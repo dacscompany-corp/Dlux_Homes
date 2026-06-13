@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -nA12 \"INSERT INTO booking_payments\" backend/controller/bookingController.ts)",
+      "Bash(grep -nA10 \"INSERT INTO booking \" backend/controller/bookingController.ts)",
+      "Bash(node --env-file=.env.local -e \"const{Client}=require\\('pg'\\);const c=new Client\\({connectionString:process.env.DATABASE_URL,ssl:{rejectUnauthorized:false}}\\);c.connect\\(\\).then\\(\\(\\)=>c.query\\(\\\\\"select column_name,is_nullable,column_default from information_schema.columns where table_name='booking_payments' and column_name in \\('remaining_balance','amount_paid','room_rate','total_amount','down_payment'\\)\\\\\"\\)\\).then\\(r=>{r.rows.forEach\\(x=>console.log\\(' ',x.column_name.padEnd\\(18\\),'nullable='+x.is_nullable,'default='+\\(x.column_default||'\\(none\\)'\\)\\)\\);return c.end\\(\\)}\\)\")",
+      "Bash(node --env-file=.env.local -e \"const{Client}=require\\('pg'\\);const c=new Client\\({connectionString:process.env.DATABASE_URL,ssl:{rejectUnauthorized:false}}\\);c.connect\\(\\).then\\(\\(\\)=>c.query\\(\\\\\"ALTER TABLE booking_payments ALTER COLUMN remaining_balance SET DEFAULT 0\\\\\"\\)\\).then\\(\\(\\)=>{console.log\\('remaining_balance default set to 0'\\);return c.end\\(\\)}\\).catch\\(e=>{console.error\\(e.message\\);process.exit\\(1\\)}\\)\")",
+      "Bash(break)",
+      "Bash(node -e \"let s='';process.stdin.on\\('data',d=>s+=d\\).on\\('end',\\(\\)=>{try{const j=JSON.parse\\(s\\);console.log\\(j.success!==false?\\('OK booking_id='+\\(j.data?.booking_id||'?'\\)+' status='+\\(j.data?.status||'?'\\)\\):'FAIL: '+j.error\\)}catch{console.log\\(s.slice\\(0,200\\)\\)}}\\)\")",
+      "Bash(node --env-file=.env.local -e \"const{Client}=require\\('pg'\\);const c=new Client\\({connectionString:process.env.DATABASE_URL,ssl:{rejectUnauthorized:false}}\\);c.connect\\(\\).then\\(\\(\\)=>c.query\\(\\\\\"SELECT conname, pg_get_constraintdef\\(oid\\) def FROM pg_constraint WHERE conrelid='booking_payments'::regclass AND contype='c'\\\\\"\\)\\).then\\(r=>{r.rows.forEach\\(x=>console.log\\(x.conname+': '+x.def\\)\\);return c.end\\(\\)}\\)\")",
+      "Bash(grep -ivE \"SELECT|as remaining|bp\\\\.remaining|GREATEST|//|\\\\* \")",
+      "Bash(curl -s -X POST http://localhost:__TRACKED_VAR__/api/bookings -H 'Content-Type: application/json' -d '{\"booking_id\":\"BK-GUEST-TEST\",\"user_id\":null,\"room_name\":\"D'\\\\''Lux Homes — Tower 4 Unit A\",\"check_in_date\":\"__CMDSUB_OUTPUT__\",\"check_out_date\":\"__CMDSUB_OUTPUT__\",\"check_in_time\":\"10:00\",\"check_out_time\":\"19:00\",\"adults\":2,\"children\":0,\"infants\":0,\"guest_first_name\":\"Juan\",\"guest_last_name\":\"Guest\",\"guest_email\":\"juan@test.com\",\"guest_phone\":\"09170001122\",\"guest_age\":28,\"guest_gender\":\"Male\",\"facebook_link\":null,\"payment_method\":\"gcash\",\"room_rate\":5500,\"add_ons_total\":150,\"total_amount\":6200,\"down_payment\":1860,\"add_ons\":[{\"name\":\"Pool Pass\",\"price\":150,\"quantity\":1}]}')",
+      "Bash(grep -nA30 \"export const mockRooms\" src/lib/mock-data.ts)",
+      "Bash(grep -nA45 \"export const getHavens\\\\b\\\\|export async function getHavens\\\\b\" backend/controller/roomController.ts)",
+      "Bash(sed -n '30,40p' redux/api/roomApi.ts)",
+      "Bash(grep -nA8 \"export const getHavenById\" backend/controller/roomController.ts)",
+      "Bash(node --env-file=.env.local -e ' *)",
+      "Bash(grep -nA4 \"amenityFees:\" src/lib/mock-data.ts)",
+      "Bash(grep -nA3 \"nearby:\" src/lib/mock-data.ts)",
+      "Bash(grep -nA3 \"houseRules:\" src/lib/mock-data.ts)",
+      "Bash(grep -nA3 \"blockedDates:\" src/lib/mock-data.ts)"
+    ]
+  }
+}

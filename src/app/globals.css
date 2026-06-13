@@ -2,6 +2,37 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+/* ── D'Lux Homes design system ─────────────────────────────── */
+:root {
+  --bg:         #F6EFE2;
+  --bg-2:       #EFE4CE;
+  --ink:        #1F160E;
+  --ink-2:      #4A3A2A;
+  --muted:      #8B7458;
+  --line:       #E0CEB2;
+  --line-2:     #D4BE9A;
+  --dlux-accent:      #B07848;
+  --accent-ink: #8C5A2E;
+  --accent-deep:#6B3F1C;
+  --gold:       #D4A96A;
+  --white:      #FFFCF4;
+  --shadow-sm:  0 1px 2px rgba(31,22,14,.04), 0 2px 8px rgba(31,22,14,.04);
+  --shadow-md:  0 4px 16px rgba(31,22,14,.06), 0 12px 32px rgba(31,22,14,.08);
+  --shadow-lg:  0 24px 64px rgba(31,22,14,.14);
+}
+
+@keyframes pageIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.page-enter { animation: pageIn .38s cubic-bezier(.2,.7,.2,1); }
+.fade-in    { animation: fadeIn .22s ease; }
+.serif      { font-family: var(--font-fraunces), Georgia, serif; font-optical-sizing: auto; }
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -55,32 +86,32 @@
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
+  --primary: oklch(0.546 0.245 264.05);
   --primary-foreground: oklch(0.985 0 0);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
   --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
+  --accent: oklch(0.93 0.05 264.05);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
+  --ring: oklch(0.546 0.245 264.05);
+  --chart-1: oklch(0.546 0.245 264.05);
+  --chart-2: oklch(0.65 0.2 264.05);
+  --chart-3: oklch(0.75 0.15 264.05);
+  --chart-4: oklch(0.85 0.1 264.05);
+  --chart-5: oklch(0.9 0.05 264.05);
+  --radius: 0.75rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary: oklch(0.546 0.245 264.05);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent: oklch(0.93 0.05 264.05);
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar-ring: oklch(0.546 0.245 264.05);
 }
 
 .dark {
@@ -90,8 +121,8 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
+  --primary: oklch(0.65 0.2 264.05);
+  --primary-foreground: oklch(0.145 0 0);
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
@@ -101,20 +132,20 @@
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
+  --ring: oklch(0.65 0.2 264.05);
+  --chart-1: oklch(0.65 0.2 264.05);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary: oklch(0.65 0.2 264.05);
   --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar-ring: oklch(0.65 0.2 264.05);
 }
 
 @layer base {
