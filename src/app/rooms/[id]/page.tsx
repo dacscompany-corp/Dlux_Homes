@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, use } from "react";
+import { useState, useEffect, use, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { mockRooms, mockReviews } from "@/lib/mock-data";
@@ -26,6 +26,7 @@ function IcoX() { return <svg width={16} height={16} viewBox="0 0 24 24" fill="n
 function IcoPlus() { return <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>; }
 function IcoMinus() { return <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /></svg>; }
 function IcoArrowRight() { return <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>; }
+function IcoWarning() { return <svg width={18} height={18} viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" stroke="#fff" strokeWidth={2} strokeLinecap="round" /><circle cx="12" cy="17" r="1" fill="#fff" /></svg>; }
 function IcoQuote() { return <svg width={18} height={18} viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M3 21c3 0 7-1 7-8V5c0-1.25-.76-2.02-2-2H4c-1.25 0-2 .75-2 1.96v7c0 1.25.75 2.04 2 2.04h.93L3 21z" /><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.76-2.02-2-2h-4c-1.25 0-2 .75-2 1.96v7c0 1.25.75 2.04 2 2.04h.93L15 21z" /></svg>; }
 function AiWifi()      { return <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>; }
 function AiWind()      { return <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><path d="M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2"/></svg>; }
@@ -55,9 +56,9 @@ const WELCOME_PACK = ["Dental kit", "Shampoo & bath soap", "Drinking water", "Fr
 function peso(n: number) { return "₱" + n.toLocaleString("en-PH"); }
 
 const availableWindows = [
-  { stayType: "10", checkIn: "7:00 AM", checkOut: "5:00 PM", label: "Daycation" },
-  { stayType: "10", checkIn: "7:00 PM", checkOut: "5:00 AM", label: "Nightcation" },
-  { stayType: "21", checkIn: "7:00 PM", checkOut: "4:00 PM", label: "Overnight" },
+  { stayType: "10", checkIn: "7:00 AM",  checkOut: "5:00 PM", label: "Daycation" },
+  { stayType: "10", checkIn: "9:00 PM",  checkOut: "5:00 AM", label: "Nightcation" },
+  { stayType: "21", checkIn: "10:00 AM", checkOut: "7:00 AM", label: "Overnight" },
 ];
 
 type Window = typeof availableWindows[0];
@@ -151,102 +152,113 @@ function GuestCounter({ guests, setGuests, max }: { guests: Guests; setGuests: (
 
 // ── Gallery modal ─────────────────────────────────────────────
 function GalleryModal({ images, start, onClose }: { images: string[]; start: number; onClose: () => void }) {
-  const [i, setI] = useState(start);
+  const [idx, setIdx] = useState(start);
+  const [dir, setDir] = useState<"left" | "right">("right");
+  const [animKey, setAnimKey] = useState(0);
+  const thumbRef = useRef<HTMLDivElement>(null);
+
+  const goTo = (next: number, d: "left" | "right") => {
+    const total = images.length;
+    setDir(d);
+    setIdx((next + total) % total);
+    setAnimKey((k) => k + 1);
+  };
+
+  // Scroll active thumb into view
+  useEffect(() => {
+    const el = thumbRef.current?.children[idx] as HTMLElement | undefined;
+    el?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+  }, [idx]);
+
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
-      if (e.key === "ArrowLeft") setI((x) => Math.max(0, x - 1));
-      if (e.key === "ArrowRight") setI((x) => Math.min(images.length - 1, x + 1));
+      if (e.key === "ArrowLeft")  goTo(idx - 1, "left");
+      if (e.key === "ArrowRight") goTo(idx + 1, "right");
     };
     window.addEventListener("keydown", k);
     return () => window.removeEventListener("keydown", k);
-  }, [images.length, onClose]);
+  }, [idx, images.length, onClose]);
 
   return (
-    <div className="fade-in" style={{ position: "fixed", inset: 0, background: "rgba(20,14,8,.94)", zIndex: 9998, display: "grid", gridTemplateRows: "auto 1fr auto", padding: 20 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", color: "var(--white)" }}>
-        <button onClick={onClose} style={{ padding: "8px 14px", borderRadius: 999, color: "var(--white)", background: "rgba(255,255,255,.12)", border: "none", cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", fontSize: 13 }}>
-          <IcoX /> Close
-        </button>
-        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--white)" }}>{i + 1} / {images.length}</div>
-      </div>
-      <div style={{ display: "grid", placeItems: "center", position: "relative" }}>
-        <img key={images[i]} src={images[i]} alt="" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 16 }} />
-        {i > 0 && (
-          <button 
-            onClick={() => setI(i - 1)} 
-            style={{ 
-              position: "absolute", 
-              left: 20, 
-              top: "50%", 
-              transform: "translateY(-50%)", 
-              width: 56, 
-              height: 56, 
-              borderRadius: "50%", 
-              background: "#B07848",
-              color: "#FFFCF4", 
-              display: "grid", 
-              placeItems: "center", 
-              border: "2px solid #FFFCF4", 
-              cursor: "pointer",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-              transition: "all 0.2s",
-              zIndex: 10
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "#8C5A2E";
-              e.currentTarget.style.transform = "translateY(-50%) scale(1.1)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "#B07848";
-              e.currentTarget.style.transform = "translateY(-50%) scale(1)";
-            }}
+    <>
+      <style>{`
+        @keyframes modalSlideRight { from { opacity:0; transform:translateX(60px) scale(.97); } to { opacity:1; transform:translateX(0) scale(1); } }
+        @keyframes modalSlideLeft  { from { opacity:0; transform:translateX(-60px) scale(.97); } to { opacity:1; transform:translateX(0) scale(1); } }
+        @keyframes modalFadeIn     { from { opacity:0; } to { opacity:1; } }
+        .modal-img-anim-right { animation: modalSlideRight 0.38s cubic-bezier(.25,.85,.25,1) both; }
+        .modal-img-anim-left  { animation: modalSlideLeft  0.38s cubic-bezier(.25,.85,.25,1) both; }
+        .modal-nav:hover { background: rgba(255,255,255,.25) !important; transform: translateY(-50%) scale(1.1) !important; }
+        .modal-thumb:hover { opacity: 1 !important; transform: scale(1.05); }
+      `}</style>
+      {/* Backdrop */}
+      <div
+        style={{ position: "fixed", inset: 0, background: "rgba(10,8,6,.96)", zIndex: 9998, animation: "modalFadeIn 0.22s ease both", display: "flex", flexDirection: "column" }}
+        onClick={onClose}
+      >
+        {/* Top bar */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 24px", flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+          <button onClick={onClose} style={{ display: "inline-flex", gap: 8, alignItems: "center", padding: "8px 18px", borderRadius: 999, background: "rgba(255,255,255,.1)", border: "1px solid rgba(255,255,255,.18)", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+            <IcoX /> Close
+          </button>
+          <span style={{ color: "rgba(255,255,255,.7)", fontSize: 14, fontWeight: 600 }}>
+            {idx + 1} <span style={{ color: "rgba(255,255,255,.35)" }}>/ {images.length}</span>
+          </span>
+        </div>
+
+        {/* Main image area */}
+        <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", padding: "0 80px" }} onClick={(e) => e.stopPropagation()}>
+          {/* Image */}
+          <div
+            key={animKey}
+            className={dir === "right" ? "modal-img-anim-right" : "modal-img-anim-left"}
+            style={{ position: "relative", maxWidth: "100%", maxHeight: "100%", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}
           >
-            <svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
-          </button>
-        )}
-        {i < images.length - 1 && (
-          <button 
-            onClick={() => setI(i + 1)} 
-            style={{ 
-              position: "absolute", 
-              right: 20, 
-              top: "50%", 
-              transform: "translateY(-50%)", 
-              width: 56, 
-              height: 56, 
-              borderRadius: "50%", 
-              background: "#B07848",
-              color: "#FFFCF4", 
-              display: "grid", 
-              placeItems: "center", 
-              border: "2px solid #FFFCF4", 
-              cursor: "pointer",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-              transition: "all 0.2s",
-              zIndex: 10
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "#8C5A2E";
-              e.currentTarget.style.transform = "translateY(-50%) scale(1.1)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "#B07848";
-              e.currentTarget.style.transform = "translateY(-50%) scale(1)";
-            }}
+            <img
+              src={images[idx]}
+              alt={`Photo ${idx + 1}`}
+              style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 12, boxShadow: "0 24px 80px rgba(0,0,0,.6)" }}
+            />
+          </div>
+
+          {/* Prev */}
+          <button
+            className="modal-nav"
+            onClick={() => goTo(idx - 1, "left")}
+            style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", width: 52, height: 52, borderRadius: "50%", background: "rgba(255,255,255,.12)", border: "1px solid rgba(255,255,255,.2)", color: "#fff", display: "grid", placeItems: "center", cursor: "pointer", transition: "all 0.2s", zIndex: 2 }}
           >
-            <svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
+            <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
           </button>
-        )}
-      </div>
-      <div style={{ display: "flex", gap: 6, justifyContent: "center", overflowX: "auto", padding: "0 20px" }}>
-        {images.map((src, idx) => (
-          <button key={idx} onClick={() => setI(idx)} style={{ width: 72, height: 54, borderRadius: 8, overflow: "hidden", flexShrink: 0, border: i === idx ? "2px solid var(--dlux-accent)" : "2px solid transparent", padding: 0, cursor: "pointer" }}>
-            <img src={src} alt="" style={{ objectFit: "cover", width: "100%", height: "100%" }} />
+
+          {/* Next */}
+          <button
+            className="modal-nav"
+            onClick={() => goTo(idx + 1, "right")}
+            style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", width: 52, height: 52, borderRadius: "50%", background: "rgba(255,255,255,.12)", border: "1px solid rgba(255,255,255,.2)", color: "#fff", display: "grid", placeItems: "center", cursor: "pointer", transition: "all 0.2s", zIndex: 2 }}
+          >
+            <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
           </button>
-        ))}
+        </div>
+
+        {/* Thumbnail strip */}
+        <div
+          ref={thumbRef}
+          style={{ display: "flex", gap: 8, justifyContent: "center", overflowX: "auto", padding: "16px 24px", flexShrink: 0, scrollbarWidth: "none" }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {images.map((src, n) => (
+            <button
+              key={n}
+              className="modal-thumb"
+              onClick={() => goTo(n, n > idx ? "right" : "left")}
+              style={{ width: 80, height: 60, borderRadius: 8, overflow: "hidden", flexShrink: 0, padding: 0, cursor: "pointer", border: n === idx ? "2px solid #fff" : "2px solid rgba(255,255,255,.15)", opacity: n === idx ? 1 : 0.55, transition: "all 0.2s", transform: "scale(1)" }}
+            >
+              <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+            </button>
+          ))}
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -255,12 +267,32 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
   const { id } = use(params);
   // Live haven by id; fall back to a matching mock (legacy ids) or the first
   // property so the single-property storefront always renders.
-  const { data: havenRes } = useGetHavenByIdQuery(id, { skip: !id });
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  const { data: havenRes } = useGetHavenByIdQuery(id, { skip: !id || !isUuid });
   const liveHaven = (havenRes as { data?: Record<string, unknown> } | undefined)?.data;
   const room = liveHaven ? havenToRoom(liveHaven) : (mockRooms.find((r) => r.id === id) || mockRooms[0]);
 
   const [galleryIdx, setGalleryIdx] = useState(0);
+  const [galleryDir, setGalleryDir] = useState<"left" | "right">("right");
+  const [animId, setAnimId] = useState(0);
+  const animKey = useRef(0);
+  const [carouselPaused, setCarouselPaused] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
+
+  const goTo = (nextIdx: number, dir: "left" | "right") => {
+    const total = room.images.length;
+    setGalleryDir(dir);
+    setGalleryIdx((nextIdx + total) % total);
+    animKey.current += 1;
+    setAnimId(animKey.current);
+  };
+
+  useEffect(() => {
+    if (carouselPaused || showGallery) return;
+    const t = setTimeout(() => goTo(galleryIdx + 1, "right"), 4000);
+    return () => clearTimeout(t);
+  }, [galleryIdx, carouselPaused, showGallery]);
+
   const [dateOpen, setDateOpen] = useState(false);
   const [guestOpen, setGuestOpen] = useState(false);
   const [wished, setWished] = useState(false);
@@ -311,26 +343,32 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
               <div style={{ fontSize: 10, color: "var(--ink)", textTransform: "uppercase", letterSpacing: ".15em" }}>Staycations · PH</div>
             </div>
           </Link>
-          <Link href="/my-bookings" style={{ padding: "9px 14px", borderRadius: 999, fontSize: 13, fontWeight: 600, color: "var(--ink)", textDecoration: "none" }}>My bookings</Link>
+          <style>{`
+            .mybookings-btn{transition:background 0.18s,transform 0.18s,box-shadow 0.18s}
+            .mybookings-btn:hover{background:var(--dlux-accent)!important;color:#fff!important;transform:scale(1.04);box-shadow:0 4px 14px rgba(176,120,72,0.35)}
+            .back-btn{transition:background 0.18s,border-color 0.18s,transform 0.18s,box-shadow 0.18s}
+            .back-btn:hover{background:var(--bg-2)!important;border-color:var(--line-2)!important;transform:scale(1.05);box-shadow:0 3px 10px rgba(31,22,14,0.12)}
+            .save-btn{transition:background 0.18s,border-color 0.18s,color 0.18s,transform 0.18s,box-shadow 0.18s}
+            .save-btn:hover{background:var(--dlux-accent)!important;border-color:var(--dlux-accent)!important;color:#fff!important;transform:scale(1.05);box-shadow:0 4px 14px rgba(176,120,72,0.35)}
+          `}</style>
+          <Link href="/my-bookings" className="mybookings-btn" style={{ padding: "10px 20px", borderRadius: 999, fontSize: 13, fontWeight: 700, color: "var(--dlux-accent)", textDecoration: "none", border: "2px solid var(--dlux-accent)", background: "transparent", display: "inline-flex", alignItems: "center", gap: 7, letterSpacing: ".01em" }}>
+            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><polyline points="9 16 11 18 15 14"/></svg>
+            My bookings
+          </Link>
         </div>
       </header>
 
       <div style={{ maxWidth: 1320, margin: "0 auto", padding: "20px 28px 60px" }}>
         {/* BREADCRUMB */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
-          <Link href="/rooms" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 999, border: "1px solid var(--line-2)", background: "var(--white)", fontSize: 13, fontWeight: 600, textDecoration: "none", color: "var(--ink)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 32 }}>
+          <Link href="/rooms" className="back-btn" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 999, border: "1px solid var(--line-2)", background: "var(--white)", fontSize: 13, fontWeight: 600, textDecoration: "none", color: "var(--ink)" }}>
             <IcoChevLeft /> Back
           </Link>
-          <span style={{ fontSize: 13, color: "var(--ink)" }}>›</span>
-          <span style={{ fontSize: 13, color: "var(--ink)", fontWeight: 600 }}>{room.name}</span>
         </div>
 
         {/* TITLE ROW */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 22, gap: 24 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 28, gap: 24 }}>
           <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--accent-ink)", textTransform: "uppercase", letterSpacing: ".14em", marginBottom: 8 }}>
-              {room.floor}
-            </div>
             <h1 className="serif" style={{ fontSize: "clamp(32px,5vw,56px)", fontWeight: 400, letterSpacing: "-.03em", lineHeight: 0.98, margin: 0 }}>{room.name}</h1>
             <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 18, fontSize: 13, color: "var(--ink-2)", flexWrap: "wrap" }}>
               <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}><IcoStar /> {room.rating} · {room.reviewCount} reviews</span>
@@ -340,165 +378,177 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
           </div>
           <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
             <button onClick={() => setWished((w) => !w)}
+              className="save-btn"
               style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 999, border: "1px solid var(--line-2)", background: "var(--white)", fontSize: 13, fontWeight: 600, cursor: "pointer", color: wished ? "var(--dlux-accent)" : "var(--ink)" }}>
               <IcoHeart filled={wished} /> {wished ? "Saved" : "Save"}
             </button>
           </div>
         </div>
 
-        {/* GALLERY GRID */}
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gridTemplateRows: "260px 260px", gap: 8, borderRadius: 24, overflow: "hidden" }}>
-          <div style={{ gridRow: "1 / span 2", position: "relative", cursor: "pointer" }} onClick={() => { setGalleryIdx(0); setShowGallery(true); }}>
-            <Image src={room.images[0]} alt="" fill unoptimized style={{ objectFit: "cover" }} />
-          </div>
-          {room.images.slice(1, 5).map((src, i) => (
-            <div key={i} style={{ position: "relative", cursor: "pointer" }} onClick={() => { setGalleryIdx(i + 1); setShowGallery(true); }}>
-              <Image src={src} alt="" fill unoptimized style={{ objectFit: "cover" }} />
-              {i === 3 && (
-                <div style={{ position: "absolute", inset: 0, background: "rgba(31,22,14,.5)", display: "grid", placeItems: "center" }}>
-                  <div style={{ color: "var(--white)", fontWeight: 600, fontSize: 13, display: "inline-flex", gap: 8, alignItems: "center", padding: "10px 18px", background: "rgba(255,255,255,.15)", borderRadius: 999, backdropFilter: "blur(8px)" }}>
-                    <IcoSquare /> Show all {room.images.length} photos
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-
-        {/* TWO-COL BODY */}
-        <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 56, marginTop: 40 }}>
-          {/* LEFT */}
+        {/* CAROUSEL + BOOKING SIDE BY SIDE */}
+        <style>{`
+          @keyframes csRight { from { opacity:0; transform:translateX(48px) scale(1.03); } to { opacity:1; transform:translateX(0) scale(1); } }
+          @keyframes csLeft  { from { opacity:0; transform:translateX(-48px) scale(1.03); } to { opacity:1; transform:translateX(0) scale(1); } }
+          .cs-nav { opacity:0; transition: opacity 0.2s, transform 0.2s; }
+          .cs-wrap:hover .cs-nav { opacity:1; }
+          .cs-nav:hover { transform: translateY(-50%) scale(1.1) !important; }
+          .cs-dot { transition: width 0.3s, background 0.3s; }
+          .cs-showbtn { transition: background 0.2s; }
+          .cs-showbtn:hover { background: rgba(0,0,0,.65) !important; }
+        `}</style>
+        <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 32, alignItems: "start" }}>
+          {/* LEFT — carousel + all scrollable content */}
           <div>
-            {/* Host row */}
-            <div style={{ paddingBottom: 24, borderBottom: "1px solid var(--line)" }}>
-              <div style={{ fontSize: 16, fontWeight: 600 }}>Hosted by Ella &amp; Marco</div>
-              <div style={{ fontSize: 13, color: "var(--muted)" }}>Superhost · 2022 on D&apos; Lux · {room.reviewCount} reviews</div>
+          {/* CAROUSEL */}
+          <div
+            className="cs-wrap"
+            style={{ position: "relative", height: 480, borderRadius: 24, overflow: "hidden", background: "#111", userSelect: "none", cursor: "pointer" }}
+            onMouseEnter={() => setCarouselPaused(true)}
+            onMouseLeave={() => setCarouselPaused(false)}
+            onClick={() => setShowGallery(true)}
+          >
+            <div key={animId} style={{ position: "absolute", inset: 0, animation: `${galleryDir === "right" ? "csRight" : "csLeft"} 0.52s cubic-bezier(.22,.85,.25,1) both` }}>
+              <Image src={room.images[galleryIdx]} alt="" fill unoptimized style={{ objectFit: "cover" }} />
             </div>
+            <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(0,0,0,.6) 0%, transparent 45%)", pointerEvents: "none", zIndex: 1 }} />
+            <div style={{ position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 6, zIndex: 3 }} onClick={(e) => e.stopPropagation()}>
+              {room.images.map((_, i) => (
+                <button key={i} className="cs-dot" onClick={() => goTo(i, i > galleryIdx ? "right" : "left")}
+                  style={{ width: i === galleryIdx ? 24 : 8, height: 8, borderRadius: 999, background: i === galleryIdx ? "#fff" : "rgba(255,255,255,.4)", border: "none", padding: 0, cursor: "pointer" }} />
+              ))}
+            </div>
+            <button className="cs-showbtn" onClick={(e) => { e.stopPropagation(); setShowGallery(true); }}
+              style={{ position: "absolute", bottom: 16, right: 16, display: "inline-flex", gap: 7, alignItems: "center", padding: "9px 16px", background: "rgba(0,0,0,.45)", color: "#fff", border: "1px solid rgba(255,255,255,.25)", borderRadius: 999, backdropFilter: "blur(10px)", fontSize: 13, fontWeight: 600, cursor: "pointer", zIndex: 3 }}>
+              <IcoSquare /> Show all {room.images.length} photos
+            </button>
+            <button className="cs-nav" onClick={(e) => { e.stopPropagation(); goTo(galleryIdx - 1, "left"); }}
+              style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", width: 44, height: 44, borderRadius: "50%", background: "rgba(255,255,255,.92)", border: "none", cursor: "pointer", display: "grid", placeItems: "center", boxShadow: "0 2px 12px rgba(0,0,0,.4)", zIndex: 3 }}>
+              <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="#111" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
+            </button>
+            <button className="cs-nav" onClick={(e) => { e.stopPropagation(); goTo(galleryIdx + 1, "right"); }}
+              style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", width: 44, height: 44, borderRadius: "50%", background: "rgba(255,255,255,.92)", border: "none", cursor: "pointer", display: "grid", placeItems: "center", boxShadow: "0 2px 12px rgba(0,0,0,.4)", zIndex: 3 }}>
+              <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="#111" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
+            </button>
+          </div>{/* end carousel */}
 
-            {/* Description */}
+          {/* All scrollable content below carousel */}
+          <div style={{ marginTop: 40 }}>
             <section style={{ padding: "28px 0", borderBottom: "1px solid var(--line)" }}>
               <p style={{ fontSize: 16, lineHeight: 1.7, color: "var(--ink-2)", margin: 0 }}>{room.description}</p>
             </section>
-
-            {/* Stay windows */}
+            <style>{`
+              .rule-item { transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, border-color 0.18s ease; cursor: default; }
+              .rule-item:hover { transform: translateX(6px); background: #fde68a !important; border-color: #f59e0b !important; box-shadow: 0 4px 16px rgba(245,158,11,0.25); }
+              .rule-item:hover .rule-icon { background: #f59e0b !important; color: #fff !important; }
+            `}</style>
+            <section style={{ padding: "28px 0", borderBottom: "1px solid var(--line)" }}>
+              <h2 className="serif" style={{ fontSize: 28, fontWeight: 500, margin: "0 0 20px", letterSpacing: "-.02em" }}>Things to know</h2>
+              <ul style={{ padding: 0, margin: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 10 }}>
+                {room.houseRules.map((h) => {
+                  const ruleIcon = (() => {
+                    if (/smok|vap/i.test(h)) return (
+                      <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="2" y1="2" x2="22" y2="22" /><path d="M16 9c1.7.3 3 1.8 3 3.5V14"/><path d="M8 13H3v2h10"/><path d="M22 13v1"/><path d="M16 3s2 1 2 4"/>
+                      </svg>
+                    );
+                    if (/pet|dog|cat|animal/i.test(h)) return (
+                      <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                        {/* paw print */}
+                        <circle cx="7" cy="4" r="1.5" fill="currentColor" stroke="none"/>
+                        <circle cx="12" cy="3" r="1.5" fill="currentColor" stroke="none"/>
+                        <circle cx="17" cy="4" r="1.5" fill="currentColor" stroke="none"/>
+                        <circle cx="4.5" cy="8.5" r="1.5" fill="currentColor" stroke="none"/>
+                        <path d="M12 20c-4 0-7-3-5.5-6.5C7.5 11 10 10 12 10s4.5 1 5.5 3.5C19 17 16 20 12 20z" fill="currentColor" stroke="none"/>
+                        {/* slash */}
+                        <line x1="3" y1="21" x2="21" y2="3" strokeWidth={2.5}/>
+                      </svg>
+                    );
+                    if (/walk.?in/i.test(h)) return (
+                      <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                        {/* walking person */}
+                        <circle cx="12" cy="4" r="1.8" fill="currentColor" stroke="none"/>
+                        <path d="M9 9l3 2 3-2"/>
+                        <path d="M12 11v5"/>
+                        <path d="M9 16l-1.5 4"/>
+                        <path d="M15 16l1.5 4"/>
+                        {/* slash */}
+                        <line x1="3" y1="21" x2="21" y2="3" strokeWidth={2.5}/>
+                      </svg>
+                    );
+                    return <IcoWarning />;
+                  })();
+                  return (
+                    <li key={h} className="rule-item" style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 14, fontWeight: 700, color: "#7a3a00", background: "#fff4e0", border: "1.5px solid #f5c97a", borderRadius: 14, padding: "16px 20px", borderLeft: "5px solid #f59e0b" }}>
+                      <span className="rule-icon" style={{ color: "#f59e0b", flexShrink: 0, display: "flex", width: 38, height: 38, borderRadius: "50%", background: "#fef3c7", alignItems: "center", justifyContent: "center", transition: "background 0.18s, color 0.18s" }}>
+                        {ruleIcon}
+                      </span>
+                      {h}
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+            <style>{`.window-card{transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease,background .18s ease}.window-card:hover{transform:translateY(-4px);box-shadow:0 10px 28px rgba(0,0,0,.13);border-color:var(--dlux-accent)!important}.window-card.active:hover{box-shadow:0 10px 28px rgba(0,0,0,.22)}`}</style>
             <section style={{ padding: "28px 0", borderBottom: "1px solid var(--line)" }}>
               <h2 className="serif" style={{ fontSize: 28, fontWeight: 500, margin: "0 0 6px", letterSpacing: "-.02em" }}>Pick your window</h2>
               <p style={{ fontSize: 14, color: "var(--ink)", margin: "0 0 20px" }}>Three preset check-in windows. Book the one that fits your rhythm.</p>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
-                {availableWindows.map((w, i) => {
-                  const active = selectedWindow.checkIn === w.checkIn && selectedWindow.checkOut === w.checkOut;
-                  return (
-                    <button key={i} onClick={() => setSelectedWindow(w)}
-                      style={{ padding: 18, textAlign: "left", borderRadius: 16, border: active ? "2px solid var(--ink)" : "1px solid var(--line-2)", background: active ? "var(--ink)" : "var(--white)", color: active ? "var(--white)" : "var(--ink)", cursor: "pointer" }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".1em", opacity: 0.7 }}>{w.stayType}-hour</div>
-                      <div className="serif" style={{ fontSize: 22, fontWeight: 500, marginTop: 4, letterSpacing: "-.015em" }}>{w.label}</div>
-                      <div style={{ fontSize: 12, marginTop: 10, opacity: 0.85, display: "flex", alignItems: "center", gap: 6 }}>
-                        <IcoClock /> {w.checkIn} → {w.checkOut}
-                      </div>
-                      <div style={{ fontSize: 13, fontWeight: 600, marginTop: 10 }}>
-                        {peso(w.stayType === "10" ? room.price10hr : room.price21hr)}
-                      </div>
-                    </button>
-                  );
-                })}
+                {availableWindows.map((w, i) => { const active = selectedWindow.checkIn === w.checkIn && selectedWindow.checkOut === w.checkOut; return (
+                  <button key={i} onClick={() => setSelectedWindow(w)} className={`window-card${active ? " active" : ""}`}
+                    style={{ padding: 18, textAlign: "left", borderRadius: 16, border: active ? "2px solid var(--ink)" : "1.5px solid var(--line-2)", background: active ? "var(--ink)" : "var(--white)", color: active ? "var(--white)" : "var(--ink)", cursor: "pointer" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".1em", opacity: 0.7 }}>{w.stayType}-hour</div>
+                    <div className="serif" style={{ fontSize: 22, fontWeight: 500, marginTop: 4, letterSpacing: "-.015em" }}>{w.label}</div>
+                    <div style={{ fontSize: 12, marginTop: 10, opacity: 0.85, display: "flex", alignItems: "center", gap: 6 }}><IcoClock /> {w.checkIn} → {w.checkOut}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginTop: 10 }}>{peso(w.stayType === "10" ? room.price10hr : room.price21hr)}</div>
+                  </button>); })}
               </div>
             </section>
-
-            {/* Amenities */}
             <section style={{ padding: "28px 0", borderBottom: "1px solid var(--line)" }}>
               <h2 className="serif" style={{ fontSize: 28, fontWeight: 500, margin: "0 0 20px", letterSpacing: "-.02em" }}>What&apos;s inside</h2>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 14 }}>
-                {AMENITIES.map((a) => (
-                  <div key={a.label} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0" }}>
-                    <div style={{ width: 36, height: 36, borderRadius: 10, background: "var(--bg-2)", display: "grid", placeItems: "center", color: "var(--ink-2)" }}><a.icon /></div>
-                    <div style={{ fontSize: 14, fontWeight: 500 }}>{a.label}</div>
-                  </div>
-                ))}
+                {AMENITIES.map((a) => (<div key={a.label} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0" }}><div style={{ width: 36, height: 36, borderRadius: 10, background: "var(--bg-2)", display: "grid", placeItems: "center", color: "var(--ink-2)" }}><a.icon /></div><div style={{ fontSize: 14, fontWeight: 500 }}>{a.label}</div></div>))}
               </div>
             </section>
-
-            {/* Welcome pack */}
             <section style={{ padding: "28px 0", borderBottom: "1px solid var(--line)" }}>
               <h2 className="serif" style={{ fontSize: 28, fontWeight: 500, margin: "0 0 6px", letterSpacing: "-.02em" }}>On the house</h2>
               <p style={{ fontSize: 14, color: "var(--muted)", margin: "0 0 16px" }}>Our welcome pack, included with every booking.</p>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {WELCOME_PACK.map((w) => (
-                  <div key={w} style={{ padding: "10px 16px", background: "var(--bg-2)", borderRadius: 12, fontSize: 13, display: "inline-flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ color: "var(--accent-ink)" }}><IcoCheck /></span> {w}
-                  </div>
-                ))}
+                {WELCOME_PACK.map((w) => (<div key={w} style={{ padding: "10px 16px", background: "var(--bg-2)", borderRadius: 12, fontSize: 13, display: "inline-flex", alignItems: "center", gap: 8 }}><span style={{ color: "var(--accent-ink)" }}><IcoCheck /></span> {w}</div>))}
               </div>
             </section>
-
-            {/* Nearby + amenity fees */}
             <section style={{ padding: "28px 0", borderBottom: "1px solid var(--line)", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 40 }}>
               <div>
                 <h3 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 16px" }}>Around the building</h3>
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {(room.nearby as string[]).slice(0, 5).map((n) => (
-                    <div key={n} style={{ fontSize: 13, paddingBottom: 10, borderBottom: "1px solid var(--line)", color: "var(--ink-2)" }}>{n}</div>
-                  ))}
+                  {(room.nearby as string[]).slice(0, 5).map((n) => (<div key={n} style={{ fontSize: 13, paddingBottom: 10, borderBottom: "1px solid var(--line)", color: "var(--ink-2)" }}>{n}</div>))}
                 </div>
               </div>
               <div>
                 <h3 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 16px" }}>Optional amenity fees</h3>
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {room.amenityFees.map((n) => (
-                    <div key={n.name} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, paddingBottom: 10, borderBottom: "1px solid var(--line)" }}>
-                      <span style={{ color: "var(--ink)" }}>{n.name}</span>
-                      <span style={{ color: "var(--ink)", fontWeight: 600 }}>{n.fee}</span>
-                    </div>
-                  ))}
+                  {room.amenityFees.map((n) => (<div key={n.name} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, paddingBottom: 10, borderBottom: "1px solid var(--line)" }}><span style={{ color: "var(--ink)" }}>{n.name}</span><span style={{ color: "var(--ink)", fontWeight: 600 }}>{n.fee}</span></div>))}
                 </div>
               </div>
             </section>
-
-            {/* Reviews */}
             <section style={{ padding: "28px 0", borderBottom: "1px solid var(--line)" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 20 }}>
-                <h2 className="serif" style={{ fontSize: 28, fontWeight: 500, margin: 0, letterSpacing: "-.02em", display: "flex", alignItems: "center", gap: 8 }}>
-                  <IcoStar size={20} /> {room.rating} · {room.reviewCount} reviews
-                </h2>
+                <h2 className="serif" style={{ fontSize: 28, fontWeight: 500, margin: 0, letterSpacing: "-.02em", display: "flex", alignItems: "center", gap: 8 }}><IcoStar size={20} /> {room.rating} · {room.reviewCount} reviews</h2>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-                {mockReviews.map((r) => (
-                  <div key={r.id} style={{ background: "var(--white)", borderRadius: 18, padding: 22, border: "1px solid var(--line)" }}>
-                    <span style={{ color: "var(--line-2)" }}><IcoQuote /></span>
-                    <p style={{ fontSize: 14, lineHeight: 1.65, margin: "10px 0 16px", color: "var(--ink-2)" }}>&ldquo;{r.comment}&rdquo;</p>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <div style={{ width: 34, height: 34, borderRadius: "50%", background: "var(--accent-deep)", color: "var(--white)", display: "grid", placeItems: "center", fontSize: 11, fontWeight: 700 }}>{r.avatar}</div>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600 }}>{r.author}</div>
-                        <div style={{ fontSize: 11, color: "var(--muted)" }}>{r.date}</div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                {mockReviews.map((r) => (<div key={r.id} style={{ background: "var(--white)", borderRadius: 18, padding: 22, border: "1px solid var(--line)" }}><span style={{ color: "var(--line-2)" }}><IcoQuote /></span><p style={{ fontSize: 14, lineHeight: 1.65, margin: "10px 0 16px", color: "var(--ink-2)" }}>&ldquo;{r.comment}&rdquo;</p><div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 34, height: 34, borderRadius: "50%", background: "var(--accent-deep)", color: "var(--white)", display: "grid", placeItems: "center", fontSize: 11, fontWeight: 700 }}>{r.avatar}</div><div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.author}</div><div style={{ fontSize: 11, color: "var(--muted)" }}>{r.date}</div></div></div></div>))}
               </div>
-            </section>
-
-            {/* House rules */}
-            <section style={{ padding: "28px 0" }}>
-              <h2 className="serif" style={{ fontSize: 28, fontWeight: 500, margin: "0 0 16px", letterSpacing: "-.02em" }}>Things to know</h2>
-              <ul style={{ padding: 0, margin: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 10 }}>
-                {room.houseRules.map((h) => (
-                  <li key={h} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: "var(--ink-2)" }}>
-                    <span style={{ color: "var(--muted)" }}><IcoInfo /></span> {h}
-                  </li>
-                ))}
-              </ul>
             </section>
           </div>
 
-          {/* RIGHT — booking panel */}
+          </div>{/* end left column */}
+
+          {/* BOOKING CARD — sticky beside the carousel */}
           <aside style={{ position: "sticky", top: 90, height: "fit-content" }}>
             <div style={{ background: "var(--white)", borderRadius: 24, padding: 28, border: "1px solid var(--line)", boxShadow: "var(--shadow-md)" }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 20 }}>
                 <span style={{ fontSize: 26, fontWeight: 700 }}>{peso(basePrice)}</span>
                 <span style={{ fontSize: 13, color: "var(--ink-2)" }}>/ {selectedWindow.stayType}-hour stay</span>
               </div>
-
-              {/* Date picker */}
               <div style={{ border: "1px solid var(--line-2)", borderRadius: 14, overflow: "hidden", marginBottom: 12 }}>
                 <button onClick={() => { setDateOpen(!dateOpen); setGuestOpen(false); }}
                   style={{ width: "100%", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "transparent", border: "none", cursor: "pointer", textAlign: "left" }}>
@@ -514,32 +564,36 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                   </div>
                 )}
               </div>
-
-              {/* Window */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
-                <div style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid var(--line-2)" }}>
-                  <label style={{ fontSize: 10, fontWeight: 700, color: "var(--ink)", textTransform: "uppercase", letterSpacing: ".1em", display: "block" }}>Check-in</label>
-                  <input 
-                    type="time" 
-                    value={customCheckIn} 
-                    onChange={(e) => setCustomCheckIn(e.target.value)}
-                    placeholder={selectedWindow.checkIn}
-                    style={{ fontSize: 13, fontWeight: 600, marginTop: 4, width: "100%", border: "none", background: "transparent", outline: "none", fontFamily: "inherit", color: "var(--ink)" }}
-                  />
+                <div style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid var(--line-2)", background: "var(--white)", position: "relative" }}>
+                  <label style={{ fontSize: 10, fontWeight: 700, color: "var(--ink)", textTransform: "uppercase", letterSpacing: ".1em", display: "block", marginBottom: 4 }}>Check-in</label>
+                  <div style={{ display: "flex", alignItems: "center" }}>
+                    <select
+                      value={customCheckIn || selectedWindow.checkIn}
+                      onChange={(e) => setCustomCheckIn(e.target.value)}
+                      style={{ fontSize: 13, fontWeight: 600, flex: 1, border: "none", background: "transparent", outline: "none", fontFamily: "inherit", color: "var(--ink)", cursor: "pointer", appearance: "none", WebkitAppearance: "none" }}>
+                      {availableWindows.map((w, i) => (
+                        <option key={i} value={w.checkIn}>{w.checkIn}</option>
+                      ))}
+                    </select>
+                    <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, pointerEvents: "none" }}><polyline points="6 9 12 15 18 9"/></svg>
+                  </div>
                 </div>
-                <div style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid var(--line-2)" }}>
-                  <label style={{ fontSize: 10, fontWeight: 700, color: "var(--ink)", textTransform: "uppercase", letterSpacing: ".1em", display: "block" }}>Check-out</label>
-                  <input 
-                    type="time" 
-                    value={customCheckOut} 
-                    onChange={(e) => setCustomCheckOut(e.target.value)}
-                    placeholder={selectedWindow.checkOut}
-                    style={{ fontSize: 13, fontWeight: 600, marginTop: 4, width: "100%", border: "none", background: "transparent", outline: "none", fontFamily: "inherit", color: "var(--ink)" }}
-                  />
+                <div style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid var(--line-2)", background: "var(--white)", position: "relative" }}>
+                  <label style={{ fontSize: 10, fontWeight: 700, color: "var(--ink)", textTransform: "uppercase", letterSpacing: ".1em", display: "block", marginBottom: 4 }}>Check-out</label>
+                  <div style={{ display: "flex", alignItems: "center" }}>
+                    <select
+                      value={customCheckOut || selectedWindow.checkOut}
+                      onChange={(e) => setCustomCheckOut(e.target.value)}
+                      style={{ fontSize: 13, fontWeight: 600, flex: 1, border: "none", background: "transparent", outline: "none", fontFamily: "inherit", color: "var(--ink)", cursor: "pointer", appearance: "none", WebkitAppearance: "none" }}>
+                      {availableWindows.map((w, i) => (
+                        <option key={i} value={w.checkOut}>{w.checkOut}</option>
+                      ))}
+                    </select>
+                    <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, pointerEvents: "none" }}><polyline points="6 9 12 15 18 9"/></svg>
+                  </div>
                 </div>
               </div>
-
-              {/* Guest picker */}
               <div style={{ border: "1px solid var(--line-2)", borderRadius: 14, overflow: "hidden", marginBottom: 18 }}>
                 <button onClick={() => { setGuestOpen(!guestOpen); setDateOpen(false); }}
                   style={{ width: "100%", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "transparent", border: "none", cursor: "pointer", textAlign: "left" }}>
@@ -561,7 +615,6 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                   </div>
                 )}
               </div>
-
               <button onClick={handleReserve} disabled={!canProceed}
                 style={{ display: "flex", width: "100%", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px 24px", borderRadius: 999, background: canProceed ? "var(--dlux-accent)" : "var(--line-2)", color: canProceed ? "var(--white)" : "var(--ink)", fontSize: 15, fontWeight: 600, border: "none", cursor: canProceed ? "pointer" : "not-allowed", opacity: canProceed ? 1 : 0.7 }}>
                 {canProceed ? <>Reserve this stay <IcoArrowRight /></> : "Pick a date to continue"}
@@ -569,8 +622,6 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
               <div style={{ textAlign: "center", fontSize: 12, color: "var(--ink-2)", marginTop: 10 }}>
                 You won&apos;t be charged yet — payment is confirmed at checkout.
               </div>
-
-              {/* Price breakdown */}
               {date && (
                 <div style={{ marginTop: 22, paddingTop: 20, borderTop: "1px solid var(--line)", fontSize: 13 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", color: "var(--ink-2)" }}><span>{peso(basePrice)} × 1 {selectedWindow.stayType}-hr stay</span><span>{peso(basePrice)}</span></div>
@@ -583,7 +634,6 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                 </div>
               )}
             </div>
-
             <div style={{ marginTop: 16, padding: 16, background: "var(--bg-2)", borderRadius: 16, display: "flex", gap: 12, alignItems: "flex-start" }}>
               <span style={{ color: "var(--dlux-accent)", flexShrink: 0, marginTop: 2 }}><IcoFlame /></span>
               <div style={{ fontSize: 12, color: "var(--ink-2)", lineHeight: 1.55 }}>
@@ -592,6 +642,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
             </div>
           </aside>
         </div>
+
       </div>
 
       {showGallery && <GalleryModal images={room.images} start={galleryIdx} onClose={() => setShowGallery(false)} />}

@@ -132,7 +132,8 @@ function CheckoutInner() {
   const infants = Number(sp.get("infants") || 0);
 
   // Live haven by id; fall back to mock so the page renders while loading.
-  const { data: havenRes } = useGetHavenByIdQuery(roomId, { skip: !roomId });
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(roomId ?? "");
+  const { data: havenRes } = useGetHavenByIdQuery(roomId, { skip: !roomId || !isUuid });
   const liveHaven = (havenRes as { data?: Record<string, unknown> } | undefined)?.data;
   const room = liveHaven ? havenToRoom(liveHaven) : (mockRooms.find((r) => r.id === roomId) || mockRooms[0]);
 

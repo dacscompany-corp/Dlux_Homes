@@ -487,10 +487,15 @@ export const getHavenById = async (
 
     if (!id) {
       return NextResponse.json(
-        {
-          success: false,
-          error: "Haven ID is required",
-        },
+        { success: false, error: "Haven ID is required" },
+        { status: 400 }
+      );
+    }
+
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidPattern.test(id)) {
+      return NextResponse.json(
+        { success: false, error: "Invalid haven ID format" },
         { status: 400 }
       );
     }

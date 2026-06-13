@@ -31,6 +31,16 @@
 }
 .page-enter { animation: pageIn .38s cubic-bezier(.2,.7,.2,1); }
 .fade-in    { animation: fadeIn .22s ease; }
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(60px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-60px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.slide-in-right { animation: slideInRight .35s cubic-bezier(.2,.8,.2,1); }
+.slide-in-left  { animation: slideInLeft  .35s cubic-bezier(.2,.8,.2,1); }
 .serif      { font-family: var(--font-fraunces), Georgia, serif; font-optical-sizing: auto; }
 
 @custom-variant dark (&:is(.dark *));

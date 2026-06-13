@@ -1,6 +1,6 @@
 export const mockRooms = [
   {
-    id: "1",
+    id: "00000000-0000-0000-0000-000000000001",
     name: "D'Lux Homes — Tower 4 Grass Residences",
     description: "Cozy 1-bedroom unit with balcony and city view at Tower 4 Grass Residences. Perfect for couples, families, or solo travelers. Comes with a complimentary welcome pack and everything you need for a relaxing staycation.",
     size: "1 Bedroom",
