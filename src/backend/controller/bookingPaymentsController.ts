@@ -47,7 +47,7 @@ export const createBookingPayment = async (
     if (payment_proof) {
       const uploadResult = await upload_file(
         payment_proof,
-        "staycation-haven/payment-proofs",
+        "dlux-homes/payment-proofs",
       );
       paymentProofUrl = uploadResult.url;
     }
@@ -484,7 +484,7 @@ export const updateBookingPayment = async (
     if (payment_proof) {
       const uploadResult = await upload_file(
         payment_proof,
-        "staycation-haven/payment-proofs",
+        "dlux-homes/payment-proofs",
       );
       pushField("payment_proof_url", uploadResult.url);
     }

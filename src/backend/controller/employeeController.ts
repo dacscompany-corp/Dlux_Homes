@@ -57,7 +57,7 @@ export const createEmployee = async (req: NextRequest): Promise<NextResponse> =>
 
     let profileImageUrl = null;
     if (profile_image) {
-      const uploadResult = await upload_file(profile_image, "staycation-haven/profiles");
+      const uploadResult = await upload_file(profile_image, "dlux-homes/profiles");
       profileImageUrl = uploadResult.url;
     }
 
@@ -225,7 +225,7 @@ export const updateEmployee = async (req: NextRequest): Promise<NextResponse> =>
     // Handle profile image upload to Cloudinary if it's a base64 string
     let profileImageUrl = profile_image_url;
     if (profile_image_url && profile_image_url.startsWith('data:image')) {
-      const uploadResult = await upload_file(profile_image_url, "staycation-haven/profiles");
+      const uploadResult = await upload_file(profile_image_url, "dlux-homes/profiles");
       profileImageUrl = uploadResult.url;
     }
 

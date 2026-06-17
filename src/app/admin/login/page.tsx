@@ -84,13 +84,13 @@ export default function AdminLoginPage() {
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: "#F7F0E3" }}>
 
       {/* Navbar — matches rooms page */}
-      <nav className="sticky top-0 z-50 border-b shadow-sm" style={{ backgroundColor: "#F7F0E3", borderColor: "#E0CEB8" }}>
+      <nav className="sticky top-0 z-50 border-b shadow-sm" style={{ backgroundColor: "#F7F0E3", borderColor: "#EDE3D2" }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <Link href="/rooms">
             <Image src="/logo.png" alt="D'Lux Homes" width={130} height={44} className="object-cover mix-blend-multiply" style={{ width: "130px", height: "44px" }} />
           </Link>
           <div className="flex items-center gap-1.5" style={{ color: "#8B6344" }}>
-            <Shield className="w-3.5 h-3.5" />
+            <Shield strokeWidth={1.75} className="w-3.5 h-3.5" />
             <span className="text-xs font-semibold uppercase tracking-wide">Staff Portal</span>
           </div>
         </div>
@@ -104,12 +104,12 @@ export default function AdminLoginPage() {
           <div className="text-center mb-8">
             <div
               className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4"
-              style={{ backgroundColor: "#B07848", boxShadow: "0 8px 24px #B0784835" }}
+              style={{ backgroundColor: "#B07848", boxShadow: "0 4px 14px #B0784818" }}
             >
-              <Lock className="w-6 h-6 text-white" />
+              <Lock strokeWidth={1.75} className="w-6 h-6 text-white" />
             </div>
             <div className="flex items-center justify-center gap-1.5 mb-1">
-              <Shield className="w-3.5 h-3.5" style={{ color: "#B07848" }} />
+              <Shield strokeWidth={1.75} className="w-3.5 h-3.5" style={{ color: "#B07848" }} />
               <span className="text-xs font-semibold uppercase tracking-[0.2em]" style={{ color: "#B07848" }}>
                 Restricted Access
               </span>
@@ -119,10 +119,10 @@ export default function AdminLoginPage() {
           </div>
 
           {/* Card */}
-          <div className="bg-white rounded-3xl border overflow-hidden shadow-sm" style={{ borderColor: "#E0CEB8" }}>
+          <div className="bg-white rounded-3xl border overflow-hidden shadow-sm" style={{ borderColor: "#EDE3D2" }}>
 
             {/* Role tabs */}
-            <div className="grid grid-cols-3" style={{ borderBottom: "1px solid #E0CEB8" }}>
+            <div className="grid grid-cols-3" style={{ borderBottom: "1px solid #EDE3D2" }}>
               {roles.map((role) => {
                 const isActive = selectedRole === role.value;
                 return (
@@ -160,13 +160,13 @@ export default function AdminLoginPage() {
               {/* Role banner */}
               <div
                 className="flex items-center gap-3 px-4 py-3 rounded-2xl border"
-                style={{ backgroundColor: "#FDF8F3", borderColor: "#E0CEB8" }}
+                style={{ backgroundColor: "#FDF8F3", borderColor: "#EDE3D2" }}
               >
                 <div
                   className="w-7 h-7 rounded-xl flex items-center justify-center flex-shrink-0"
                   style={{ backgroundColor: "#F7F0E3" }}
                 >
-                  <Shield className="w-3.5 h-3.5" style={{ color: "#B07848" }} />
+                  <Shield strokeWidth={1.75} className="w-3.5 h-3.5" style={{ color: "#B07848" }} />
                 </div>
                 <div className="min-w-0">
                   <p className="text-xs font-semibold" style={{ color: "#B07848" }}>
@@ -176,7 +176,7 @@ export default function AdminLoginPage() {
                     {roles.find((r) => r.value === selectedRole)?.desc}
                   </p>
                 </div>
-                <ChevronRight className="w-3.5 h-3.5 ml-auto flex-shrink-0" style={{ color: "#D4BFA0" }} />
+                <ChevronRight strokeWidth={1.75} className="w-3.5 h-3.5 ml-auto flex-shrink-0" style={{ color: "#D4BFA0" }} />
               </div>
 
               {/* Email */}
@@ -187,12 +187,12 @@ export default function AdminLoginPage() {
                 <div
                   className="relative flex items-center rounded-2xl border transition-all duration-200"
                   style={{
-                    borderColor: emailFocused ? "#B07848" : "#E0CEB8",
+                    borderColor: emailFocused ? "#B07848" : "#EDE3D2",
                     boxShadow: emailFocused ? "0 0 0 3px #B0784815" : "none",
                     backgroundColor: emailFocused ? "#FDF8F3" : "#FAFAFA",
                   }}
                 >
-                  <Mail className="absolute left-3.5 w-4 h-4 pointer-events-none" style={{ color: emailFocused ? "#B07848" : "#D4BFA0" }} />
+                  <Mail strokeWidth={1.75} className="absolute left-3.5 w-4 h-4 pointer-events-none" style={{ color: emailFocused ? "#B07848" : "#D4BFA0" }} />
                   <input
                     type="email"
                     placeholder="admin@dluxhomes.com"
@@ -212,19 +212,19 @@ export default function AdminLoginPage() {
                   <label className="block text-xs font-semibold uppercase tracking-wider" style={{ color: "#8B6344" }}>
                     Password
                   </label>
-                  <button className="text-xs font-medium hover:underline" style={{ color: "#B07848" }}>
+                  <Link href="/forgot-password" className="text-xs font-medium hover:underline" style={{ color: "#B07848" }}>
                     Forgot password?
-                  </button>
+                  </Link>
                 </div>
                 <div
                   className="relative flex items-center rounded-2xl border transition-all duration-200"
                   style={{
-                    borderColor: passwordFocused ? "#B07848" : "#E0CEB8",
+                    borderColor: passwordFocused ? "#B07848" : "#EDE3D2",
                     boxShadow: passwordFocused ? "0 0 0 3px #B0784815" : "none",
                     backgroundColor: passwordFocused ? "#FDF8F3" : "#FAFAFA",
                   }}
                 >
-                  <Lock className="absolute left-3.5 w-4 h-4 pointer-events-none" style={{ color: passwordFocused ? "#B07848" : "#D4BFA0" }} />
+                  <Lock strokeWidth={1.75} className="absolute left-3.5 w-4 h-4 pointer-events-none" style={{ color: passwordFocused ? "#B07848" : "#D4BFA0" }} />
                   <input
                     type={showPassword ? "text" : "password"}
                     placeholder="••••••••"
@@ -243,7 +243,7 @@ export default function AdminLoginPage() {
                     onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.color = "#8B6344"}
                     onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.color = "#D4BFA0"}
                   >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    {showPassword ? <EyeOff strokeWidth={1.75} className="w-4 h-4" /> : <Eye strokeWidth={1.75} className="w-4 h-4" />}
                   </button>
                 </div>
               </div>
@@ -257,7 +257,7 @@ export default function AdminLoginPage() {
               {/* Error message */}
               {error && (
                 <div className="flex items-center gap-2 px-4 py-3 rounded-xl border" style={{ backgroundColor: "#fee2e2", borderColor: "#fca5a5" }}>
-                  <AlertCircle className="w-4 h-4 flex-shrink-0 text-red-600" />
+                  <AlertCircle strokeWidth={1.75} className="w-4 h-4 flex-shrink-0 text-red-600" />
                   <p className="text-sm text-red-700">{error}</p>
                 </div>
               )}
@@ -267,7 +267,7 @@ export default function AdminLoginPage() {
                 onClick={handleSignIn}
                 disabled={loading}
                 className="w-full flex items-center justify-center gap-2 py-3 rounded-full font-semibold text-sm text-white transition-all duration-200 mt-1 group cursor-pointer disabled:cursor-not-allowed disabled:opacity-80"
-                style={{ backgroundColor: "#B07848", boxShadow: "0 4px 16px #B0784830" }}
+                style={{ backgroundColor: "#B07848", boxShadow: "0 2px 10px #B0784820" }}
                 onMouseEnter={(e) => { if (!loading) { (e.currentTarget as HTMLButtonElement).style.backgroundColor = "#9a6840"; (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-1px)"; } }}
                 onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = "#B07848"; (e.currentTarget as HTMLButtonElement).style.transform = "translateY(0)"; }}
               >
@@ -285,7 +285,7 @@ export default function AdminLoginPage() {
               </button>
 
               {/* Credentials hint */}
-              <div className="px-4 py-3 rounded-xl border" style={{ backgroundColor: "#F7F0E3", borderColor: "#E0CEB8" }}>
+              <div className="px-4 py-3 rounded-xl border" style={{ backgroundColor: "#F7F0E3", borderColor: "#EDE3D2" }}>
                 <p className="text-xs font-semibold mb-1.5" style={{ color: "#8B6344" }}>Demo credentials for <span style={{ color: "#B07848" }}>{roles.find((r) => r.value === selectedRole)?.label}</span>:</p>
                 <p className="text-xs font-mono" style={{ color: "#5a4a3a" }}>📧 {staticAccounts[selectedRole].email}</p>
                 <p className="text-xs font-mono" style={{ color: "#5a4a3a" }}>🔑 {staticAccounts[selectedRole].password}</p>
@@ -293,7 +293,7 @@ export default function AdminLoginPage() {
 
               {/* Footer note */}
               <p className="flex items-center justify-center gap-1.5 text-xs pt-3 border-t" style={{ color: "#D4BFA0", borderColor: "#F7F0E3" }}>
-                <Lock className="w-3 h-3" />
+                <Lock strokeWidth={1.75} className="w-3 h-3" />
                 Secure connection · All activity is monitored and logged
               </p>
             </div>

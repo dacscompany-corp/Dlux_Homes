@@ -4,7 +4,7 @@ import { useEffect, useState, Suspense } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useSearchParams } from "next/navigation";
-import { getStoredBookings } from "@/lib/booking-store";
+import toast from "react-hot-toast";
 import type { StoredBooking } from "@/lib/booking-store";
 
 function peso(n: number) { return "₱" + n.toLocaleString("en-PH"); }
@@ -31,17 +31,85 @@ function ConfirmedInner() {
   const sp = useSearchParams();
   const bookingId = sp.get("id") || "";
   const [booking, setBooking] = useState<ExtendedBooking | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [showChange, setShowChange] = useState(false);
+  const [changing, setChanging] = useState(false);
+  const [newDate, setNewDate] = useState("");
+  const [changeReason, setChangeReason] = useState("");
+
+  const requestDateChange = async () => {
+    if (!booking) return;
+    if (!newDate) { toast.error("Please pick a new date."); return; }
+    setChanging(true);
+    try {
+      const res = await fetch(`/api/bookings/${encodeURIComponent(booking.id)}/request-date-change`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ new_date: newDate, reason: changeReason.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(data?.error || "Could not submit your request"); setChanging(false); return; }
+      setShowChange(false); setNewDate(""); setChangeReason("");
+      toast.success(data?.message || "Date-change request sent.");
+    } catch {
+      toast.error("Something went wrong. Please try again.");
+    } finally {
+      setChanging(false);
+    }
+  };
 
   useEffect(() => {
-    const all = getStoredBookings() as ExtendedBooking[];
-    const found = all.find((b) => b.id === bookingId);
-    setBooking(found || null);
+    if (!bookingId) { setLoading(false); return; }
+    let active = true;
+    fetch(`/api/bookings/${encodeURIComponent(bookingId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!active) return;
+        const d = j?.data;
+        if (d) {
+          setBooking({
+            id: String(d.booking_id ?? bookingId),
+            roomId: "",
+            roomName: String(d.room_name ?? ""),
+            checkIn: String(d.check_in_date ?? "").slice(0, 10),
+            checkOut: String(d.check_out_date ?? "").slice(0, 10),
+            stayType: "",
+            guests: { adults: Number(d.adults ?? 0), children: Number(d.children ?? 0), infants: Number(d.infants ?? 0) },
+            status: d.status ?? "pending",
+            totalAmount: Number(d.total_amount ?? 0),
+            addOns: [],
+            createdAt: String(d.created_at ?? ""),
+            guestInfo: {
+              firstName: String(d.guest_first_name ?? ""),
+              lastName: String(d.guest_last_name ?? ""),
+              email: String(d.guest_email ?? ""),
+              phone: String(d.guest_phone ?? ""),
+            },
+            checkInTime: d.check_in_time ?? undefined,
+            checkOutTime: d.check_out_time ?? undefined,
+          } as ExtendedBooking);
+        }
+        setLoading(false);
+      })
+      .catch(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [bookingId]);
 
-  if (!booking) {
+  if (loading) {
     return (
       <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--bg)", color: "var(--muted)", fontSize: 14 }}>
         Loading your confirmation…
+      </div>
+    );
+  }
+
+  if (!booking) {
+    return (
+      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--bg)", color: "var(--muted)", fontSize: 14, textAlign: "center", padding: 24 }}>
+        <div>
+          <p style={{ marginBottom: 12 }}>We couldn&apos;t find that booking.</p>
+          <Link href="/rooms" style={{ color: "var(--dlux-accent)", fontWeight: 600 }}>Back to rooms</Link>
+        </div>
       </div>
     );
   }
@@ -51,6 +119,8 @@ function ConfirmedInner() {
     : "";
   const guestEmail = booking.guestInfo?.email || "";
   const guestPhone = booking.guestInfo?.phone || "";
+  const isCancelled = String(booking.status) === "cancelled";
+  const canChange = ["pending", "approved", "confirmed", "on-going"].includes(String(booking.status));
 
   return (
     <div style={{ minHeight: "100vh", backgroundColor: "var(--bg)", color: "var(--ink)" }}>
@@ -71,8 +141,13 @@ function ConfirmedInner() {
           <div style={{ width: 72, height: 72, borderRadius: "50%", background: "var(--ink)", color: "var(--white)", display: "grid", placeItems: "center", margin: "0 auto 20px" }}>
             <IcoCheck />
           </div>
-          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: "var(--accent-ink)", marginBottom: 10 }}>
-            Booking {booking.id}
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: "var(--accent-ink)" }}>
+              Booking {booking.id}
+            </span>
+            {isCancelled && (
+              <span style={{ padding: "3px 10px", borderRadius: 999, background: "#EFD9D4", color: "#7A2B18", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".08em" }}>Cancelled</span>
+            )}
           </div>
           <h1 className="serif" style={{ fontSize: 56, fontWeight: 400, letterSpacing: "-.03em", margin: 0, lineHeight: 1 }}>
             You&apos;re in. <em>Rest is coming.</em>
@@ -116,6 +191,12 @@ function ConfirmedInner() {
               <div style={{ fontSize: 28, fontWeight: 700, marginTop: 4 }}>{peso(booking.totalAmount)}</div>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
+              {canChange && (
+                <button type="button" onClick={() => setShowChange(true)}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 20px", borderRadius: 999, background: "var(--white)", color: "var(--ink)", border: "1px solid var(--line-2)", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+                  Request date change
+                </button>
+              )}
               <Link href="/my-bookings"
                 style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 20px", borderRadius: 999, background: "var(--ink)", color: "var(--white)", fontSize: 14, fontWeight: 600, textDecoration: "none" }}>
                 <IcoCalendar /> My bookings
@@ -133,9 +214,9 @@ function ConfirmedInner() {
           <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--muted)", marginBottom: 16 }}>Before you arrive</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 24 }}>
             {[
-              { h: "48 hrs before", t: "Cancel for free up to this point. After that, the first-night fee applies." },
+              { h: "Date changes", t: "No cancellations. One free date change if requested at least 7 days before check-in (new date within 1 month)." },
               { h: "24 hrs before", t: "Your host sends unit access codes and building instructions via SMS." },
-              { h: "Check-in day", t: "Bring a valid ID at the lobby. Head up, settle in, start resting." },
+              { h: "Check-in day", t: "Bring a valid ID at the lobby. Settle the 50% balance + ₱1,000 deposit, then start resting." },
             ].map((b) => (
               <div key={b.h}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: "var(--accent-ink)" }}>{b.h}</div>
@@ -152,6 +233,36 @@ function ConfirmedInner() {
           <div>Made with care for rest.</div>
         </div>
       </footer>
+
+      {/* Date-change request modal */}
+      {showChange && (
+        <div onClick={() => !changing && setShowChange(false)}
+          style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,.5)", display: "grid", placeItems: "center", padding: 16 }}>
+          <div onClick={(e) => e.stopPropagation()}
+            style={{ width: "100%", maxWidth: 440, background: "var(--white)", borderRadius: 20, border: "1px solid var(--line)", padding: 28 }}>
+            <div className="serif" style={{ fontSize: 24, fontWeight: 500, letterSpacing: "-.015em" }}>Request a date change</div>
+            <p style={{ fontSize: 14, color: "var(--ink-2)", lineHeight: 1.6, marginTop: 8 }}>
+              Bookings can&apos;t be cancelled, but you can move <strong>{booking.id}</strong> once — if requested at least <strong>7 days</strong> before check-in, to a date <strong>within 1 month</strong> of the original. Our team will confirm availability.
+            </p>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--muted)", marginTop: 16, marginBottom: 4 }}>New check-in date</label>
+            <input aria-label="New check-in date" type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)}
+              style={{ width: "100%", borderRadius: 12, border: "1px solid var(--line-2)", background: "var(--bg)", padding: "10px 12px", fontSize: 14, color: "var(--ink)", outline: "none", fontFamily: "inherit" }} />
+            <textarea value={changeReason} onChange={(e) => setChangeReason(e.target.value)}
+              placeholder="Reason (optional)" rows={2}
+              style={{ width: "100%", marginTop: 12, borderRadius: 12, border: "1px solid var(--line-2)", background: "var(--bg)", padding: "10px 12px", fontSize: 14, color: "var(--ink)", resize: "none", outline: "none", fontFamily: "inherit" }} />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>
+              <button type="button" onClick={() => setShowChange(false)} disabled={changing}
+                style={{ padding: "10px 18px", borderRadius: 999, border: "1px solid var(--line-2)", background: "var(--white)", color: "var(--ink)", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+                Close
+              </button>
+              <button type="button" onClick={requestDateChange} disabled={changing}
+                style={{ padding: "10px 18px", borderRadius: 999, border: "none", background: "var(--dlux-accent)", color: "var(--white)", fontSize: 14, fontWeight: 600, cursor: "pointer", opacity: changing ? 0.7 : 1 }}>
+                {changing ? "Sending…" : "Send request"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

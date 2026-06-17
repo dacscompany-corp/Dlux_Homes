@@ -82,7 +82,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
       try {
         const uploaded = await upload_file(
           body.proof_data_url,
-          `staycation-haven/payout-proofs/${id}`
+          `dlux-homes/payout-proofs/${id}`
         );
         proofUrl = uploaded.url;
       } catch (uploadErr) {

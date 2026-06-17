@@ -11,14 +11,20 @@ import { useGetActivityLogsQuery } from "@/redux/api/activityLogApi";
 import { useGetCleaningTasksQuery } from "@/redux/api/cleanersApi";
 import { useGetNotificationsQuery } from "@/redux/api/notificationsApi";
 import { useGetConversationsQuery } from "@/redux/api/messagesApi";
-import { getDeposits, getDeliverables, getDiscounts } from "@/app/admin/csr/actions";
+import {
+  getDeposits, getDeliverables, getDiscounts,
+  updateDepositStatus, markBookingDeliverablesDelivered,
+  createDiscount, toggleDiscountStatus, deleteDiscount,
+  approveDownPaymentByBookingId,
+} from "@/app/admin/csr/actions";
+import NewBookingWizard from "@/components/admin/NewBookingWizard";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   LayoutDashboard, CalendarDays, MessageSquare, ClipboardList, Settings, Bell,
-  Menu, X, LogOut, ChevronRight, Check, XCircle, Eye, UserCheck, UserMinus,
+  Menu, X, LogOut, Check, XCircle, Eye, UserCheck, UserMinus,
   Clock, Sun, Users, ChevronDown, CreditCard, Package, Tag, Truck, Wrench,
   BarChart2, Bell as BellIcon, User, Star, MapPin, Plus, FileText, AlertCircle,
-  Mail, Phone, Shield, DollarSign, CheckCircle2,
+  Mail, Phone, Shield, PhilippinePeso, CheckCircle2, Trash2,
 } from "lucide-react";
 
 const navItems = [
@@ -69,9 +75,11 @@ export default function CSRDashboard() {
 
   // ── Live bookings + status workflow ──
   const { data: session } = useSession();
-  const { data: bookingsData } = useGetBookingsQuery();
+  const { data: bookingsData, refetch: refetchBookings } = useGetBookingsQuery();
+  const [newBookingOpen, setNewBookingOpen] = useState(false);
   const [updateBookingStatus, { isLoading: bookingUpdating }] = useUpdateBookingStatusMutation();
   const [rejectModal, setRejectModal] = useState<{ open: boolean; id: string; reason: string }>({ open: false, id: "", reason: "" });
+  const [viewBooking, setViewBooking] = useState<{ displayId: string; guest: string; email: string; room: string; checkIn: string; stayType: string; amount: number; status: string } | null>(null);
 
   // Backend statuses → UI statuses the design expects
   const normalizeStatus = (s: string) =>
@@ -98,7 +106,28 @@ export default function CSRDashboard() {
       toast.success(okMsg);
     } catch { toast.error("Action failed. Please try again."); }
   };
-  const approveBooking  = (id: string) => setStatus(id, "approved", "Booking approved");
+  // Two-step approval: 1) approve the down payment, 2) approve the booking.
+  const [approval, setApproval] = useState<{ open: boolean; step: 1 | 2; id: string; displayId: string; guest: string; amount: number; busy: boolean }>(
+    { open: false, step: 1, id: "", displayId: "", guest: "", amount: 0, busy: false }
+  );
+  const openApproval = (b: { id: string; displayId: string; guest: string; amount: number }) =>
+    setApproval({ open: true, step: 1, id: b.id, displayId: b.displayId, guest: b.guest, amount: b.amount, busy: false });
+  const approveDownStep = async () => {
+    setApproval((a) => ({ ...a, busy: true }));
+    try {
+      await approveDownPaymentByBookingId(approval.id);
+      toast.success("Down payment approved");
+      setApproval((a) => ({ ...a, step: 2, busy: false }));
+    } catch { toast.error("Could not approve down payment"); setApproval((a) => ({ ...a, busy: false })); }
+  };
+  const approveFinalStep = async () => {
+    setApproval((a) => ({ ...a, busy: true }));
+    try {
+      await updateBookingStatus({ id: approval.id, status: "approved" }).unwrap();
+      toast.success("Booking approved");
+      setApproval({ open: false, step: 1, id: "", displayId: "", guest: "", amount: 0, busy: false });
+    } catch { toast.error("Could not approve booking"); setApproval((a) => ({ ...a, busy: false })); }
+  };
   const rejectBooking   = (id: string) => setRejectModal({ open: true, id, reason: "" });
   const submitReject    = async () => {
     await setStatus(rejectModal.id, "rejected", "Booking rejected", rejectModal.reason.trim() || "Rejected by CSR");
@@ -127,14 +156,12 @@ export default function CSRDashboard() {
     type: String(l.activity_type || "booking").toLowerCase(),
   }));
 
-  // Inventory — live stock list
-  const [inventory, setInventory] = useState<{ id: string; item: string; haven: string; qty: number; minQty: number; status: string }[]>([]);
-  useEffect(() => {
-    let active = true;
+  // Inventory — live stock list (full CRUD via /api/inventory)
+  const [inventory, setInventory] = useState<{ id: string; item: string; haven: string; qty: number; minQty: number; unit: string; price: number; status: string }[]>([]);
+  const reloadInventory = () =>
     fetch("/api/inventory")
       .then((r) => (r.ok ? r.json() : { data: [] }))
       .then((j) => {
-        if (!active) return;
         setInventory(((j.data as Record<string, unknown>[]) || []).map((it) => {
           const qty = Number(it.current_stock ?? 0);
           const min = Number(it.minimum_stock ?? 0);
@@ -144,13 +171,66 @@ export default function CSRDashboard() {
             haven: String(it.category ?? "—"),
             qty,
             minQty: min,
+            unit: String(it.unit_type ?? "pcs"),
+            price: Number(it.price_per_unit ?? 0),
             status: qty <= 0 ? "out" : qty < min ? "low" : "ok",
           };
         }));
       })
       .catch(() => {});
-    return () => { active = false; };
-  }, []);
+  useEffect(() => { reloadInventory(); }, []);
+
+  // Inventory — Add Item + Restock
+  const INVENTORY_CATEGORIES = ["Guest Amenities", "Bathroom Supplies", "Cleaning Supplies", "Linens & Bedding", "Kitchen Supplies", "Add ons"];
+  const [invModal, setInvModal] = useState(false);
+  const [invSaving, setInvSaving] = useState(false);
+  const emptyInv = { item_name: "", category: "Guest Amenities", current_stock: "", minimum_stock: "", unit_type: "pcs", price_per_unit: "" };
+  const [invForm, setInvForm] = useState(emptyInv);
+  const submitInventory = async () => {
+    if (!invForm.item_name.trim() || invForm.current_stock === "" || invForm.minimum_stock === "") {
+      toast.error("Please fill in item name, stock, and minimum stock."); return;
+    }
+    setInvSaving(true);
+    try {
+      const res = await fetch("/api/inventory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          item_name: invForm.item_name.trim(),
+          category: invForm.category,
+          current_stock: Number(invForm.current_stock),
+          minimum_stock: Number(invForm.minimum_stock),
+          unit_type: invForm.unit_type.trim() || "pcs",
+          price_per_unit: invForm.price_per_unit ? Number(invForm.price_per_unit) : 0,
+        }),
+      });
+      if (!res.ok) throw new Error();
+      toast.success("Inventory item added");
+      setInvModal(false); setInvForm(emptyInv); reloadInventory();
+    } catch { toast.error("Could not add item"); }
+    finally { setInvSaving(false); }
+  };
+  const [restockModal, setRestockModal] = useState<{ open: boolean; item: typeof inventory[number] | null; qty: string }>({ open: false, item: null, qty: "" });
+  const submitRestock = async () => {
+    const it = restockModal.item;
+    if (!it) return;
+    const add = Number(restockModal.qty);
+    if (!Number.isFinite(add) || add <= 0) { toast.error("Enter a quantity to add."); return; }
+    try {
+      const res = await fetch("/api/inventory", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          item_id: it.id, item_name: it.item, category: it.haven,
+          current_stock: it.qty + add, minimum_stock: it.minQty,
+          unit_type: it.unit, price_per_unit: it.price,
+        }),
+      });
+      if (!res.ok) throw new Error();
+      toast.success(`Restocked +${add} ${it.unit}`);
+      setRestockModal({ open: false, item: null, qty: "" }); reloadInventory();
+    } catch { toast.error("Could not restock item"); }
+  };
 
   // Payments — live payment submissions + verify/reject
   const { data: paymentsData } = useGetBookingPaymentsQuery();
@@ -181,16 +261,71 @@ export default function CSRDashboard() {
   };
 
   // Deposits / Deliverables / Discounts — CSR server actions
-  const [deposits, setDeposits] = useState<{ id: string; booking: string; guest: string; amount: number; status: string; released: string | null }[]>([]);
-  const [deliverables, setDeliverables] = useState<{ id: string; booking: string; guest: string; item: string; status: string; date: string }[]>([]);
+  const [deposits, setDeposits] = useState<{ id: string; uuid: string; booking: string; guest: string; amount: number; status: string; released: string | null }[]>([]);
+  const [deliverables, setDeliverables] = useState<{ id: string; bookingUuid: string; booking: string; guest: string; item: string; status: string; date: string }[]>([]);
   const [discounts, setDiscounts] = useState<{ id: string; code: string; type: string; value: number; uses: number; limit: number; status: string; expires: string }[]>([]);
-  useEffect(() => {
-    let active = true;
-    getDeposits().then((rows) => { if (active) setDeposits(rows.map((d) => ({ id: d.deposit_id || d.id, booking: d.booking_id, guest: d.guest, amount: Number(d.deposit_amount || 0), status: d.status, released: d.status === "returned" ? "Returned" : null }))); }).catch(() => {});
-    getDeliverables().then((rows) => { if (active) setDeliverables(rows.map((d) => ({ id: d.deliverable_id || d.id, booking: d.booking_id, guest: d.guest, item: d.items?.length ? (d.items.length === 1 ? d.items[0].name : `${d.items.length} items`) : "—", status: d.overall_status, date: d.checkin_date }))); }).catch(() => {});
-    getDiscounts().then((rows) => { if (active) setDiscounts(rows.map((d) => ({ id: d.id, code: d.discount_code, type: d.discount_type === "percentage" ? "percent" : "flat", value: Number(d.discount_value || 0), uses: Number(d.used_count || 0), limit: Number(d.max_uses || 0), status: d.active ? "active" : "inactive", expires: d.expires_at ? new Date(d.expires_at).toLocaleDateString() : "—" }))); }).catch(() => {});
-    return () => { active = false; };
-  }, []);
+  const reloadDeposits = () => getDeposits().then((rows) => setDeposits(rows.map((d) => ({
+    id: d.deposit_id || d.id, uuid: d.id, booking: d.booking_id, guest: d.guest,
+    amount: Number(d.deposit_amount || 0),
+    status: d.status === "Paid" ? "held" : d.status === "Returned" ? "released" : d.status.toLowerCase(),
+    released: d.returned_at ? new Date(d.returned_at).toLocaleDateString() : null,
+  })))).catch(() => {});
+  const reloadDeliverables = () => getDeliverables().then((rows) => setDeliverables(rows.map((d) => ({
+    id: d.deliverable_id || d.id, bookingUuid: d.booking_uuid, booking: d.booking_id, guest: d.guest,
+    item: d.items?.length ? (d.items.length === 1 ? d.items[0].name : `${d.items.length} items`) : "—",
+    status: (d.overall_status || "pending").toLowerCase(), date: d.checkin_date,
+  })))).catch(() => {});
+  const reloadDiscounts = () => getDiscounts().then((rows) => setDiscounts(rows.map((d) => ({
+    id: d.id, code: d.discount_code, type: d.discount_type === "percentage" ? "percent" : "flat",
+    value: Number(d.discount_value || 0), uses: Number(d.used_count || 0), limit: Number(d.max_uses || 0),
+    status: d.active ? "active" : "inactive", expires: d.expires_at ? new Date(d.expires_at).toLocaleDateString() : "—",
+  })))).catch(() => {});
+  useEffect(() => { reloadDeposits(); reloadDeliverables(); reloadDiscounts(); }, []);
+
+  const employeeId = (session?.user as { id?: string } | undefined)?.id;
+  const releaseDeposit = async (uuid: string) => {
+    try { await updateDepositStatus(uuid, "Returned", employeeId); toast.success("Deposit released"); reloadDeposits(); }
+    catch { toast.error("Could not release deposit"); }
+  };
+  const markDelivered = async (bookingUuid: string) => {
+    try { await markBookingDeliverablesDelivered(bookingUuid); toast.success("Marked as delivered"); reloadDeliverables(); }
+    catch { toast.error("Could not update deliverable"); }
+  };
+  const toggleDiscount = async (id: string, currentlyActive: boolean) => {
+    try { await toggleDiscountStatus(id, !currentlyActive, employeeId); toast.success(currentlyActive ? "Discount deactivated" : "Discount activated"); reloadDiscounts(); }
+    catch { toast.error("Could not update discount"); }
+  };
+  const removeDiscount = async (id: string) => {
+    try { await deleteDiscount(id, employeeId); toast.success("Discount deleted"); reloadDiscounts(); }
+    catch { toast.error("Could not delete discount"); }
+  };
+
+  // Discount create modal
+  const [discountModal, setDiscountModal] = useState(false);
+  const [discountSaving, setDiscountSaving] = useState(false);
+  const emptyDiscount = { code: "", name: "", discount_type: "percentage" as "percentage" | "fixed", discount_value: "", max_uses: "", start_date: "", end_date: "" };
+  const [discountForm, setDiscountForm] = useState(emptyDiscount);
+  const submitDiscount = async () => {
+    if (!discountForm.code.trim() || !discountForm.name.trim() || !discountForm.discount_value || !discountForm.start_date || !discountForm.end_date) {
+      toast.error("Please fill in code, name, value, and the date range."); return;
+    }
+    setDiscountSaving(true);
+    try {
+      await createDiscount({
+        code: discountForm.code.trim().toUpperCase(),
+        name: discountForm.name.trim(),
+        discount_type: discountForm.discount_type,
+        discount_value: Number(discountForm.discount_value),
+        max_uses: discountForm.max_uses ? Number(discountForm.max_uses) : undefined,
+        start_date: discountForm.start_date,
+        end_date: discountForm.end_date,
+        employeeId,
+      });
+      toast.success("Discount code created");
+      setDiscountModal(false); setDiscountForm(emptyDiscount); reloadDiscounts();
+    } catch { toast.error("Could not create discount"); }
+    finally { setDiscountSaving(false); }
+  };
 
   // Notifications + Messages (live, session-scoped)
   const { data: notifRes } = useGetNotificationsQuery({});
@@ -240,7 +375,7 @@ export default function CSRDashboard() {
   );
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: "#ffffff" }}>
+    <div className="min-h-screen" style={{ backgroundColor: "#ffffff", zoom: "1.1" }}>
       {sidebarOpen && (
         <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setSidebarOpen(false)} />
       )}
@@ -275,14 +410,14 @@ export default function CSRDashboard() {
               <button
                 key={item.label}
                 onClick={() => { setActiveNav(item.label); setSidebarOpen(false); }}
-                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm font-medium cursor-pointer"
-                style={{ backgroundColor: isActive ? "#B07848" : "transparent", color: isActive ? "#1F160E" : "#A89080" }}
-                onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "#3a2510"; }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm cursor-pointer"
+                style={{ backgroundColor: isActive ? "#B0784816" : "transparent", color: isActive ? "#E6CFA6" : "#A89080", fontWeight: isActive ? 600 : 500 }}
+                onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "#2f2114"; }}
                 onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
               >
-                <Icon className="w-4 h-4 flex-shrink-0" />
+                <Icon className="w-[18px] h-[18px] flex-shrink-0" strokeWidth={isActive ? 2 : 1.5} style={{ color: isActive ? "#D4A96A" : "#8C7660" }} />
                 {item.label}
-                {isActive && <ChevronRight className="w-3.5 h-3.5 ml-auto" />}
+                {isActive && <span className="ml-auto w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#D4A96A" }} />}
               </button>
             );
           })}
@@ -307,7 +442,7 @@ export default function CSRDashboard() {
       <div className="lg:pl-64 flex flex-col min-h-screen">
         {/* Header */}
         <header className="px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between gap-4 sticky top-0 z-30 border-b"
-          style={{ backgroundColor: "#ffffff", borderColor: "#E0CEB8" }}>
+          style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }}>
           <div className="flex items-center gap-4">
             <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-2 rounded-xl cursor-pointer" style={{ color: "#8B6344" }}>
               <Menu className="w-5 h-5" />
@@ -319,16 +454,16 @@ export default function CSRDashboard() {
           </div>
           <div className="flex items-center gap-2">
             <div className="hidden md:flex items-center gap-3">
-              <div className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-xl border" style={{ backgroundColor: "#F7F0E3", borderColor: "#E0CEB8", color: "#5a4a3a" }}>
+              <div className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-xl border" style={{ backgroundColor: "#F7F0E3", borderColor: "#EDE3D2", color: "#5a4a3a" }}>
                 <Clock className="w-3.5 h-3.5" style={{ color: "#B07848" }} />
                 <span className="font-medium">10:09 AM</span>
               </div>
-              <div className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-xl border" style={{ backgroundColor: "#F7F0E3", borderColor: "#E0CEB8", color: "#5a4a3a" }}>
+              <div className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-xl border" style={{ backgroundColor: "#F7F0E3", borderColor: "#EDE3D2", color: "#5a4a3a" }}>
                 <Sun className="w-3.5 h-3.5" style={{ color: "#D4A96A" }} />
                 <span className="font-medium">29°C Sunny</span>
               </div>
             </div>
-            <button className="relative p-2 rounded-xl cursor-pointer" style={{ color: "#8B6344" }}>
+            <button onClick={() => setActiveNav("Notifications")} title="Notifications" className="relative p-2 rounded-xl cursor-pointer" style={{ color: "#8B6344" }}>
               <Bell className="w-5 h-5" />
               <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center">
                 <span className="text-white text-xs font-bold leading-none">{notifications.filter(n=>!n.read).length}</span>
@@ -353,9 +488,9 @@ export default function CSRDashboard() {
               ].map((card) => {
                 const Icon = card.icon;
                 return (
-                  <div key={card.label} className="rounded-2xl border p-5" style={{ backgroundColor: "#ffffff", borderColor: "#E0CEB8" }}>
+                  <div key={card.label} className="rounded-2xl border p-5" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }}>
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-3" style={{ backgroundColor: card.iconBg }}>
-                      <Icon className="w-5 h-5" style={{ color: card.iconColor }} />
+                      <Icon className="w-5 h-5" strokeWidth={1.75} style={{ color: card.iconColor }} />
                     </div>
                     <p className="text-3xl font-bold" style={{ color: "#1a1a1a" }}>{card.value}</p>
                     <p className="text-sm mt-0.5" style={{ color: "#8B6344" }}>{card.label}</p>
@@ -364,8 +499,8 @@ export default function CSRDashboard() {
               })}
             </div>
             {/* Recent bookings preview */}
-            <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#E0CEB8" }}>
-              <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: "#E0CEB8" }}>
+            <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#EDE3D2" }}>
+              <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: "#EDE3D2" }}>
                 <div>
                   <h3 className="font-bold" style={{ color: "#1a1a1a" }}>Bookings Queue</h3>
                   <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{bookings.filter(b=>b.status==="pending").length} pending action</p>
@@ -393,7 +528,7 @@ export default function CSRDashboard() {
                           <td className="px-4 py-3.5">
                             <div className="flex items-center gap-1">
                               {b.status === "pending" && (<>
-                                <button onClick={() => approveBooking(b.id)} className="px-2 py-1 rounded-lg text-xs font-medium border cursor-pointer" style={{ backgroundColor: "#d1fae5", color: "#065f46", borderColor: "#6ee7b7" }}>Approve</button>
+                                <button onClick={() => openApproval(b)} className="px-2 py-1 rounded-lg text-xs font-medium border cursor-pointer" style={{ backgroundColor: "#d1fae5", color: "#065f46", borderColor: "#6ee7b7" }}>Approve</button>
                                 <button onClick={() => rejectBooking(b.id)}  className="px-2 py-1 rounded-lg text-xs font-medium border cursor-pointer" style={{ backgroundColor: "#fee2e2", color: "#991b1b", borderColor: "#fca5a5" }}>Reject</button>
                               </>)}
                               {b.status === "confirmed" && (
@@ -415,24 +550,29 @@ export default function CSRDashboard() {
 
           {/* ── Bookings ── */}
           {activeNav === "Bookings" && (
-            <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#E0CEB8" }}>
-              <div className="px-6 py-4 border-b flex flex-wrap items-center justify-between gap-3" style={{ borderColor: "#E0CEB8" }}>
+            <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#EDE3D2" }}>
+              <div className="px-6 py-4 border-b flex flex-wrap items-center justify-between gap-3" style={{ borderColor: "#EDE3D2" }}>
                 <div>
                   <h3 className="font-bold" style={{ color: "#1a1a1a" }}>All Bookings</h3>
                   <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{filteredBookings.length} records</p>
                 </div>
-                <div className="relative">
-                  <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}
-                    className="appearance-none text-sm rounded-xl px-3 py-2 pr-8 outline-none border cursor-pointer"
-                    style={{ backgroundColor: "#F7F0E3", borderColor: "#D4BFA0", color: "#5a4a3a" }}>
-                    <option value="all">All Status</option>
-                    <option value="pending">Pending</option>
-                    <option value="confirmed">Confirmed</option>
-                    <option value="checked-in">Checked In</option>
-                    <option value="checked-out">Checked Out</option>
-                    <option value="rejected">Rejected</option>
-                  </select>
-                  <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 pointer-events-none" style={{ color: "#8B6344" }} />
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}
+                      className="appearance-none text-sm rounded-xl px-3 py-2 pr-8 outline-none border cursor-pointer"
+                      style={{ backgroundColor: "#F7F0E3", borderColor: "#D4BFA0", color: "#5a4a3a" }}>
+                      <option value="all">All Status</option>
+                      <option value="pending">Pending</option>
+                      <option value="confirmed">Confirmed</option>
+                      <option value="checked-in">Checked In</option>
+                      <option value="checked-out">Checked Out</option>
+                      <option value="rejected">Rejected</option>
+                    </select>
+                    <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 pointer-events-none" style={{ color: "#8B6344" }} />
+                  </div>
+                  <button onClick={() => setNewBookingOpen(true)} className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer" style={{ backgroundColor: "#B07848" }}>
+                    <Plus className="w-4 h-4" /> New Booking
+                  </button>
                 </div>
               </div>
               <div className="overflow-x-auto">
@@ -472,13 +612,13 @@ export default function CSRDashboard() {
                           </td>
                           <td className="px-4 py-4">
                             <div className="flex items-center gap-1">
-                              <button className="p-1.5 rounded-lg cursor-pointer" style={{ color: "#8B6344" }}
+                              <button onClick={() => setViewBooking(b)} title="View booking" className="p-1.5 rounded-lg cursor-pointer" style={{ color: "#8B6344" }}
                                 onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#F7F0E3";}}
                                 onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";}}>
                                 <Eye className="w-4 h-4" />
                               </button>
                               {b.status === "pending" && (<>
-                                <button onClick={() => approveBooking(b.id)} className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium border cursor-pointer" style={{ backgroundColor: "#d1fae5", color: "#065f46", borderColor: "#6ee7b7" }}
+                                <button onClick={() => openApproval(b)} className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium border cursor-pointer" style={{ backgroundColor: "#d1fae5", color: "#065f46", borderColor: "#6ee7b7" }}
                                   onMouseEnter={(e)=>(e.currentTarget as HTMLElement).style.backgroundColor="#a7f3d0"}
                                   onMouseLeave={(e)=>(e.currentTarget as HTMLElement).style.backgroundColor="#d1fae5"}>
                                   <Check className="w-3 h-3" /> Approve
@@ -516,7 +656,7 @@ export default function CSRDashboard() {
 
           {/* ── Calendar ── */}
           {activeNav === "Calendar" && (
-            <div className="rounded-2xl border p-6" style={{ borderColor: "#E0CEB8" }}>
+            <div className="rounded-2xl border p-6" style={{ borderColor: "#EDE3D2" }}>
               <div className="flex items-center justify-between mb-6">
                 <h3 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>April 2026</h3>
                 <div className="flex items-center gap-4 text-xs">
@@ -554,8 +694,8 @@ export default function CSRDashboard() {
 
           {/* ── Payments ── */}
           {activeNav === "Payments" && (
-            <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#E0CEB8" }}>
-              <div className="px-6 py-4 border-b" style={{ borderColor: "#E0CEB8" }}>
+            <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#EDE3D2" }}>
+              <div className="px-6 py-4 border-b" style={{ borderColor: "#EDE3D2" }}>
                 <h3 className="font-bold" style={{ color: "#1a1a1a" }}>Payment Submissions</h3>
                 <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{payments.filter(p=>p.status==="pending").length} awaiting verification</p>
               </div>
@@ -602,8 +742,8 @@ export default function CSRDashboard() {
 
           {/* ── Deposits ── */}
           {activeNav === "Deposits" && (
-            <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#E0CEB8" }}>
-              <div className="px-6 py-4 border-b" style={{ borderColor: "#E0CEB8" }}>
+            <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#EDE3D2" }}>
+              <div className="px-6 py-4 border-b" style={{ borderColor: "#EDE3D2" }}>
                 <h3 className="font-bold" style={{ color: "#1a1a1a" }}>Security Deposits</h3>
                 <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{deposits.filter(d=>d.status==="held").length} currently held</p>
               </div>
@@ -632,7 +772,7 @@ export default function CSRDashboard() {
                         <td className="px-4 py-3.5"><span className="text-sm" style={{ color: "#8B6344" }}>{d.released ?? "—"}</span></td>
                         <td className="px-4 py-3.5">
                           {d.status === "held" && (
-                            <button className="px-2.5 py-1 rounded-lg text-xs font-medium border cursor-pointer" style={{ backgroundColor: "#d1fae5", color: "#065f46", borderColor: "#6ee7b7" }}>Release</button>
+                            <button onClick={() => releaseDeposit(d.uuid)} className="px-2.5 py-1 rounded-lg text-xs font-medium border cursor-pointer" style={{ backgroundColor: "#d1fae5", color: "#065f46", borderColor: "#6ee7b7" }}>Release</button>
                           )}
                         </td>
                       </tr>
@@ -650,11 +790,11 @@ export default function CSRDashboard() {
                 <h2 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>Discount Codes</h2>
                 <p className="text-sm" style={{ color: "#8B6344" }}>{discounts.filter(d=>d.status==="active").length} active codes</p>
               </div>
-              <button className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer" style={{ backgroundColor: "#B07848" }}>
+              <button onClick={() => setDiscountModal(true)} className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer" style={{ backgroundColor: "#B07848" }}>
                 <Plus className="w-4 h-4" /> New Code
               </button>
             </div>
-            <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#E0CEB8" }}>
+            <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#EDE3D2" }}>
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead><tr style={{ backgroundColor: "#f9fafb" }}>
@@ -686,11 +826,18 @@ export default function CSRDashboard() {
                           </span>
                         </td>
                         <td className="px-4 py-3.5">
-                          <button className="p-1.5 rounded-lg cursor-pointer" style={{ color: "#8B6344" }}
-                            onMouseEnter={(e)=>(e.currentTarget as HTMLElement).style.backgroundColor="#F7F0E3"}
-                            onMouseLeave={(e)=>(e.currentTarget as HTMLElement).style.backgroundColor="transparent"}>
-                            <Eye className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => toggleDiscount(d.id, d.status === "active")} title={d.status === "active" ? "Deactivate" : "Activate"} className="p-1.5 rounded-lg cursor-pointer" style={{ color: d.status === "active" ? "#92400e" : "#065f46" }}
+                              onMouseEnter={(e)=>(e.currentTarget as HTMLElement).style.backgroundColor="#F7F0E3"}
+                              onMouseLeave={(e)=>(e.currentTarget as HTMLElement).style.backgroundColor="transparent"}>
+                              {d.status === "active" ? <XCircle className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                            </button>
+                            <button onClick={() => removeDiscount(d.id)} title="Delete" className="p-1.5 rounded-lg cursor-pointer" style={{ color: "#991b1b" }}
+                              onMouseEnter={(e)=>(e.currentTarget as HTMLElement).style.backgroundColor="#fee2e2"}
+                              onMouseLeave={(e)=>(e.currentTarget as HTMLElement).style.backgroundColor="transparent"}>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -702,8 +849,8 @@ export default function CSRDashboard() {
 
           {/* ── Deliverables ── */}
           {activeNav === "Deliverables" && (
-            <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#E0CEB8" }}>
-              <div className="px-6 py-4 border-b" style={{ borderColor: "#E0CEB8" }}>
+            <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#EDE3D2" }}>
+              <div className="px-6 py-4 border-b" style={{ borderColor: "#EDE3D2" }}>
                 <h3 className="font-bold" style={{ color: "#1a1a1a" }}>Guest Deliverables</h3>
                 <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{deliverables.filter(d=>d.status==="pending").length} pending</p>
               </div>
@@ -732,7 +879,7 @@ export default function CSRDashboard() {
                         </td>
                         <td className="px-4 py-3.5">
                           {d.status !== "delivered" && (
-                            <button className="px-2.5 py-1 rounded-lg text-xs font-medium border cursor-pointer" style={{ backgroundColor: "#d1fae5", color: "#065f46", borderColor: "#6ee7b7" }}>
+                            <button onClick={() => markDelivered(d.bookingUuid)} className="px-2.5 py-1 rounded-lg text-xs font-medium border cursor-pointer" style={{ backgroundColor: "#d1fae5", color: "#065f46", borderColor: "#6ee7b7" }}>
                               <CheckCircle2 className="w-3 h-3 inline mr-1" />Mark Delivered
                             </button>
                           )}
@@ -755,7 +902,7 @@ export default function CSRDashboard() {
                 </div>
               </div>
               {cleanerAssignments.map((ca) => (
-                <div key={ca.id} className="rounded-2xl border p-5 flex items-center gap-4" style={{ borderColor: "#E0CEB8" }}>
+                <div key={ca.id} className="rounded-2xl border p-5 flex items-center gap-4" style={{ borderColor: "#EDE3D2" }}>
                   <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: "#F7F0E3" }}>
                     <span className="text-sm font-bold" style={{ color: "#B07848" }}>{ca.cleaner.split(" ").map((n)=>n[0]).join("")}</span>
                   </div>
@@ -782,11 +929,11 @@ export default function CSRDashboard() {
                 <h2 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>Inventory</h2>
                 <p className="text-sm" style={{ color: "#8B6344" }}>{inventory.filter(i=>i.status !== "ok").length} items need restocking</p>
               </div>
-              <button className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer" style={{ backgroundColor: "#B07848" }}>
+              <button onClick={() => setInvModal(true)} className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer" style={{ backgroundColor: "#B07848" }}>
                 <Plus className="w-4 h-4" /> Add Item
               </button>
             </div>
-            <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#E0CEB8" }}>
+            <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#EDE3D2" }}>
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead><tr style={{ backgroundColor: "#f9fafb" }}>
@@ -811,7 +958,7 @@ export default function CSRDashboard() {
                         </td>
                         <td className="px-4 py-3.5">
                           {item.status !== "ok" && (
-                            <button className="px-2.5 py-1 rounded-lg text-xs font-medium border cursor-pointer" style={{ backgroundColor: "#F7F0E3", color: "#B07848", borderColor: "#D4BFA0" }}>Restock</button>
+                            <button onClick={() => setRestockModal({ open: true, item, qty: "" })} className="px-2.5 py-1 rounded-lg text-xs font-medium border cursor-pointer" style={{ backgroundColor: "#F7F0E3", color: "#B07848", borderColor: "#D4BFA0" }}>Restock</button>
                           )}
                         </td>
                       </tr>
@@ -854,8 +1001,8 @@ export default function CSRDashboard() {
 
           {/* ── Activity Logs ── */}
           {activeNav === "Activity Logs" && (
-            <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#E0CEB8" }}>
-              <div className="px-6 py-4 border-b" style={{ borderColor: "#E0CEB8" }}>
+            <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#EDE3D2" }}>
+              <div className="px-6 py-4 border-b" style={{ borderColor: "#EDE3D2" }}>
                 <h3 className="font-bold" style={{ color: "#1a1a1a" }}>Activity Logs</h3>
                 <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>All actions performed by CSR staff</p>
               </div>
@@ -907,7 +1054,7 @@ export default function CSRDashboard() {
                     onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
                     onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = !n.read ? "#FDF8F3" : "#ffffff"}>
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: ic.bg }}>
-                      <Icon className="w-5 h-5" style={{ color: ic.color }} />
+                      <Icon className="w-5 h-5" strokeWidth={1.75} style={{ color: ic.color }} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2 mb-0.5">
@@ -934,7 +1081,7 @@ export default function CSRDashboard() {
                 { label: "Auto-approve Confirmed Payments", desc: "Automatically confirm bookings when payment is verified", enabled: false },
                 { label: "Dark Mode", desc: "Switch to dark theme for lower eye strain", enabled: false },
               ].map((setting) => (
-                <div key={setting.label} className="flex items-center justify-between p-5 rounded-2xl border" style={{ borderColor: "#E0CEB8" }}>
+                <div key={setting.label} className="flex items-center justify-between p-5 rounded-2xl border" style={{ borderColor: "#EDE3D2" }}>
                   <div className="flex-1 min-w-0 mr-4">
                     <p className="font-semibold text-sm" style={{ color: "#1a1a1a" }}>{setting.label}</p>
                     <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{setting.desc}</p>
@@ -953,7 +1100,7 @@ export default function CSRDashboard() {
           {activeNav === "Profile" && (
             <div className="max-w-lg">
               <h2 className="font-bold text-lg mb-6" style={{ color: "#1a1a1a" }}>My Profile</h2>
-              <div className="rounded-2xl border p-6 mb-4" style={{ borderColor: "#E0CEB8" }}>
+              <div className="rounded-2xl border p-6 mb-4" style={{ borderColor: "#EDE3D2" }}>
                 <div className="flex items-center gap-4 mb-6">
                   <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-white text-xl font-bold" style={{ backgroundColor: "#059669" }}>CS</div>
                   <div>
@@ -982,7 +1129,7 @@ export default function CSRDashboard() {
                   })}
                 </div>
               </div>
-              <button className="w-full py-3 rounded-2xl text-sm font-semibold border cursor-pointer transition-colors" style={{ color: "#B07848", borderColor: "#D4BFA0", backgroundColor: "#F7F0E3" }}
+              <button onClick={() => toast("Your profile is managed by the Owner. Contact them to update your details.", { icon: "ℹ️" })} className="w-full py-3 rounded-2xl text-sm font-semibold border cursor-pointer transition-colors" style={{ color: "#B07848", borderColor: "#D4BFA0", backgroundColor: "#F7F0E3" }}
                 onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#EDE0CE"}
                 onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}>
                 Edit Profile
@@ -994,9 +1141,57 @@ export default function CSRDashboard() {
       </div>
 
       {/* ── Reject Booking modal ── */}
+      {/* Two-step booking approval */}
+      {approval.open && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => !approval.busy && setApproval((a) => ({ ...a, open: false }))}>
+          <div className="w-full max-w-md rounded-3xl border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>Approve Booking</h3>
+            <p className="text-sm mt-0.5" style={{ color: "#8B6344" }}>Step {approval.step} of 2 · {approval.step === 1 ? "Approve down payment" : "Final approval"}</p>
+
+            {/* Stepper */}
+            <div className="flex items-center gap-2 mt-4 mb-5">
+              {[1, 2].map((n, i) => {
+                const active = approval.step === n;
+                const done = approval.step > n;
+                return (
+                  <div key={n} className="flex items-center gap-2 flex-1">
+                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold" style={{ backgroundColor: done ? "#059669" : active ? "#d1fae5" : "#F3EEE4", color: done ? "#fff" : active ? "#065f46" : "#C9B79E", border: active ? "1.5px solid #059669" : "none" }}>
+                      {done ? <Check className="w-3.5 h-3.5" /> : n}
+                    </div>
+                    <span className="text-xs font-semibold" style={{ color: active || done ? "#065f46" : "#C9B79E" }}>{n === 1 ? "Down Payment" : "Approve"}</span>
+                    {i < 1 && <div className="flex-1 h-0.5 rounded-full" style={{ backgroundColor: done ? "#059669" : "#EDE3D2" }} />}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="rounded-2xl border p-4 mb-4" style={{ backgroundColor: "#FAFAF7", borderColor: "#EDE3D2" }}>
+              <div className="flex items-center justify-between text-sm"><span style={{ color: "#8B6344" }}>Booking</span><span className="font-mono text-xs" style={{ color: "#1a1a1a" }}>{approval.displayId}</span></div>
+              <div className="flex items-center justify-between text-sm mt-2"><span style={{ color: "#8B6344" }}>Guest</span><span style={{ color: "#1a1a1a" }}>{approval.guest}</span></div>
+              <div className="flex items-center justify-between text-sm mt-2"><span style={{ color: "#8B6344" }}>Amount</span><span className="font-semibold" style={{ color: "#1a1a1a" }}>₱{approval.amount.toLocaleString()}</span></div>
+            </div>
+
+            <p className="text-sm leading-relaxed" style={{ color: "#5a4a3a" }}>
+              {approval.step === 1
+                ? "Confirm the guest's down payment has been received and verified. This marks the payment approved."
+                : "Down payment approved. Approve the booking to confirm the reservation — the guest will be notified."}
+            </p>
+
+            <div className="flex justify-between gap-2 mt-6">
+              <button type="button" onClick={() => setApproval((a) => ({ ...a, open: false }))} disabled={approval.busy} className="px-4 py-2 rounded-xl text-sm font-semibold border cursor-pointer disabled:opacity-60" style={{ color: "#8B6344", borderColor: "#EDE3D2", backgroundColor: "#ffffff" }}>Cancel</button>
+              {approval.step === 1 ? (
+                <button type="button" onClick={approveDownStep} disabled={approval.busy} className="px-5 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#059669" }}>{approval.busy ? "Approving…" : "Approve Down Payment"}</button>
+              ) : (
+                <button type="button" onClick={approveFinalStep} disabled={approval.busy} className="px-5 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#059669" }}>{approval.busy ? "Approving…" : "Approve Booking"}</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {rejectModal.open && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setRejectModal({ open: false, id: "", reason: "" })}>
-          <div className="w-full max-w-md rounded-3xl border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#E0CEB8" }} onClick={(e) => e.stopPropagation()}>
+          <div className="w-full max-w-md rounded-3xl border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }} onClick={(e) => e.stopPropagation()}>
             <h3 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>Reject Booking</h3>
             <p className="text-sm mt-1 mb-4" style={{ color: "#8B6344" }}>Add a reason for the rejection. The guest will be notified.</p>
             <textarea
@@ -1005,11 +1200,163 @@ export default function CSRDashboard() {
               placeholder="e.g. Payment proof could not be verified"
               rows={3}
               className="w-full rounded-xl border px-3 py-2 text-sm outline-none resize-none"
-              style={{ borderColor: "#E0CEB8", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}
+              style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}
             />
             <div className="flex justify-end gap-2 mt-5">
-              <button type="button" onClick={() => setRejectModal({ open: false, id: "", reason: "" })} className="px-4 py-2 rounded-xl text-sm font-semibold border cursor-pointer" style={{ color: "#8B6344", borderColor: "#E0CEB8", backgroundColor: "#ffffff" }}>Cancel</button>
+              <button type="button" onClick={() => setRejectModal({ open: false, id: "", reason: "" })} className="px-4 py-2 rounded-xl text-sm font-semibold border cursor-pointer" style={{ color: "#8B6344", borderColor: "#EDE3D2", backgroundColor: "#ffffff" }}>Cancel</button>
               <button type="button" onClick={submitReject} disabled={bookingUpdating} className="px-4 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#dc2626" }}>{bookingUpdating ? "Rejecting…" : "Reject Booking"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create discount code modal */}
+      {discountModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setDiscountModal(false)}>
+          <div className="w-full max-w-md rounded-3xl border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>New Discount Code</h3>
+            <p className="text-sm mt-1 mb-4" style={{ color: "#8B6344" }}>Create a promo code guests can apply at checkout.</p>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Code</label>
+                  <input value={discountForm.code} onChange={(e) => setDiscountForm((f) => ({ ...f, code: e.target.value }))} placeholder="SUMMER20" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none uppercase" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Name</label>
+                  <input value={discountForm.name} onChange={(e) => setDiscountForm((f) => ({ ...f, name: e.target.value }))} placeholder="Summer Sale" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Type</label>
+                  <select aria-label="Discount type" value={discountForm.discount_type} onChange={(e) => setDiscountForm((f) => ({ ...f, discount_type: e.target.value as "percentage" | "fixed" }))} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
+                    <option value="percentage">Percentage (%)</option>
+                    <option value="fixed">Fixed (₱)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Value</label>
+                  <input type="number" value={discountForm.discount_value} onChange={(e) => setDiscountForm((f) => ({ ...f, discount_value: e.target.value }))} placeholder={discountForm.discount_type === "percentage" ? "20" : "500"} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Start date</label>
+                  <input aria-label="Start date" type="date" value={discountForm.start_date} onChange={(e) => setDiscountForm((f) => ({ ...f, start_date: e.target.value }))} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>End date</label>
+                  <input aria-label="End date" type="date" value={discountForm.end_date} onChange={(e) => setDiscountForm((f) => ({ ...f, end_date: e.target.value }))} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Max uses (optional)</label>
+                <input type="number" value={discountForm.max_uses} onChange={(e) => setDiscountForm((f) => ({ ...f, max_uses: e.target.value }))} placeholder="Unlimited" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button type="button" onClick={() => setDiscountModal(false)} className="px-4 py-2 rounded-xl text-sm font-semibold border cursor-pointer" style={{ color: "#8B6344", borderColor: "#EDE3D2", backgroundColor: "#ffffff" }}>Cancel</button>
+              <button type="button" onClick={submitDiscount} disabled={discountSaving} className="px-4 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#B07848" }}>{discountSaving ? "Creating…" : "Create Code"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add inventory item modal */}
+      {invModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setInvModal(false)}>
+          <div className="w-full max-w-md rounded-3xl border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>Add Inventory Item</h3>
+            <p className="text-sm mt-1 mb-4" style={{ color: "#8B6344" }}>Track a new supply or amenity.</p>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Item name</label>
+                <input value={invForm.item_name} onChange={(e) => setInvForm((f) => ({ ...f, item_name: e.target.value }))} placeholder="Bath towels" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+              </div>
+              <div>
+                <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Category</label>
+                <select aria-label="Category" value={invForm.category} onChange={(e) => setInvForm((f) => ({ ...f, category: e.target.value }))} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
+                  {INVENTORY_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Current stock</label>
+                  <input type="number" value={invForm.current_stock} onChange={(e) => setInvForm((f) => ({ ...f, current_stock: e.target.value }))} placeholder="50" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Minimum stock</label>
+                  <input type="number" value={invForm.minimum_stock} onChange={(e) => setInvForm((f) => ({ ...f, minimum_stock: e.target.value }))} placeholder="10" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Unit</label>
+                  <input value={invForm.unit_type} onChange={(e) => setInvForm((f) => ({ ...f, unit_type: e.target.value }))} placeholder="pcs" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Price/unit (₱)</label>
+                  <input type="number" value={invForm.price_per_unit} onChange={(e) => setInvForm((f) => ({ ...f, price_per_unit: e.target.value }))} placeholder="0" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button type="button" onClick={() => setInvModal(false)} className="px-4 py-2 rounded-xl text-sm font-semibold border cursor-pointer" style={{ color: "#8B6344", borderColor: "#EDE3D2", backgroundColor: "#ffffff" }}>Cancel</button>
+              <button type="button" onClick={submitInventory} disabled={invSaving} className="px-4 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#B07848" }}>{invSaving ? "Adding…" : "Add Item"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Restock modal */}
+      {restockModal.open && restockModal.item && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setRestockModal({ open: false, item: null, qty: "" })}>
+          <div className="w-full max-w-sm rounded-3xl border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>Restock {restockModal.item.item}</h3>
+            <p className="text-sm mt-1 mb-4" style={{ color: "#8B6344" }}>Current: {restockModal.item.qty} {restockModal.item.unit} · min {restockModal.item.minQty}</p>
+            <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Quantity to add</label>
+            <input type="number" value={restockModal.qty} onChange={(e) => setRestockModal((m) => ({ ...m, qty: e.target.value }))} placeholder="20" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+            <div className="flex justify-end gap-2 mt-5">
+              <button type="button" onClick={() => setRestockModal({ open: false, item: null, qty: "" })} className="px-4 py-2 rounded-xl text-sm font-semibold border cursor-pointer" style={{ color: "#8B6344", borderColor: "#EDE3D2", backgroundColor: "#ffffff" }}>Cancel</button>
+              <button type="button" onClick={submitRestock} className="px-4 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer" style={{ backgroundColor: "#B07848" }}>Restock</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <NewBookingWizard open={newBookingOpen} onClose={() => setNewBookingOpen(false)} onCreated={refetchBookings} />
+
+      {/* Booking detail modal */}
+      {viewBooking && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setViewBooking(null)}>
+          <div className="w-full max-w-md rounded-3xl border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>{viewBooking.guest}</h3>
+                <p className="font-mono text-xs mt-0.5" style={{ color: "#8B6344" }}>{viewBooking.displayId}</p>
+              </div>
+              <button type="button" onClick={() => setViewBooking(null)} title="Close" className="p-1.5 rounded-lg cursor-pointer" style={{ color: "#8B6344" }}><X className="w-4 h-4" /></button>
+            </div>
+            <div className="space-y-2.5">
+              {[
+                { icon: Mail, label: "Email", value: viewBooking.email || "—" },
+                { icon: MapPin, label: "Room", value: viewBooking.room },
+                { icon: CalendarDays, label: "Check-in", value: viewBooking.checkIn },
+                { icon: Clock, label: "Stay", value: viewBooking.stayType },
+                { icon: PhilippinePeso, label: "Amount", value: `₱${viewBooking.amount.toLocaleString()}` },
+              ].map((row) => (
+                <div key={row.label} className="flex items-center gap-3 px-3 py-2.5 rounded-xl" style={{ backgroundColor: "#FAFAF7" }}>
+                  <row.icon className="w-4 h-4 flex-shrink-0" style={{ color: "#B07848" }} strokeWidth={1.75} />
+                  <span className="text-xs font-medium w-20" style={{ color: "#8B6344" }}>{row.label}</span>
+                  <span className="text-sm flex-1 text-right truncate" style={{ color: "#1a1a1a" }}>{row.value}</span>
+                </div>
+              ))}
+              <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl" style={{ backgroundColor: "#FAFAF7" }}>
+                <Shield className="w-4 h-4 flex-shrink-0" style={{ color: "#B07848" }} strokeWidth={1.75} />
+                <span className="text-xs font-medium w-20" style={{ color: "#8B6344" }}>Status</span>
+                <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full ml-auto" style={{ backgroundColor: (statusConfig[viewBooking.status] || statusConfig.pending).bg, color: (statusConfig[viewBooking.status] || statusConfig.pending).color }}>{(statusConfig[viewBooking.status] || statusConfig.pending).label}</span>
+              </div>
             </div>
           </div>
         </div>

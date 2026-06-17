@@ -1555,6 +1555,26 @@ export async function markDeliverableDelivered(deliverableId: string, notes?: st
   }
 }
 
+// Mark ALL add-ons for a booking as delivered. The CSR table groups
+// deliverables by booking, so the "Mark Delivered" row action applies to the
+// whole booking's pending/preparing items at once.
+export async function markBookingDeliverablesDelivered(bookingUuid: string): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query(
+      `UPDATE booking_add_ons
+       SET status = 'delivered', delivered_at = NOW() AT TIME ZONE 'Asia/Manila'
+       WHERE booking_id = $1 AND status NOT IN ('delivered', 'cancelled', 'refunded')`,
+      [bookingUuid]
+    );
+  } catch (error) {
+    console.error("Error marking booking deliverables as delivered:", error);
+    throw new Error("Failed to mark deliverables as delivered");
+  } finally {
+    client.release();
+  }
+}
+
 // Cancel deliverable
 export async function cancelDeliverable(deliverableId: string, reason?: string): Promise<void> {
   const client = await pool.connect();

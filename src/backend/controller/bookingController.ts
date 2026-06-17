@@ -109,7 +109,7 @@ export const updateBookingDetails = async (
     if (valid_id) {
       const uploadResult = await upload_file(
         valid_id,
-        "staycation-haven/valid-ids",
+        "dlux-homes/valid-ids",
       );
       mainValidIdUrl = uploadResult.url;
     } else if (typeof valid_id_url === "string" && valid_id_url.trim()) {
@@ -134,7 +134,7 @@ export const updateBookingDetails = async (
         if (g?.validId) {
           const uploadResult = await upload_file(
             g.validId,
-            "staycation-haven/valid-ids",
+            "dlux-homes/valid-ids",
           );
           guestIdUrl = uploadResult.url;
         } else if (
@@ -186,7 +186,7 @@ export const updateBookingDetails = async (
     if (payment_proof) {
       const uploadResult = await upload_file(
         payment_proof,
-        "staycation-haven/payment-proofs",
+        "dlux-homes/payment-proofs",
       );
       paymentProofUrl = uploadResult.url;
     }
@@ -585,14 +585,22 @@ export const createBooking = async (
     }
     // --- END CHECK ---
 
-    // Upload payment proof first to get the URL for calendar event
+    // Upload payment proof first to get the URL for calendar event.
+    // Non-fatal: a failed/misconfigured image upload must not roll back the booking.
     let paymentProofUrl = null;
     if (payment_proof) {
-      const uploadResult = await upload_file(
-        payment_proof,
-        "staycation-haven/payment-proofs",
-      );
-      paymentProofUrl = uploadResult.url;
+      try {
+        const uploadResult = await upload_file(
+          payment_proof,
+          "dlux-homes/payment-proofs",
+        );
+        paymentProofUrl = uploadResult.url;
+      } catch (err: unknown) {
+        console.error(
+          "[booking] payment proof upload failed (continuing without it):",
+          err instanceof Error ? err.message : err,
+        );
+      }
     }
 
     // Create Google Calendar event with payment proof URL
@@ -663,7 +671,7 @@ export const createBooking = async (
       try {
         const uploadResult = await upload_file(
           valid_id,
-          "staycation-haven/valid-ids",
+          "dlux-homes/valid-ids",
         );
         validIdUrl = uploadResult.url;
       } catch (err: unknown) {
@@ -717,7 +725,7 @@ export const createBooking = async (
         if (guest.validId) {
           const uploadResult = await upload_file(
             guest.validId,
-            "staycation-haven/valid-ids",
+            "dlux-homes/valid-ids",
           );
           guestIdUrl = uploadResult.url;
         }
@@ -1274,10 +1282,10 @@ export const getBookingById = async (
       LEFT JOIN haven_images hi ON h.uuid_id = hi.haven_id
       LEFT JOIN booking_payments bp ON b.id = bp.booking_id
       LEFT JOIN booking_guests bg ON bg.id = (
-        SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY created_at ASC LIMIT 1
+        SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY id ASC LIMIT 1
       )
       LEFT JOIN booking_security_deposits bd ON b.id = bd.booking_id
-      WHERE b.id = $1
+      WHERE (b.id::text = $1 OR b.booking_id = $1)
       GROUP BY b.id, h.tower, h.uuid_id, bp.total_amount, bp.down_payment, bp.remaining_balance, bp.payment_method, bp.payment_proof_url, bp.room_rate, bp.add_ons_total, bg.first_name, bg.last_name, bg.email, bg.phone, bg.valid_id_url, bg.age, bg.gender, bd.amount
       LIMIT 1
     `;
@@ -1292,13 +1300,17 @@ export const getBookingById = async (
 
     const booking = bookingResult.rows[0];
 
+    // Secondary lookups key on the booking UUID (booking.id), which the main
+    // query resolved — not the URL param (which may be the friendly booking_id).
+    const bookingUuid = booking.id;
+
     // Get all guests
     const guestsQuery = `
       SELECT * FROM booking_guests
       WHERE booking_id = $1
-      ORDER BY created_at ASC
+      ORDER BY id ASC
     `;
-    const guestsResult = await pool.query(guestsQuery, [id]);
+    const guestsResult = await pool.query(guestsQuery, [bookingUuid]);
 
     // Get payment info
     const paymentQuery = `
@@ -1306,7 +1318,7 @@ export const getBookingById = async (
       WHERE booking_id = $1
       LIMIT 1
     `;
-    const paymentResult = await pool.query(paymentQuery, [id]);
+    const paymentResult = await pool.query(paymentQuery, [bookingUuid]);
 
     // Get security deposit
     const depositQuery = `
@@ -1314,7 +1326,7 @@ export const getBookingById = async (
       WHERE booking_id = $1
       LIMIT 1
     `;
-    const depositResult = await pool.query(depositQuery, [id]);
+    const depositResult = await pool.query(depositQuery, [bookingUuid]);
 
     // Get add-ons
     const addOnsQuery = `
@@ -1322,7 +1334,7 @@ export const getBookingById = async (
       WHERE booking_id = $1
       ORDER BY name ASC
     `;
-    const addOnsResult = await pool.query(addOnsQuery, [id]);
+    const addOnsResult = await pool.query(addOnsQuery, [bookingUuid]);
 
     // Get cleaning info
     const cleaningQuery = `
@@ -1330,7 +1342,7 @@ export const getBookingById = async (
       WHERE booking_id = $1
       LIMIT 1
     `;
-    const cleaningResult = await pool.query(cleaningQuery, [id]);
+    const cleaningResult = await pool.query(cleaningQuery, [bookingUuid]);
 
     // Combine all data — always use guestsResult.rows[0] as the authoritative main guest
     const mainGuest = guestsResult.rows[0] || null;

@@ -6,9 +6,10 @@ import Image from "next/image";
 import { useSearchParams, useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import { mockRooms } from "@/lib/mock-data";
-import { generateBookingId } from "@/lib/booking-store";
+import { generateBookingId, addMyBookingId } from "@/lib/booking-store";
 import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
 import { havenToRoom } from "@/lib/haven-adapter";
+import { pickRate, isWeekendOrHoliday } from "@/lib/pricing";
 
 // ── Helpers ────────────────────────────────────────────────────
 function peso(n: number) { return "₱" + n.toLocaleString("en-PH"); }
@@ -28,6 +29,16 @@ function addDays(iso: string, n: number): string {
   const d = new Date(iso + "T00:00:00");
   d.setDate(d.getDate() + n);
   return d.toISOString().slice(0, 10);
+}
+// Read a File as a base64 data URL — sent to the booking API, which uploads it
+// to Cloudinary when configured (otherwise it's skipped gracefully).
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
 function formatDate(iso: string) {
@@ -68,8 +79,8 @@ const ADDONS = [
 
 const STEPS = ["Our details", "Add-ons", "Payment", "Review"];
 
-type Info = { firstName: string; lastName: string; age: string; gender: string; email: string; phone: string; facebook: string; notes: string; validIdName: string | null };
-type Payment = { method: "gcash" | "bank" | "card"; proofName: string | null; idName: string | null; cardNum: string; cardName: string; cardExpiry: string; cardCvc: string };
+type Info = { firstName: string; lastName: string; age: string; gender: string; email: string; phone: string; facebook: string; notes: string; validIdName: string | null; validIdData: string | null };
+type Payment = { method: "gcash" | "bank" | "card"; proofName: string | null; idName: string | null; proofData: string | null; idData: string | null; cardNum: string; cardName: string; cardExpiry: string; cardCvc: string };
 type AddOns = Record<string, number>;
 
 function FieldLabel({ label, children, span }: { label: string; children: React.ReactNode; span?: boolean }) {
@@ -85,12 +96,12 @@ const inputStyle: React.CSSProperties = {
   width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid var(--line-2)", fontSize: 14, background: "var(--white)", color: "var(--ink)", fontFamily: "inherit", outline: "none", boxSizing: "border-box",
 };
 
-function UploadField({ label, sub, value, onChange }: { label: string; sub: string; value: string | null; onChange: (name: string) => void }) {
+function UploadField({ label, sub, value, onChange }: { label: string; sub: string; value: string | null; onChange: (name: string, data: string) => void }) {
   const ref = useRef<HTMLInputElement>(null);
   return (
     <div>
       <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--ink)", marginBottom: 8 }}>{label}</div>
-      <input ref={ref} type="file" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) onChange(f.name); }} />
+      <input ref={ref} type="file" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) fileToBase64(f).then((data) => onChange(f.name, data)); }} />
       <button onClick={() => ref.current?.click()}
         style={{ width: "100%", padding: 20, borderRadius: 14, border: value ? "1px solid var(--dlux-accent)" : "1px dashed var(--line-2)", background: value ? "rgba(176,120,72,.06)" : "var(--white)", display: "flex", alignItems: "center", gap: 12, textAlign: "left", cursor: "pointer" }}>
         <div style={{ width: 40, height: 40, borderRadius: 10, background: value ? "var(--dlux-accent)" : "var(--bg-2)", display: "grid", placeItems: "center", color: value ? "var(--white)" : "var(--ink-2)" }}>
@@ -137,22 +148,21 @@ function CheckoutInner() {
   const room = liveHaven ? havenToRoom(liveHaven) : (mockRooms.find((r) => r.id === roomId) || mockRooms[0]);
 
   const [step, setStep] = useState(0);
-  const [info, setInfo] = useState<Info>({ firstName: "", lastName: "", age: "", gender: "Male", email: "", phone: "", facebook: "", notes: "", validIdName: null });
+  const [info, setInfo] = useState<Info>({ firstName: "", lastName: "", age: "", gender: "Male", email: "", phone: "", facebook: "", notes: "", validIdName: null, validIdData: null });
   const [addOns, setAddOns] = useState<AddOns>({});
-  const [payment, setPayment] = useState<Payment>({ method: "gcash", proofName: null, idName: null, cardNum: "", cardName: "", cardExpiry: "", cardCvc: "" });
+  const [payment, setPayment] = useState<Payment>({ method: "gcash", proofName: null, idName: null, proofData: null, idData: null, cardNum: "", cardName: "", cardExpiry: "", cardCvc: "" });
   const [submitting, setSubmitting] = useState(false);
 
-  const basePrice = stayType === "10" ? room.price10hr : room.price21hr;
-  const extraPax = Math.max(0, adults + children - (room.basePax ?? 2));
-  const paxFee = extraPax * (room.additionalPaxFee ?? 150);
+  // Weekday vs weekend/holiday rate based on the check-in date.
+  const isWeekendRate = isWeekendOrHoliday(date);
+  const basePrice = pickRate(stayType, date, room);
   const addOnsTotal = Object.entries(addOns).reduce((s, [id, qty]) => {
     const a = ADDONS.find((x) => x.id === id); return s + (a ? a.price * qty : 0);
   }, 0);
-  const cleaning = 150;
-  const subtotal = basePrice + paxFee + addOnsTotal;
-  const serviceFee = Math.round(subtotal * 0.08);
-  const total = subtotal + cleaning + serviceFee;
-  const downPayment = Math.round(total * 0.3);
+  // D'Lux pricing: the base rate covers 1–4 pax — no per-pax, cleaning, or
+  // service fee. Total is just the stay rate (+ optional add-ons).
+  const total = basePrice + addOnsTotal;
+  const downPayment = Math.round(total * 0.5); // 50% reservation down payment
 
   const canNext = () => {
     if (step === 0) {
@@ -205,6 +215,8 @@ function CheckoutInner() {
       guest_age: parseInt(info.age, 10) || null,
       guest_gender: info.gender,
       facebook_link: info.facebook || null,
+      valid_id: info.validIdData || undefined,           // base64; uploaded to Cloudinary when configured
+      payment_proof: payment.proofData || undefined,     // base64; uploaded to Cloudinary when configured
       payment_method: payment.method,
       room_rate: basePrice,
       add_ons_total: addOnsTotal,
@@ -226,6 +238,7 @@ function CheckoutInner() {
         return;
       }
       const confirmedId = json.data?.booking_id || bookingId;
+      addMyBookingId(confirmedId);
       toast.success("Booking submitted!");
       router.push(`/my-bookings/confirmed?id=${confirmedId}`);
     } catch {
@@ -321,7 +334,7 @@ function CheckoutInner() {
                   <div style={{ fontSize: 13, color: "#B8A68E", marginBottom: 20 }}>Accepted: Driver's License, Passport, National ID, School ID</div>
                   {!info.validIdName ? (
                     <div>
-                      <div style={{ background: "#4d4337", borderRadius: 14, padding: 40, textAlign: "center", marginBottom: 16, cursor: "pointer" }} onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) setInfo({ ...info, validIdName: file.name }); }; f.click(); }}>
+                      <div style={{ background: "#4d4337", borderRadius: 14, padding: 40, textAlign: "center", marginBottom: 16, cursor: "pointer" }} onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) fileToBase64(file).then((data) => setInfo({ ...info, validIdName: file.name, validIdData: data })); }; f.click(); }}>
                         <div style={{ width: 56, height: 56, borderRadius: 12, background: "#5d5347", display: "grid", placeItems: "center", margin: "0 auto 16px", color: "#B8A68E" }}>
                           <IcoUpload />
                         </div>
@@ -330,7 +343,7 @@ function CheckoutInner() {
                       </div>
                       <div style={{ textAlign: "center" }}>
                         <div style={{ fontSize: 13, color: "#9B8B73", marginBottom: 14, fontWeight: 500 }}>OR</div>
-                        <button onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.capture = "environment" as any; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) setInfo({ ...info, validIdName: file.name }); }; f.click(); }} style={{ display: "inline-flex", alignItems: "center", gap: 10, padding: "12px 22px", borderRadius: 12, fontSize: 14, fontWeight: 600, background: "#4d4337", color: "#F6EFE2", border: "1px solid #5d5347", cursor: "pointer" }}>
+                        <button onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.capture = "environment" as any; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) fileToBase64(file).then((data) => setInfo({ ...info, validIdName: file.name, validIdData: data })); }; f.click(); }} style={{ display: "inline-flex", alignItems: "center", gap: 10, padding: "12px 22px", borderRadius: 12, fontSize: 14, fontWeight: 600, background: "#4d4337", color: "#F6EFE2", border: "1px solid #5d5347", cursor: "pointer" }}>
                           <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6}><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
                           Take photo with camera
                         </button>
@@ -427,8 +440,8 @@ function CheckoutInner() {
                       </div>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                      <UploadField label="Payment proof" sub="Screenshot of your transfer" value={payment.proofName} onChange={(name) => setPayment({ ...payment, proofName: name })} />
-                      <UploadField label="Valid ID" sub="Driver's license, passport, etc." value={payment.idName} onChange={(name) => setPayment({ ...payment, idName: name })} />
+                      <UploadField label="Payment proof" sub="Screenshot of your transfer" value={payment.proofName} onChange={(name, data) => setPayment({ ...payment, proofName: name, proofData: data })} />
+                      <UploadField label="Valid ID" sub="Driver's license, passport, etc." value={payment.idName} onChange={(name, data) => setPayment({ ...payment, idName: name, idData: data })} />
                     </div>
                   </div>
                 )}
@@ -534,11 +547,8 @@ function CheckoutInner() {
                 <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "var(--ink)" }}>Guests</span><span style={{ fontWeight: 600 }}>{adults + children}</span></div>
               </div>
               <div style={{ padding: "16px 0", borderBottom: "1px solid var(--line)", fontSize: 13, display: "flex", flexDirection: "column", gap: 6 }}>
-                <PriceRow label={`${stayType}-hour stay`} value={peso(basePrice)} />
-                {paxFee > 0 && <PriceRow label="Extra guests" value={peso(paxFee)} />}
+                <PriceRow label={`${stayType}-hour stay · ${isWeekendRate ? "Weekend/Holiday" : "Weekday"}`} value={peso(basePrice)} />
                 {addOnsTotal > 0 && <PriceRow label="Add-ons" value={peso(addOnsTotal)} />}
-                <PriceRow label="Cleaning fee" value={peso(cleaning)} />
-                <PriceRow label="Service fee" value={peso(serviceFee)} />
               </div>
               <div style={{ padding: "16px 0 0", display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16 }}>
                 <span>Total</span><span>{peso(total)}</span>
