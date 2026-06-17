@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { mockRooms, mockReviews } from "@/lib/mock-data";
@@ -64,6 +64,28 @@ export default function BrowsePage() {
   const [heroImg, setHeroImg] = useState(0);
   const [wished, setWished] = useState(false);
 
+  // Reveal the stay-window cards once they scroll into view
+  const stayCardsRef = useRef<HTMLDivElement>(null);
+  const [stayCardsVisible, setStayCardsVisible] = useState(false);
+
+  // Reveal the "About this home" editorial section on scroll
+  const aboutRef = useRef<HTMLDivElement>(null);
+  const [aboutVisible, setAboutVisible] = useState(false);
+
+  // Reveal the "What's inside" amenities section on scroll
+  const amenitiesRef = useRef<HTMLDivElement>(null);
+  const [amenitiesVisible, setAmenitiesVisible] = useState(false);
+
+  // Reveal the "Guests say" reviews section on scroll
+  const reviewsRef = useRef<HTMLDivElement>(null);
+  const [reviewsVisible, setReviewsVisible] = useState(false);
+
+  // Reveal the final CTA + footer on scroll
+  const ctaRef = useRef<HTMLDivElement>(null);
+  const [ctaVisible, setCtaVisible] = useState(false);
+  const footerRef = useRef<HTMLDivElement>(null);
+  const [footerVisible, setFooterVisible] = useState(false);
+
   // Live haven (single-property storefront) — falls back to mock while loading / if none exist
   const { data: havensData } = useGetHavensQuery({});
   const liveHaven = (havensData as Record<string, unknown>[] | undefined)?.[0];
@@ -73,6 +95,34 @@ export default function BrowsePage() {
     const id = setInterval(() => setHeroImg((i) => (i + 1) % room.images.length), 5500);
     return () => clearInterval(id);
   }, [room.images.length]);
+
+  useEffect(() => {
+    // Toggle visibility on every scroll in/out so the animation replays
+    // each time the section enters the viewport (not just the first time).
+    const reveal = (
+      el: HTMLElement | null,
+      onChange: (visible: boolean) => void
+    ) => {
+      if (!el) return () => {};
+      const observer = new IntersectionObserver(
+        ([entry]) => onChange(entry.isIntersecting),
+        // Fire as soon as any part enters; trigger a little before fully
+        // on-screen, and don't rely on a % of a possibly-tall section.
+        { threshold: 0, rootMargin: "0px 0px -10% 0px" }
+      );
+      observer.observe(el);
+      return () => observer.disconnect();
+    };
+    const cleanups = [
+      reveal(stayCardsRef.current, setStayCardsVisible),
+      reveal(aboutRef.current, setAboutVisible),
+      reveal(amenitiesRef.current, setAmenitiesVisible),
+      reveal(reviewsRef.current, setReviewsVisible),
+      reveal(ctaRef.current, setCtaVisible),
+      reveal(footerRef.current, setFooterVisible),
+    ];
+    return () => cleanups.forEach((c) => c());
+  }, []);
 
   return (
     <div className="page-enter" style={{ minHeight: "100vh", backgroundColor: "var(--bg)", color: "var(--ink)" }}>
@@ -89,9 +139,24 @@ export default function BrowsePage() {
               <div style={{ fontSize: 10, color: "var(--ink)", textTransform: "uppercase", letterSpacing: ".15em" }}>Staycations · PH</div>
             </div>
           </Link>
-          <nav style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <Link href="/my-bookings" style={{ padding: "9px 14px", borderRadius: 999, fontSize: 13, fontWeight: 600, color: "var(--ink)", textDecoration: "none" }}>My bookings</Link>
-            <Link href={`/rooms/${room.id}`} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 20px", borderRadius: 999, fontSize: 14, fontWeight: 600, background: "var(--dlux-accent)", color: "var(--white)", textDecoration: "none" }}>
+          <style>{`
+            .mybookings-btn{transition:background .18s,color .18s,transform .18s,box-shadow .18s}
+            .mybookings-btn:hover{background:var(--dlux-accent)!important;color:#fff!important;transform:scale(1.04);box-shadow:0 4px 14px rgba(176,120,72,.35)}
+            .booknow-btn{transition:background .18s,transform .18s,box-shadow .18s,gap .18s}
+            .booknow-btn:hover{background:#8C5A2E!important;transform:scale(1.05);box-shadow:0 6px 20px rgba(140,90,46,.45)}
+            .booknow-btn:hover svg{transform:translateX(4px);transition:transform .18s}
+            .checkavail-btn{transition:background .18s,transform .18s,box-shadow .18s}
+            .checkavail-btn:hover{background:#8C5A2E!important;transform:scale(1.05);box-shadow:0 6px 22px rgba(140,90,46,.5)}
+            .checkavail-btn:hover svg{transform:translateX(4px);transition:transform .18s}
+            .savestay-btn{transition:background .18s,border-color .18s,transform .18s,box-shadow .18s}
+            .savestay-btn:hover{background:rgba(255,255,255,.28)!important;border-color:rgba(255,255,255,.55)!important;transform:scale(1.05);box-shadow:0 4px 16px rgba(0,0,0,.2)}
+          `}</style>
+          <nav style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <Link href="/my-bookings" className="mybookings-btn" style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "10px 20px", borderRadius: 999, fontSize: 13, fontWeight: 700, color: "var(--dlux-accent)", textDecoration: "none", border: "2px solid var(--dlux-accent)", background: "transparent" }}>
+              <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><polyline points="9 16 11 18 15 14"/></svg>
+              My bookings
+            </Link>
+            <Link href={`/rooms/${room.id}`} className="booknow-btn" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 20px", borderRadius: 999, fontSize: 14, fontWeight: 600, background: "var(--dlux-accent)", color: "var(--white)", textDecoration: "none" }}>
               Book now <IcoArrowRight size={14} />
             </Link>
           </nav>
@@ -125,10 +190,12 @@ export default function BrowsePage() {
             </p>
             <div style={{ marginTop: 28, display: "flex", gap: 10, flexWrap: "wrap" }}>
               <button onClick={() => document.getElementById("book-section")?.scrollIntoView({ behavior: "smooth" })}
+                className="checkavail-btn"
                 style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 24px", borderRadius: 999, background: "var(--dlux-accent)", color: "var(--white)", fontSize: 15, fontWeight: 600, border: "none", cursor: "pointer" }}>
                 Check availability <IcoArrowRight size={18} />
               </button>
               <button onClick={() => setWished((w) => !w)}
+                className="savestay-btn"
                 style={{ display: "inline-flex", alignItems: "center", gap: 10, padding: "14px 22px", borderRadius: 999, background: "rgba(255,255,255,.14)", backdropFilter: "blur(10px)", color: "var(--white)", fontSize: 14, fontWeight: 600, border: "1px solid rgba(255,255,255,.25)", cursor: "pointer" }}>
                 <span style={{ color: wished ? "var(--dlux-accent)" : "var(--white)" }}><IcoHeart filled={wished} /></span>
                 {wished ? "Saved" : "Save this stay"}
@@ -162,9 +229,9 @@ export default function BrowsePage() {
       </section>
 
       {/* EDITORIAL 2-COL */}
-      <section style={{ maxWidth: 1320, margin: "0 auto", padding: "80px 28px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1.1fr", gap: 64, alignItems: "center" }}>
-          <div>
+      <section ref={aboutRef} style={{ maxWidth: 1320, margin: "0 auto", padding: "80px 28px" }}>
+        <div className={`about-grid${aboutVisible ? " about-grid--in" : ""}`} style={{ display: "grid", gridTemplateColumns: "1fr 1.1fr", gap: 64, alignItems: "center" }}>
+          <div className="about-copy">
             <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: "var(--accent-ink)", marginBottom: 18 }}>About this home</div>
             <h2 className="serif" style={{ fontSize: 56, fontWeight: 400, letterSpacing: "-.025em", lineHeight: 1, margin: 0 }}>
               A corner of the sky, <em>set aside for you.</em>
@@ -174,20 +241,23 @@ export default function BrowsePage() {
               We keep it small on purpose — one home, obsessively looked after, so every guest gets the version we&apos;d want to stay in ourselves. Hosted since 2022.
             </p>
             <div style={{ marginTop: 28, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {["Balcony", "City view", "Netflix", "Pet-free"].map((t) => (
-                <span key={t} style={{ display: "inline-flex", alignItems: "center", padding: "8px 14px", fontSize: 13, fontWeight: 500, borderRadius: 999, border: "1px solid var(--line-2)", background: "var(--white)", color: "var(--ink-2)" }}>{t}</span>
+              {["Balcony", "City view", "Swimming pool", "Garden"].map((t, i) => (
+                <span key={t} className="about-tag" style={{ transitionDelay: `${300 + i * 90}ms`, display: "inline-flex", alignItems: "center", padding: "8px 14px", fontSize: 13, fontWeight: 500, borderRadius: 999, border: "1px solid var(--line-2)", background: "var(--white)", color: "var(--ink-2)" }}>{t}</span>
               ))}
             </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div style={{ borderRadius: 20, overflow: "hidden", aspectRatio: "3/4", background: "var(--bg-2)", gridRow: "span 2", position: "relative" }}>
-              <Image src={room.images[1]} alt="" fill unoptimized style={{ objectFit: "cover" }} />
+            <div className="about-photo" style={{ transitionDelay: "120ms", borderRadius: 20, overflow: "hidden", aspectRatio: "3/4", background: "var(--bg-2)", gridRow: "span 2", position: "relative" }}>
+              <Image className="about-photo__img" src={room.images[1]} alt="" fill unoptimized style={{ objectFit: "cover" }} />
+              <span className="about-photo__overlay" />
             </div>
-            <div style={{ borderRadius: 20, overflow: "hidden", aspectRatio: "4/3", background: "var(--bg-2)", position: "relative" }}>
-              <Image src={room.images[2]} alt="" fill unoptimized style={{ objectFit: "cover" }} />
+            <div className="about-photo" style={{ transitionDelay: "240ms", borderRadius: 20, overflow: "hidden", aspectRatio: "4/3", background: "var(--bg-2)", position: "relative" }}>
+              <Image className="about-photo__img" src={room.images[2]} alt="" fill unoptimized style={{ objectFit: "cover" }} />
+              <span className="about-photo__overlay" />
             </div>
-            <div style={{ borderRadius: 20, overflow: "hidden", aspectRatio: "4/3", background: "var(--bg-2)", position: "relative" }}>
-              <Image src={room.images[0]} alt="" fill unoptimized style={{ objectFit: "cover" }} />
+            <div className="about-photo" style={{ transitionDelay: "360ms", borderRadius: 20, overflow: "hidden", aspectRatio: "4/3", background: "var(--bg-2)", position: "relative" }}>
+              <Image className="about-photo__img" src={room.images[0]} alt="" fill unoptimized style={{ objectFit: "cover" }} />
+              <span className="about-photo__overlay" />
             </div>
           </div>
         </div>
@@ -207,23 +277,25 @@ export default function BrowsePage() {
               Three preset check-in windows. No &quot;4pm check-in / 11am check-out&quot; nonsense. Show up, settle in, leave rested.
             </p>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
+          <div ref={stayCardsRef} style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
             {stayWindows.map((w, i) => (
-              <Link key={i} href={`/rooms/${room.id}`} style={{ textDecoration: "none" }}>
-                <div
-                  style={{ padding: 28, borderRadius: 20, background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.12)", color: "var(--white)", cursor: "pointer", transition: "all .22s" }}
-                  onMouseEnter={(e) => { const el = e.currentTarget as HTMLDivElement; el.style.background = "rgba(255,255,255,.1)"; el.style.borderColor = "var(--gold)"; }}
-                  onMouseLeave={(e) => { const el = e.currentTarget as HTMLDivElement; el.style.background = "rgba(255,255,255,.05)"; el.style.borderColor = "rgba(255,255,255,.12)"; }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <Link
+                key={i}
+                href={`/rooms/${room.id}`}
+                className={`stay-card${stayCardsVisible ? " stay-card--in" : ""}`}
+                style={{ textDecoration: "none", transitionDelay: `${i * 110}ms` }}
+              >
+                <div className="stay-card__inner">
+                  <div className="stay-card__sheen" />
+                  <div style={{ position: "relative", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                     <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--gold)" }}>{w.stayType}-hour</div>
-                    <IcoArrowRight size={16} />
+                    <span className="stay-card__arrow"><IcoArrowRight size={16} /></span>
                   </div>
-                  <div className="serif" style={{ fontSize: 36, fontWeight: 400, letterSpacing: "-.02em", marginTop: 14, lineHeight: 1 }}>{w.label}</div>
-                  <div style={{ fontSize: 13, color: "rgba(255,255,255,.7)", marginTop: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                  <div className="serif" style={{ position: "relative", fontSize: 36, fontWeight: 400, letterSpacing: "-.02em", marginTop: 14, lineHeight: 1 }}>{w.label}</div>
+                  <div style={{ position: "relative", fontSize: 13, color: "rgba(255,255,255,.7)", marginTop: 14, display: "flex", alignItems: "center", gap: 8 }}>
                     <IcoClock /> {w.checkIn} → {w.checkOut}
                   </div>
-                  <div style={{ marginTop: 24, paddingTop: 18, borderTop: "1px solid rgba(255,255,255,.12)", display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                  <div style={{ position: "relative", marginTop: 24, paddingTop: 18, borderTop: "1px solid rgba(255,255,255,.12)", display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                     <span style={{ fontSize: 12, color: "rgba(255,255,255,.6)" }}>From</span>
                     <span style={{ fontSize: 22, fontWeight: 700 }}>₱{(w.stayType === "10" ? room.price10hr : room.price21hr).toLocaleString()}</span>
                   </div>
@@ -235,17 +307,17 @@ export default function BrowsePage() {
       </section>
 
       {/* AMENITIES */}
-      <section style={{ maxWidth: 1320, margin: "0 auto", padding: "80px 28px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr", gap: 64 }}>
-          <div>
+      <section ref={amenitiesRef} style={{ maxWidth: 1320, margin: "0 auto", padding: "80px 28px" }}>
+        <div className={`amen-grid${amenitiesVisible ? " amen-grid--in" : ""}`} style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr", gap: 64 }}>
+          <div className="amen-copy">
             <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: "var(--accent-ink)", marginBottom: 16 }}>What&apos;s inside</div>
             <h2 className="serif" style={{ fontSize: 52, fontWeight: 400, letterSpacing: "-.025em", lineHeight: 1, margin: "0 0 20px" }}>Everything you&apos;d reach for.</h2>
             <p style={{ fontSize: 15, color: "var(--ink-2)", lineHeight: 1.65 }}>Kitchenette, balcony, Netflix, videoke — and a welcome pack that means you can walk in with just a backpack.</p>
             <div style={{ marginTop: 28, padding: 20, background: "var(--bg-2)", borderRadius: 16 }}>
               <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--ink)", marginBottom: 12 }}>On the house</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {WELCOME_PACK.map((w) => (
-                  <div key={w} style={{ fontSize: 14, display: "flex", alignItems: "center", gap: 10 }}>
+                {WELCOME_PACK.map((w, i) => (
+                  <div key={w} className="amen-pack" style={{ transitionDelay: `${300 + i * 80}ms`, fontSize: 14, display: "flex", alignItems: "center", gap: 10 }}>
                     <span style={{ color: "var(--accent-ink)" }}><IcoCheck /></span> {w}
                   </div>
                 ))}
@@ -253,9 +325,9 @@ export default function BrowsePage() {
             </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 2, background: "var(--line)", borderRadius: 20, overflow: "hidden", alignSelf: "start" }}>
-            {AMENITIES.map((a) => (
-              <div key={a.label} style={{ padding: "24px 18px", background: "var(--white)", display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ width: 40, height: 40, borderRadius: 10, background: "var(--bg-2)", display: "grid", placeItems: "center", color: "var(--ink-2)" }}><a.icon /></div>
+            {AMENITIES.map((a, i) => (
+              <div key={a.label} className="amen-tile" style={{ transitionDelay: `${i * 70}ms`, padding: "24px 18px", background: "var(--white)", display: "flex", flexDirection: "column", gap: 8 }}>
+                <div className="amen-tile__icon" style={{ width: 40, height: 40, borderRadius: 10, background: "var(--bg-2)", display: "grid", placeItems: "center", color: "var(--ink-2)" }}><a.icon /></div>
                 <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.3 }}>{a.label}</div>
               </div>
             ))}
@@ -272,9 +344,9 @@ export default function BrowsePage() {
               <IcoStar size={36} /> {room.rating} from {room.reviewCount} stays
             </h2>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16 }}>
-            {mockReviews.map((r) => (
-              <div key={r.id} style={{ background: "var(--white)", borderRadius: 18, padding: 22, border: "1px solid var(--line)" }}>
+          <div ref={reviewsRef} className={`review-grid${reviewsVisible ? " review-grid--in" : ""}`} style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16 }}>
+            {mockReviews.map((r, i) => (
+              <div key={r.id} className="review-card" style={{ animationDelay: `${i * 120}ms`, background: "var(--white)", borderRadius: 18, padding: 22, border: "1px solid var(--line)" }}>
                 <span style={{ color: "var(--line-2)" }}><IcoQuote /></span>
                 <p style={{ fontSize: 14, lineHeight: 1.65, margin: "10px 0 16px", color: "var(--ink-2)" }}>&ldquo;{r.comment}&rdquo;</p>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -291,23 +363,23 @@ export default function BrowsePage() {
       </section>
 
       {/* FINAL CTA */}
-      <section style={{ maxWidth: 1320, margin: "0 auto", padding: "100px 28px 80px", textAlign: "center" }}>
-        <h2 className="serif" style={{ fontSize: "clamp(48px,7vw,96px)", fontWeight: 400, letterSpacing: "-.03em", lineHeight: 0.95, margin: 0 }}>
+      <section ref={ctaRef} className={`cta-sec${ctaVisible ? " cta-sec--in" : ""}`} style={{ maxWidth: 1320, margin: "0 auto", padding: "100px 28px 80px", textAlign: "center" }}>
+        <h2 className="serif cta-title" style={{ fontSize: "clamp(48px,7vw,96px)", fontWeight: 400, letterSpacing: "-.03em", lineHeight: 0.95, margin: 0 }}>
           Ready to <em style={{ color: "var(--accent-ink)" }}>pause?</em>
         </h2>
-        <p style={{ fontSize: 17, color: "var(--ink-2)", maxWidth: 520, margin: "22px auto 32px", lineHeight: 1.55 }}>
+        <p className="cta-text" style={{ fontSize: 17, color: "var(--ink-2)", maxWidth: 520, margin: "22px auto 32px", lineHeight: 1.55 }}>
           Our calendar fills up 2–3 weeks out. Pick your window and we&apos;ll hold it.
         </p>
-        <Link href={`/rooms/${room.id}`} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 999, background: "var(--dlux-accent)", color: "var(--white)", fontSize: 15, fontWeight: 600, textDecoration: "none" }}>
+        <Link href={`/rooms/${room.id}`} className="booknow-btn cta-btn" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 999, background: "var(--dlux-accent)", color: "var(--white)", fontSize: 15, fontWeight: 600, textDecoration: "none" }}>
           See the home · Book now <IcoArrowRight size={18} />
         </Link>
       </section>
 
       {/* FOOTER */}
-      <footer style={{ borderTop: "1px solid var(--line)", background: "var(--bg)" }}>
+      <footer ref={footerRef} className={`footer-sec${footerVisible ? " footer-sec--in" : ""}`} style={{ borderTop: "1px solid var(--line)", background: "var(--bg)" }}>
         <div style={{ maxWidth: 1320, margin: "0 auto", padding: "48px 28px 28px" }}>
           <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 40 }}>
-            <div>
+            <div className="footer-col" style={{ animationDelay: "0ms" }}>
               <div className="serif" style={{ fontSize: 34, fontWeight: 500, letterSpacing: "-.02em", lineHeight: 1 }}>Come home to <em>rest.</em></div>
               <p style={{ color: "var(--ink)", fontSize: 13, maxWidth: 360, marginTop: 12, lineHeight: 1.6 }}>
                 One staycation unit at Grass Residences, SM North EDSA, Quezon City. Book by the hour. Leave rested.
@@ -316,12 +388,12 @@ export default function BrowsePage() {
             {[
               { h: "Stay", items: ["10-Hour Daycation", "10-Hour Nightcation", "21-Hour Full Stay"] },
               { h: "Info", items: ["House rules", "Amenities", "Nearby places"] },
-              { h: "Contact", items: ["0946 007 4015", "havenphstaycation@gmail.com", "Tower 4, Grass Residences, QC"] },
-            ].map((col) => (
-              <div key={col.h}>
+              { h: "Contact", items: ["homesdlux@gmail.com", "Tower 4, Grass Residences, QC"] },
+            ].map((col, i) => (
+              <div key={col.h} className="footer-col" style={{ animationDelay: `${(i + 1) * 110}ms` }}>
                 <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--ink)", marginBottom: 14, fontWeight: 600 }}>{col.h}</div>
                 <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-                  {col.items.map((item) => <li key={item} style={{ fontSize: 13, color: "var(--ink)" }}>{item}</li>)}
+                  {col.items.map((item) => <li key={item} className="footer-link" style={{ fontSize: 13, color: "var(--ink)" }}>{item}</li>)}
                 </ul>
               </div>
             ))}
