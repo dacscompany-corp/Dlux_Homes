@@ -205,6 +205,7 @@ function CheckoutInner() {
     const payload = {
       booking_id: bookingId,
       user_id: null,
+      haven_id: roomId, // enables the blocked-dates check on the server
       room_name: room.name,
       check_in_date: checkInDate,
       check_out_date: checkOutDate,

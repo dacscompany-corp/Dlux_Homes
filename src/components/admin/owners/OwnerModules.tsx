@@ -10,6 +10,65 @@ import { useGetHavensQuery } from "@/redux/api/roomApi";
 import { useGetCleaningTasksQuery } from "@/redux/api/cleanersApi";
 import { useGetAdminUsersQuery } from "@/redux/api/adminUsersApi";
 import { useGetPartnersQuery } from "@/redux/api/partnersApi";
+type DateRange = { from?: Date; to?: Date };
+
+// Range-picker calendar styled to match the Booking Calendar (big wall-calendar
+// cells). Click a start date, then an end date, to select a range to block.
+function RangeCalendar({ value, onChange }: { value?: DateRange; onChange: (r: DateRange) => void }) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const [month, setMonth] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
+  const first = new Date(month.y, month.m, 1);
+  const daysInMonth = new Date(month.y, month.m + 1, 0).getDate();
+  const startWeekday = first.getDay();
+  const monthName = first.toLocaleString("en", { month: "long", year: "numeric" });
+  const shift = (n: number) => setMonth((p) => { const d = new Date(p.y, p.m + n, 1); return { y: d.getFullYear(), m: d.getMonth() }; });
+
+  const from = value?.from, to = value?.to;
+  const same = (a?: Date, b?: Date) => !!a && !!b && a.toDateString() === b.toDateString();
+  const inRange = (d: Date) => !!from && !!to && d > from && d < to;
+  const click = (d: Date) => {
+    if (!from || (from && to)) onChange({ from: d, to: undefined });
+    else if (d < from) onChange({ from: d, to: undefined });
+    else onChange({ from, to: d });
+  };
+
+  const navCls = "px-3 py-1.5 rounded-lg text-sm font-semibold border cursor-pointer";
+  const navStyle = { color: "#B07848", borderColor: "#EDE3D2", backgroundColor: "#F7F0E3" } as const;
+  return (
+    <div className="w-full">
+      <div className="flex items-center justify-between mb-4">
+        <button type="button" onClick={() => shift(-1)} className={navCls} style={navStyle}>← Prev</button>
+        <h3 className="font-bold" style={{ color: "#1a1a1a" }}>{monthName}</h3>
+        <button type="button" onClick={() => shift(1)} className={navCls} style={navStyle}>Next →</button>
+      </div>
+      <div className="grid grid-cols-7 gap-1.5">
+        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => <div key={d} className="text-center text-xs font-semibold py-2" style={{ color: "#8B6344" }}>{d}</div>)}
+        {Array.from({ length: startWeekday }).map((_, i) => <div key={`e${i}`} />)}
+        {Array.from({ length: daysInMonth }).map((_, i) => {
+          const day = i + 1;
+          const d = new Date(month.y, month.m, day);
+          const isPast = d < today;
+          const isEnd = same(d, from) || same(d, to);
+          const mid = inRange(d);
+          return (
+            <button key={day} type="button" disabled={isPast} onClick={() => click(d)}
+              className="rounded-lg border p-2 min-h-[64px] text-left transition-colors"
+              style={{
+                borderColor: isEnd ? "#B07848" : "#F0E6D6",
+                backgroundColor: isEnd ? "#B07848" : mid ? "#F7F0E3" : "#ffffff",
+                cursor: isPast ? "not-allowed" : "pointer",
+                opacity: isPast ? 0.45 : 1,
+              }}
+              onMouseEnter={(e) => { if (!isPast && !isEnd && !mid) (e.currentTarget as HTMLElement).style.backgroundColor = "#FDF8F3"; }}
+              onMouseLeave={(e) => { if (!isEnd) (e.currentTarget as HTMLElement).style.backgroundColor = mid ? "#F7F0E3" : "#ffffff"; }}>
+              <div className="text-xs font-semibold" style={{ color: isEnd ? "#ffffff" : mid ? "#B07848" : "#5a4a3a" }}>{day}</div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 const peso = (n: number) => "₱" + Number(n || 0).toLocaleString();
 type Row = Record<string, unknown>;
@@ -121,24 +180,56 @@ export function AnalyticsSection() {
 // ── 2. Booking Calendar ───────────────────────────────────────────────────
 export function BookingCalendarSection() {
   const { data: bookingsData } = useGetBookingsQuery();
+  const { data: blockedData } = useGetBlockedDatesQuery({});
   const bookings = dataOf(bookingsData);
   const [month, setMonth] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
+  const [selectedDay, setSelectedDay] = useState<number | null>(null);
   const first = new Date(month.y, month.m, 1);
   const daysInMonth = new Date(month.y, month.m + 1, 0).getDate();
   const startWeekday = first.getDay();
   const sameMonth = (d: unknown) => { if (!d) return null; const dt = new Date(String(d)); return dt.getFullYear() === month.y && dt.getMonth() === month.m ? dt.getDate() : null; };
-  const byDay: Record<number, { in: number; out: number }> = {};
+
+  // Per-day check-ins / check-outs + the full occupied span, with guest + id.
+  type Entry = { name: string; id: string };
+  const dayInfo: Record<number, { ins: Entry[]; outs: Entry[] }> = {};
+  const occupiedByDay: Record<number, Entry[]> = {};
   bookings.forEach((b) => {
     if (["rejected", "cancelled"].includes(String(b.status))) return;
+    const name = `${b.guest_first_name ?? ""} ${b.guest_last_name ?? ""}`.trim() || "Guest";
+    const id = String(b.booking_id ?? b.id ?? "");
     const ci = sameMonth(b.check_in_date); const co = sameMonth(b.check_out_date);
-    if (ci) (byDay[ci] = byDay[ci] || { in: 0, out: 0 }).in++;
-    if (co) (byDay[co] = byDay[co] || { in: 0, out: 0 }).out++;
+    if (ci) (dayInfo[ci] = dayInfo[ci] || { ins: [], outs: [] }).ins.push({ name, id });
+    if (co) (dayInfo[co] = dayInfo[co] || { ins: [], outs: [] }).outs.push({ name, id });
+    // Shade every day of the stay (check-in through check-out).
+    const start = new Date(String(b.check_in_date)); start.setHours(0, 0, 0, 0);
+    const end = new Date(String(b.check_out_date)); end.setHours(0, 0, 0, 0);
+    if (isNaN(start.getTime())) return;
+    for (const d = new Date(start); d <= (isNaN(end.getTime()) ? start : end); d.setDate(d.getDate() + 1)) {
+      if (d.getFullYear() === month.y && d.getMonth() === month.m) (occupiedByDay[d.getDate()] = occupiedByDay[d.getDate()] || []).push({ name, id });
+    }
   });
+
+  // Blocked days in this month + their reasons. Parse the date in LOCAL time
+  // (matches the list display) so a PH-stored date doesn't shift a day back.
+  const blockInfo: Record<number, string[]> = {};
+  dataOf(blockedData).forEach((b) => {
+    const from = new Date(String(b.from_date)); from.setHours(0, 0, 0, 0);
+    const to = new Date(String(b.to_date)); to.setHours(0, 0, 0, 0);
+    for (const d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+      if (d.getFullYear() === month.y && d.getMonth() === month.m) {
+        (blockInfo[d.getDate()] = blockInfo[d.getDate()] || []).push(String(b.reason || "").trim() || "Blocked");
+      }
+    }
+  });
+
   const monthName = first.toLocaleString("en", { month: "long", year: "numeric" });
   const shift = (n: number) => setMonth((p) => { const d = new Date(p.y, p.m + n, 1); return { y: d.getFullYear(), m: d.getMonth() }; });
+  const sel = selectedDay != null ? { day: selectedDay, info: dayInfo[selectedDay], blocks: blockInfo[selectedDay], occ: occupiedByDay[selectedDay] } : null;
+  const selDate = selectedDay != null ? new Date(month.y, month.m, selectedDay).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }) : "";
+
   return (
     <div>
-      <SectionHead title="Booking Calendar" icon={Calendar} sub="Check-ins and check-outs across the property" />
+      <SectionHead title="Booking Calendar" icon={Calendar} sub="Check-ins, check-outs & blocked dates — click a day for details" />
       <Card className="p-6">
         <div className="flex items-center justify-between mb-4">
           <button type="button" onClick={() => shift(-1)} className="px-3 py-1.5 rounded-lg text-sm font-semibold border cursor-pointer" style={{ color: "#B07848", borderColor: "#EDE3D2", backgroundColor: "#F7F0E3" }}>← Prev</button>
@@ -149,17 +240,67 @@ export function BookingCalendarSection() {
           {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => <div key={d} className="text-center text-xs font-semibold py-2" style={{ color: "#8B6344" }}>{d}</div>)}
           {Array.from({ length: startWeekday }).map((_, i) => <div key={`e${i}`} />)}
           {Array.from({ length: daysInMonth }).map((_, i) => {
-            const day = i + 1; const ev = byDay[day];
+            const day = i + 1; const ev = dayInfo[day]; const blocked = !!blockInfo[day];
+            const occupied = !!occupiedByDay[day]?.length;
             return (
-              <div key={day} className="rounded-lg border p-2 min-h-[64px]" style={{ borderColor: "#F0E6D6", backgroundColor: ev ? "#FDF8F3" : "#ffffff" }}>
-                <div className="text-xs font-semibold" style={{ color: "#5a4a3a" }}>{day}</div>
-                {ev?.in ? <div className="text-[10px] mt-1 px-1.5 py-0.5 rounded" style={{ backgroundColor: "#d1fae5", color: "#065f46" }}>{ev.in} in</div> : null}
-                {ev?.out ? <div className="text-[10px] mt-1 px-1.5 py-0.5 rounded" style={{ backgroundColor: "#F7F0E3", color: "#B07848" }}>{ev.out} out</div> : null}
-              </div>
+              <button key={day} type="button" onClick={() => setSelectedDay(day)}
+                className="rounded-lg border p-2 min-h-[64px] text-left cursor-pointer transition-colors"
+                style={{ borderColor: blocked ? "#F0C9C0" : occupied ? "#C7E7D2" : "#F0E6D6", backgroundColor: blocked ? "#FCEEEA" : occupied ? "#ECFDF3" : "#ffffff" }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.boxShadow = "0 0 0 1.5px #E6CFA6 inset"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}>
+                <div className="text-xs font-semibold" style={{ color: blocked ? "#9C3B28" : "#5a4a3a" }}>{day}</div>
+                {blocked ? <div className="text-[10px] mt-1 px-1.5 py-0.5 rounded" style={{ backgroundColor: "#F6D8D0", color: "#9C3B28" }}>Blocked</div> : null}
+                {ev?.ins.length ? <div className="text-[10px] mt-1 px-1.5 py-0.5 rounded" style={{ backgroundColor: "#d1fae5", color: "#065f46" }}>{ev.ins.length} in</div> : null}
+                {ev?.outs.length ? <div className="text-[10px] mt-1 px-1.5 py-0.5 rounded" style={{ backgroundColor: "#F7F0E3", color: "#B07848" }}>{ev.outs.length} out</div> : null}
+                {occupied && !ev?.ins.length && !ev?.outs.length ? <div className="text-[10px] mt-1 px-1.5 py-0.5 rounded" style={{ backgroundColor: "#d1fae5", color: "#065f46" }}>Booked</div> : null}
+              </button>
             );
           })}
         </div>
       </Card>
+
+      {/* Day detail popover */}
+      {sel && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setSelectedDay(null)}>
+          <div className="w-full max-w-md rounded-3xl border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-4">
+              <h3 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>{selDate}</h3>
+              <button type="button" onClick={() => setSelectedDay(null)} title="Close" className="p-1.5 rounded-lg cursor-pointer" style={{ color: "#8B6344" }}><X className="w-4 h-4" /></button>
+            </div>
+            {sel.blocks?.length ? (
+              <div className="rounded-xl border p-3 mb-3" style={{ borderColor: "#F0C9C0", backgroundColor: "#FCEEEA" }}>
+                <p className="text-sm font-semibold" style={{ color: "#9C3B28" }}>Blocked</p>
+                <p className="text-xs mt-0.5" style={{ color: "#9C3B28" }}>{sel.blocks.filter((r) => r !== "Blocked").join(" · ") || "Unavailable for booking"}</p>
+              </div>
+            ) : null}
+            {sel.info?.ins.length ? (
+              <div className="mb-3">
+                <p className="text-xs font-semibold mb-1.5" style={{ color: "#065f46" }}>Check-ins</p>
+                {sel.info.ins.map((g, i) => <div key={i} className="flex justify-between text-sm py-1.5 px-3 rounded-lg mb-1" style={{ backgroundColor: "#ECFDF3" }}><span style={{ color: "#1a1a1a" }}>{g.name}</span><span className="font-mono text-xs" style={{ color: "#8B6344" }}>{g.id}</span></div>)}
+              </div>
+            ) : null}
+            {sel.info?.outs.length ? (
+              <div className="mb-1">
+                <p className="text-xs font-semibold mb-1.5" style={{ color: "#B07848" }}>Check-outs</p>
+                {sel.info.outs.map((g, i) => <div key={i} className="flex justify-between text-sm py-1.5 px-3 rounded-lg mb-1" style={{ backgroundColor: "#F7F0E3" }}><span style={{ color: "#1a1a1a" }}>{g.name}</span><span className="font-mono text-xs" style={{ color: "#8B6344" }}>{g.id}</span></div>)}
+              </div>
+            ) : null}
+            {(() => {
+              const boundary = new Set([...(sel.info?.ins || []), ...(sel.info?.outs || [])].map((g) => g.id));
+              const staying = (sel.occ || []).filter((g) => !boundary.has(g.id));
+              return staying.length ? (
+                <div className="mb-1">
+                  <p className="text-xs font-semibold mb-1.5" style={{ color: "#065f46" }}>Staying</p>
+                  {staying.map((g, i) => <div key={i} className="flex justify-between text-sm py-1.5 px-3 rounded-lg mb-1" style={{ backgroundColor: "#ECFDF3" }}><span style={{ color: "#1a1a1a" }}>{g.name}</span><span className="font-mono text-xs" style={{ color: "#8B6344" }}>{g.id}</span></div>)}
+                </div>
+              ) : null;
+            })()}
+            {!sel.blocks?.length && !sel.info?.ins.length && !sel.info?.outs.length && !sel.occ?.length ? (
+              <p className="text-sm text-center py-4" style={{ color: "#C9B79E" }}>No bookings or blocks on this day.</p>
+            ) : null}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -172,30 +313,53 @@ export function BlockedDatesSection() {
   const [deleteBlocked] = useDeleteBlockedDateMutation();
   const rows = dataOf(blockedRes);
   const havens = arr(havensData).map((h) => ({ id: String(h.uuid_id || h.id || ""), name: String(h.haven_name || "Haven") }));
-  const [form, setForm] = useState({ haven_id: "", from_date: "", to_date: "", reason: "" });
+  const [haven_id, setHavenId] = useState("");
+  const [reason, setReason] = useState("");
+  const [range, setRange] = useState<DateRange | undefined>();
+  // Single-property site: with exactly one haven there's nothing to choose —
+  // use it automatically and hide the selector.
+  const singleHaven = havens.length === 1 ? havens[0] : null;
+  const effectiveHavenId = singleHaven ? singleHaven.id : haven_id;
+
+  // Local YYYY-MM-DD (avoid the UTC shift toISOString causes).
+  const toISO = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const fromD = range?.from, toD = range?.to ?? range?.from;
 
   const submit = async () => {
-    if (!form.haven_id || !form.from_date || !form.to_date) { toast.error("Pick a haven and date range"); return; }
-    try { await createBlocked(form).unwrap(); toast.success("Dates blocked"); setForm({ haven_id: "", from_date: "", to_date: "", reason: "" }); }
-    catch { toast.error("Could not block dates"); }
+    if (!effectiveHavenId) { toast.error("Select a haven"); return; }
+    if (!fromD) { toast.error("Pick a date range on the calendar"); return; }
+    try {
+      await createBlocked({ haven_id: effectiveHavenId, from_date: toISO(fromD), to_date: toISO(toD!), reason }).unwrap();
+      toast.success("Dates blocked");
+      setRange(undefined); setReason("");
+    } catch { toast.error("Could not block dates"); }
   };
   const remove = async (id: string) => { try { await deleteBlocked(id).unwrap(); toast.success("Removed"); } catch { toast.error("Could not remove"); } };
 
   const inputCls = "rounded-xl border px-3 py-2 text-sm outline-none";
   const inputStyle = { borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" } as const;
+  const niceDate = (d?: Date) => (d ? d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "");
   return (
     <div>
-      <SectionHead title="Blocked Dates" icon={CalendarOff} sub="Mark dates as unavailable per haven (maintenance, events, holidays)" />
+      <SectionHead title="Blocked Dates" icon={CalendarOff} sub="Mark dates unavailable for booking (maintenance, events, holidays)" />
       <Card className="p-5 mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
-          <select value={form.haven_id} onChange={(e) => setForm({ ...form, haven_id: e.target.value })} className={inputCls} style={inputStyle}>
-            <option value="">Select haven</option>
-            {havens.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
-          </select>
-          <input type="date" value={form.from_date} onChange={(e) => setForm({ ...form, from_date: e.target.value })} className={inputCls} style={inputStyle} />
-          <input type="date" value={form.to_date} onChange={(e) => setForm({ ...form, to_date: e.target.value })} className={inputCls} style={inputStyle} />
-          <input placeholder="Reason (optional)" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} className={inputCls} style={inputStyle} />
-          <button type="button" onClick={submit} disabled={creating} className="px-4 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#B07848" }}>{creating ? "Blocking…" : "Block dates"}</button>
+        <div className={`grid grid-cols-1 ${singleHaven ? "" : "md:grid-cols-2"} gap-3 mb-4`}>
+          {!singleHaven && (
+            <select aria-label="Select haven" value={haven_id} onChange={(e) => setHavenId(e.target.value)} className={inputCls} style={inputStyle}>
+              <option value="">Select haven</option>
+              {havens.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+            </select>
+          )}
+          <input placeholder="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} className={inputCls} style={inputStyle} />
+        </div>
+        <div className="rounded-2xl border p-5" style={{ borderColor: "#EDE3D2", backgroundColor: "#ffffff" }}>
+          <RangeCalendar value={range} onChange={setRange} />
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 mt-4">
+          <p className="text-sm" style={{ color: "#8B6344" }}>
+            {fromD ? <>Blocking <span className="font-semibold" style={{ color: "#1a1a1a" }}>{niceDate(fromD)}{toD && toD !== fromD ? ` → ${niceDate(toD)}` : ""}</span></> : "Click a start and end date on the calendar."}
+          </p>
+          <button type="button" onClick={submit} disabled={creating} className="px-5 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#B07848" }}>{creating ? "Blocking…" : "Block dates"}</button>
         </div>
       </Card>
       {rows.length === 0 ? <Empty label="No blocked dates." /> : (
@@ -207,7 +371,13 @@ export function BlockedDatesSection() {
               <td className="px-4 py-3.5 text-sm" style={{ color: "#5a4a3a" }}>{fmtDate(r.to_date)}</td>
               <td className="px-4 py-3.5 text-sm" style={{ color: "#8B6344" }}>{String(r.reason ?? "—")}</td>
               <td className="px-4 py-3.5"><Pill text={String(r.status ?? "active")} tone="warn" /></td>
-              <td className="px-4 py-3.5"><button type="button" onClick={() => remove(String(r.id))} className="text-xs font-semibold cursor-pointer" style={{ color: "#dc2626" }}>Remove</button></td>
+              <td className="px-4 py-3.5">
+                <button type="button" onClick={() => remove(String(r.id))} title="Remove" className="p-1.5 rounded-lg cursor-pointer" style={{ color: "#991b1b" }}
+                  onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#fee2e2"}
+                  onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </td>
             </tr>
           ))}
         </Table>

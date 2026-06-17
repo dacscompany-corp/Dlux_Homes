@@ -112,6 +112,7 @@ export default function NewBookingWizard({
       const payload = {
         booking_id: generateBookingId(),
         user_id: null,
+        haven_id: form.haven_id, // enables the blocked-dates check on the server
         room_name: form.room_name,
         check_in_date: checkInDate,
         check_out_date: checkOutDate,

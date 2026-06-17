@@ -420,22 +420,38 @@ export const createBooking = async (
     // --- GENERAL ROOM AVAILABILITY CHECK (time-aware) ---
     // '00:00' checkout means end-of-day midnight, so treat it as the start of the next day.
     // Only active bookings block a new one — completed, checked-out, rejected, cancelled, declined do not.
+    // Time-aware availability WITH a cleaning turnover buffer. After every stay
+    // the unit is unavailable for cleaning before the next guest can check in:
+    //   21-hour overnight (≥20h) → 3 hours,  shorter stays (e.g. 10h) → 2 hours.
+    // The buffer is applied to BOTH bookings so neither can butt up against the
+    // other's cleaning window (works for the preset windows AND custom times).
     const availabilityCheckQuery = `
+      WITH n AS (
+        SELECT
+          ($2::DATE + $3::TIME)::TIMESTAMP AS ns,
+          (CASE WHEN $5 = '00:00'
+                THEN ($4::DATE + INTERVAL '1 day')::TIMESTAMP
+                ELSE ($4::DATE + $5::TIME)::TIMESTAMP END) AS ne
+      )
       SELECT b.id, b.booking_id
-      FROM booking b
+      FROM booking b, n
       WHERE b.room_name = $1
         AND b.status IN ('pending', 'approved', 'confirmed', 'checked-in', 'on-going')
-        AND (b.check_in_date::DATE + b.check_in_time::TIME) <
-            CASE WHEN $5 = '00:00'
-                 THEN ($4::DATE + INTERVAL '1 day')::TIMESTAMP
-                 ELSE ($4::DATE + $5::TIME)::TIMESTAMP
-            END
+        -- existing check-in  <  new check-out + new cleaning buffer
+        AND (b.check_in_date::DATE + b.check_in_time::TIME)::TIMESTAMP <
+            n.ne + (CASE WHEN (n.ne - n.ns) >= INTERVAL '20 hours' THEN INTERVAL '3 hours' ELSE INTERVAL '2 hours' END)
+        -- existing check-out + existing cleaning buffer  >  new check-in
         AND (
-            CASE WHEN b.check_out_time = '00:00'
-                 THEN (b.check_out_date::DATE + INTERVAL '1 day')::TIMESTAMP
-                 ELSE (b.check_out_date::DATE + b.check_out_time::TIME)::TIMESTAMP
-            END
-        ) > ($2::DATE + $3::TIME)::TIMESTAMP
+          (CASE WHEN b.check_out_time = '00:00'
+                THEN (b.check_out_date::DATE + INTERVAL '1 day')::TIMESTAMP
+                ELSE (b.check_out_date::DATE + b.check_out_time::TIME)::TIMESTAMP END)
+          + (CASE WHEN (
+                (CASE WHEN b.check_out_time = '00:00'
+                      THEN (b.check_out_date::DATE + INTERVAL '1 day')::TIMESTAMP
+                      ELSE (b.check_out_date::DATE + b.check_out_time::TIME)::TIMESTAMP END)
+                - (b.check_in_date::DATE + b.check_in_time::TIME)::TIMESTAMP
+              ) >= INTERVAL '20 hours' THEN INTERVAL '3 hours' ELSE INTERVAL '2 hours' END)
+        ) > n.ns
       LIMIT 1
     `;
 
@@ -454,7 +470,7 @@ export const createBooking = async (
       return NextResponse.json(
         {
           success: false,
-          error: "This room is already booked during the selected time slot. Please choose a different date or time.",
+          error: "This room isn't available for the selected time — it overlaps another booking or its cleaning turnover (3 hrs after an overnight stay, 2 hrs otherwise). Please choose a different date or time.",
         },
         { status: 400 }
       );
@@ -473,7 +489,6 @@ export const createBooking = async (
         `SELECT id, from_date, to_date, block_type, reason
          FROM blocked_dates
          WHERE haven_id = $1
-           AND status = 'active'
            AND daterange(from_date, to_date, '[]')
                && daterange($2::date, $3::date, '[)')
          LIMIT 1`,
