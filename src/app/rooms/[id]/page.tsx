@@ -6,7 +6,7 @@ import Image from "next/image";
 import { mockRooms, mockReviews } from "@/lib/mock-data";
 import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
 import { havenToRoom } from "@/lib/haven-adapter";
-import { pickRate, isWeekendOrHoliday } from "@/lib/pricing";
+import { stayTotal, isWeekendOrHoliday } from "@/lib/pricing";
 
 // ── Inline SVG icons ───────────────────────────────────────────
 function IcoChevLeft() { return <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>; }
@@ -271,12 +271,17 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
   const [guests, setGuests] = useState<Guests>({ adults: 2, children: 0, infants: 0 });
   const [customCheckIn, setCustomCheckIn] = useState("");
   const [customCheckOut, setCustomCheckOut] = useState("");
+  const [nights, setNights] = useState(1);
 
-  // D'Lux: rate depends on stay type + whether check-in is a weekend/holiday.
+  // Overnight (21h) stays can span multiple nights; 10h sessions are always 1.
+  const isOvernight = selectedWindow.stayType !== "10";
+  const stayNights = isOvernight ? nights : 1;
+
+  // D'Lux: rate depends on stay type + whether each night is a weekend/holiday.
   // Base rate covers 1–4 pax; no per-pax, cleaning, or service fee.
   const isWeekendRate = isWeekendOrHoliday(date);
-  const basePrice = pickRate(selectedWindow.stayType, date, room);
-  const total = basePrice;
+  const total = stayTotal(selectedWindow.stayType, date, stayNights, room);
+  const basePrice = total;
 
   const blockedDates = (room.blockedDates as Array<{ date: string } | string>).map((b) => typeof b === "string" ? b : b.date);
   const canProceed = date && guests.adults >= 1;
@@ -292,6 +297,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
       adults: String(guests.adults),
       children: String(guests.children),
       infants: String(guests.infants),
+      nights: String(stayNights),
     });
     window.location.href = `/checkout?${params.toString()}`;
   };
@@ -494,7 +500,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
             <div style={{ background: "var(--white)", borderRadius: 24, padding: 28, border: "1px solid var(--line)", boxShadow: "var(--shadow-md)" }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 20 }}>
                 <span style={{ fontSize: 26, fontWeight: 700 }}>{peso(basePrice)}</span>
-                <span style={{ fontSize: 13, color: "var(--ink-2)" }}>/ {selectedWindow.stayType}-hour stay</span>
+                <span style={{ fontSize: 13, color: "var(--ink-2)" }}>/ {isOvernight ? `${stayNights} night${stayNights > 1 ? "s" : ""}` : `${selectedWindow.stayType}-hour stay`}</span>
               </div>
 
               {/* Date picker */}
@@ -513,6 +519,23 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                   </div>
                 )}
               </div>
+
+              {/* Nights — overnight stays only */}
+              {isOvernight && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", border: "1px solid var(--line-2)", borderRadius: 14, marginBottom: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--ink)" }}>Nights</div>
+                    <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>Consecutive overnight stays</div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <button aria-label="Fewer nights" onClick={() => setNights((n) => Math.max(1, n - 1))}
+                      style={{ width: 30, height: 30, borderRadius: "50%", border: "1px solid var(--line-2)", background: "var(--white)", display: "grid", placeItems: "center", cursor: nights <= 1 ? "not-allowed" : "pointer", opacity: nights <= 1 ? 0.4 : 1 }}>–</button>
+                    <span style={{ width: 18, textAlign: "center", fontWeight: 700 }}>{nights}</span>
+                    <button aria-label="More nights" onClick={() => setNights((n) => n + 1)}
+                      style={{ width: 30, height: 30, borderRadius: "50%", border: "1px solid var(--line-2)", background: "var(--white)", display: "grid", placeItems: "center", cursor: "pointer" }}>+</button>
+                  </div>
+                </div>
+              )}
 
               {/* Window */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
@@ -572,7 +595,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
               {/* Price breakdown */}
               {date && (
                 <div style={{ marginTop: 22, paddingTop: 20, borderTop: "1px solid var(--line)", fontSize: 13 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", color: "var(--ink-2)" }}><span>{selectedWindow.label} · {isWeekendRate ? "Weekend/Holiday" : "Weekday"}</span><span>{peso(basePrice)}</span></div>
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", color: "var(--ink-2)" }}><span>{selectedWindow.label}{isOvernight ? ` · ${stayNights} night${stayNights > 1 ? "s" : ""}` : ` · ${isWeekendRate ? "Weekend/Holiday" : "Weekday"}`}</span><span>{peso(basePrice)}</span></div>
                   <div style={{ paddingTop: 14, marginTop: 10, borderTop: "1px solid var(--line)", display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 15 }}>
                     <span>Total</span><span>{peso(total)}</span>
                   </div>

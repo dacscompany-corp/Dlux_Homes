@@ -9,7 +9,7 @@ import { mockRooms } from "@/lib/mock-data";
 import { generateBookingId, addMyBookingId } from "@/lib/booking-store";
 import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
 import { havenToRoom } from "@/lib/haven-adapter";
-import { pickRate, isWeekendOrHoliday } from "@/lib/pricing";
+import { stayTotal, isWeekendOrHoliday, addDaysISO } from "@/lib/pricing";
 
 // ── Helpers ────────────────────────────────────────────────────
 function peso(n: number) { return "₱" + n.toLocaleString("en-PH"); }
@@ -141,6 +141,8 @@ function CheckoutInner() {
   const adults = Number(sp.get("adults") || 2);
   const children = Number(sp.get("children") || 0);
   const infants = Number(sp.get("infants") || 0);
+  // Overnight (21h) stays can span multiple nights; 10h sessions are always 1.
+  const nights = stayType === "10" ? 1 : Math.max(1, Number(sp.get("nights") || 1));
 
   // Live haven by id; fall back to mock so the page renders while loading.
   const { data: havenRes } = useGetHavenByIdQuery(roomId, { skip: !roomId });
@@ -155,7 +157,8 @@ function CheckoutInner() {
 
   // Weekday vs weekend/holiday rate based on the check-in date.
   const isWeekendRate = isWeekendOrHoliday(date);
-  const basePrice = pickRate(stayType, date, room);
+  // Stay price: 10h single session, or 21h × nights (each night priced by its own date).
+  const basePrice = stayTotal(stayType, date, nights, room);
   const addOnsTotal = Object.entries(addOns).reduce((s, [id, qty]) => {
     const a = ADDONS.find((x) => x.id === id); return s + (a ? a.price * qty : 0);
   }, 0);
@@ -186,9 +189,11 @@ function CheckoutInner() {
     const ci = to24h(checkInTime);
     const co = to24h(checkOutTime);
     const checkInDate = date || new Date().toISOString().slice(0, 10);
-    // If the check-out time is the same or earlier than check-in (e.g. an
-    // overnight 21-hour stay ending the next morning), it lands on the next day.
-    const checkOutDate = co <= ci ? addDays(checkInDate, 1) : checkInDate;
+    // Multi-night overnight stays check out `nights` days later. For a same-day
+    // 10h session that ends earlier than it starts, roll to the next day.
+    const checkOutDate = stayType === "10"
+      ? (co <= ci ? addDays(checkInDate, 1) : checkInDate)
+      : addDaysISO(checkInDate, nights);
 
     const addOnItems = Object.entries(addOns)
       .filter(([, q]) => q > 0)
@@ -411,8 +416,7 @@ function CheckoutInner() {
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 24 }}>
                   {([
                     { id: "gcash" as const, label: "GCash", sub: "Scan & upload proof", icon: <IcoPhone /> },
-                    { id: "bank" as const, label: "Bank Transfer", sub: "BPI / UnionBank", icon: <IcoHome /> },
-                    { id: "card" as const, label: "Credit / Debit", sub: "Visa · Mastercard", icon: <IcoCreditCard /> },
+                    { id: "bank" as const, label: "Bank Transfer", sub: "BPI", icon: <IcoHome /> },
                   ] as const).map((m) => (
                     <button key={m.id} onClick={() => setPayment({ ...payment, method: m.id })}
                       style={{ padding: 16, textAlign: "left", borderRadius: 14, border: payment.method === m.id ? "2px solid var(--ink)" : "1px solid var(--line-2)", background: "var(--white)", cursor: "pointer", color: "var(--ink)" }}>
@@ -478,7 +482,7 @@ function CheckoutInner() {
                 <ReviewBlock title="Stay" onEdit={() => router.back()}>
                   <div style={{ fontSize: 14, fontWeight: 600 }}>{room.name}</div>
                   <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>{formatDateLong(date)} · {checkInTime} → {checkOutTime}</div>
-                  <div style={{ fontSize: 13, color: "var(--muted)" }}>{stayType}-hour stay · {adults + children} guest{adults + children > 1 ? "s" : ""}</div>
+                  <div style={{ fontSize: 13, color: "var(--muted)" }}>{stayType === "10" ? "10-hour stay" : `Overnight · ${nights} night${nights > 1 ? "s" : ""}`} · {adults + children} guest{adults + children > 1 ? "s" : ""}</div>
                 </ReviewBlock>
                 {addOnsTotal > 0 && (
                   <ReviewBlock title="Add-ons" onEdit={() => setStep(1)}>
@@ -547,7 +551,7 @@ function CheckoutInner() {
                 <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "var(--ink)" }}>Guests</span><span style={{ fontWeight: 600 }}>{adults + children}</span></div>
               </div>
               <div style={{ padding: "16px 0", borderBottom: "1px solid var(--line)", fontSize: 13, display: "flex", flexDirection: "column", gap: 6 }}>
-                <PriceRow label={`${stayType}-hour stay · ${isWeekendRate ? "Weekend/Holiday" : "Weekday"}`} value={peso(basePrice)} />
+                <PriceRow label={stayType === "10" ? `10-hour stay · ${isWeekendRate ? "Weekend/Holiday" : "Weekday"}` : `Overnight · ${nights} night${nights > 1 ? "s" : ""}`} value={peso(basePrice)} />
                 {addOnsTotal > 0 && <PriceRow label="Add-ons" value={peso(addOnsTotal)} />}
               </div>
               <div style={{ padding: "16px 0 0", display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16 }}>

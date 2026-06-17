@@ -37,14 +37,30 @@ export function isWeekendOrHoliday(dateISO: string): boolean {
   return day === 0 || day === 5 || day === 6;
 }
 
+type Rates = { price10hr: number; price10hrWeekend: number; price21hr: number; price21hrWeekend: number };
+
 // Pick the correct rate for a stay type + check-in date.
 // stayType "10" = Daycation/Nightcation, anything else = Overnight (21h).
-export function pickRate(
-  stayType: string,
-  dateISO: string,
-  rates: { price10hr: number; price10hrWeekend: number; price21hr: number; price21hrWeekend: number },
-): number {
+export function pickRate(stayType: string, dateISO: string, rates: Rates): number {
   const weekend = isWeekendOrHoliday(dateISO);
   if (stayType === "10") return weekend ? rates.price10hrWeekend : rates.price10hr;
   return weekend ? rates.price21hrWeekend : rates.price21hr;
+}
+
+export function addDaysISO(iso: string, n: number): string {
+  if (!iso) return iso;
+  const d = new Date(iso + "T00:00:00");
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+// Total for a stay. Daycation/Nightcation (10h) is a single session. Overnight
+// (21h) can span multiple nights — each night is priced by its OWN date, so a
+// weekend night charges the weekend rate even within a mostly-weekday stay.
+export function stayTotal(stayType: string, checkInISO: string, nights: number, rates: Rates): number {
+  if (stayType === "10" || !checkInISO) return pickRate(stayType, checkInISO, rates);
+  const n = Math.max(1, Math.floor(nights || 1));
+  let total = 0;
+  for (let i = 0; i < n; i++) total += pickRate("21", addDaysISO(checkInISO, i), rates);
+  return total;
 }

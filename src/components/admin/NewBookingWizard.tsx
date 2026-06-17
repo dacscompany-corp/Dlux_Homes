@@ -20,7 +20,7 @@ const empty = {
   room_name: "", haven_id: "", room_rate: "",
   check_in_date: "", check_out_date: "", check_in_time: "14:00", check_out_time: "11:00",
   adults: "1", children: "0", infants: "0",
-  payment_method: "gcash" as "gcash" | "bank" | "card",
+  payment_method: "gcash" as "gcash" | "bank",
   down_payment: "",
 };
 type Form = typeof empty;
@@ -270,7 +270,7 @@ export default function NewBookingWizard({
               <div>
                 <label className={labelCls} style={labelStyle}>Payment method</label>
                 <select aria-label="Payment method" value={form.payment_method} onChange={(e) => set({ payment_method: e.target.value as Form["payment_method"] })} className={`${field} mt-1`} style={fieldStyle}>
-                  <option value="gcash">GCash</option><option value="bank">Bank transfer</option><option value="card">Card</option>
+                  <option value="gcash">GCash</option><option value="bank">BPI bank transfer</option>
                 </select>
               </div>
               <div>
