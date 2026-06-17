@@ -408,7 +408,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
             onClick={() => setShowGallery(true)}
           >
             <div key={animId} style={{ position: "absolute", inset: 0, animation: `${galleryDir === "right" ? "csRight" : "csLeft"} 0.52s cubic-bezier(.22,.85,.25,1) both` }}>
-              <Image src={room.images[galleryIdx]} alt="" fill unoptimized style={{ objectFit: "cover" }} />
+              <Image src={room.images[galleryIdx]} alt="" fill unoptimized preload={galleryIdx === 0} style={{ objectFit: "cover" }} />
             </div>
             <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(0,0,0,.6) 0%, transparent 45%)", pointerEvents: "none", zIndex: 1 }} />
             <div style={{ position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 6, zIndex: 3 }} onClick={(e) => e.stopPropagation()}>
@@ -437,9 +437,53 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
               <p style={{ fontSize: 16, lineHeight: 1.7, color: "var(--ink-2)", margin: 0 }}>{room.description}</p>
             </section>
             <style>{`
-              .rule-item { transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, border-color 0.18s ease; cursor: default; }
+              .rule-item { transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, border-color 0.18s ease; cursor: help; }
               .rule-item:hover { transform: translateX(6px); background: #fde68a !important; border-color: #f59e0b !important; box-shadow: 0 4px 16px rgba(245,158,11,0.25); }
               .rule-item:hover .rule-icon { background: #f59e0b !important; color: #fff !important; }
+              .rule-tip {
+                position: absolute;
+                left: 56px;
+                bottom: calc(100% + 10px);
+                z-index: 10;
+                width: max-content;
+                max-width: 280px;
+                padding: 11px 14px;
+                border-radius: 12px;
+                background: #2a1a08;
+                color: #fff4e0;
+                font-size: 12.5px;
+                font-weight: 500;
+                line-height: 1.45;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+                transform-origin: 24px bottom;
+                opacity: 0;
+                transform: translateY(10px) scale(0.96);
+                pointer-events: none;
+                transition: opacity 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+                  transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+              }
+              .rule-tip::after {
+                content: "";
+                position: absolute;
+                top: 100%;
+                left: 24px;
+                border: 6px solid transparent;
+                border-top-color: #2a1a08;
+              }
+              .rule-item:hover .rule-tip {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+                transition-delay: 0.08s;
+              }
+              @media (prefers-reduced-motion: reduce) {
+                .rule-tip {
+                  transition: opacity 0.15s ease;
+                  transform: none;
+                }
+                .rule-item:hover .rule-tip {
+                  transform: none;
+                }
+              }
             `}</style>
             <section style={{ padding: "28px 0", borderBottom: "1px solid var(--line)" }}>
               <h2 className="serif" style={{ fontSize: 28, fontWeight: 500, margin: "0 0 20px", letterSpacing: "-.02em" }}>Things to know</h2>
@@ -477,12 +521,19 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                     );
                     return <IcoWarning />;
                   })();
+                  const ruleNote = (() => {
+                    if (/smok|vap/i.test(h)) return "Smoking or vaping anywhere inside the unit triggers a deep-cleaning fee. Please step outside.";
+                    if (/pet|dog|cat|animal/i.test(h)) return "Sorry, no pets of any kind are allowed — including for short visits.";
+                    if (/walk.?in/i.test(h)) return "Bookings must be made and confirmed in advance. We can't accommodate walk-in guests.";
+                    return "Please review this house rule before booking.";
+                  })();
                   return (
-                    <li key={h} className="rule-item" style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 14, fontWeight: 700, color: "#7a3a00", background: "#fff4e0", border: "1.5px solid #f5c97a", borderRadius: 14, padding: "16px 20px", borderLeft: "5px solid #f59e0b" }}>
+                    <li key={h} className="rule-item" style={{ position: "relative", display: "flex", alignItems: "center", gap: 16, fontSize: 14, fontWeight: 700, color: "#7a3a00", background: "#fff4e0", border: "1.5px solid #f5c97a", borderRadius: 14, padding: "16px 20px", borderLeft: "5px solid #f59e0b" }}>
                       <span className="rule-icon" style={{ color: "#f59e0b", flexShrink: 0, display: "flex", width: 38, height: 38, borderRadius: "50%", background: "#fef3c7", alignItems: "center", justifyContent: "center", transition: "background 0.18s, color 0.18s" }}>
                         {ruleIcon}
                       </span>
                       {h}
+                      <span className="rule-tip" role="tooltip">{ruleNote}</span>
                     </li>
                   );
                 })}

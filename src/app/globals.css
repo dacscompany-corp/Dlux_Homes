@@ -169,3 +169,340 @@
     @apply font-sans;
   }
 }
+
+/* ── Stay-window cards (rooms page "Pick the window") ───────────── */
+.stay-card {
+  display: block;
+  color: var(--white);
+  opacity: 0;
+  transform: translateY(28px);
+  transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.stay-card--in {
+  opacity: 1;
+  transform: translateY(0);
+}
+.stay-card__inner {
+  position: relative;
+  overflow: hidden;
+  padding: 28px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+  transition: transform 0.32s cubic-bezier(0.16, 1, 0.3, 1),
+    background 0.32s ease, border-color 0.32s ease, box-shadow 0.32s ease;
+}
+.stay-card:hover .stay-card__inner {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--gold);
+  transform: translateY(-6px);
+  box-shadow: 0 18px 40px -16px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(212, 175, 122, 0.25);
+}
+.stay-card__sheen {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    120deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.08) 50%,
+    transparent 70%
+  );
+  transform: translateX(-120%);
+  transition: transform 0.7s ease;
+  pointer-events: none;
+}
+.stay-card:hover .stay-card__sheen {
+  transform: translateX(120%);
+}
+.stay-card__arrow {
+  display: inline-flex;
+  color: var(--gold);
+  transition: transform 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.stay-card:hover .stay-card__arrow {
+  transform: translateX(5px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .stay-card,
+  .stay-card__inner,
+  .stay-card__sheen,
+  .stay-card__arrow {
+    transition: none;
+  }
+  .stay-card {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── "About this home" editorial section ───────────────────────── */
+.about-copy {
+  opacity: 0;
+  transform: translateX(-36px);
+  transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.about-grid--in .about-copy {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.about-tag {
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.about-grid--in .about-tag {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.about-photo {
+  opacity: 0;
+  transform: translateY(40px) scale(0.96);
+  transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.4s ease;
+  box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
+}
+.about-grid--in .about-photo {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+/* Lift + soft shadow + gold ring on hover */
+.about-grid--in .about-photo:hover {
+  transform: translateY(-8px) scale(1.012);
+  box-shadow: 0 26px 50px -20px rgba(0, 0, 0, 0.5),
+    0 0 0 2px rgba(212, 175, 122, 0.45);
+}
+
+/* The image inside zooms slowly */
+.about-photo__img {
+  transition: transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.about-photo:hover .about-photo__img {
+  transform: scale(1.12);
+}
+
+/* Dark gradient overlay that fades in from the bottom on hover */
+.about-photo__overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    to top,
+    rgba(20, 14, 8, 0.45) 0%,
+    rgba(20, 14, 8, 0.12) 35%,
+    transparent 65%
+  );
+  opacity: 0;
+  transition: opacity 0.45s ease;
+  pointer-events: none;
+}
+.about-photo:hover .about-photo__overlay {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .about-copy,
+  .about-tag,
+  .about-photo,
+  .about-photo__img,
+  .about-photo__overlay {
+    transition: none;
+    opacity: 1;
+    transform: none;
+  }
+  .about-photo__overlay {
+    opacity: 0;
+  }
+}
+
+/* ── "What's inside" amenities section ─────────────────────────── */
+.amen-copy {
+  opacity: 0;
+  transform: translateX(-32px);
+  transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.amen-grid--in .amen-copy {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.amen-pack {
+  opacity: 0;
+  transform: translateX(-12px);
+  transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.amen-grid--in .amen-pack {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.amen-tile {
+  opacity: 0;
+  transform: translateY(26px);
+  transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.6s cubic-bezier(0.16, 1, 0.3, 1), background 0.3s ease;
+}
+.amen-grid--in .amen-tile {
+  opacity: 1;
+  transform: translateY(0);
+}
+/* Gentle hover on each amenity tile */
+.amen-tile:hover {
+  background: var(--bg-2) !important;
+}
+.amen-tile__icon {
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    background 0.3s ease, color 0.3s ease;
+}
+.amen-tile:hover .amen-tile__icon {
+  transform: translateY(-3px) scale(1.08);
+  background: var(--accent-deep, var(--accent-ink)) !important;
+  color: var(--white) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .amen-copy,
+  .amen-pack,
+  .amen-tile,
+  .amen-tile__icon {
+    transition: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── "Guests say" review cards ─────────────────────────────────── */
+/* Default state is fully visible — content is NEVER hidden by the
+   animation. The reveal is layered on only when the grid scrolls in. */
+.review-card {
+  opacity: 1;
+  transform: none;
+  transition: box-shadow 0.35s ease, border-color 0.35s ease,
+    transform 0.35s ease;
+  box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
+}
+.review-card:hover {
+  transform: translateY(-8px);
+  border-color: var(--accent-ink);
+  box-shadow: 0 22px 44px -22px rgba(0, 0, 0, 0.4);
+}
+/* Entrance animation only runs when the grid is in view */
+.review-grid--in .review-card {
+  animation: reviewIn 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes reviewIn {
+  from {
+    opacity: 0;
+    transform: translateY(32px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .review-grid--in .review-card {
+    animation: none;
+  }
+}
+
+/* ── Final CTA ("Ready to pause?") ─────────────────────────────── */
+/* Visible by default; the entrance only layers on when in view. */
+.cta-title,
+.cta-text,
+.cta-btn {
+  opacity: 1;
+}
+.cta-sec--in .cta-title {
+  animation: ctaUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.cta-sec--in .cta-text {
+  animation: ctaUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.12s both;
+}
+.cta-sec--in .cta-btn {
+  animation: ctaPop 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) 0.24s both;
+}
+@keyframes ctaUp {
+  from {
+    opacity: 0;
+    transform: translateY(34px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes ctaPop {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* ── Footer ────────────────────────────────────────────────────── */
+.footer-col {
+  opacity: 1;
+}
+.footer-sec--in .footer-col {
+  animation: footerUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes footerUp {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+/* Footer links nudge + color shift on hover */
+.footer-link {
+  display: inline-block;
+  cursor: pointer;
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), color 0.25s ease;
+}
+.footer-link:hover {
+  transform: translateX(4px);
+  color: var(--accent-ink) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cta-sec--in .cta-title,
+  .cta-sec--in .cta-text,
+  .cta-sec--in .cta-btn,
+  .footer-sec--in .footer-col {
+    animation: none;
+  }
+  .footer-link {
+    transition: color 0.2s ease;
+  }
+}
+
+/* Failsafe: if JS is disabled the IntersectionObserver never runs, so
+   make sure scroll-revealed CONTENT is never permanently hidden. */
+@media (scripting: none) {
+  .stay-card,
+  .about-copy,
+  .about-tag,
+  .about-photo,
+  .amen-copy,
+  .amen-pack,
+  .amen-tile,
+  .review-card {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
