@@ -1061,6 +1061,48 @@ export async function sendEmployeeWelcomeEmail(
   }
 }
 
+// Send a password-reset email with a tokenized link. Returns true if sent.
+export async function sendPasswordResetEmail(email: string, resetUrl: string): Promise<boolean> {
+  try {
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
+      console.warn("Email not configured — password reset link:", resetUrl);
+      return false;
+    }
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASSWORD },
+    });
+
+    const html = `
+      <div style="font-family:Inter,Arial,sans-serif;max-width:560px;margin:0 auto;border:1px solid #EDE3D2;border-radius:14px;overflow:hidden">
+        <div style="background:#B07848;padding:28px 30px;color:#fff">
+          <div style="font-size:22px;font-weight:700">D'Lux Homes</div>
+          <div style="font-size:13px;opacity:.9;margin-top:4px">Password reset request</div>
+        </div>
+        <div style="padding:30px;color:#1a1a1a">
+          <p style="font-size:15px;line-height:1.6;color:#5a4a3a">We received a request to reset your password. Click the button below to choose a new one. This link expires in 1 hour.</p>
+          <div style="text-align:center;margin:28px 0">
+            <a href="${resetUrl}" style="display:inline-block;background:#B07848;color:#fff;padding:13px 32px;border-radius:10px;text-decoration:none;font-weight:600;font-size:15px">Reset Password</a>
+          </div>
+          <p style="font-size:13px;color:#8B6344;line-height:1.6">If you didn't request this, you can safely ignore this email — your password won't change.</p>
+          <p style="font-size:12px;color:#B0A08F;word-break:break-all;margin-top:18px">Or paste this link into your browser:<br>${resetUrl}</p>
+        </div>
+      </div>`;
+
+    await transporter.sendMail({
+      from: `"D'Lux Homes" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: "Reset your D'Lux Homes password",
+      html,
+    });
+    console.log(`Password reset email sent to ${email}`);
+    return true;
+  } catch (error) {
+    console.error("Error sending password reset email:", error);
+    return false;
+  }
+}
+
 // Send partner welcome email using the same setup as booking emails
 export async function sendPartnerWelcomeEmail(
   email: string,

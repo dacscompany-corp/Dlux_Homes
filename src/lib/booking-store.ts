@@ -44,3 +44,25 @@ export function updateStoredBookingStatus(id: string, status: StoredBooking["sta
 export function generateBookingId(): string {
   return "BK" + Date.now().toString().slice(-10);
 }
+
+// ── "My bookings on this device" ────────────────────────────────────────────
+// Guest checkout creates real DB bookings (user_id is null — no guest auth), so
+// we keep a lightweight list of the booking ids this device created. /my-bookings
+// reads these ids and fetches the live records from the API.
+const MY_IDS_KEY = "dlux_my_booking_ids";
+
+export function getMyBookingIds(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    return JSON.parse(localStorage.getItem(MY_IDS_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+export function addMyBookingId(id: string): void {
+  if (typeof window === "undefined" || !id) return;
+  const ids = getMyBookingIds().filter((x) => x !== id);
+  ids.unshift(id);
+  localStorage.setItem(MY_IDS_KEY, JSON.stringify(ids.slice(0, 50)));
+}

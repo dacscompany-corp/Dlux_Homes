@@ -87,7 +87,7 @@ export async function GET() {
 // File uploads:
 //   - valid_id_data_url   (string, data URL) + valid_id_type (string)
 //   - contract_data_url   (string, data URL)
-// Uploaded files go to Cloudinary under staycation-haven/partner-docs/<partner_id>/.
+// Uploaded files go to Cloudinary under dlux-homes/partner-docs/<partner_id>/.
 //
 // After EVERY update we recompute docs_submitted_at if the partner has uploaded
 // both required documents AND filled the required payout/business info.
@@ -99,7 +99,7 @@ export async function PATCH(req: NextRequest) {
     }
 
     const body = await req.json();
-    const folder = `staycation-haven/partner-docs/${partnerId}`;
+    const folder = `dlux-homes/partner-docs/${partnerId}`;
 
     // Upload new ID if a data URL was supplied
     let validIdUrl: string | null = null;

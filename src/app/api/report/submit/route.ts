@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
             // Upload to Cloudinary using the utility function
             const uploadResult = await upload_image_from_form(
               file,
-              `staycation-haven/reports/${newReport.report_id}`
+              `dlux-homes/reports/${newReport.report_id}`
             );
             
             // Store in database

@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { getStoredBookings } from "@/lib/booking-store";
+import { getMyBookingIds } from "@/lib/booking-store";
 import type { StoredBooking } from "@/lib/booking-store";
 
 function peso(n: number) { return "₱" + n.toLocaleString("en-PH"); }
@@ -72,7 +72,44 @@ export default function MyBookingsPage() {
   const [tab, setTab] = useState<"upcoming" | "past">("upcoming");
 
   useEffect(() => {
-    setBookings(getStoredBookings());
+    const ids = getMyBookingIds();
+    if (!ids.length) return;
+    let active = true;
+    Promise.all(
+      ids.map((id) =>
+        fetch(`/api/bookings/${encodeURIComponent(id)}`)
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null)
+      )
+    ).then((results) => {
+      if (!active) return;
+      const mapped = results
+        .map((j) => j?.data)
+        .filter(Boolean)
+        .map((d: Record<string, unknown>) => ({
+          id: String(d.booking_id ?? ""),
+          roomId: "",
+          roomName: String(d.room_name ?? ""),
+          checkIn: String(d.check_in_date ?? "").slice(0, 10),
+          checkOut: String(d.check_out_date ?? "").slice(0, 10),
+          stayType: "",
+          guests: { adults: Number(d.adults ?? 0), children: Number(d.children ?? 0), infants: Number(d.infants ?? 0) },
+          status: String(d.status ?? "pending") as StoredBooking["status"],
+          totalAmount: Number(d.total_amount ?? 0),
+          addOns: [],
+          createdAt: String(d.created_at ?? ""),
+          guestInfo: {
+            firstName: String(d.guest_first_name ?? ""),
+            lastName: String(d.guest_last_name ?? ""),
+            email: String(d.guest_email ?? ""),
+            phone: String(d.guest_phone ?? ""),
+          },
+          checkInTime: (d.check_in_time as string) ?? undefined,
+          checkOutTime: (d.check_out_time as string) ?? undefined,
+        }) as StoredBooking & { checkInTime?: string; checkOutTime?: string });
+      setBookings(mapped);
+    });
+    return () => { active = false; };
   }, []);
 
   const upcoming = bookings.filter((b) => ["pending", "confirmed", "checked-in"].includes(b.status));

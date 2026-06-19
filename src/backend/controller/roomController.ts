@@ -136,9 +136,9 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
 
     let havenImageUrls: any[] = [];
     if (haven_images && haven_images.length > 0) {
-      havenImageUrls = await Promise.all(
+      const uploaded = await Promise.all(
         haven_images.map(async (image: string, index: number) => {
-          const result = await upload_file(image, "staycation-haven/havens");
+          const result = await upload_file(image, "dlux-homes/havens");
           return {
             image_url: result.url,
             public_id: result.public_id,
@@ -146,6 +146,8 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
           };
         })
       );
+      // Drop any uploads that were skipped (Cloudinary not configured / failed).
+      havenImageUrls = uploaded.filter((img) => img.image_url);
     }
 
     let photoTourUrls: any = {};
@@ -156,7 +158,7 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
             images.map(async (image: string, index: number) => {
               const result = await upload_file(
                 image,
-                `staycation-haven/photo-tours/${category}`
+                `dlux-homes/photo-tours/${category}`
               );
               return {
                 category,
@@ -166,7 +168,9 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
               };
             })
           );
-          photoTourUrls[category] = categoryUrls;
+          // Keep only successful uploads (skip ones Cloudinary couldn't store).
+          const kept = categoryUrls.filter((img) => img.image_url);
+          if (kept.length) photoTourUrls[category] = kept;
         }
       }
     }
@@ -817,7 +821,7 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
     if (haven_images && haven_images.length > 0) {
       const havenImageUrls = await Promise.all(
         haven_images.map(async (image: string, index: number) => {
-          const result = await upload_file(image, "staycation-haven/havens");
+          const result = await upload_file(image, "dlux-homes/havens");
           return {
             image_url: result.url,
             public_id: result.public_id,
@@ -844,7 +848,7 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
             images.map(async (image: string, index: number) => {
               const result = await upload_file(
                 image,
-                `staycation-haven/photo-tours/${category}`
+                `dlux-homes/photo-tours/${category}`
               );
               return {
                 category,

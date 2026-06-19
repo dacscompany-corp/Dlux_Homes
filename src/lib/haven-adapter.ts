@@ -41,10 +41,13 @@ export function havenToRoom(h: Record<string, unknown>): Room & RoomExtras {
     capacity: Number(h.capacity ?? 2),
     rating: Number(h.rating ?? 4.9),
     reviewCount: Number(h.review_count ?? 0),
-    price10hr: Number(h.ten_hour_rate ?? 0),
-    price10hrWeekend: Number(h.weekend_rate ?? h.ten_hour_rate ?? 0),
-    price21hr: Number(h.weekday_rate ?? 0),
-    price21hrWeekend: Number(h.weekend_rate ?? 0),
+    // D'Lux rate model (4 distinct rates). The havens table has no dedicated
+    // 10h-weekend column, so we reuse the otherwise-unused `six_hour_rate`
+    // column to hold the Daycation/Nightcation weekend rate.
+    price10hr: Number(h.ten_hour_rate ?? 0),                                   // 10h weekday
+    price10hrWeekend: Number(h.six_hour_rate ?? h.ten_hour_rate ?? 0),         // 10h weekend/holiday
+    price21hr: Number(h.weekday_rate ?? 0),                                    // 21h weekday
+    price21hrWeekend: Number(h.weekend_rate ?? h.weekday_rate ?? 0),           // 21h weekend/holiday
     additionalPaxFee: Number(h.extra_pax_fee ?? 150),
     basePax: Number(h.base_pax ?? 2),
     maxPax: Number(h.capacity ?? 4),

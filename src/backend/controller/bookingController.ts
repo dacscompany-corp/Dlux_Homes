@@ -109,7 +109,7 @@ export const updateBookingDetails = async (
     if (valid_id) {
       const uploadResult = await upload_file(
         valid_id,
-        "staycation-haven/valid-ids",
+        "dlux-homes/valid-ids",
       );
       mainValidIdUrl = uploadResult.url;
     } else if (typeof valid_id_url === "string" && valid_id_url.trim()) {
@@ -134,7 +134,7 @@ export const updateBookingDetails = async (
         if (g?.validId) {
           const uploadResult = await upload_file(
             g.validId,
-            "staycation-haven/valid-ids",
+            "dlux-homes/valid-ids",
           );
           guestIdUrl = uploadResult.url;
         } else if (
@@ -186,7 +186,7 @@ export const updateBookingDetails = async (
     if (payment_proof) {
       const uploadResult = await upload_file(
         payment_proof,
-        "staycation-haven/payment-proofs",
+        "dlux-homes/payment-proofs",
       );
       paymentProofUrl = uploadResult.url;
     }
@@ -420,22 +420,38 @@ export const createBooking = async (
     // --- GENERAL ROOM AVAILABILITY CHECK (time-aware) ---
     // '00:00' checkout means end-of-day midnight, so treat it as the start of the next day.
     // Only active bookings block a new one — completed, checked-out, rejected, cancelled, declined do not.
+    // Time-aware availability WITH a cleaning turnover buffer. After every stay
+    // the unit is unavailable for cleaning before the next guest can check in:
+    //   21-hour overnight (≥20h) → 3 hours,  shorter stays (e.g. 10h) → 2 hours.
+    // The buffer is applied to BOTH bookings so neither can butt up against the
+    // other's cleaning window (works for the preset windows AND custom times).
     const availabilityCheckQuery = `
+      WITH n AS (
+        SELECT
+          ($2::DATE + $3::TIME)::TIMESTAMP AS ns,
+          (CASE WHEN $5 = '00:00'
+                THEN ($4::DATE + INTERVAL '1 day')::TIMESTAMP
+                ELSE ($4::DATE + $5::TIME)::TIMESTAMP END) AS ne
+      )
       SELECT b.id, b.booking_id
-      FROM booking b
+      FROM booking b, n
       WHERE b.room_name = $1
         AND b.status IN ('pending', 'approved', 'confirmed', 'checked-in', 'on-going')
-        AND (b.check_in_date::DATE + b.check_in_time::TIME) <
-            CASE WHEN $5 = '00:00'
-                 THEN ($4::DATE + INTERVAL '1 day')::TIMESTAMP
-                 ELSE ($4::DATE + $5::TIME)::TIMESTAMP
-            END
+        -- existing check-in  <  new check-out + new cleaning buffer
+        AND (b.check_in_date::DATE + b.check_in_time::TIME)::TIMESTAMP <
+            n.ne + (CASE WHEN (n.ne - n.ns) >= INTERVAL '20 hours' THEN INTERVAL '3 hours' ELSE INTERVAL '2 hours' END)
+        -- existing check-out + existing cleaning buffer  >  new check-in
         AND (
-            CASE WHEN b.check_out_time = '00:00'
-                 THEN (b.check_out_date::DATE + INTERVAL '1 day')::TIMESTAMP
-                 ELSE (b.check_out_date::DATE + b.check_out_time::TIME)::TIMESTAMP
-            END
-        ) > ($2::DATE + $3::TIME)::TIMESTAMP
+          (CASE WHEN b.check_out_time = '00:00'
+                THEN (b.check_out_date::DATE + INTERVAL '1 day')::TIMESTAMP
+                ELSE (b.check_out_date::DATE + b.check_out_time::TIME)::TIMESTAMP END)
+          + (CASE WHEN (
+                (CASE WHEN b.check_out_time = '00:00'
+                      THEN (b.check_out_date::DATE + INTERVAL '1 day')::TIMESTAMP
+                      ELSE (b.check_out_date::DATE + b.check_out_time::TIME)::TIMESTAMP END)
+                - (b.check_in_date::DATE + b.check_in_time::TIME)::TIMESTAMP
+              ) >= INTERVAL '20 hours' THEN INTERVAL '3 hours' ELSE INTERVAL '2 hours' END)
+        ) > n.ns
       LIMIT 1
     `;
 
@@ -454,7 +470,7 @@ export const createBooking = async (
       return NextResponse.json(
         {
           success: false,
-          error: "This room is already booked during the selected time slot. Please choose a different date or time.",
+          error: "This room isn't available for the selected time — it overlaps another booking or its cleaning turnover (3 hrs after an overnight stay, 2 hrs otherwise). Please choose a different date or time.",
         },
         { status: 400 }
       );
@@ -473,7 +489,6 @@ export const createBooking = async (
         `SELECT id, from_date, to_date, block_type, reason
          FROM blocked_dates
          WHERE haven_id = $1
-           AND status = 'active'
            AND daterange(from_date, to_date, '[]')
                && daterange($2::date, $3::date, '[)')
          LIMIT 1`,
@@ -585,14 +600,22 @@ export const createBooking = async (
     }
     // --- END CHECK ---
 
-    // Upload payment proof first to get the URL for calendar event
+    // Upload payment proof first to get the URL for calendar event.
+    // Non-fatal: a failed/misconfigured image upload must not roll back the booking.
     let paymentProofUrl = null;
     if (payment_proof) {
-      const uploadResult = await upload_file(
-        payment_proof,
-        "staycation-haven/payment-proofs",
-      );
-      paymentProofUrl = uploadResult.url;
+      try {
+        const uploadResult = await upload_file(
+          payment_proof,
+          "dlux-homes/payment-proofs",
+        );
+        paymentProofUrl = uploadResult.url;
+      } catch (err: unknown) {
+        console.error(
+          "[booking] payment proof upload failed (continuing without it):",
+          err instanceof Error ? err.message : err,
+        );
+      }
     }
 
     // Create Google Calendar event with payment proof URL
@@ -663,7 +686,7 @@ export const createBooking = async (
       try {
         const uploadResult = await upload_file(
           valid_id,
-          "staycation-haven/valid-ids",
+          "dlux-homes/valid-ids",
         );
         validIdUrl = uploadResult.url;
       } catch (err: unknown) {
@@ -717,7 +740,7 @@ export const createBooking = async (
         if (guest.validId) {
           const uploadResult = await upload_file(
             guest.validId,
-            "staycation-haven/valid-ids",
+            "dlux-homes/valid-ids",
           );
           guestIdUrl = uploadResult.url;
         }
@@ -1274,10 +1297,10 @@ export const getBookingById = async (
       LEFT JOIN haven_images hi ON h.uuid_id = hi.haven_id
       LEFT JOIN booking_payments bp ON b.id = bp.booking_id
       LEFT JOIN booking_guests bg ON bg.id = (
-        SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY created_at ASC LIMIT 1
+        SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY id ASC LIMIT 1
       )
       LEFT JOIN booking_security_deposits bd ON b.id = bd.booking_id
-      WHERE b.id = $1
+      WHERE (b.id::text = $1 OR b.booking_id = $1)
       GROUP BY b.id, h.tower, h.uuid_id, bp.total_amount, bp.down_payment, bp.remaining_balance, bp.payment_method, bp.payment_proof_url, bp.room_rate, bp.add_ons_total, bg.first_name, bg.last_name, bg.email, bg.phone, bg.valid_id_url, bg.age, bg.gender, bd.amount
       LIMIT 1
     `;
@@ -1292,13 +1315,17 @@ export const getBookingById = async (
 
     const booking = bookingResult.rows[0];
 
+    // Secondary lookups key on the booking UUID (booking.id), which the main
+    // query resolved — not the URL param (which may be the friendly booking_id).
+    const bookingUuid = booking.id;
+
     // Get all guests
     const guestsQuery = `
       SELECT * FROM booking_guests
       WHERE booking_id = $1
-      ORDER BY created_at ASC
+      ORDER BY id ASC
     `;
-    const guestsResult = await pool.query(guestsQuery, [id]);
+    const guestsResult = await pool.query(guestsQuery, [bookingUuid]);
 
     // Get payment info
     const paymentQuery = `
@@ -1306,7 +1333,7 @@ export const getBookingById = async (
       WHERE booking_id = $1
       LIMIT 1
     `;
-    const paymentResult = await pool.query(paymentQuery, [id]);
+    const paymentResult = await pool.query(paymentQuery, [bookingUuid]);
 
     // Get security deposit
     const depositQuery = `
@@ -1314,7 +1341,7 @@ export const getBookingById = async (
       WHERE booking_id = $1
       LIMIT 1
     `;
-    const depositResult = await pool.query(depositQuery, [id]);
+    const depositResult = await pool.query(depositQuery, [bookingUuid]);
 
     // Get add-ons
     const addOnsQuery = `
@@ -1322,7 +1349,7 @@ export const getBookingById = async (
       WHERE booking_id = $1
       ORDER BY name ASC
     `;
-    const addOnsResult = await pool.query(addOnsQuery, [id]);
+    const addOnsResult = await pool.query(addOnsQuery, [bookingUuid]);
 
     // Get cleaning info
     const cleaningQuery = `
@@ -1330,7 +1357,7 @@ export const getBookingById = async (
       WHERE booking_id = $1
       LIMIT 1
     `;
-    const cleaningResult = await pool.query(cleaningQuery, [id]);
+    const cleaningResult = await pool.query(cleaningQuery, [bookingUuid]);
 
     // Combine all data — always use guestsResult.rows[0] as the authoritative main guest
     const mainGuest = guestsResult.rows[0] || null;

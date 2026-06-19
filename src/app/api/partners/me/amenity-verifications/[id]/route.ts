@@ -54,7 +54,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     for (const item of newMediaBase64) {
       if (!item?.data) continue;
       try {
-        const folder = `staycation-haven/amenity-verifications/${row.haven_id}`;
+        const folder = `dlux-homes/amenity-verifications/${row.haven_id}`;
         const uploaded = await upload_file(item.data, folder);
         media.push({
           url: uploaded.url,

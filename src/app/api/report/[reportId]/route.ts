@@ -122,7 +122,7 @@ export async function PATCH(
           try {
             const uploadResult = await upload_image_from_form(
               imageFile,
-              `staycation-haven/reports/${reportId}`
+              `dlux-homes/reports/${reportId}`
             );
             
             if (uploadResult?.public_id && uploadResult?.url) {

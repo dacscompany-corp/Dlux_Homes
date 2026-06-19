@@ -13,7 +13,7 @@ import { useGetCleaningTasksQuery, useStartCleaningMutation, useCompleteCleaning
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   LayoutDashboard, ClipboardList, MapPin, CheckSquare, AlertTriangle,
-  Bell, Menu, X, LogOut, ChevronRight, Clock, CheckCircle2, Circle,
+  Bell, Menu, X, LogOut, Clock, CheckCircle2, Circle,
   AlertCircle, Building2, MessageSquare, User, CalendarDays, BookOpen,
   Camera, Phone, Mail, Shield, Star, ChevronDown,
 } from "lucide-react";
@@ -157,8 +157,14 @@ export default function CleanerDashboard() {
   const completedCount  = checklist.filter((i) => i.done).length;
   const progressPercent = Math.round((completedCount / checklist.length) * 100);
 
+  const [reportSubmitted, setReportSubmitted] = useState(false);
+  const submitChecklistReport = () => {
+    setReportSubmitted(true);
+    toast.success("Cleaning report submitted — room marked ready");
+  };
+
   return (
-    <div className="min-h-screen" style={{ backgroundColor: "#ffffff" }}>
+    <div className="min-h-screen" style={{ backgroundColor: "#ffffff", zoom: "1.1" }}>
       {sidebarOpen && (
         <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setSidebarOpen(false)} />
       )}
@@ -192,13 +198,13 @@ export default function CleanerDashboard() {
             return (
               <button key={item.label}
                 onClick={() => { setActiveNav(item.label); setSidebarOpen(false); }}
-                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm font-medium cursor-pointer"
-                style={{ backgroundColor: isActive ? "#B07848" : "transparent", color: isActive ? "#1F160E" : "#A89080" }}
-                onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "#3a2510"; }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm cursor-pointer"
+                style={{ backgroundColor: isActive ? "#B0784816" : "transparent", color: isActive ? "#E6CFA6" : "#A89080", fontWeight: isActive ? 600 : 500 }}
+                onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "#2f2114"; }}
                 onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}>
-                <Icon className="w-4 h-4 flex-shrink-0" />
+                <Icon className="w-[18px] h-[18px] flex-shrink-0" strokeWidth={isActive ? 2 : 1.5} style={{ color: isActive ? "#D4A96A" : "#8C7660" }} />
                 {item.label}
-                {isActive && <ChevronRight className="w-3.5 h-3.5 ml-auto" />}
+                {isActive && <span className="ml-auto w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#D4A96A" }} />}
               </button>
             );
           })}
@@ -223,7 +229,7 @@ export default function CleanerDashboard() {
       <div className="lg:pl-64 flex flex-col min-h-screen">
         {/* Header */}
         <header className="px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between gap-4 sticky top-0 z-30 border-b"
-          style={{ backgroundColor: "#ffffff", borderColor: "#E0CEB8" }}>
+          style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }}>
           <div className="flex items-center gap-4">
             <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-2 rounded-xl cursor-pointer" style={{ color: "#8B6344" }}>
               <Menu className="w-5 h-5" />
@@ -234,7 +240,7 @@ export default function CleanerDashboard() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button className="relative p-2 rounded-xl cursor-pointer" style={{ color: "#8B6344" }}>
+            <button onClick={() => setActiveNav("Notifications")} title="Notifications" className="relative p-2 rounded-xl cursor-pointer" style={{ color: "#8B6344" }}>
               <Bell className="w-5 h-5" />
               <span className="absolute top-1.5 right-1.5 w-3.5 h-3.5 bg-red-500 rounded-full flex items-center justify-center">
                 <span className="text-white text-xs font-bold leading-none">{notifications.filter(n=>!n.read).length}</span>
@@ -258,9 +264,9 @@ export default function CleanerDashboard() {
               ].map((card) => {
                 const Icon = card.icon;
                 return (
-                  <div key={card.label} className="rounded-2xl border p-4 text-center" style={{ backgroundColor: "#ffffff", borderColor: "#E0CEB8" }}>
+                  <div key={card.label} className="rounded-2xl border p-4 text-center" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }}>
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-2" style={{ backgroundColor: card.iconBg }}>
-                      <Icon className="w-5 h-5" style={{ color: card.iconColor }} />
+                      <Icon className="w-5 h-5" strokeWidth={1.75} style={{ color: card.iconColor }} />
                     </div>
                     <p className="text-2xl font-bold" style={{ color: "#1a1a1a" }}>{card.value}</p>
                     <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{card.label}</p>
@@ -309,7 +315,7 @@ export default function CleanerDashboard() {
                   <h2 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>Cleaning Checklist</h2>
                   <button onClick={() => setActiveNav("Cleaning Checklist")} className="text-sm font-medium cursor-pointer" style={{ color: "#B07848" }}>View Full →</button>
                 </div>
-                <div className="rounded-2xl border p-5 mb-4" style={{ borderColor: "#E0CEB8" }}>
+                <div className="rounded-2xl border p-5 mb-4" style={{ borderColor: "#EDE3D2" }}>
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm font-medium" style={{ color: "#5a4a3a" }}>Overall Progress</span>
                     <span className="text-sm font-bold" style={{ color: "#B07848" }}>{progressPercent}%</span>
@@ -319,7 +325,7 @@ export default function CleanerDashboard() {
                   </div>
                   <p className="text-xs mt-2" style={{ color: "#8B6344" }}>{completedCount} of {checklist.length} tasks completed</p>
                 </div>
-                <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#E0CEB8" }}>
+                <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#EDE3D2" }}>
                   {checklist.slice(0,4).map((item, idx) => (
                     <label key={item.id} className="flex items-center gap-4 px-5 py-3.5 cursor-pointer transition-colors"
                       style={{ borderTop: idx > 0 ? "1px solid #F7F0E3" : "none" }}
@@ -377,7 +383,7 @@ export default function CleanerDashboard() {
                       <Clock className="w-4 h-4" style={{ color: "#B07848" }} />{a.timeSlot}
                     </div>
                     {a.notes && (
-                      <div className="rounded-xl p-3 mb-3 border" style={{ backgroundColor: "#F7F0E3", borderColor: "#E0CEB8" }}>
+                      <div className="rounded-xl p-3 mb-3 border" style={{ backgroundColor: "#F7F0E3", borderColor: "#EDE3D2" }}>
                         <p className="text-xs" style={{ color: "#6b5040" }}>{a.notes}</p>
                       </div>
                     )}
@@ -402,7 +408,7 @@ export default function CleanerDashboard() {
           {/* ── Property Location ── */}
           {activeNav === "Property Location" && (
             <div className="space-y-4">
-              <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#E0CEB8" }}>
+              <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#EDE3D2" }}>
                 {/* Map placeholder */}
                 <div className="relative flex items-center justify-center" style={{ height: "320px", backgroundColor: "#f0ebe3", backgroundImage: "repeating-linear-gradient(0deg,#E0CEB820 0px,#E0CEB820 1px,transparent 1px,transparent 40px),repeating-linear-gradient(90deg,#E0CEB820 0px,#E0CEB820 1px,transparent 1px,transparent 40px)" }}>
                   <div className="text-center">
@@ -411,7 +417,9 @@ export default function CleanerDashboard() {
                     </div>
                     <p className="font-bold" style={{ color: "#1a1a1a" }}>D&apos;Lux Homes — Tower 4 Grass Residences</p>
                     <p className="text-sm mt-1" style={{ color: "#8B6344" }}>Grass Residences, SM North EDSA, Quezon City</p>
-                    <button className="mt-3 px-4 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer" style={{ backgroundColor: "#B07848" }}>
+                    <button
+                      onClick={() => window.open("https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent("Grass Residences SM North EDSA Quezon City"), "_blank", "noopener")}
+                      className="mt-3 px-4 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer" style={{ backgroundColor: "#B07848" }}>
                       Open in Google Maps
                     </button>
                   </div>
@@ -424,7 +432,7 @@ export default function CleanerDashboard() {
                   { label: "Lobby / CSR",   address: "Ground Floor — Reception & CSR Desk",                   color: "#7c3aed", bg: "#ede9fe" },
                   { label: "Amenities",     address: "Pool · Gym · Basketball Court · Kids Playground",       color: "#0d9488", bg: "#ccfbf1" },
                 ].map((loc) => (
-                  <div key={loc.label} className="rounded-2xl border p-4 flex items-center gap-4" style={{ borderColor: "#E0CEB8" }}>
+                  <div key={loc.label} className="rounded-2xl border p-4 flex items-center gap-4" style={{ borderColor: "#EDE3D2" }}>
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: loc.bg }}>
                       <Building2 className="w-5 h-5" style={{ color: loc.color }} />
                     </div>
@@ -447,7 +455,7 @@ export default function CleanerDashboard() {
                   Azure Haven Suite
                 </span>
               </div>
-              <div className="rounded-2xl border p-5 mb-4" style={{ borderColor: "#E0CEB8" }}>
+              <div className="rounded-2xl border p-5 mb-4" style={{ borderColor: "#EDE3D2" }}>
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm font-medium" style={{ color: "#5a4a3a" }}>Overall Progress</span>
                   <span className="text-sm font-bold" style={{ color: "#B07848" }}>{progressPercent}%</span>
@@ -457,7 +465,7 @@ export default function CleanerDashboard() {
                 </div>
                 <p className="text-xs mt-2" style={{ color: "#8B6344" }}>{completedCount} of {checklist.length} tasks completed</p>
               </div>
-              <div className="rounded-2xl border overflow-hidden mb-4" style={{ borderColor: "#E0CEB8" }}>
+              <div className="rounded-2xl border overflow-hidden mb-4" style={{ borderColor: "#EDE3D2" }}>
                 {checklist.map((item, idx) => (
                   <label key={item.id} className="flex items-center gap-4 px-5 py-3.5 cursor-pointer transition-colors"
                     style={{ borderTop: idx > 0 ? "1px solid #F7F0E3" : "none" }}
@@ -478,7 +486,11 @@ export default function CleanerDashboard() {
                   <CheckCircle2 className="w-8 h-8 mx-auto mb-2" style={{ color: "#059669" }} />
                   <p className="font-bold" style={{ color: "#065f46" }}>All tasks completed!</p>
                   <p className="text-sm mt-0.5" style={{ color: "#059669" }}>Room is ready for the next guest</p>
-                  <button className="mt-3 px-5 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer" style={{ backgroundColor: "#059669" }}>Submit Report</button>
+                  <button
+                    onClick={submitChecklistReport}
+                    disabled={reportSubmitted}
+                    className="mt-3 px-5 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer disabled:opacity-60"
+                    style={{ backgroundColor: "#059669" }}>{reportSubmitted ? "Report Submitted ✓" : "Submit Report"}</button>
                 </div>
               ) : (
                 <p className="text-xs text-center" style={{ color: "#D4BFA0" }}>Complete all tasks before submitting the report</p>
@@ -515,7 +527,7 @@ export default function CleanerDashboard() {
                           <select value={issueForm[field.field as keyof typeof issueForm]}
                             onChange={(e) => setIssueForm(prev => ({ ...prev, [field.field]: e.target.value }))}
                             className="w-full appearance-none rounded-2xl border px-4 py-3 text-sm outline-none pr-10 cursor-pointer"
-                            style={{ borderColor: "#E0CEB8", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
+                            style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
                             <option value="">Select {field.label}</option>
                             {field.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                           </select>
@@ -526,7 +538,7 @@ export default function CleanerDashboard() {
                           value={issueForm[field.field as keyof typeof issueForm]}
                           onChange={(e) => setIssueForm(prev => ({ ...prev, [field.field]: e.target.value }))}
                           className="w-full rounded-2xl border px-4 py-3 text-sm outline-none"
-                          style={{ borderColor: "#E0CEB8", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                          style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
                       )}
                     </div>
                   ))}
@@ -536,7 +548,7 @@ export default function CleanerDashboard() {
                       value={issueForm.description}
                       onChange={(e) => setIssueForm(prev => ({ ...prev, description: e.target.value }))}
                       className="w-full rounded-2xl border px-4 py-3 text-sm outline-none resize-none"
-                      style={{ borderColor: "#E0CEB8", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                      style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
                   </div>
                   <div className="rounded-xl border border-dashed p-4 text-center cursor-pointer" style={{ borderColor: "#D4BFA0", backgroundColor: "#F7F0E3" }}>
                     <Camera className="w-5 h-5 mx-auto mb-1.5" style={{ color: "#B07848" }} />
@@ -574,7 +586,7 @@ export default function CleanerDashboard() {
                     onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
                     onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = !n.read ? "#FDF8F3" : "#ffffff"}>
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: ic.bg }}>
-                      <Icon className="w-5 h-5" style={{ color: ic.color }} />
+                      <Icon className="w-5 h-5" strokeWidth={1.75} style={{ color: ic.color }} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2 mb-0.5">
@@ -597,8 +609,8 @@ export default function CleanerDashboard() {
             <div className="space-y-4">
               <h2 className="font-bold text-lg mb-2" style={{ color: "#1a1a1a" }}>My Schedule</h2>
               {scheduleData.map((day) => (
-                <div key={day.date} className="rounded-2xl border overflow-hidden" style={{ borderColor: "#E0CEB8" }}>
-                  <div className="px-5 py-3 border-b" style={{ backgroundColor: "#F7F0E3", borderColor: "#E0CEB8" }}>
+                <div key={day.date} className="rounded-2xl border overflow-hidden" style={{ borderColor: "#EDE3D2" }}>
+                  <div className="px-5 py-3 border-b" style={{ backgroundColor: "#F7F0E3", borderColor: "#EDE3D2" }}>
                     <p className="font-bold text-sm" style={{ color: "#B07848" }}>{day.date}</p>
                   </div>
                   <div className="divide-y" style={{ borderColor: "#F7F0E3" }}>
@@ -627,11 +639,11 @@ export default function CleanerDashboard() {
                 {guideTopics.map((topic) => {
                   const Icon = topic.icon;
                   return (
-                    <div key={topic.title} className="rounded-2xl border p-5 cursor-pointer transition-shadow hover:shadow-md" style={{ borderColor: "#E0CEB8" }}
+                    <div key={topic.title} className="rounded-2xl border p-5 cursor-pointer transition-shadow hover:shadow-md" style={{ borderColor: "#EDE3D2" }}
                       onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
                       onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
                       <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-3" style={{ backgroundColor: "#F7F0E3" }}>
-                        <Icon className="w-5 h-5" style={{ color: "#B07848" }} />
+                        <Icon className="w-5 h-5" strokeWidth={1.75} style={{ color: "#B07848" }} />
                       </div>
                       <p className="font-bold text-sm mb-1" style={{ color: "#1a1a1a" }}>{topic.title}</p>
                       <p className="text-xs" style={{ color: "#8B6344" }}>{topic.desc}</p>
@@ -676,7 +688,7 @@ export default function CleanerDashboard() {
           {activeNav === "Profile" && (
             <div className="max-w-lg">
               <h2 className="font-bold text-lg mb-6" style={{ color: "#1a1a1a" }}>My Profile</h2>
-              <div className="rounded-2xl border p-6 mb-4" style={{ borderColor: "#E0CEB8" }}>
+              <div className="rounded-2xl border p-6 mb-4" style={{ borderColor: "#EDE3D2" }}>
                 <div className="flex items-center gap-4 mb-6">
                   <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-lg font-bold" style={{ backgroundColor: "#D4A96A", color: "#2C1F14" }}>CL</div>
                   <div>
@@ -708,6 +720,7 @@ export default function CleanerDashboard() {
               </div>
               <button className="w-full py-3 rounded-2xl text-sm font-semibold border cursor-pointer transition-colors"
                 style={{ color: "#B07848", borderColor: "#D4BFA0", backgroundColor: "#F7F0E3" }}
+                onClick={() => toast("Your profile is managed by the Owner. Contact them to update your details.", { icon: "ℹ️" })}
                 onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#EDE0CE"}
                 onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}>
                 Edit Profile

@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
 
     const uploadResult = await upload_file(
       dataUrl,
-      "staycation-haven/cleaning-checklist-photos",
+      "dlux-homes/cleaning-checklist-photos",
     );
 
     await pool.query(

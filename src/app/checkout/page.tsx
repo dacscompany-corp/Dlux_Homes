@@ -6,9 +6,10 @@ import Image from "next/image";
 import { useSearchParams, useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import { mockRooms } from "@/lib/mock-data";
-import { generateBookingId } from "@/lib/booking-store";
+import { generateBookingId, addMyBookingId } from "@/lib/booking-store";
 import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
 import { havenToRoom } from "@/lib/haven-adapter";
+import { stayTotal, isWeekendOrHoliday, addDaysISO } from "@/lib/pricing";
 
 // ── Helpers ────────────────────────────────────────────────────
 function peso(n: number) { return "₱" + n.toLocaleString("en-PH"); }
@@ -28,6 +29,16 @@ function addDays(iso: string, n: number): string {
   const d = new Date(iso + "T00:00:00");
   d.setDate(d.getDate() + n);
   return d.toISOString().slice(0, 10);
+}
+// Read a File as a base64 data URL — sent to the booking API, which uploads it
+// to Cloudinary when configured (otherwise it's skipped gracefully).
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
 function formatDate(iso: string) {
@@ -68,8 +79,8 @@ const ADDONS = [
 
 const STEPS = ["Our details", "Add-ons", "Review", "Payment"];
 
-type Info = { firstName: string; lastName: string; age: string; gender: string; email: string; phone: string; facebook: string; notes: string; validIdName: string | null };
-type Payment = { method: "gcash" | "bank" | "card"; proofName: string | null; idName: string | null; cardNum: string; cardName: string; cardExpiry: string; cardCvc: string };
+type Info = { firstName: string; lastName: string; age: string; gender: string; email: string; phone: string; facebook: string; notes: string; validIdName: string | null; validIdData: string | null };
+type Payment = { method: "gcash" | "bank"; proofName: string | null; idName: string | null; proofData: string | null; idData: string | null };
 type AddOns = Record<string, number>;
 
 function FieldLabel({ label, children, span }: { label: string; children: React.ReactNode; span?: boolean }) {
@@ -85,12 +96,12 @@ const inputStyle: React.CSSProperties = {
   width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid var(--line-2)", fontSize: 14, background: "var(--white)", color: "var(--ink)", fontFamily: "inherit", outline: "none", boxSizing: "border-box",
 };
 
-function UploadField({ label, sub, value, onChange }: { label: string; sub: string; value: string | null; onChange: (name: string) => void }) {
+function UploadField({ label, sub, value, onChange }: { label: string; sub: string; value: string | null; onChange: (name: string, data: string) => void }) {
   const ref = useRef<HTMLInputElement>(null);
   return (
     <div>
       <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--ink)", marginBottom: 8 }}>{label}</div>
-      <input ref={ref} type="file" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) onChange(f.name); }} />
+      <input ref={ref} type="file" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) fileToBase64(f).then((data) => onChange(f.name, data)); }} />
       <button onClick={() => ref.current?.click()}
         style={{ width: "100%", padding: 20, borderRadius: 14, border: value ? "1px solid var(--dlux-accent)" : "1px dashed var(--line-2)", background: value ? "rgba(176,120,72,.06)" : "var(--white)", display: "flex", alignItems: "center", gap: 12, textAlign: "left", cursor: "pointer" }}>
         <div style={{ width: 40, height: 40, borderRadius: 10, background: value ? "var(--dlux-accent)" : "var(--bg-2)", display: "grid", placeItems: "center", color: value ? "var(--white)" : "var(--ink-2)" }}>
@@ -130,6 +141,8 @@ function CheckoutInner() {
   const adults = Number(sp.get("adults") || 2);
   const children = Number(sp.get("children") || 0);
   const infants = Number(sp.get("infants") || 0);
+  // Overnight (21h) stays can span multiple nights; 10h sessions are always 1.
+  const nights = stayType === "10" ? 1 : Math.max(1, Number(sp.get("nights") || 1));
 
   // Live haven by id; fall back to mock so the page renders while loading.
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(roomId ?? "");
@@ -138,22 +151,22 @@ function CheckoutInner() {
   const room = liveHaven ? havenToRoom(liveHaven) : (mockRooms.find((r) => r.id === roomId) || mockRooms[0]);
 
   const [step, setStep] = useState(0);
-  const [info, setInfo] = useState<Info>({ firstName: "", lastName: "", age: "", gender: "Male", email: "", phone: "", facebook: "", notes: "", validIdName: null });
+  const [info, setInfo] = useState<Info>({ firstName: "", lastName: "", age: "", gender: "Male", email: "", phone: "", facebook: "", notes: "", validIdName: null, validIdData: null });
   const [addOns, setAddOns] = useState<AddOns>({});
-  const [payment, setPayment] = useState<Payment>({ method: "gcash", proofName: null, idName: null, cardNum: "", cardName: "", cardExpiry: "", cardCvc: "" });
+  const [payment, setPayment] = useState<Payment>({ method: "gcash", proofName: null, idName: null, proofData: null, idData: null });
   const [submitting, setSubmitting] = useState(false);
 
-  const basePrice = stayType === "10" ? room.price10hr : room.price21hr;
-  const extraPax = Math.max(0, adults + children - (room.basePax ?? 2));
-  const paxFee = extraPax * (room.additionalPaxFee ?? 150);
+  // Weekday vs weekend/holiday rate based on the check-in date.
+  const isWeekendRate = isWeekendOrHoliday(date);
+  // Stay price: 10h single session, or 21h × nights (each night priced by its own date).
+  const basePrice = stayTotal(stayType, date, nights, room);
   const addOnsTotal = Object.entries(addOns).reduce((s, [id, qty]) => {
     const a = ADDONS.find((x) => x.id === id); return s + (a ? a.price * qty : 0);
   }, 0);
-  const cleaning = 150;
-  const subtotal = basePrice + paxFee + addOnsTotal;
-  const serviceFee = Math.round(subtotal * 0.08);
-  const total = subtotal + cleaning + serviceFee;
-  const downPayment = Math.round(total * 0.3);
+  // D'Lux pricing: the base rate covers 1–4 pax — no per-pax, cleaning, or
+  // service fee. Total is just the stay rate (+ optional add-ons).
+  const total = basePrice + addOnsTotal;
+  const downPayment = Math.round(total * 0.5); // 50% reservation down payment
 
   const canNext = () => {
     if (step === 0) {
@@ -164,8 +177,7 @@ function CheckoutInner() {
     if (step === 1) return true;
     if (step === 2) return true; // Review step — nothing to validate
     if (step === 3) {
-      if (payment.method === "gcash" || payment.method === "bank") return !!(payment.proofName && payment.idName);
-      if (payment.method === "card") return payment.cardNum.length >= 12 && !!payment.cardName && !!payment.cardExpiry && payment.cardCvc.length >= 3;
+      return !!(payment.proofName && payment.idName);
     }
     return true;
   };
@@ -178,9 +190,11 @@ function CheckoutInner() {
     const ci = to24h(checkInTime);
     const co = to24h(checkOutTime);
     const checkInDate = date || new Date().toISOString().slice(0, 10);
-    // If the check-out time is the same or earlier than check-in (e.g. an
-    // overnight 21-hour stay ending the next morning), it lands on the next day.
-    const checkOutDate = co <= ci ? addDays(checkInDate, 1) : checkInDate;
+    // Multi-night overnight stays check out `nights` days later. For a same-day
+    // 10h session that ends earlier than it starts, roll to the next day.
+    const checkOutDate = stayType === "10"
+      ? (co <= ci ? addDays(checkInDate, 1) : checkInDate)
+      : addDaysISO(checkInDate, nights);
 
     const addOnItems = Object.entries(addOns)
       .filter(([, q]) => q > 0)
@@ -192,6 +206,7 @@ function CheckoutInner() {
     const payload = {
       booking_id: bookingId,
       user_id: null,
+      haven_id: roomId, // enables the blocked-dates check on the server
       room_name: room.name,
       check_in_date: checkInDate,
       check_out_date: checkOutDate,
@@ -207,6 +222,8 @@ function CheckoutInner() {
       guest_age: parseInt(info.age, 10) || null,
       guest_gender: info.gender,
       facebook_link: info.facebook || null,
+      valid_id: info.validIdData || undefined,           // base64; uploaded to Cloudinary when configured
+      payment_proof: payment.proofData || undefined,     // base64; uploaded to Cloudinary when configured
       payment_method: payment.method,
       room_rate: basePrice,
       add_ons_total: addOnsTotal,
@@ -228,6 +245,7 @@ function CheckoutInner() {
         return;
       }
       const confirmedId = json.data?.booking_id || bookingId;
+      addMyBookingId(confirmedId);
       toast.success("Booking submitted!");
       router.push(`/my-bookings/confirmed?id=${confirmedId}`);
     } catch {
@@ -361,7 +379,7 @@ function CheckoutInner() {
                   <div style={{ fontSize: 13, color: "#B8A68E", marginBottom: 20 }}>Accepted: Driver's License, Passport, National ID, School ID</div>
                   {!info.validIdName ? (
                     <div>
-                      <div style={{ background: "#4d4337", borderRadius: 14, padding: 40, textAlign: "center", marginBottom: 16, cursor: "pointer" }} onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) setInfo({ ...info, validIdName: file.name }); }; f.click(); }}>
+                      <div style={{ background: "#4d4337", borderRadius: 14, padding: 40, textAlign: "center", marginBottom: 16, cursor: "pointer" }} onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) fileToBase64(file).then((data) => setInfo({ ...info, validIdName: file.name, validIdData: data })); }; f.click(); }}>
                         <div style={{ width: 56, height: 56, borderRadius: 12, background: "#5d5347", display: "grid", placeItems: "center", margin: "0 auto 16px", color: "#B8A68E" }}>
                           <IcoUpload />
                         </div>
@@ -370,7 +388,7 @@ function CheckoutInner() {
                       </div>
                       <div style={{ textAlign: "center" }}>
                         <div style={{ fontSize: 13, color: "#9B8B73", marginBottom: 14, fontWeight: 500 }}>OR</div>
-                        <button onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.capture = "environment" as any; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) setInfo({ ...info, validIdName: file.name }); }; f.click(); }} style={{ display: "inline-flex", alignItems: "center", gap: 10, padding: "12px 22px", borderRadius: 12, fontSize: 14, fontWeight: 600, background: "#4d4337", color: "#F6EFE2", border: "1px solid #5d5347", cursor: "pointer" }}>
+                        <button onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.capture = "environment" as any; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) fileToBase64(file).then((data) => setInfo({ ...info, validIdName: file.name, validIdData: data })); }; f.click(); }} style={{ display: "inline-flex", alignItems: "center", gap: 10, padding: "12px 22px", borderRadius: 12, fontSize: 14, fontWeight: 600, background: "#4d4337", color: "#F6EFE2", border: "1px solid #5d5347", cursor: "pointer" }}>
                           <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6}><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
                           Take photo with camera
                         </button>
@@ -459,7 +477,8 @@ function CheckoutInner() {
                   <ul style={{ margin: 0, padding: "0 0 0 18px", fontSize: 13, color: "var(--ink-2)", lineHeight: 1.7 }}>
                     <li>Check-in at {checkInTime} and check-out by {checkOutTime}</li>
                     <li>House rules — no smoking, no pets, quiet hours after 10pm</li>
-                    <li>Free cancellation up to 48 hours before check-in</li>
+                    <li>50% balance + ₱1,000 refundable deposit due at check-in</li>
+                    <li>No cancellations — one free date change if requested ≥7 days before check-in</li>
                   </ul>
                 </div>
               </div>
@@ -472,8 +491,7 @@ function CheckoutInner() {
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 24 }}>
                   {([
                     { id: "gcash" as const, label: "GCash", sub: "Scan & upload proof", icon: <IcoPhone /> },
-                    { id: "bank" as const, label: "Bank Transfer", sub: "BPI / UnionBank", icon: <IcoHome /> },
-                    { id: "card" as const, label: "Credit / Debit", sub: "Visa · Mastercard", icon: <IcoCreditCard /> },
+                    { id: "bank" as const, label: "Bank Transfer", sub: "BPI", icon: <IcoHome /> },
                   ] as const).map((m) => (
                     <button key={m.id} onClick={() => setPayment({ ...payment, method: m.id })}
                       style={{ padding: 16, textAlign: "left", borderRadius: 14, border: payment.method === m.id ? "2px solid var(--ink)" : "1px solid var(--line-2)", background: "var(--white)", cursor: "pointer", color: "var(--ink)" }}>
@@ -501,28 +519,53 @@ function CheckoutInner() {
                       </div>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                      <UploadField label="Payment proof" sub="Screenshot of your transfer" value={payment.proofName} onChange={(name) => setPayment({ ...payment, proofName: name })} />
-                      <UploadField label="Valid ID" sub="Driver's license, passport, etc." value={payment.idName} onChange={(name) => setPayment({ ...payment, idName: name })} />
+                      <UploadField label="Payment proof" sub="Screenshot of your transfer" value={payment.proofName} onChange={(name, data) => setPayment({ ...payment, proofName: name, proofData: data })} />
+                      <UploadField label="Valid ID" sub="Driver's license, passport, etc." value={payment.idName} onChange={(name, data) => setPayment({ ...payment, idName: name, idData: data })} />
                     </div>
                   </div>
                 )}
 
-                {payment.method === "card" && (
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                    <FieldLabel label="Card number" span>
-                      <input style={inputStyle} value={payment.cardNum} onChange={(e) => setPayment({ ...payment, cardNum: e.target.value.replace(/\D/g, "").slice(0, 16) })} placeholder="1234 5678 9012 3456" />
-                    </FieldLabel>
-                    <FieldLabel label="Name on card" span>
-                      <input style={inputStyle} value={payment.cardName} onChange={(e) => setPayment({ ...payment, cardName: e.target.value })} placeholder="Maria Santos" />
-                    </FieldLabel>
-                    <FieldLabel label="Expiry (MM/YY)">
-                      <input style={inputStyle} value={payment.cardExpiry} onChange={(e) => setPayment({ ...payment, cardExpiry: e.target.value.slice(0, 5) })} placeholder="09/28" />
-                    </FieldLabel>
-                    <FieldLabel label="CVC">
-                      <input style={inputStyle} value={payment.cardCvc} onChange={(e) => setPayment({ ...payment, cardCvc: e.target.value.replace(/\D/g, "").slice(0, 4) })} placeholder="123" />
-                    </FieldLabel>
-                  </div>
+              </div>
+            )}
+
+            {/* Step 3: Review */}
+            {step === 3 && (
+              <div className="fade-in">
+                <h2 className="serif" style={{ fontSize: 28, fontWeight: 500, margin: "0 0 20px", letterSpacing: "-.02em" }}>Double-check everything</h2>
+                <ReviewBlock title="Guest" onEdit={() => setStep(0)}>
+                  <div style={{ fontSize: 14 }}>{info.firstName} {info.lastName}</div>
+                  <div style={{ fontSize: 13, color: "var(--muted)" }}>{info.age} years old · {info.gender}</div>
+                  <div style={{ fontSize: 13, color: "var(--muted)" }}>{info.email} · {info.phone}</div>
+                  {info.facebook && <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>Facebook: {info.facebook}</div>}
+                </ReviewBlock>
+                <ReviewBlock title="Stay" onEdit={() => router.back()}>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>{room.name}</div>
+                  <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>{formatDateLong(date)} · {checkInTime} → {checkOutTime}</div>
+                  <div style={{ fontSize: 13, color: "var(--muted)" }}>{stayType === "10" ? "10-hour stay" : `Overnight · ${nights} night${nights > 1 ? "s" : ""}`} · {adults + children} guest{adults + children > 1 ? "s" : ""}</div>
+                </ReviewBlock>
+                {addOnsTotal > 0 && (
+                  <ReviewBlock title="Add-ons" onEdit={() => setStep(1)}>
+                    {Object.entries(addOns).filter(([, q]) => q > 0).map(([id, q]) => {
+                      const a = ADDONS.find((x) => x.id === id)!;
+                      return <div key={id} style={{ fontSize: 13, display: "flex", justifyContent: "space-between" }}><span>{a.name} × {q}</span><span style={{ color: "var(--muted)" }}>{peso(a.price * q)}</span></div>;
+                    })}
+                  </ReviewBlock>
                 )}
+                <ReviewBlock title="Payment" onEdit={() => setStep(2)}>
+                  <div style={{ fontSize: 14 }}>
+                    {payment.method === "gcash" ? "GCash — " : "BPI bank transfer — "}
+                    <span style={{ color: "var(--muted)" }}>50% down payment now ({peso(downPayment)}), balance at check-in</span>
+                  </div>
+                </ReviewBlock>
+                <div style={{ marginTop: 20, padding: 20, background: "var(--bg-2)", borderRadius: 16 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>You&apos;re agreeing to:</div>
+                  <ul style={{ margin: 0, padding: "0 0 0 18px", fontSize: 13, color: "var(--ink-2)", lineHeight: 1.7 }}>
+                    <li>Check-in at {checkInTime} and check-out by {checkOutTime}</li>
+                    <li>House rules — no smoking, no pets, quiet hours after 10pm</li>
+                    <li>50% balance + ₱1,000 refundable deposit due at check-in</li>
+                    <li>No cancellations — one free date change if requested ≥7 days before check-in</li>
+                  </ul>
+                </div>
               </div>
             )}
 
@@ -565,11 +608,8 @@ function CheckoutInner() {
                 <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "var(--ink)" }}>Guests</span><span style={{ fontWeight: 600 }}>{adults + children}</span></div>
               </div>
               <div style={{ padding: "16px 0", borderBottom: "1px solid var(--line)", fontSize: 13, display: "flex", flexDirection: "column", gap: 6 }}>
-                <PriceRow label={`${stayType}-hour stay`} value={peso(basePrice)} />
-                {paxFee > 0 && <PriceRow label="Extra guests" value={peso(paxFee)} />}
+                <PriceRow label={stayType === "10" ? `10-hour stay · ${isWeekendRate ? "Weekend/Holiday" : "Weekday"}` : `Overnight · ${nights} night${nights > 1 ? "s" : ""}`} value={peso(basePrice)} />
                 {addOnsTotal > 0 && <PriceRow label="Add-ons" value={peso(addOnsTotal)} />}
-                <PriceRow label="Cleaning fee" value={peso(cleaning)} />
-                <PriceRow label="Service fee" value={peso(serviceFee)} />
               </div>
               <div style={{ padding: "16px 0 0", display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16 }}>
                 <span>Total</span><span>{peso(total)}</span>
