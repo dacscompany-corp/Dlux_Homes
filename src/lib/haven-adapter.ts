@@ -29,6 +29,24 @@ export function havenToRoom(h: Record<string, unknown>): Room & RoomExtras {
   const tower = String(h.tower ?? "");
   const floor = String(h.floor ?? "");
 
+  // Haven stores times as "HH:MM:SS"; the storefront shows "h:MM AM/PM".
+  const fmtTime = (t: unknown): string => {
+    const mt = String(t ?? "").match(/^(\d{1,2}):(\d{2})/);
+    if (!mt) return "";
+    let hr = parseInt(mt[1], 10);
+    const ap = hr >= 12 ? "PM" : "AM";
+    hr = hr % 12 || 12;
+    return `${hr}:${mt[2]} ${ap}`;
+  };
+  // Three storefront stay windows. The haven has one 10h time pair (ten_hour)
+  // and one 21h pair (twenty_one_hour); the second 10h window (Nightcation)
+  // reuses the otherwise-unused six_hour pair — same convention as the rates.
+  const windows = [
+    { stayType: "10", label: "Daycation",   checkIn: fmtTime(h.ten_hour_check_in),       checkOut: fmtTime(h.ten_hour_check_out) },
+    { stayType: "10", label: "Nightcation", checkIn: fmtTime(h.six_hour_check_in),        checkOut: fmtTime(h.six_hour_check_out) },
+    { stayType: "21", label: "Overnight",   checkIn: fmtTime(h.twenty_one_hour_check_in), checkOut: fmtTime(h.twenty_one_hour_check_out) },
+  ].filter((w) => w.checkIn && w.checkOut);
+
   return {
     id: String(h.uuid_id ?? h.id ?? ""),
     name: String(h.haven_name ?? h.name ?? "D'Lux Homes"),
@@ -56,10 +74,15 @@ export function havenToRoom(h: Record<string, unknown>): Room & RoomExtras {
     images: images.length ? images : ["/images/rooms/1.jpg"],
     amenities,
     stayTypes: ["10-Hour", "21-Hour"],
-    // Static property-info extras the detail page renders
+    windows,
+    // House rules come from the haven (the owner sets them in the Haven wizard);
+    // split the text block into bullet lines. Falls back to the mock list.
+    houseRules: h.house_rules
+      ? String(h.house_rules).split(/\r?\n|·|;|•/).map((s) => s.trim()).filter(Boolean)
+      : (m.houseRules ?? []),
+    // Still static (no dedicated backend field yet).
     amenityFees: m.amenityFees ?? [],
     nearby: m.nearby ?? [],
-    houseRules: m.houseRules ?? [],
     blockedDates: [],
   };
 }

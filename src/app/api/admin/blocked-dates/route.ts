@@ -19,22 +19,16 @@ import pool from "@/backend/config/db";
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const havenId = searchParams.get("haven_id");
-  const statusFilter = searchParams.get("status");
 
   if (havenId) {
     try {
-      const params: string[] = [havenId];
-      let where = "haven_id = $1";
-      if (statusFilter) {
-        params.push(statusFilter);
-        where += ` AND status = $${params.length}`;
-      }
+      // blocked_dates has no `status` column — every row is an active block.
       const result = await pool.query(
-        `SELECT id::text, from_date::text, to_date::text, status
+        `SELECT id::text, from_date::text, to_date::text
            FROM blocked_dates
-          WHERE ${where}
+          WHERE haven_id = $1
           ORDER BY from_date ASC`,
-        params
+        [havenId]
       );
       return NextResponse.json({ success: true, data: result.rows });
     } catch (err: unknown) {

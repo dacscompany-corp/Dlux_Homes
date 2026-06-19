@@ -2099,7 +2099,9 @@ export const getRoomBookings = async (
         status,
         room_name
       FROM booking
-      WHERE TRIM(room_name) = $1
+      -- Match on the haven name, tolerating curly vs straight apostrophes
+      -- (bookings created from mock data use a straight ' ).
+      WHERE REPLACE(TRIM(room_name), '’', '''') = REPLACE($1, '’', '''')
         AND status IN ('pending', 'approved', 'confirmed', 'checked-in')
       ORDER BY check_in_date ASC
     `;

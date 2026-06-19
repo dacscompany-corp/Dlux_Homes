@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
@@ -18,6 +18,20 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  // Where to land after sign-in (e.g. back to checkout). Defaults to My bookings.
+  const [callbackUrl, setCallbackUrl] = useState("/my-bookings");
+  // Back target — the room being booked (never the checkout, which would just
+  // redirect back here). Falls back to the listing.
+  const [backHref, setBackHref] = useState("/rooms");
+  useEffect(() => {
+    const cb = new URLSearchParams(window.location.search).get("callbackUrl");
+    if (cb) {
+      setCallbackUrl(cb);
+      const rid = new URLSearchParams(cb.split("?")[1] || "").get("roomId");
+      if (rid) setBackHref(`/rooms/${rid}`);
+    }
+  }, []);
+  const isBooking = callbackUrl.includes("/checkout");
 
   const handleCredentials = async () => {
     if (!email || !password) { toast.error("Enter your email and password"); return; }
@@ -25,7 +39,7 @@ export default function LoginPage() {
     try {
       const res = await signIn("credentials", { email, password, redirect: false });
       if (!res || res.error) { toast.error(res?.error || "Invalid email or password"); setLoading(false); return; }
-      router.push("/my-bookings");
+      router.push(callbackUrl);
     } catch { toast.error("Something went wrong. Please try again."); setLoading(false); }
   };
 
@@ -33,9 +47,13 @@ export default function LoginPage() {
     <div className="min-h-screen flex flex-col" style={{ background: "#F7F0E3" }}>
       {/* Navbar */}
       <nav className="border-b border-gray-100 shadow-sm" style={{ background: "#F7F0E3" }}>
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <Link href="/rooms">
             <Image src="/logo.png" alt="D' Lux Homes" width={130} height={44} className="object-cover mix-blend-multiply" style={{ width: "130px", height: "44px" }} />
+          </Link>
+          <Link href={backHref} className="inline-flex items-center gap-2 text-sm font-semibold hover:opacity-75" style={{ color: "#B07848" }}>
+            <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            Back
           </Link>
         </div>
       </nav>
@@ -49,16 +67,16 @@ export default function LoginPage() {
               <div className="mx-auto mb-4 inline-block px-3 py-1 rounded-xl" style={{ backgroundColor: "#F7F0E3" }}>
                 <Image src="/logo.png" alt="D' Lux Homes" width={100} height={60} className="object-cover mix-blend-multiply" style={{ width: "100px", height: "60px" }} />
               </div>
-              <h1 className="text-2xl font-bold">Welcome to D&apos; Lux Homes!</h1>
+              <h1 className="text-2xl font-bold">{isBooking ? "Almost there" : "Welcome to D’ Lux Homes!"}</h1>
               <p className="text-sm mt-1" style={{ color: "rgba(255,255,255,0.85)" }}>
-                Sign in to manage your bookings
+                {isBooking ? "Sign in to confirm your booking" : "Sign in to manage your bookings"}
               </p>
             </div>
 
             {/* Card Body */}
             <div className="px-8 py-8">
               {/* Google Login */}
-              <button type="button" onClick={() => signIn("google", { callbackUrl: "/my-bookings" })} className="w-full flex items-center justify-center gap-3 border border-gray-200 rounded-xl py-3 px-4 text-gray-700 font-medium text-sm hover:bg-gray-50 hover:border-gray-300 transition-all group cursor-pointer">
+              <button type="button" onClick={() => signIn("google", { callbackUrl })} className="w-full flex items-center justify-center gap-3 border border-gray-200 rounded-xl py-3 px-4 text-gray-700 font-medium text-sm hover:bg-gray-50 hover:border-gray-300 transition-all group cursor-pointer">
                 <svg className="w-5 h-5" viewBox="0 0 24 24">
                   <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
                   <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
@@ -139,7 +157,7 @@ export default function LoginPage() {
               <p className="text-center text-sm text-gray-500 mt-6">
                 Don&apos;t have an account?{" "}
                 <Link
-                  href="/register"
+                  href={`/register?callbackUrl=${encodeURIComponent(callbackUrl)}`}
                   className="font-semibold hover:opacity-75 cursor-pointer"
                   style={{ color: "#B07848" }}
                 >

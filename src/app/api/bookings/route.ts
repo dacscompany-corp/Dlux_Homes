@@ -5,6 +5,7 @@ import {
   updateBookingStatus,
   deleteBooking,
 } from "@/backend/controller/bookingController";
+import { notifyAdminOfBooking } from "@/backend/utils/messengerNotify";
 
 // GET /api/bookings
 export async function GET(req: NextRequest) {
@@ -13,7 +14,17 @@ export async function GET(req: NextRequest) {
 
 // POST /api/bookings
 export async function POST(req: NextRequest) {
-  return createBooking(req);
+  // Read the body up-front (for the admin alert) before the controller consumes it.
+  const body = await req.clone().json().catch(() => null);
+  const res = await createBooking(req);
+  // On success, ping the admin's Messenger that a new request arrived (best-effort).
+  try {
+    const json = await res.clone().json();
+    if (body && json?.success !== false) {
+      notifyAdminOfBooking(body).catch(() => {});
+    }
+  } catch { /* ignore — never block the booking response */ }
+  return res;
 }
 
 // PUT /api/bookings - THIS WAS MISSING!

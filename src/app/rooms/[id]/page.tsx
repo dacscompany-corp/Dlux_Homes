@@ -3,10 +3,14 @@
 import { useState, useEffect, use, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import SiteHeader from "@/components/SiteHeader";
 import { mockRooms, mockReviews } from "@/lib/mock-data";
 import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
+import { useGetHavenReviewsQuery } from "@/redux/api/reviewsApi";
+import { useGetBlockedDatesQuery } from "@/redux/api/blockedDatesApi";
 import { havenToRoom } from "@/lib/haven-adapter";
 import { stayTotal, isWeekendOrHoliday } from "@/lib/pricing";
+import type { Room } from "@/types";
 
 // ── Inline SVG icons ───────────────────────────────────────────
 function IcoChevLeft() { return <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>; }
@@ -56,13 +60,15 @@ const WELCOME_PACK = ["Dental kit", "Shampoo & bath soap", "Drinking water", "Fr
 // ── Helpers ────────────────────────────────────────────────────
 function peso(n: number) { return "₱" + n.toLocaleString("en-PH"); }
 
-const availableWindows = [
-  { stayType: "10", checkIn: "7:00 AM",  checkOut: "5:00 PM", label: "Daycation" },
-  { stayType: "10", checkIn: "9:00 PM",  checkOut: "5:00 AM", label: "Nightcation" },
-  { stayType: "21", checkIn: "10:00 AM", checkOut: "7:00 AM", label: "Overnight" },
+// Fallback windows (mock mode / haven with no configured times). Match the
+// official D'Lux rate card; live havens override these via room.windows.
+const FALLBACK_WINDOWS = [
+  { stayType: "10", checkIn: "7:00 AM", checkOut: "5:00 PM", label: "Daycation" },
+  { stayType: "10", checkIn: "7:00 PM", checkOut: "5:00 AM", label: "Nightcation" },
+  { stayType: "21", checkIn: "7:00 PM", checkOut: "4:00 PM", label: "Overnight" },
 ];
 
-type Window = typeof availableWindows[0];
+type Window = typeof FALLBACK_WINDOWS[0];
 type Guests = { adults: number; children: number; infants: number };
 
 function formatDateLong(iso: string) {
@@ -76,7 +82,9 @@ function Calendar({ selected, onSelect, blocked }: { selected: string; onSelect:
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const [viewMonth, setViewMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
   const blockedSet = new Set(blocked);
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  // Build from LOCAL parts — toISOString() shifts the date back a day in +UTC
+  // zones (PH), so clicking the 18th would store the 17th.
+  const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
   const y = viewMonth.getFullYear(), m = viewMonth.getMonth();
   const daysInMonth = new Date(y, m + 1, 0).getDate();
@@ -144,8 +152,8 @@ function GuestCounter({ guests, setGuests, max }: { guests: Guests; setGuests: (
   );
   return (
     <div>
-      {row("Adults", "Age 13+", "adults", 1, true)}
-      {row("Children", "Ages 2–12", "children", 0, true)}
+      {row("Adults", "Age 18+", "adults", 1, true)}
+      {row("Children", "Ages 2–17", "children", 0, true)}
       {row("Infants", "Under 2", "infants", 0, false)}
     </div>
   );
@@ -273,6 +281,38 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
   const liveHaven = (havenRes as { data?: Record<string, unknown> } | undefined)?.data;
   const room = liveHaven ? havenToRoom(liveHaven) : (mockRooms.find((r) => r.id === id) || mockRooms[0]);
 
+  // Check-in/out windows from the haven's configured times; fall back to the
+  // rate-card defaults when a live haven has no times (or in mock mode).
+  const liveWindows = (room as Room).windows;
+  const windows: Window[] = liveWindows?.length ? (liveWindows as Window[]) : FALLBACK_WINDOWS;
+
+  // Real guest reviews for this haven (falls back to mock if none yet).
+  const { data: reviewsRes } = useGetHavenReviewsQuery({ haven_id: id }, { skip: !isUuid });
+  const liveReviews = (reviewsRes?.reviews || []).map((r) => ({
+    id: r.id,
+    comment: r.comment || "",
+    author: `${r.guest_first_name || ""} ${r.guest_last_name || ""}`.trim() || "Guest",
+    avatar: `${(r.guest_first_name || "G")[0] || "G"}${(r.guest_last_name || "")[0] || ""}`.toUpperCase(),
+    date: r.created_at ? new Date(r.created_at).toLocaleDateString("en-US", { month: "short", year: "numeric" }) : "",
+  }));
+  const reviews = liveReviews.length ? liveReviews : mockReviews;
+
+  // Unavailable days for the date picker: owner-set blocked dates + active bookings.
+  const { data: blockedRes } = useGetBlockedDatesQuery({ haven_id: id }, { skip: !isUuid });
+  const [bookedRanges, setBookedRanges] = useState<{ ci: string; co: string }[]>([]);
+  useEffect(() => {
+    if (!isUuid || !id) return;
+    let active = true;
+    fetch(`/api/bookings/room/${encodeURIComponent(id)}`)
+      .then((r) => (r.ok ? r.json() : null)).catch(() => null)
+      .then((j) => {
+        if (!active) return;
+        const rows = Array.isArray(j?.data) ? j.data : [];
+        setBookedRanges(rows.map((b: Record<string, unknown>) => ({ ci: String(b.check_in_date ?? ""), co: String(b.check_out_date ?? "") })));
+      });
+    return () => { active = false; };
+  }, [isUuid, id]);
+
   const [galleryIdx, setGalleryIdx] = useState(0);
   const [galleryDir, setGalleryDir] = useState<"left" | "right">("right");
   const [animId, setAnimId] = useState(0);
@@ -298,11 +338,15 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
   const [guestOpen, setGuestOpen] = useState(false);
   const [wished, setWished] = useState(false);
 
-  const [selectedWindow, setSelectedWindow] = useState<Window>(availableWindows[2]);
+  const [selectedWindow, setSelectedWindow] = useState<Window>(windows[2] ?? windows[0]);
+  // Keep the selection valid when live windows arrive (mock → backend swap).
+  useEffect(() => {
+    if (!windows.some((w) => w.checkIn === selectedWindow.checkIn && w.checkOut === selectedWindow.checkOut)) {
+      setSelectedWindow(windows[2] ?? windows[0]);
+    }
+  }, [windows]); // eslint-disable-line react-hooks/exhaustive-deps
   const [date, setDate] = useState("");
   const [guests, setGuests] = useState<Guests>({ adults: 2, children: 0, infants: 0 });
-  const [customCheckIn, setCustomCheckIn] = useState("");
-  const [customCheckOut, setCustomCheckOut] = useState("");
   const [nights, setNights] = useState(1);
 
   // Overnight (21h) stays can span multiple nights; 10h sessions are always 1.
@@ -315,15 +359,47 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
   const total = stayTotal(selectedWindow.stayType, date, stayNights, room);
   const basePrice = total;
 
-  const blockedDates = (room.blockedDates as Array<{ date: string } | string>).map((b) => typeof b === "string" ? b : b.date);
+  // Normalize any date value (DATE column may arrive as a UTC timestamp) to a
+  // local YYYY-MM-DD, then expand ranges into the individual unavailable days.
+  const toLocalISO = (v: unknown) => {
+    const d = new Date(String(v));
+    if (isNaN(d.getTime())) return String(v).slice(0, 10);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const blockedDates = (() => {
+    const set = new Set<string>();
+    const pushRange = (fromISO: string, toISO: string) => {
+      if (!fromISO) return;
+      const d = new Date(fromISO + "T00:00:00");
+      const end = new Date((toISO || fromISO) + "T00:00:00");
+      for (let g = 0; d <= end && g < 400; g++) {
+        set.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+        d.setDate(d.getDate() + 1);
+      }
+    };
+    // Owner-blocked ranges (inclusive).
+    (blockedRes?.data || []).forEach((b) => pushRange(toLocalISO(b.from_date), toLocalISO(b.to_date)));
+    // Booked nights: check-in up to (but not including) check-out; same-day = that day.
+    bookedRanges.forEach(({ ci, co }) => {
+      const from = toLocalISO(ci);
+      if (!from) return;
+      const coISO = toLocalISO(co);
+      const end = new Date((coISO || from) + "T00:00:00");
+      const start = new Date(from + "T00:00:00");
+      if (end <= start) { pushRange(from, from); return; }
+      end.setDate(end.getDate() - 1); // last occupied night
+      pushRange(from, `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}`);
+    });
+    return Array.from(set);
+  })();
   const canProceed = date && guests.adults >= 1;
 
   const handleReserve = () => {
     const params = new URLSearchParams({
       roomId: room.id,
       stayType: selectedWindow.stayType,
-      checkIn: customCheckIn || selectedWindow.checkIn,
-      checkOut: customCheckOut || selectedWindow.checkOut,
+      checkIn: selectedWindow.checkIn,
+      checkOut: selectedWindow.checkOut,
       windowLabel: selectedWindow.label,
       date,
       adults: String(guests.adults),
@@ -337,39 +413,13 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
   return (
     <div className="page-enter" style={{ backgroundColor: "var(--bg)", color: "var(--ink)", minHeight: "100vh" }}>
       {/* HEADER */}
-      <header style={{ position: "sticky", top: 0, zIndex: 50, background: "rgba(246,239,226,.88)", backdropFilter: "blur(14px)", borderBottom: "1px solid var(--line)" }}>
-        <div style={{ maxWidth: 1320, margin: "0 auto", padding: "14px 28px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24 }}>
-          <Link href="/rooms" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: "inherit" }}>
-            <div style={{ width: 56, height: 56, borderRadius: 10, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Image src="/logo.png" alt="D'Lux Homes" width={56} height={56} unoptimized style={{ objectFit: "contain" }} />
-            </div>
-            <div style={{ lineHeight: 1.05 }}>
-              <div className="serif" style={{ fontSize: 19, fontWeight: 600, letterSpacing: "-.02em" }}>D&apos; Lux Homes</div>
-              <div style={{ fontSize: 10, color: "var(--ink)", textTransform: "uppercase", letterSpacing: ".15em" }}>Staycations · PH</div>
-            </div>
-          </Link>
-          <style>{`
-            .mybookings-btn{transition:background 0.18s,transform 0.18s,box-shadow 0.18s}
-            .mybookings-btn:hover{background:var(--dlux-accent)!important;color:#fff!important;transform:scale(1.04);box-shadow:0 4px 14px rgba(176,120,72,0.35)}
-            .back-btn{transition:background 0.18s,border-color 0.18s,transform 0.18s,box-shadow 0.18s}
-            .back-btn:hover{background:var(--bg-2)!important;border-color:var(--line-2)!important;transform:scale(1.05);box-shadow:0 3px 10px rgba(31,22,14,0.12)}
-            .save-btn{transition:background 0.18s,border-color 0.18s,color 0.18s,transform 0.18s,box-shadow 0.18s}
-            .save-btn:hover{background:var(--dlux-accent)!important;border-color:var(--dlux-accent)!important;color:#fff!important;transform:scale(1.05);box-shadow:0 4px 14px rgba(176,120,72,0.35)}
-          `}</style>
-          <Link href="/my-bookings" className="mybookings-btn" style={{ padding: "10px 20px", borderRadius: 999, fontSize: 13, fontWeight: 700, color: "var(--dlux-accent)", textDecoration: "none", border: "2px solid var(--dlux-accent)", background: "transparent", display: "inline-flex", alignItems: "center", gap: 7, letterSpacing: ".01em" }}>
-            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><polyline points="9 16 11 18 15 14"/></svg>
-            My bookings
-          </Link>
-        </div>
-      </header>
+      <SiteHeader bookHref="#book" backHref="/rooms" backLabel="Back" />
+      <style>{`
+        .save-btn{transition:background 0.18s,border-color 0.18s,color 0.18s,transform 0.18s,box-shadow 0.18s}
+        .save-btn:hover{background:var(--dlux-accent)!important;border-color:var(--dlux-accent)!important;color:#fff!important;transform:scale(1.05);box-shadow:0 4px 14px rgba(176,120,72,0.35)}
+      `}</style>
 
       <div style={{ maxWidth: 1320, margin: "0 auto", padding: "20px 28px 60px" }}>
-        {/* BREADCRUMB */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 32 }}>
-          <Link href="/rooms" className="back-btn" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 999, border: "1px solid var(--line-2)", background: "var(--white)", fontSize: 13, fontWeight: 600, textDecoration: "none", color: "var(--ink)" }}>
-            <IcoChevLeft /> Back
-          </Link>
-        </div>
 
         {/* TITLE ROW */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 28, gap: 24 }}>
@@ -549,7 +599,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
               <h2 className="serif" style={{ fontSize: 28, fontWeight: 500, margin: "0 0 6px", letterSpacing: "-.02em" }}>Pick your window</h2>
               <p style={{ fontSize: 14, color: "var(--ink)", margin: "0 0 20px" }}>Three preset check-in windows. Book the one that fits your rhythm.</p>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
-                {availableWindows.map((w, i) => { const active = selectedWindow.checkIn === w.checkIn && selectedWindow.checkOut === w.checkOut; return (
+                {windows.map((w, i) => { const active = selectedWindow.checkIn === w.checkIn && selectedWindow.checkOut === w.checkOut; return (
                   <button key={i} onClick={() => setSelectedWindow(w)} className={`window-card${active ? " active" : ""}`}
                     style={{ padding: 18, textAlign: "left", borderRadius: 16, border: active ? "2px solid var(--ink)" : "1.5px solid var(--line-2)", background: active ? "var(--ink)" : "var(--white)", color: active ? "var(--white)" : "var(--ink)", cursor: "pointer" }}>
                     <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".1em", opacity: 0.7 }}>{w.stayType}-hour</div>
@@ -591,7 +641,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                 <h2 className="serif" style={{ fontSize: 28, fontWeight: 500, margin: 0, letterSpacing: "-.02em", display: "flex", alignItems: "center", gap: 8 }}><IcoStar size={20} /> {room.rating} · {room.reviewCount} reviews</h2>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-                {mockReviews.map((r) => (<div key={r.id} style={{ background: "var(--white)", borderRadius: 18, padding: 22, border: "1px solid var(--line)" }}><span style={{ color: "var(--line-2)" }}><IcoQuote /></span><p style={{ fontSize: 14, lineHeight: 1.65, margin: "10px 0 16px", color: "var(--ink-2)" }}>&ldquo;{r.comment}&rdquo;</p><div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 34, height: 34, borderRadius: "50%", background: "var(--accent-deep)", color: "var(--white)", display: "grid", placeItems: "center", fontSize: 11, fontWeight: 700 }}>{r.avatar}</div><div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.author}</div><div style={{ fontSize: 11, color: "var(--muted)" }}>{r.date}</div></div></div></div>))}
+                {reviews.map((r) => (<div key={r.id} style={{ background: "var(--white)", borderRadius: 18, padding: 22, border: "1px solid var(--line)" }}><span style={{ color: "var(--line-2)" }}><IcoQuote /></span><p style={{ fontSize: 14, lineHeight: 1.65, margin: "10px 0 16px", color: "var(--ink-2)" }}>&ldquo;{r.comment}&rdquo;</p><div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 34, height: 34, borderRadius: "50%", background: "var(--accent-deep)", color: "var(--white)", display: "grid", placeItems: "center", fontSize: 11, fontWeight: 700 }}>{r.avatar}</div><div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.author}</div><div style={{ fontSize: 11, color: "var(--muted)" }}>{r.date}</div></div></div></div>))}
               </div>
             </section>
           </div>
@@ -599,7 +649,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
           </div>{/* end left column */}
 
           {/* BOOKING CARD — sticky beside the carousel */}
-          <aside style={{ position: "sticky", top: 90, height: "fit-content" }}>
+          <aside id="book" style={{ position: "sticky", top: 90, height: "fit-content" }}>
             <div style={{ background: "var(--white)", borderRadius: 24, padding: 28, border: "1px solid var(--line)", boxShadow: "var(--shadow-md)" }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 20 }}>
                 <span style={{ fontSize: 26, fontWeight: 700 }}>{peso(basePrice)}</span>
@@ -640,33 +690,13 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
 
               {/* Window */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
-                <div style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid var(--line-2)", background: "var(--white)", position: "relative" }}>
+                <div style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid var(--line-2)", background: "var(--white)" }}>
                   <label style={{ fontSize: 10, fontWeight: 700, color: "var(--ink)", textTransform: "uppercase", letterSpacing: ".1em", display: "block", marginBottom: 4 }}>Check-in</label>
-                  <div style={{ display: "flex", alignItems: "center" }}>
-                    <select
-                      value={customCheckIn || selectedWindow.checkIn}
-                      onChange={(e) => setCustomCheckIn(e.target.value)}
-                      style={{ fontSize: 13, fontWeight: 600, flex: 1, border: "none", background: "transparent", outline: "none", fontFamily: "inherit", color: "var(--ink)", cursor: "pointer", appearance: "none", WebkitAppearance: "none" }}>
-                      {availableWindows.map((w, i) => (
-                        <option key={i} value={w.checkIn}>{w.checkIn}</option>
-                      ))}
-                    </select>
-                    <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, pointerEvents: "none" }}><polyline points="6 9 12 15 18 9"/></svg>
-                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>{selectedWindow.checkIn}</div>
                 </div>
-                <div style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid var(--line-2)", background: "var(--white)", position: "relative" }}>
+                <div style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid var(--line-2)", background: "var(--white)" }}>
                   <label style={{ fontSize: 10, fontWeight: 700, color: "var(--ink)", textTransform: "uppercase", letterSpacing: ".1em", display: "block", marginBottom: 4 }}>Check-out</label>
-                  <div style={{ display: "flex", alignItems: "center" }}>
-                    <select
-                      value={customCheckOut || selectedWindow.checkOut}
-                      onChange={(e) => setCustomCheckOut(e.target.value)}
-                      style={{ fontSize: 13, fontWeight: 600, flex: 1, border: "none", background: "transparent", outline: "none", fontFamily: "inherit", color: "var(--ink)", cursor: "pointer", appearance: "none", WebkitAppearance: "none" }}>
-                      {availableWindows.map((w, i) => (
-                        <option key={i} value={w.checkOut}>{w.checkOut}</option>
-                      ))}
-                    </select>
-                    <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, pointerEvents: "none" }}><polyline points="6 9 12 15 18 9"/></svg>
-                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>{selectedWindow.checkOut}</div>
                 </div>
               </div>
               <div style={{ border: "1px solid var(--line-2)", borderRadius: 14, overflow: "hidden", marginBottom: 18 }}>
@@ -685,7 +715,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                   <div style={{ borderTop: "1px solid var(--line)", padding: "0 16px" }}>
                     <GuestCounter guests={guests} setGuests={setGuests} max={4} />
                     <div style={{ fontSize: 12, color: "var(--muted)", padding: "10px 0" }}>
-                      Good for up to 4 guests — all included in the rate. For 5 or more, message us on <a href="https://m.me/dluxhomes" target="_blank" rel="noopener" style={{ color: "var(--dlux-accent)", fontWeight: 600 }}>Facebook</a> to arrange.
+                      Good for up to 4 guests — all included in the rate. For 5 or more, message us on <a href="https://www.facebook.com/messages/t/270893736109969" target="_blank" rel="noopener" style={{ color: "var(--dlux-accent)", fontWeight: 600 }}>Facebook</a> to arrange.
                     </div>
                   </div>
                 )}

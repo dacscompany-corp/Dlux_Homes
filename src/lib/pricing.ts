@@ -51,7 +51,8 @@ export function addDaysISO(iso: string, n: number): string {
   if (!iso) return iso;
   const d = new Date(iso + "T00:00:00");
   d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
+  // Build from LOCAL parts — toISOString() would shift the date in +UTC zones (PH).
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 // Total for a stay. Daycation/Nightcation (10h) is a single session. Overnight

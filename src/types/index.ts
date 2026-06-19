@@ -24,6 +24,9 @@ export interface Room {
   images: string[];
   amenities: string[];
   stayTypes: StayType[];
+  // Check-in/out windows sourced from the haven's configured times. Optional so
+  // mock rooms (no backend times) fall back to the storefront defaults.
+  windows?: { stayType: string; checkIn: string; checkOut: string; label: string }[];
 }
 
 export interface Booking {

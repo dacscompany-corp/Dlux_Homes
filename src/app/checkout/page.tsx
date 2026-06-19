@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useRef, Suspense } from "react";
+import { useState, useRef, useEffect, Suspense } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useSearchParams, useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import toast from "react-hot-toast";
 import { mockRooms } from "@/lib/mock-data";
 import { generateBookingId, addMyBookingId } from "@/lib/booking-store";
@@ -28,7 +29,8 @@ function to24h(t: string): string {
 function addDays(iso: string, n: number): string {
   const d = new Date(iso + "T00:00:00");
   d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
+  // Build from LOCAL parts — toISOString() shifts the date a day in +UTC zones (PH).
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 // Read a File as a base64 data URL — sent to the booking API, which uploads it
 // to Cloudinary when configured (otherwise it's skipped gracefully).
@@ -67,21 +69,14 @@ function IcoHome() { return <svg width={18} height={18} viewBox="0 0 24 24" fill
 function IcoUpload() { return <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>; }
 function IcoStar() { return <svg width={12} height={12} viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="12 2 15 9 22 10 17 15 18 22 12 18.5 6 22 7 15 2 10 9 9 12 2" /></svg>; }
 
-const ADDONS = [
-  { id: "pool", name: "Pool Pass", price: 150, unit: "per pax", desc: "Unlimited pool access during stay" },
-  { id: "towels", name: "Extra Towels", price: 50, unit: "per set", desc: "Fresh towel set" },
-  { id: "robe", name: "Bath Robe", price: 150, unit: "each", desc: "Plush cotton bath robe" },
-  { id: "comforter", name: "Extra Comforter", price: 100, unit: "each", desc: "Heavy winter comforter" },
-  { id: "kit", name: "Guest Kit", price: 75, unit: "per pax", desc: "Toothbrush, toothpaste, cotton buds" },
-  { id: "slippers", name: "Slippers", price: 30, unit: "per pair", desc: "Disposable indoor slippers" },
-  { id: "breakfast", name: "Breakfast for Two", price: 450, unit: "per set", desc: "Silog, coffee, fresh fruit" },
-];
-
-const STEPS = ["Our details", "Add-ons", "Review", "Payment"];
+const STEPS = ["Our details", "Payment", "Review"];
+// Refundable security deposit collected at check-in (D'Lux house policy).
+const SECURITY_DEPOSIT = 1000;
 
 type Info = { firstName: string; lastName: string; age: string; gender: string; email: string; phone: string; facebook: string; notes: string; validIdName: string | null; validIdData: string | null };
+// Additional (non-main) guests collect only name, age, gender + valid ID.
+type ExtraGuest = { firstName: string; lastName: string; age: string; gender: string; validIdName: string | null; validIdData: string | null };
 type Payment = { method: "gcash" | "bank"; proofName: string | null; idName: string | null; proofData: string | null; idData: string | null };
-type AddOns = Record<string, number>;
 
 function FieldLabel({ label, children, span }: { label: string; children: React.ReactNode; span?: boolean }) {
   return (
@@ -93,17 +88,17 @@ function FieldLabel({ label, children, span }: { label: string; children: React.
 }
 
 const inputStyle: React.CSSProperties = {
-  width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid var(--line-2)", fontSize: 14, background: "var(--white)", color: "var(--ink)", fontFamily: "inherit", outline: "none", boxSizing: "border-box",
+  width: "100%", padding: "12px 14px", borderRadius: 12, borderWidth: 1, borderStyle: "solid", borderColor: "var(--line-2)", fontSize: 14, background: "var(--white)", color: "var(--ink)", fontFamily: "inherit", outline: "none", boxSizing: "border-box",
 };
 
-function UploadField({ label, sub, value, onChange }: { label: string; sub: string; value: string | null; onChange: (name: string, data: string) => void }) {
+function UploadField({ label, sub, value, onChange, invalid, id }: { label: string; sub: string; value: string | null; onChange: (name: string, data: string) => void; invalid?: boolean; id?: string }) {
   const ref = useRef<HTMLInputElement>(null);
   return (
-    <div>
+    <div id={id}>
       <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--ink)", marginBottom: 8 }}>{label}</div>
       <input ref={ref} type="file" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) fileToBase64(f).then((data) => onChange(f.name, data)); }} />
       <button onClick={() => ref.current?.click()}
-        style={{ width: "100%", padding: 20, borderRadius: 14, border: value ? "1px solid var(--dlux-accent)" : "1px dashed var(--line-2)", background: value ? "rgba(176,120,72,.06)" : "var(--white)", display: "flex", alignItems: "center", gap: 12, textAlign: "left", cursor: "pointer" }}>
+        style={{ width: "100%", padding: 20, borderRadius: 14, border: invalid ? "1px solid #ef4444" : value ? "1px solid var(--dlux-accent)" : "1px dashed var(--line-2)", background: value ? "rgba(176,120,72,.06)" : "var(--white)", display: "flex", alignItems: "center", gap: 12, textAlign: "left", cursor: "pointer" }}>
         <div style={{ width: 40, height: 40, borderRadius: 10, background: value ? "var(--dlux-accent)" : "var(--bg-2)", display: "grid", placeItems: "center", color: value ? "var(--white)" : "var(--ink-2)" }}>
           {value ? <IcoCheckLg /> : <IcoUpload />}
         </div>
@@ -112,6 +107,7 @@ function UploadField({ label, sub, value, onChange }: { label: string; sub: stri
           <div style={{ fontSize: 11, color: "var(--ink)" }}>{sub}</div>
         </div>
       </button>
+      {invalid && <div style={{ fontSize: 11, color: "#ef4444", marginTop: 6 }}>Required</div>}
     </div>
   );
 }
@@ -128,14 +124,64 @@ function ReviewBlock({ title, onEdit, children }: { title: string; onEdit: () =>
   );
 }
 
+// Compact dark valid-ID uploader reused for each additional guest.
+function GuestIdUpload({ valueName, onPick, onClear, invalid, id, title = "Valid ID (Required for guests 10+ years old)", accepted, requiredMsg = "Please upload a valid ID for this guest." }: { valueName: string | null; onPick: (name: string, data: string) => void; onClear: () => void; invalid?: boolean; id?: string; title?: string; accepted?: string; requiredMsg?: string }) {
+  const pick = (capture?: boolean) => {
+    const f = document.createElement("input");
+    f.type = "file";
+    f.accept = "image/*";
+    if (capture) (f as unknown as { capture: string }).capture = "environment";
+    f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) fileToBase64(file).then((data) => onPick(file.name, data)); };
+    f.click();
+  };
+  const btn: React.CSSProperties = { flex: 1, minWidth: 150, padding: 14, borderRadius: 12, fontSize: 13, fontWeight: 600, background: "#4d4337", color: "#F6EFE2", border: "1px solid #5d5347", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 };
+  return (
+    <div id={id} style={{ marginTop: 16, padding: 20, background: "#3d3529", borderRadius: 16, border: invalid ? "1px solid #ef4444" : "1px solid transparent" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: accepted ? 6 : 14 }}>
+        <span style={{ color: "#D4A96A" }}><IcoShield /></span>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "#F6EFE2" }}>{title}</div>
+      </div>
+      {accepted && <div style={{ fontSize: 12, color: "#B8A68E", marginBottom: 14 }}>{accepted}</div>}
+      {invalid && <div style={{ fontSize: 11, color: "#ff8f8f", marginBottom: 12 }}>{requiredMsg}</div>}
+      {!valueName ? (
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <button onClick={() => pick(false)} style={btn}><IcoUpload /> Upload ID photo</button>
+          <button onClick={() => pick(true)} style={btn}>
+            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6}><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            Take photo
+          </button>
+        </div>
+      ) : (
+        <div style={{ background: "#4d4337", borderRadius: 14, padding: 16, display: "flex", alignItems: "center", gap: 14 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 10, background: "#22c55e", display: "grid", placeItems: "center", color: "white", flexShrink: 0 }}><IcoCheckLg /></div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#F6EFE2", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{valueName}</div>
+            <div style={{ fontSize: 12, color: "#B8A68E" }}>ID uploaded successfully</div>
+          </div>
+          <button onClick={onClear} style={{ fontSize: 13, color: "#ef4444", background: "transparent", border: "none", cursor: "pointer", textDecoration: "underline", fontWeight: 500 }}>Remove</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CheckoutInner() {
   const sp = useSearchParams();
   const router = useRouter();
+  const { data: session, status: authStatus } = useSession();
+
+  // Checkout requires an account: send guests to sign in/up first, then back here.
+  useEffect(() => {
+    if (authStatus === "unauthenticated") {
+      const cb = encodeURIComponent(window.location.pathname + window.location.search);
+      router.replace(`/login?callbackUrl=${cb}`);
+    }
+  }, [authStatus, router]);
 
   const roomId = sp.get("roomId") || "1";
   const stayType = sp.get("stayType") || "21";
-  const checkInTime = sp.get("checkIn") || "10:00 AM";
-  const checkOutTime = sp.get("checkOut") || "7:00 AM";
+  const checkInTime = sp.get("checkIn") || "7:00 PM";
+  const checkOutTime = sp.get("checkOut") || "4:00 PM";
   const windowLabel = sp.get("windowLabel") || "Full stay";
   const date = sp.get("date") || "";
   const adults = Number(sp.get("adults") || 2);
@@ -152,34 +198,125 @@ function CheckoutInner() {
 
   const [step, setStep] = useState(0);
   const [info, setInfo] = useState<Info>({ firstName: "", lastName: "", age: "", gender: "Male", email: "", phone: "", facebook: "", notes: "", validIdName: null, validIdData: null });
-  const [addOns, setAddOns] = useState<AddOns>({});
   const [payment, setPayment] = useState<Payment>({ method: "gcash", proofName: null, idName: null, proofData: null, idData: null });
   const [submitting, setSubmitting] = useState(false);
+  // Show field markings only after a failed Continue/Confirm; clear on step change.
+  const [showErrors, setShowErrors] = useState(false);
+  useEffect(() => { setShowErrors(false); }, [step]);
+
+  // Each booking covers every named guest (adults + children + infants); guest 1
+  // is the main guest above, so collect reduced details for everyone beyond the first.
+  const extraCount = Math.max(0, adults + children + infants - 1);
+  const [extraGuests, setExtraGuests] = useState<ExtraGuest[]>([]);
+  useEffect(() => {
+    setExtraGuests((prev) => {
+      const next = prev.slice(0, extraCount);
+      while (next.length < extraCount) next.push({ firstName: "", lastName: "", age: "", gender: "Male", validIdName: null, validIdData: null });
+      return next;
+    });
+  }, [extraCount]);
+  const updateGuest = (i: number, patch: Partial<ExtraGuest>) =>
+    setExtraGuests((prev) => prev.map((g, idx) => (idx === i ? { ...g, ...patch } : g)));
+  // Guests are ordered adults → children → infants. The main guest is adult #1,
+  // so an extra guest's type follows its overall position (i + 2, main = 1).
+  const guestType = (i: number): "adult" | "child" | "infant" => {
+    const pos = i + 2;
+    if (pos <= adults) return "adult";
+    if (pos <= adults + children) return "child";
+    return "infant";
+  };
 
   // Weekday vs weekend/holiday rate based on the check-in date.
   const isWeekendRate = isWeekendOrHoliday(date);
   // Stay price: 10h single session, or 21h × nights (each night priced by its own date).
   const basePrice = stayTotal(stayType, date, nights, room);
-  const addOnsTotal = Object.entries(addOns).reduce((s, [id, qty]) => {
-    const a = ADDONS.find((x) => x.id === id); return s + (a ? a.price * qty : 0);
-  }, 0);
   // D'Lux pricing: the base rate covers 1–4 pax — no per-pax, cleaning, or
-  // service fee. Total is just the stay rate (+ optional add-ons).
-  const total = basePrice + addOnsTotal;
+  // service fee. Total is just the stay rate.
+  const total = basePrice;
   const downPayment = Math.round(total * 0.5); // 50% reservation down payment
 
-  const canNext = () => {
+  // Per-field validation for the current step. Returns the set of invalid field
+  // keys so the Continue button can stay clickable while we mark exactly what's
+  // still missing (instead of silently disabling the button).
+  const fieldErrors = ((): Set<string> => {
+    const e = new Set<string>();
     if (step === 0) {
       const age = parseInt(info.age);
-      const needsId = age >= 10;
-      return info.firstName && info.lastName && info.age && age > 0 && info.gender && info.email && /@/.test(info.email) && /^\d{11}$/.test(info.phone) && (!needsId || info.validIdName);
+      if (!info.firstName) e.add("firstName");
+      if (!info.lastName) e.add("lastName");
+      // Main guest is Adult 1 — must be a realistic adult age (18–120).
+      if (!info.age || isNaN(age) || age < 18 || age > 120) e.add("age");
+      if (!info.gender) e.add("gender");
+      if (!info.email || !/@/.test(info.email)) e.add("email");
+      if (!/^\d{11}$/.test(info.phone)) e.add("phone");
+      if (age >= 10 && !info.validIdName) e.add("validId");
+      extraGuests.forEach((g, i) => {
+        const a = Number(g.age);
+        const t = guestType(i);
+        if (!g.firstName) e.add(`x${i}-firstName`);
+        if (!g.lastName) e.add(`x${i}-lastName`);
+        // Age range by type: adults 18–120, children 2–17, infants under 2.
+        const ageBad = g.age === "" || isNaN(a) ||
+          (t === "adult" ? a < 18 || a > 120 : t === "child" ? a < 2 || a > 17 : a < 0 || a > 1);
+        if (ageBad) e.add(`x${i}-age`);
+        if (!g.gender) e.add(`x${i}-gender`);
+        // Document: infants always need an ID/birth certificate; others when 10+.
+        const needDoc = t === "infant" || a >= 10;
+        if (needDoc && !g.validIdName) e.add(`x${i}-validId`);
+      });
     }
-    if (step === 1) return true;
-    if (step === 2) return true; // Review step — nothing to validate
-    if (step === 3) {
-      return !!(payment.proofName && payment.idName);
+    // Step 2 (Payment): only the method is needed — payment proof is collected
+    // later, after the host approves the documents. Nothing to validate here.
+    return e;
+  })();
+
+  // Run `action` only when the step is valid; otherwise surface the markings.
+  const tryAdvance = (action: () => void) => {
+    if (fieldErrors.size > 0) {
+      setShowErrors(true);
+      toast.error(`Please complete the ${fieldErrors.size} highlighted field${fieldErrors.size > 1 ? "s" : ""} before continuing.`);
+      // Jump to the first missing field (Set keeps form order).
+      const firstKey = fieldErrors.values().next().value;
+      setTimeout(() => {
+        const el = document.getElementById(`f-${firstKey}`);
+        el?.scrollIntoView({ behavior: "smooth", block: "center" });
+        if (el && "focus" in el) (el as HTMLElement).focus({ preventScroll: true });
+      }, 60);
+      return;
     }
-    return true;
+    setShowErrors(false);
+    action();
+  };
+
+  // Style/marking helpers driven by a failed Continue attempt.
+  const fieldStyle = (key: string): React.CSSProperties =>
+    showErrors && fieldErrors.has(key) ? { ...inputStyle, borderColor: "#ef4444" } : inputStyle;
+  const Req = ({ k, msg = "Required" }: { k: string; msg?: string }) =>
+    showErrors && fieldErrors.has(k) ? <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>{msg}</div> : null;
+
+  // Live age feedback — warns the moment an out-of-range value is typed, before
+  // any Continue click. Adults 18–120, children 2–17.
+  type GType = "adult" | "child" | "infant";
+  const ageInvalidNow = (value: string, t: GType): boolean => {
+    if (value === "") return false;
+    const a = parseInt(value);
+    if (isNaN(a)) return true;
+    return t === "adult" ? a < 18 || a > 120 : t === "child" ? a < 2 || a > 17 : a < 0 || a > 1;
+  };
+  const ageStyle = (value: string, t: GType, key: string): React.CSSProperties =>
+    ageInvalidNow(value, t) || (showErrors && fieldErrors.has(key)) ? { ...inputStyle, borderColor: "#ef4444" } : inputStyle;
+  const AgeNote = ({ value, t, k }: { value: string; t: GType; k: string }) => {
+    if (ageInvalidNow(value, t)) {
+      const a = parseInt(value);
+      const msg = t === "adult"
+        ? (a < 18 ? "Must be 18 or older — adults only." : "Enter a realistic age (max 120).")
+        : t === "child"
+        ? "Children must be aged 2–17."
+        : "Infants must be under 2 (age 0 or 1).";
+      return <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>{msg}</div>;
+    }
+    if (showErrors && fieldErrors.has(k) && value === "") return <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>Enter the age.</div>;
+    return null;
   };
 
   const submit = async () => {
@@ -189,23 +326,17 @@ function CheckoutInner() {
     const bookingId = generateBookingId();
     const ci = to24h(checkInTime);
     const co = to24h(checkOutTime);
-    const checkInDate = date || new Date().toISOString().slice(0, 10);
+    const now = new Date();
+    const checkInDate = date || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     // Multi-night overnight stays check out `nights` days later. For a same-day
     // 10h session that ends earlier than it starts, roll to the next day.
     const checkOutDate = stayType === "10"
       ? (co <= ci ? addDays(checkInDate, 1) : checkInDate)
       : addDaysISO(checkInDate, nights);
 
-    const addOnItems = Object.entries(addOns)
-      .filter(([, q]) => q > 0)
-      .map(([id, qty]) => {
-        const a = ADDONS.find((x) => x.id === id)!;
-        return { name: a.name, price: a.price, quantity: qty };
-      });
-
     const payload = {
       booking_id: bookingId,
-      user_id: null,
+      user_id: session?.user?.id ?? null, // tie the booking to the signed-in account
       haven_id: roomId, // enables the blocked-dates check on the server
       room_name: room.name,
       check_in_date: checkInDate,
@@ -223,13 +354,20 @@ function CheckoutInner() {
       guest_gender: info.gender,
       facebook_link: info.facebook || null,
       valid_id: info.validIdData || undefined,           // base64; uploaded to Cloudinary when configured
+      additional_guests: extraGuests.map((g) => ({       // non-main guests: name, age, gender, ID
+        firstName: g.firstName,
+        lastName: g.lastName,
+        age: g.age,
+        gender: g.gender,
+        validId: g.validIdData || undefined,
+      })),
       payment_proof: payment.proofData || undefined,     // base64; uploaded to Cloudinary when configured
       payment_method: payment.method,
       room_rate: basePrice,
-      add_ons_total: addOnsTotal,
+      add_ons_total: 0,
       total_amount: total,
       down_payment: downPayment,
-      add_ons: addOnItems,
+      add_ons: [],
     };
 
     try {
@@ -246,7 +384,7 @@ function CheckoutInner() {
       }
       const confirmedId = json.data?.booking_id || bookingId;
       addMyBookingId(confirmedId);
-      toast.success("Booking submitted!");
+      toast.success("Booking request submitted! The host will review your documents.");
       router.push(`/my-bookings/confirmed?id=${confirmedId}`);
     } catch {
       toast.error("Network error. Please check your connection and try again.");
@@ -259,6 +397,16 @@ function CheckoutInner() {
       <span>{label}</span><span>{value}</span>
     </div>
   );
+
+  // Gate: until the session is confirmed (and the guest is signed in), don't
+  // render the form — unauthenticated users are redirected to sign in/up above.
+  if (authStatus !== "authenticated") {
+    return (
+      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--bg)", color: "var(--muted)", fontSize: 14 }}>
+        {authStatus === "loading" ? "Checking your session…" : "Please sign in to continue — redirecting…"}
+      </div>
+    );
+  }
 
   return (
     <div className="page-enter" style={{ backgroundColor: "var(--bg)", color: "var(--ink)", minHeight: "100vh" }}>
@@ -345,13 +493,16 @@ function CheckoutInner() {
                 <p style={{ color: "var(--muted)", fontSize: 14, margin: "0 0 22px" }}>Adult 1 (Main Guest)</p>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
                   <FieldLabel label="First Name *">
-                    <input style={inputStyle} value={info.firstName} onChange={(e) => setInfo({ ...info, firstName: e.target.value })} placeholder="John" />
+                    <input id="f-firstName" style={fieldStyle("firstName")} value={info.firstName} onChange={(e) => setInfo({ ...info, firstName: e.target.value })} placeholder="John" />
+                    <Req k="firstName" msg="Enter the first name" />
                   </FieldLabel>
                   <FieldLabel label="Last Name *">
-                    <input style={inputStyle} value={info.lastName} onChange={(e) => setInfo({ ...info, lastName: e.target.value })} placeholder="Doe" />
+                    <input id="f-lastName" style={fieldStyle("lastName")} value={info.lastName} onChange={(e) => setInfo({ ...info, lastName: e.target.value })} placeholder="Doe" />
+                    <Req k="lastName" msg="Enter the last name" />
                   </FieldLabel>
-                  <FieldLabel label="Age *">
-                    <input style={inputStyle} type="number" min="1" value={info.age} onChange={(e) => setInfo({ ...info, age: e.target.value })} placeholder="18" />
+                  <FieldLabel label="Age * (18+)">
+                    <input id="f-age" style={ageStyle(info.age, "adult", "age")} type="number" min="18" max="120" value={info.age} onChange={(e) => setInfo({ ...info, age: e.target.value.replace(/\D/g, "").slice(0, 3) })} placeholder="18" />
+                    <AgeNote value={info.age} t="adult" k="age" />
                   </FieldLabel>
                   <FieldLabel label="Gender *">
                     <select style={inputStyle} value={info.gender} onChange={(e) => setInfo({ ...info, gender: e.target.value })}>
@@ -361,22 +512,25 @@ function CheckoutInner() {
                     </select>
                   </FieldLabel>
                   <FieldLabel label="Email Address *">
-                    <input style={inputStyle} type="email" value={info.email} onChange={(e) => setInfo({ ...info, email: e.target.value })} placeholder="csr@staycationhavenph.com" />
+                    <input id="f-email" style={fieldStyle("email")} type="email" value={info.email} onChange={(e) => setInfo({ ...info, email: e.target.value })} placeholder="csr@staycationhavenph.com" />
+                    <Req k="email" msg="Enter a valid email address" />
                   </FieldLabel>
                   <FieldLabel label="Phone Number *">
-                    <input style={inputStyle} type="tel" inputMode="numeric" maxLength={11} value={info.phone} onChange={(e) => setInfo({ ...info, phone: e.target.value.replace(/\D/g, "").slice(0, 11) })} placeholder="09991484954" />
+                    <input id="f-phone" style={fieldStyle("phone")} type="tel" inputMode="numeric" maxLength={11} value={info.phone} onChange={(e) => setInfo({ ...info, phone: e.target.value.replace(/\D/g, "").slice(0, 11) })} placeholder="09991484954" />
+                    <Req k="phone" msg="Enter an 11-digit phone number" />
                   </FieldLabel>
                   <FieldLabel label="Facebook Name or Link" span>
                     <input style={inputStyle} value={info.facebook} onChange={(e) => setInfo({ ...info, facebook: e.target.value })} placeholder="e.g. Juan Dela Cruz or facebook.com/juandelacruz" />
                     <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 6 }}>Alternative contact in case email is incorrect</div>
                   </FieldLabel>
                 </div>
-                <div style={{ marginTop: 24, padding: 28, background: "#3d3529", borderRadius: 20, border: "none" }}>
+                <div id="f-validId" style={{ marginTop: 24, padding: 28, background: "#3d3529", borderRadius: 20, border: showErrors && fieldErrors.has("validId") ? "1px solid #ef4444" : "1px solid transparent" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
                     <span style={{ color: "#D4A96A" }}><IcoShield /></span>
                     <div style={{ fontSize: 14, fontWeight: 600, color: "#F6EFE2" }}>Valid ID (Required for guests 10+ years old)</div>
                   </div>
                   <div style={{ fontSize: 13, color: "#B8A68E", marginBottom: 20 }}>Accepted: Driver's License, Passport, National ID, School ID</div>
+                  {showErrors && fieldErrors.has("validId") && <div style={{ fontSize: 12, color: "#ff8f8f", marginBottom: 16 }}>Please upload a valid ID for the main guest.</div>}
                   {!info.validIdName ? (
                     <div>
                       <div style={{ background: "#4d4337", borderRadius: 14, padding: 40, textAlign: "center", marginBottom: 16, cursor: "pointer" }} onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) fileToBase64(file).then((data) => setInfo({ ...info, validIdName: file.name, validIdData: data })); }; f.click(); }}>
@@ -408,43 +562,95 @@ function CheckoutInner() {
                     </div>
                   )}
                 </div>
+
+                {/* Additional guests — name, age, gender + valid ID only */}
+                {extraGuests.map((g, i) => {
+                  const t = guestType(i);
+                  const typeLabel = t === "adult" ? "Adult (18+)" : t === "child" ? "Child (2–17)" : "Infant (under 2)";
+                  const ageLabel = t === "adult" ? "Age * (18+)" : t === "child" ? "Age * (2–17)" : "Age * (under 2)";
+                  const ageMin = t === "adult" ? 18 : t === "child" ? 2 : 0;
+                  const ageMax = t === "adult" ? 120 : t === "child" ? 17 : 1;
+                  const agePlaceholder = t === "adult" ? "18" : t === "child" ? "10" : "1";
+                  const isInfant = t === "infant";
+                  return (
+                  <div key={i} style={{ marginTop: 28, paddingTop: 24, borderTop: "1px solid var(--line)" }}>
+                    <p style={{ color: "var(--ink)", fontSize: 16, fontWeight: 600, margin: "0 0 16px" }}>Guest {i + 2} <span style={{ color: "var(--muted)", fontWeight: 500, fontSize: 13 }}>· {typeLabel}</span></p>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                      <FieldLabel label="First Name *">
+                        <input id={`f-x${i}-firstName`} style={fieldStyle(`x${i}-firstName`)} value={g.firstName} onChange={(e) => updateGuest(i, { firstName: e.target.value })} placeholder="Jane" />
+                        <Req k={`x${i}-firstName`} msg="Enter the first name" />
+                      </FieldLabel>
+                      <FieldLabel label="Last Name *">
+                        <input id={`f-x${i}-lastName`} style={fieldStyle(`x${i}-lastName`)} value={g.lastName} onChange={(e) => updateGuest(i, { lastName: e.target.value })} placeholder="Doe" />
+                        <Req k={`x${i}-lastName`} msg="Enter the last name" />
+                      </FieldLabel>
+                      <FieldLabel label={ageLabel}>
+                        <input id={`f-x${i}-age`} style={ageStyle(g.age, t, `x${i}-age`)} type="number" min={ageMin} max={ageMax} value={g.age} onChange={(e) => updateGuest(i, { age: e.target.value.replace(/\D/g, "").slice(0, 3) })} placeholder={agePlaceholder} />
+                        <AgeNote value={g.age} t={t} k={`x${i}-age`} />
+                      </FieldLabel>
+                      <FieldLabel label="Gender *">
+                        <select aria-label={`Guest ${i + 2} gender`} style={inputStyle} value={g.gender} onChange={(e) => updateGuest(i, { gender: e.target.value })}>
+                          <option value="Male">Male</option>
+                          <option value="Female">Female</option>
+                          <option value="Other">Other</option>
+                        </select>
+                      </FieldLabel>
+                    </div>
+                    <GuestIdUpload
+                      id={`f-x${i}-validId`}
+                      valueName={g.validIdName}
+                      invalid={showErrors && fieldErrors.has(`x${i}-validId`)}
+                      title={isInfant ? "Valid ID or Birth Certificate (Required)" : "Valid ID (Required for guests 10+ years old)"}
+                      accepted={isInfant ? "Accepted: PSA Birth Certificate, Passport, or any valid ID" : undefined}
+                      requiredMsg={isInfant ? "Please upload the infant's ID or birth certificate." : "Please upload a valid ID for this guest."}
+                      onPick={(name, data) => updateGuest(i, { validIdName: name, validIdData: data })}
+                      onClear={() => updateGuest(i, { validIdName: null, validIdData: null })}
+                    />
+                  </div>
+                  );
+                })}
               </div>
             )}
 
-            {/* Step 1: Add-ons */}
+            {/* Step 1: Payment method */}
             {step === 1 && (
               <div className="fade-in">
-                <h2 className="serif" style={{ fontSize: 28, fontWeight: 500, margin: "0 0 6px", letterSpacing: "-.02em" }}>Make it yours</h2>
-                <p style={{ color: "var(--muted)", fontSize: 14, margin: "0 0 22px" }}>Optional add-ons. Skip if you don&apos;t need them.</p>
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {ADDONS.map((a) => {
-                    const qty = addOns[a.id] || 0;
+                <h2 className="serif" style={{ fontSize: 28, fontWeight: 500, margin: "0 0 20px", letterSpacing: "-.02em" }}>Add a payment method</h2>
+                <div style={{ border: "1px solid var(--line-2)", borderRadius: 18, overflow: "hidden", background: "var(--white)", marginBottom: 24 }}>
+                  {([
+                    { id: "gcash" as const, label: "GCash", sub: "0946 007 4015", logo: "/images/gcash.svg" },
+                    { id: "bank" as const, label: "Bank Transfer", sub: "BPI", logo: "/images/bpi.svg" },
+                  ] as const).map((m, i) => {
+                    const active = payment.method === m.id;
                     return (
-                      <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 16, padding: 16, background: "var(--white)", border: "1px solid var(--line)", borderRadius: 16 }}>
-                        <div style={{ width: 48, height: 48, borderRadius: 12, background: "var(--bg-2)", display: "grid", placeItems: "center" }}>
-                          <span style={{ color: "var(--accent-ink)" }}><IcoTag /></span>
+                      <button key={m.id} onClick={() => setPayment({ ...payment, method: m.id })}
+                        style={{ width: "100%", display: "flex", alignItems: "center", gap: 14, padding: "16px 18px", background: "transparent", borderWidth: 0, borderTopWidth: i > 0 ? 1 : 0, borderStyle: "solid", borderColor: "var(--line)", cursor: "pointer", textAlign: "left" }}>
+                        <span style={{ width: 34, height: 34, display: "grid", placeItems: "center", flexShrink: 0 }}>
+                          <Image src={m.logo} alt={m.label} width={34} height={34} unoptimized style={{ objectFit: "contain" }} />
+                        </span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)" }}>{m.label}</div>
+                          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 1 }}>{m.sub}</div>
                         </div>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 15, fontWeight: 600 }}>{a.name}</div>
-                          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{a.desc}</div>
-                        </div>
-                        <div style={{ fontSize: 14, fontWeight: 700, minWidth: 90, textAlign: "right" }}>
-                          {peso(a.price)} <span style={{ color: "var(--muted)", fontWeight: 400, fontSize: 12 }}>/ {a.unit}</span>
-                        </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                          <button onClick={() => setAddOns({ ...addOns, [a.id]: Math.max(0, qty - 1) })}
-                            style={{ width: 30, height: 30, borderRadius: "50%", border: "1px solid var(--line-2)", background: "var(--white)", display: "grid", placeItems: "center", cursor: qty === 0 ? "not-allowed" : "pointer", opacity: qty === 0 ? 0.4 : 1 }}>
-                            <IcoMinus />
-                          </button>
-                          <div style={{ width: 18, textAlign: "center", fontWeight: 600 }}>{qty}</div>
-                          <button onClick={() => setAddOns({ ...addOns, [a.id]: qty + 1 })}
-                            style={{ width: 30, height: 30, borderRadius: "50%", border: "1px solid var(--line-2)", background: "var(--white)", display: "grid", placeItems: "center", cursor: "pointer" }}>
-                            <IcoPlus />
-                          </button>
-                        </div>
-                      </div>
+                        <span style={{ width: 20, height: 20, borderRadius: "50%", borderWidth: 2, borderStyle: "solid", borderColor: active ? "var(--ink)" : "var(--line-2)", display: "grid", placeItems: "center", flexShrink: 0 }}>
+                          {active && <span style={{ width: 10, height: 10, borderRadius: "50%", background: "var(--ink)" }} />}
+                        </span>
+                      </button>
                     );
                   })}
+                </div>
+
+                <div style={{ padding: 20, borderRadius: 16, background: "var(--bg-2)", marginBottom: 16 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)", marginBottom: 10 }}>What happens next</div>
+                  <ol style={{ margin: 0, padding: "0 0 0 18px", fontSize: 13, color: "var(--ink-2)", lineHeight: 1.8 }}>
+                    <li>Submit your booking request — <strong>no payment yet</strong>.</li>
+                    <li>The host reviews your valid IDs &amp; documents.</li>
+                    <li>Once approved, you&apos;ll receive {payment.method === "gcash" ? "GCash" : "BPI bank transfer"} details to send the <strong>{peso(downPayment)}</strong> down payment (50%).</li>
+                    <li>The <strong>{peso(total - downPayment)}</strong> balance + ₱1,000 refundable deposit are paid at check-in.</li>
+                  </ol>
+                </div>
+                <div style={{ padding: 14, borderRadius: 12, background: "rgba(176,120,72,.08)", border: "1px solid var(--line-2)", fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.55 }}>
+                  Your reservation isn&apos;t final until the host approves your documents and your down payment is confirmed. We&apos;ll notify you with {payment.method === "gcash" ? "GCash" : "bank"} payment instructions after approval.
                 </div>
               </div>
             )}
@@ -462,108 +668,21 @@ function CheckoutInner() {
                 <ReviewBlock title="Stay" onEdit={() => router.back()}>
                   <div style={{ fontSize: 14, fontWeight: 600 }}>{room.name}</div>
                   <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>{formatDateLong(date)} · {checkInTime} → {checkOutTime}</div>
-                  <div style={{ fontSize: 13, color: "var(--muted)" }}>{stayType}-hour stay · {adults + children} guest{adults + children > 1 ? "s" : ""}</div>
-                </ReviewBlock>
-                {addOnsTotal > 0 && (
-                  <ReviewBlock title="Add-ons" onEdit={() => setStep(1)}>
-                    {Object.entries(addOns).filter(([, q]) => q > 0).map(([id, q]) => {
-                      const a = ADDONS.find((x) => x.id === id)!;
-                      return <div key={id} style={{ fontSize: 13, display: "flex", justifyContent: "space-between" }}><span>{a.name} × {q}</span><span style={{ color: "var(--muted)" }}>{peso(a.price * q)}</span></div>;
-                    })}
-                  </ReviewBlock>
-                )}
-                <div style={{ marginTop: 20, padding: 20, background: "var(--bg-2)", borderRadius: 16 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>You&apos;re agreeing to:</div>
-                  <ul style={{ margin: 0, padding: "0 0 0 18px", fontSize: 13, color: "var(--ink-2)", lineHeight: 1.7 }}>
-                    <li>Check-in at {checkInTime} and check-out by {checkOutTime}</li>
-                    <li>House rules — no smoking, no pets, quiet hours after 10pm</li>
-                    <li>50% balance + ₱1,000 refundable deposit due at check-in</li>
-                    <li>No cancellations — one free date change if requested ≥7 days before check-in</li>
-                  </ul>
-                </div>
-              </div>
-            )}
-
-            {/* Step 3: Payment */}
-            {step === 3 && (
-              <div className="fade-in">
-                <h2 className="serif" style={{ fontSize: 28, fontWeight: 500, margin: "0 0 20px", letterSpacing: "-.02em" }}>How would you like to pay?</h2>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 24 }}>
-                  {([
-                    { id: "gcash" as const, label: "GCash", sub: "Scan & upload proof", icon: <IcoPhone /> },
-                    { id: "bank" as const, label: "Bank Transfer", sub: "BPI", icon: <IcoHome /> },
-                  ] as const).map((m) => (
-                    <button key={m.id} onClick={() => setPayment({ ...payment, method: m.id })}
-                      style={{ padding: 16, textAlign: "left", borderRadius: 14, border: payment.method === m.id ? "2px solid var(--ink)" : "1px solid var(--line-2)", background: "var(--white)", cursor: "pointer", color: "var(--ink)" }}>
-                      {m.icon}
-                      <div style={{ fontSize: 14, fontWeight: 600, marginTop: 8, color: "var(--ink)" }}>{m.label}</div>
-                      <div style={{ fontSize: 11, color: "var(--ink)", marginTop: 2 }}>{m.sub}</div>
-                    </button>
-                  ))}
-                </div>
-
-                {(payment.method === "gcash" || payment.method === "bank") && (
-                  <div>
-                    <div style={{ padding: 24, borderRadius: 20, background: "var(--white)", border: "1px dashed var(--line-2)", display: "grid", gridTemplateColumns: "auto 1fr", gap: 24, alignItems: "center", marginBottom: 20 }}>
-                      <div style={{ width: 130, height: 130, borderRadius: 12, background: "var(--bg-2)", display: "grid", placeItems: "center", fontSize: 48 }}>📱</div>
-                      <div>
-                        <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--ink)" }}>
-                          {payment.method === "gcash" ? "GCash · D' Lux Homes" : "BPI · D' Lux Homes"}
-                        </div>
-                        <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 22, fontWeight: 700, marginTop: 6, color: "var(--ink)" }}>
-                          {payment.method === "gcash" ? "0946 · 007 · 4015" : "0123 · 4567 · 8901"}
-                        </div>
-                        <div style={{ fontSize: 13, color: "var(--ink)", marginTop: 10, lineHeight: 1.55 }}>
-                          Send a <strong>{peso(downPayment)}</strong> down payment to secure your booking. Upload the screenshot below. Balance of <strong>{peso(total - downPayment)}</strong> is due at check-in.
-                        </div>
-                      </div>
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                      <UploadField label="Payment proof" sub="Screenshot of your transfer" value={payment.proofName} onChange={(name, data) => setPayment({ ...payment, proofName: name, proofData: data })} />
-                      <UploadField label="Valid ID" sub="Driver's license, passport, etc." value={payment.idName} onChange={(name, data) => setPayment({ ...payment, idName: name, idData: data })} />
-                    </div>
-                  </div>
-                )}
-
-              </div>
-            )}
-
-            {/* Step 3: Review */}
-            {step === 3 && (
-              <div className="fade-in">
-                <h2 className="serif" style={{ fontSize: 28, fontWeight: 500, margin: "0 0 20px", letterSpacing: "-.02em" }}>Double-check everything</h2>
-                <ReviewBlock title="Guest" onEdit={() => setStep(0)}>
-                  <div style={{ fontSize: 14 }}>{info.firstName} {info.lastName}</div>
-                  <div style={{ fontSize: 13, color: "var(--muted)" }}>{info.age} years old · {info.gender}</div>
-                  <div style={{ fontSize: 13, color: "var(--muted)" }}>{info.email} · {info.phone}</div>
-                  {info.facebook && <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>Facebook: {info.facebook}</div>}
-                </ReviewBlock>
-                <ReviewBlock title="Stay" onEdit={() => router.back()}>
-                  <div style={{ fontSize: 14, fontWeight: 600 }}>{room.name}</div>
-                  <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>{formatDateLong(date)} · {checkInTime} → {checkOutTime}</div>
                   <div style={{ fontSize: 13, color: "var(--muted)" }}>{stayType === "10" ? "10-hour stay" : `Overnight · ${nights} night${nights > 1 ? "s" : ""}`} · {adults + children} guest{adults + children > 1 ? "s" : ""}</div>
                 </ReviewBlock>
-                {addOnsTotal > 0 && (
-                  <ReviewBlock title="Add-ons" onEdit={() => setStep(1)}>
-                    {Object.entries(addOns).filter(([, q]) => q > 0).map(([id, q]) => {
-                      const a = ADDONS.find((x) => x.id === id)!;
-                      return <div key={id} style={{ fontSize: 13, display: "flex", justifyContent: "space-between" }}><span>{a.name} × {q}</span><span style={{ color: "var(--muted)" }}>{peso(a.price * q)}</span></div>;
-                    })}
-                  </ReviewBlock>
-                )}
-                <ReviewBlock title="Payment" onEdit={() => setStep(2)}>
+                <ReviewBlock title="Payment" onEdit={() => setStep(1)}>
                   <div style={{ fontSize: 14 }}>
-                    {payment.method === "gcash" ? "GCash — " : "BPI bank transfer — "}
-                    <span style={{ color: "var(--muted)" }}>50% down payment now ({peso(downPayment)}), balance at check-in</span>
+                    {payment.method === "gcash" ? "GCash" : "BPI bank transfer"}
+                    <span style={{ color: "var(--muted)" }}> — pay the 50% down payment ({peso(downPayment)}) after the host approves your documents</span>
                   </div>
                 </ReviewBlock>
                 <div style={{ marginTop: 20, padding: 20, background: "var(--bg-2)", borderRadius: 16 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>You&apos;re agreeing to:</div>
                   <ul style={{ margin: 0, padding: "0 0 0 18px", fontSize: 13, color: "var(--ink-2)", lineHeight: 1.7 }}>
                     <li>Check-in at {checkInTime} and check-out by {checkOutTime}</li>
-                    <li>House rules — no smoking, no pets, quiet hours after 10pm</li>
-                    <li>50% balance + ₱1,000 refundable deposit due at check-in</li>
-                    <li>No cancellations — one free date change if requested ≥7 days before check-in</li>
+                    <li>House rules — strictly no smoking/vaping, no pets, no walk-ins</li>
+                    <li>50% balance + ₱1,000 refundable security deposit due at check-in</li>
+                    <li>No cancellations — one free date change if requested ≥7 days before check-in, new date within 1 month</li>
                   </ul>
                 </div>
               </div>
@@ -576,14 +695,14 @@ function CheckoutInner() {
                 <IcoChevLeft /> {step === 0 ? "Back to stay" : "Back"}
               </button>
               {step < STEPS.length - 1 ? (
-                <button onClick={() => setStep(step + 1)} disabled={!canNext()}
-                  style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "13px 28px", borderRadius: 999, fontSize: 15, fontWeight: 600, background: canNext() ? "#B07848" : "#d4c5b0", color: "var(--white)", border: "none", cursor: canNext() ? "pointer" : "not-allowed", opacity: canNext() ? 1 : 0.6 }}>
+                <button onClick={() => tryAdvance(() => setStep(step + 1))}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "13px 28px", borderRadius: 999, fontSize: 15, fontWeight: 600, background: "#B07848", color: "var(--white)", border: "none", cursor: "pointer" }}>
                   Continue <IcoArrowRight />
                 </button>
               ) : (
-                <button onClick={submit} disabled={submitting || !canNext()}
-                  style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "13px 28px", borderRadius: 999, fontSize: 15, fontWeight: 600, background: !canNext() ? "#d4c5b0" : "#B07848", color: "var(--white)", border: "none", cursor: (submitting || !canNext()) ? "not-allowed" : "pointer", opacity: (submitting || !canNext()) ? 0.7 : 1 }}>
-                  <IcoCheckLg /> {submitting ? "Submitting…" : "Confirm booking"}
+                <button onClick={() => tryAdvance(submit)} disabled={submitting}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "13px 28px", borderRadius: 999, fontSize: 15, fontWeight: 600, background: "#B07848", color: "var(--white)", border: "none", cursor: submitting ? "not-allowed" : "pointer", opacity: submitting ? 0.7 : 1 }}>
+                  <IcoCheckLg /> {submitting ? "Submitting…" : "Submit booking request"}
                 </button>
               )}
             </div>
@@ -609,18 +728,23 @@ function CheckoutInner() {
               </div>
               <div style={{ padding: "16px 0", borderBottom: "1px solid var(--line)", fontSize: 13, display: "flex", flexDirection: "column", gap: 6 }}>
                 <PriceRow label={stayType === "10" ? `10-hour stay · ${isWeekendRate ? "Weekend/Holiday" : "Weekday"}` : `Overnight · ${nights} night${nights > 1 ? "s" : ""}`} value={peso(basePrice)} />
-                {addOnsTotal > 0 && <PriceRow label="Add-ons" value={peso(addOnsTotal)} />}
               </div>
               <div style={{ padding: "16px 0 0", display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16 }}>
                 <span>Total</span><span>{peso(total)}</span>
               </div>
-              {(payment.method === "gcash" || payment.method === "bank") && step >= 3 && (
+              {step >= 1 && (
                 <div style={{ marginTop: 14, padding: 12, background: "var(--bg-2)", borderRadius: 12, fontSize: 12, color: "var(--ink-2)" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600, marginBottom: 4 }}>
-                    <span>Down payment now</span><span>{peso(downPayment)}</span>
+                    <span>Down payment (50%, after approval)</span><span>{peso(downPayment)}</span>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", color: "var(--muted)" }}>
-                    <span>Balance at check-in</span><span>{peso(total - downPayment)}</span>
+                    <span>Room balance at check-in</span><span>{peso(total - downPayment)}</span>
+                  </div>
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed var(--line)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600 }}>
+                      <span>Security deposit (separate)</span><span>{peso(SECURITY_DEPOSIT)}</span>
+                    </div>
+                    <div style={{ marginTop: 4, color: "var(--muted)", fontSize: 11 }}>Refundable hold collected at check-in and returned after check-out not part of the room price.</div>
                   </div>
                 </div>
               )}

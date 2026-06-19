@@ -3,8 +3,36 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { useSession } from "next-auth/react";
+import SiteHeader from "@/components/SiteHeader";
 import { getMyBookingIds } from "@/lib/booking-store";
 import type { StoredBooking } from "@/lib/booking-store";
+
+type BookingRow = StoredBooking & { checkInTime?: string; checkOutTime?: string };
+// Map an API booking record into the shape the page renders.
+function mapBooking(d: Record<string, unknown>): BookingRow {
+  return {
+    id: String(d.booking_id ?? ""),
+    roomId: "",
+    roomName: String(d.room_name ?? ""),
+    checkIn: String(d.check_in_date ?? "").slice(0, 10),
+    checkOut: String(d.check_out_date ?? "").slice(0, 10),
+    stayType: "",
+    guests: { adults: Number(d.adults ?? 0), children: Number(d.children ?? 0), infants: Number(d.infants ?? 0) },
+    status: String(d.status ?? "pending") as StoredBooking["status"],
+    totalAmount: Number(d.total_amount ?? 0),
+    addOns: [],
+    createdAt: String(d.created_at ?? ""),
+    guestInfo: {
+      firstName: String(d.guest_first_name ?? ""),
+      lastName: String(d.guest_last_name ?? ""),
+      email: String(d.guest_email ?? ""),
+      phone: String(d.guest_phone ?? ""),
+    },
+    checkInTime: (d.check_in_time as string) ?? undefined,
+    checkOutTime: (d.check_out_time as string) ?? undefined,
+  } as BookingRow;
+}
 
 function peso(n: number) { return "₱" + n.toLocaleString("en-PH"); }
 function formatDate(iso: string) {
@@ -21,7 +49,9 @@ function IcoTag() { return <svg width={13} height={13} viewBox="0 0 24 24" fill=
 
 const statusStyle = (s: string): { bg: string; ink: string; label: string } => ({
   pending:      { bg: "#F8E8C4", ink: "#7A5A18", label: "Pending approval" },
+  approved:     { bg: "#DDE9D4", ink: "#3B5A24", label: "Approved — pay to confirm" },
   confirmed:    { bg: "#DDE9D4", ink: "#3B5A24", label: "Confirmed" },
+  "on-going":   { bg: "var(--ink)", ink: "var(--white)", label: "On-going" },
   "checked-in": { bg: "var(--ink)", ink: "var(--white)", label: "Checked in" },
   "checked-out":{ bg: "var(--bg-2)", ink: "var(--muted)", label: "Completed" },
   cancelled:    { bg: "#EFD9D4", ink: "#7A2B18", label: "Cancelled" },
@@ -68,71 +98,40 @@ function BookingCard({ booking }: { booking: StoredBooking & { checkInTime?: str
 }
 
 export default function MyBookingsPage() {
-  const [bookings, setBookings] = useState<StoredBooking[]>([]);
+  const { data: session } = useSession();
+  const userId = session?.user?.id;
+  const [bookings, setBookings] = useState<BookingRow[]>([]);
   const [tab, setTab] = useState<"upcoming" | "past">("upcoming");
 
   useEffect(() => {
-    const ids = getMyBookingIds();
-    if (!ids.length) return;
     let active = true;
-    Promise.all(
-      ids.map((id) =>
-        fetch(`/api/bookings/${encodeURIComponent(id)}`)
-          .then((r) => (r.ok ? r.json() : null))
-          .catch(() => null)
-      )
-    ).then((results) => {
+    // Account bookings (works across devices) + legacy localStorage bookings.
+    const ids = getMyBookingIds();
+    const localFetches = ids.map((id) =>
+      fetch(`/api/bookings/${encodeURIComponent(id)}`).then((r) => (r.ok ? r.json() : null)).catch(() => null).then((j) => j?.data)
+    );
+    const accountFetch = userId
+      ? fetch(`/api/bookings/user/${encodeURIComponent(userId)}`).then((r) => (r.ok ? r.json() : null)).catch(() => null).then((j) => (Array.isArray(j?.data) ? j.data : []))
+      : Promise.resolve([] as Record<string, unknown>[]);
+
+    Promise.all([accountFetch, Promise.all(localFetches)]).then(([acct, locals]) => {
       if (!active) return;
-      const mapped = results
-        .map((j) => j?.data)
-        .filter(Boolean)
-        .map((d: Record<string, unknown>) => ({
-          id: String(d.booking_id ?? ""),
-          roomId: "",
-          roomName: String(d.room_name ?? ""),
-          checkIn: String(d.check_in_date ?? "").slice(0, 10),
-          checkOut: String(d.check_out_date ?? "").slice(0, 10),
-          stayType: "",
-          guests: { adults: Number(d.adults ?? 0), children: Number(d.children ?? 0), infants: Number(d.infants ?? 0) },
-          status: String(d.status ?? "pending") as StoredBooking["status"],
-          totalAmount: Number(d.total_amount ?? 0),
-          addOns: [],
-          createdAt: String(d.created_at ?? ""),
-          guestInfo: {
-            firstName: String(d.guest_first_name ?? ""),
-            lastName: String(d.guest_last_name ?? ""),
-            email: String(d.guest_email ?? ""),
-            phone: String(d.guest_phone ?? ""),
-          },
-          checkInTime: (d.check_in_time as string) ?? undefined,
-          checkOutTime: (d.check_out_time as string) ?? undefined,
-        }) as StoredBooking & { checkInTime?: string; checkOutTime?: string });
-      setBookings(mapped);
+      const rows = [...(acct as Record<string, unknown>[]), ...locals.filter(Boolean) as Record<string, unknown>[]];
+      const byId = new Map<string, Record<string, unknown>>();
+      rows.forEach((d) => { const id = String(d.booking_id ?? ""); if (id) byId.set(id, d); });
+      setBookings(Array.from(byId.values()).map(mapBooking));
     });
     return () => { active = false; };
-  }, []);
+  }, [userId]);
 
-  const upcoming = bookings.filter((b) => ["pending", "confirmed", "checked-in"].includes(b.status));
+  const upcoming = bookings.filter((b) => ["pending", "approved", "confirmed", "on-going", "checked-in"].includes(b.status));
   const past = bookings.filter((b) => ["checked-out", "cancelled", "rejected"].includes(b.status));
   const list = tab === "upcoming" ? upcoming : past;
 
   return (
     <div style={{ minHeight: "100vh", backgroundColor: "var(--bg)", color: "var(--ink)" }}>
       {/* HEADER */}
-      <header style={{ position: "sticky", top: 0, zIndex: 50, background: "rgba(246,239,226,.88)", backdropFilter: "blur(14px)", borderBottom: "1px solid var(--line)" }}>
-        <div style={{ maxWidth: 1320, margin: "0 auto", padding: "14px 28px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <Link href="/rooms" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: "inherit" }}>
-            <div style={{ width: 38, height: 38, borderRadius: 10, background: "var(--ink)", color: "var(--white)", display: "grid", placeItems: "center", fontFamily: "var(--font-fraunces), Georgia, serif", fontWeight: 700, fontSize: 20, fontStyle: "italic" }}>d</div>
-            <div style={{ lineHeight: 1.05 }}>
-              <div className="serif" style={{ fontSize: 19, fontWeight: 600, letterSpacing: "-.02em" }}>D&apos; Lux Homes</div>
-              <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".15em" }}>Staycations · PH</div>
-            </div>
-          </Link>
-          <Link href="/rooms/1" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 20px", borderRadius: 999, fontSize: 14, fontWeight: 600, background: "var(--dlux-accent)", color: "var(--white)", textDecoration: "none" }}>
-            Book again <IcoArrowRight />
-          </Link>
-        </div>
-      </header>
+      <SiteHeader bookHref="/rooms" bookLabel="Book again" backHref="/rooms" backLabel="Back to home" />
 
       <div className="page-enter" style={{ maxWidth: 1180, margin: "0 auto", padding: "40px 28px 80px" }}>
         <div style={{ marginBottom: 28 }}>

@@ -6,7 +6,7 @@ export type StoredBooking = {
   checkOut: string;
   stayType: string;
   guests: { adults: number; children: number; infants: number };
-  status: "pending" | "confirmed" | "checked-in" | "checked-out" | "rejected" | "cancelled";
+  status: "pending" | "approved" | "confirmed" | "on-going" | "checked-in" | "checked-out" | "rejected" | "cancelled";
   totalAmount: number;
   addOns: { name: string; qty: number; price: number }[];
   createdAt: string;

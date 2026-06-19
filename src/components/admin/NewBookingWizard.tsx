@@ -3,17 +3,15 @@
 import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import { generateBookingId } from "@/lib/booking-store";
-import { User, CalendarDays, Package, Wallet, Check, Plus, Minus } from "lucide-react";
+import { User, CalendarDays, Wallet, Check } from "lucide-react";
 
 const STEPS = [
   { id: "guest", label: "Guest", icon: User },
   { id: "booking", label: "Booking", icon: CalendarDays },
-  { id: "addons", label: "Add-ons", icon: Package },
   { id: "payment", label: "Payment", icon: Wallet },
 ] as const;
 
 type Haven = { id: string; name: string; rate: number };
-type AddonItem = { name: string; price: number; qty: number };
 
 const empty = {
   first_name: "", last_name: "", email: "", phone: "", age: "", gender: "Male",
@@ -42,14 +40,13 @@ export default function NewBookingWizard({
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<Form>(empty);
   const [havens, setHavens] = useState<Haven[]>([]);
-  const [addons, setAddons] = useState<AddonItem[]>([]);
   const [saving, setSaving] = useState(false);
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }));
 
   // Load havens for the room picker once when opened.
   useEffect(() => {
     if (!open) return;
-    setStep(0); setForm(empty); setAddons([]);
+    setStep(0); setForm(empty);
     fetch("/api/haven")
       .then((r) => (r.ok ? r.json() : { data: [] }))
       .then((j) => {
@@ -63,29 +60,16 @@ export default function NewBookingWizard({
       .catch(() => {});
   }, [open]);
 
-  // When a haven is picked, prefill its rate and load its add-ons.
+  // When a haven is picked, prefill its rate.
   const pickHaven = (id: string) => {
     const h = havens.find((x) => x.id === id);
     set({ haven_id: id, room_name: h?.name || "", room_rate: h ? String(h.rate) : "" });
-    setAddons([]);
-    if (id) {
-      fetch(`/api/haven/${id}/rentable-items`)
-        .then((r) => (r.ok ? r.json() : { data: [] }))
-        .then((j) => {
-          const rows = (j?.data || j) || [];
-          setAddons((Array.isArray(rows) ? rows : []).map((it: Record<string, unknown>) => ({
-            name: String(it.name || "Item"), price: Number(it.price_per_night || 0), qty: 0,
-          })));
-        })
-        .catch(() => {});
-    }
   };
 
   if (!open) return null;
 
-  const addonsTotal = addons.reduce((s, a) => s + a.price * a.qty, 0);
   const roomRate = Number(form.room_rate) || 0;
-  const total = roomRate + addonsTotal;
+  const total = roomRate;
 
   const step1Valid = !!(form.first_name && form.last_name && form.email && form.phone);
   const step2Valid = !!(form.room_name && form.check_in_date && roomRate > 0);
@@ -107,7 +91,6 @@ export default function NewBookingWizard({
       const checkInDate = form.check_in_date;
       const checkOutDate = form.check_out_date || (co <= ci ? addDays(checkInDate, 1) : checkInDate);
       const dp = form.down_payment === "" ? Math.round(total * 0.5) : Number(form.down_payment);
-      const addOnItems = addons.filter((a) => a.qty > 0).map((a) => ({ name: a.name, price: a.price, quantity: a.qty }));
 
       const payload = {
         booking_id: generateBookingId(),
@@ -129,10 +112,10 @@ export default function NewBookingWizard({
         guest_gender: form.gender,
         payment_method: form.payment_method,
         room_rate: roomRate,
-        add_ons_total: addonsTotal,
+        add_ons_total: 0,
         total_amount: total,
         down_payment: dp,
-        add_ons: addOnItems,
+        add_ons: [],
       };
 
       const res = await fetch("/api/bookings", {
@@ -152,7 +135,7 @@ export default function NewBookingWizard({
     }
   };
 
-  const stepHeading = ["Guest information", "Booking details", "Add-ons", "Payment"][step];
+  const stepHeading = ["Guest information", "Booking details", "Payment"][step];
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={onClose}>
@@ -242,31 +225,8 @@ export default function NewBookingWizard({
             </div>
           )}
 
-          {/* Step 3 — Add-ons */}
+          {/* Step 3 — Payment */}
           {step === 2 && (
-            <div className="space-y-2">
-              {addons.length === 0 ? (
-                <p className="text-sm text-center py-6" style={{ color: "#C9B79E" }}>No add-ons available for this room.</p>
-              ) : (
-                addons.map((a, i) => (
-                  <div key={a.name} className="flex items-center justify-between rounded-xl border px-3 py-2.5" style={{ borderColor: "#EDE3D2" }}>
-                    <div>
-                      <p className="text-sm font-medium" style={{ color: "#1a1a1a" }}>{a.name}</p>
-                      <p className="text-xs" style={{ color: "#8B6344" }}>₱{a.price.toLocaleString()}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button type="button" onClick={() => setAddons(addons.map((x, j) => j === i ? { ...x, qty: Math.max(0, x.qty - 1) } : x))} className="w-7 h-7 rounded-lg flex items-center justify-center border" style={{ borderColor: "#D4BFA0", color: "#B07848" }}><Minus className="w-3.5 h-3.5" /></button>
-                      <span className="text-sm font-semibold w-5 text-center" style={{ color: "#1a1a1a" }}>{a.qty}</span>
-                      <button type="button" onClick={() => setAddons(addons.map((x, j) => j === i ? { ...x, qty: x.qty + 1 } : x))} className="w-7 h-7 rounded-lg flex items-center justify-center text-white" style={{ backgroundColor: "#B07848" }}><Plus className="w-3.5 h-3.5" /></button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-
-          {/* Step 4 — Payment */}
-          {step === 3 && (
             <div className="space-y-3">
               <div>
                 <label className={labelCls} style={labelStyle}>Payment method</label>
@@ -280,7 +240,6 @@ export default function NewBookingWizard({
               </div>
               <div className="rounded-2xl border p-4 mt-2" style={{ backgroundColor: "#FAFAF7", borderColor: "#EDE3D2" }}>
                 <div className="flex justify-between text-sm"><span style={{ color: "#8B6344" }}>Room</span><span style={{ color: "#1a1a1a" }}>₱{roomRate.toLocaleString()}</span></div>
-                <div className="flex justify-between text-sm mt-1.5"><span style={{ color: "#8B6344" }}>Add-ons</span><span style={{ color: "#1a1a1a" }}>₱{addonsTotal.toLocaleString()}</span></div>
                 <div className="flex justify-between text-sm mt-2 pt-2 border-t font-bold" style={{ borderColor: "#EDE3D2" }}><span style={{ color: "#1a1a1a" }}>Total</span><span style={{ color: "#B07848" }}>₱{total.toLocaleString()}</span></div>
               </div>
             </div>
@@ -306,5 +265,6 @@ export default function NewBookingWizard({
 function addDays(iso: string, days: number): string {
   const d = new Date(iso + "T00:00:00");
   d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  // Build from LOCAL parts — toISOString() shifts the date a day in +UTC zones (PH).
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
