@@ -15,7 +15,7 @@ import {
   LayoutDashboard, ClipboardList, MapPin, CheckSquare, AlertTriangle,
   Bell, Menu, X, LogOut, Clock, CheckCircle2, Circle,
   AlertCircle, Building2, MessageSquare, User, CalendarDays, BookOpen,
-  Camera, Phone, Mail, Shield, Star, ChevronDown, Plus,
+  Camera, Phone, Mail, Shield, Star, ChevronDown,
 } from "lucide-react";
 
 const navItems = [
