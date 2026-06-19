@@ -198,7 +198,7 @@ export default function BrowsePage() {
 
       {/* EDITORIAL 2-COL */}
       <section ref={aboutRef} style={{ maxWidth: 1320, margin: "0 auto", padding: "80px 28px" }}>
-        <div className={`about-grid${aboutVisible ? " about-grid--in" : ""}`} style={{ display: "grid", gridTemplateColumns: "1fr 1.1fr", gap: 64, alignItems: "center" }}>
+        <div className={`about-grid${aboutVisible ? " about-grid--in" : ""}`} style={{ display: "grid", gridTemplateColumns: "1fr 1.05fr", gap: 80, alignItems: "center" }}>
           <div className="about-copy">
             <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: "var(--accent-ink)", marginBottom: 18 }}>About this home</div>
             <h2 className="serif" style={{ fontSize: 56, fontWeight: 400, letterSpacing: "-.025em", lineHeight: 1, margin: 0 }}>
@@ -214,19 +214,21 @@ export default function BrowsePage() {
               ))}
             </div>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div className="about-photo" style={{ transitionDelay: "120ms", borderRadius: 20, overflow: "hidden", aspectRatio: "3/4", background: "var(--bg-2)", gridRow: "span 2", position: "relative" }}>
-              <Image className="about-photo__img" src={room.images[1]} alt="" fill unoptimized style={{ objectFit: "cover" }} />
-              <span className="about-photo__overlay" />
-            </div>
-            <div className="about-photo" style={{ transitionDelay: "240ms", borderRadius: 20, overflow: "hidden", aspectRatio: "4/3", background: "var(--bg-2)", position: "relative" }}>
-              <Image className="about-photo__img" src={room.images[2]} alt="" fill unoptimized style={{ objectFit: "cover" }} />
-              <span className="about-photo__overlay" />
-            </div>
-            <div className="about-photo" style={{ transitionDelay: "360ms", borderRadius: 20, overflow: "hidden", aspectRatio: "4/3", background: "var(--bg-2)", position: "relative" }}>
-              <Image className="about-photo__img" src={room.images[0]} alt="" fill unoptimized style={{ objectFit: "cover" }} />
-              <span className="about-photo__overlay" />
-            </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gridAutoRows: "118px", gridAutoFlow: "dense", gap: 16 }}>
+            {[
+              { src: room.images[1], alt: "Interior detail", span: 3 },
+              { src: "/images/rooms/garden.jpg", alt: "Landscaped garden courtyard", span: 2 },
+              { src: "/images/rooms/tower.jpg", alt: "Tower 4 Grass Residences at dusk", span: 2 },
+            ].map((p, i) => (
+              <div
+                key={i}
+                className="about-photo"
+                style={{ transitionDelay: `${120 + i * 100}ms`, borderRadius: 20, overflow: "hidden", background: "var(--bg-2)", gridRow: `span ${p.span}`, position: "relative" }}
+              >
+                <Image className="about-photo__img" src={p.src} alt={p.alt} fill unoptimized style={{ objectFit: "cover" }} />
+                <span className="about-photo__overlay" />
+              </div>
+            ))}
           </div>
         </div>
       </section>

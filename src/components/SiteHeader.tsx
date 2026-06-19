@@ -6,6 +6,7 @@
 // Wired to the real NextAuth session and the guest's stored bookings.
 
 import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
@@ -136,20 +137,82 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
 
   return (
     <header style={{ position: "sticky", top: 0, zIndex: 50, background: "#f3eadb", borderBottom: "1px solid rgba(58,51,39,.10)" }}>
-      <style>{`@keyframes dluxDot{0%,100%{opacity:.55}50%{opacity:1}}`}</style>
+      <style>{`
+        @keyframes dluxDot{0%,100%{opacity:.55}50%{opacity:1}}
+        @keyframes dluxSpin{to{transform:rotate(360deg)}}
+        .dlux-acct{
+          transition: background .25s ease, border-color .25s ease,
+            box-shadow .25s ease, transform .25s cubic-bezier(.16,1,.3,1);
+        }
+        .dlux-acct:hover{
+          background: rgba(176,120,72,.07);
+          border-color: rgba(176,120,72,.22);
+          transform: translateY(-1px);
+          box-shadow: 0 8px 20px -12px rgba(58,51,39,.45);
+        }
+        .dlux-acct:active{ transform: translateY(0); }
+        .dlux-acct__badge{
+          transition: transform .35s cubic-bezier(.16,1,.3,1),
+            background .25s ease, border-color .25s ease;
+        }
+        .dlux-acct:hover .dlux-acct__badge{
+          transform: rotate(90deg) scale(1.08);
+          border-color: var(--dlux-accent);
+          background: rgba(176,120,72,.10);
+        }
+        .dlux-hdr-back{
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 9px 18px;
+          border-radius: 999px;
+          font-size: 14px;
+          font-weight: 600;
+          color: #544a3a;
+          text-decoration: none;
+          white-space: nowrap;
+          border: 1px solid transparent;
+          background: transparent;
+          transition: background .25s ease, color .25s ease, border-color .25s ease,
+            box-shadow .25s ease, transform .25s cubic-bezier(.16,1,.3,1);
+        }
+        .dlux-hdr-back:hover{
+          background: rgba(176,120,72,.08);
+          color: var(--dlux-accent);
+          border-color: rgba(176,120,72,.22);
+          transform: translateY(-1px);
+          box-shadow: 0 8px 20px -12px rgba(58,51,39,.5);
+        }
+        .dlux-hdr-back:active{ transform: translateY(0); }
+        .dlux-hdr-back__ico{
+          display: inline-flex;
+          transition: transform .25s cubic-bezier(.16,1,.3,1);
+        }
+        .dlux-hdr-back:hover .dlux-hdr-back__ico{ transform: translateX(-4px); }
+        @media (prefers-reduced-motion: reduce){
+          .dlux-acct, .dlux-acct__badge,
+          .dlux-hdr-back, .dlux-hdr-back__ico{ transition: none; }
+          .dlux-acct:hover{ transform: none; }
+          .dlux-acct:hover .dlux-acct__badge{ transform: none; }
+          .dlux-hdr-back:hover{ transform: none; }
+          .dlux-hdr-back:hover .dlux-hdr-back__ico{ transform: none; }
+        }
+      `}</style>
       <div style={{ maxWidth: 1320, margin: "0 auto", height: 76, padding: "0 28px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24 }}>
 
         {/* left: optional back + logo */}
         <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
         {backHref && (
-          <Link href={backHref} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 14, fontWeight: 600, color: "#544a3a", textDecoration: "none", whiteSpace: "nowrap" }}>
-            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          <Link href={backHref} className="dlux-hdr-back">
+            <span className="dlux-hdr-back__ico">
+              <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            </span>
             {backLabel}
           </Link>
         )}
         <Link href="/rooms" style={{ display: "flex", alignItems: "center", gap: 14, textDecoration: "none" }}>
-          <div style={{ width: 48, height: 48, border: "1px solid rgba(58,51,39,.28)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
-            <span style={{ fontFamily: SERIF, fontSize: 13, letterSpacing: ".5px", color: "#3a3327" }}>DLH</span>
+          <div style={{ width: 56, height: 56, flex: "none", position: "relative" }}>
+            <Image src="/logo.png" alt="D'Lux Homes" fill sizes="56px" style={{ objectFit: "contain" }} priority />
           </div>
           <div style={{ lineHeight: 1.05 }}>
             <div style={{ fontFamily: SERIF, fontWeight: 600, fontSize: 23, color: "#332d22", letterSpacing: ".2px" }}>D&rsquo;&#8201;Lux Homes</div>
@@ -198,8 +261,8 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
 
           {/* ACCOUNT / SIGN IN-OUT */}
           <div ref={accountRef} style={{ position: "relative", marginLeft: 6 }}>
-            <button onClick={() => (signedIn ? (setAccountOpen((v) => !v), setBookingsOpen(false)) : router.push("/login"))} style={{ display: "flex", alignItems: "center", gap: 11, background: "none", border: "none", cursor: "pointer", padding: "7px 12px", borderRadius: 40, transition: "background .2s ease" }}>
-              <span style={{ width: 36, height: 36, borderRadius: "50%", flex: "none", display: "flex", alignItems: "center", justifyContent: "center", background: signedIn ? ACCENT : "transparent", border: signedIn ? "none" : `1.4px dashed ${ACCENT}`, color: signedIn ? "#fff" : ACCENT, fontFamily: SERIF, fontSize: 16, transition: "all .3s ease" }}>{signedIn ? initial : "+"}</span>
+            <button className="dlux-acct" onClick={() => (signedIn ? (setAccountOpen((v) => !v), setBookingsOpen(false)) : router.push("/login"))} style={{ display: "flex", alignItems: "center", gap: 11, background: "none", border: "1px solid transparent", cursor: "pointer", padding: "7px 14px 7px 8px", borderRadius: 40 }}>
+              <span className="dlux-acct__badge" style={{ width: 36, height: 36, borderRadius: "50%", flex: "none", display: "flex", alignItems: "center", justifyContent: "center", background: signedIn ? ACCENT : "transparent", border: signedIn ? "none" : `1.4px dashed ${ACCENT}`, color: signedIn ? "#fff" : ACCENT, fontFamily: SERIF, fontSize: 16 }}>{signedIn ? initial : "+"}</span>
               <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", lineHeight: 1.15 }}>
                 <span style={{ fontFamily: SERIF, fontSize: 16, color: "#332d22" }}>{signedIn ? firstName : "Sign in"}</span>
                 <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, letterSpacing: ".4px", color: "#9a8d77", marginTop: 2 }}>
