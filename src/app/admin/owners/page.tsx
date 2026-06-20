@@ -349,7 +349,7 @@ export default function OwnerDashboard() {
               <Image src="/logo.png" alt="D'Lux Homes" width={80} height={28} className="mix-blend-multiply" style={{ width: "80px", height: "28px", objectFit: "cover" }} />
             </div>
           </Link>
-          <button onClick={() => setSidebarOpen(false)} className="lg:hidden" style={{ color: "#6b5040" }}>
+          <button onClick={() => setSidebarOpen(false)} aria-label="Close menu" className="lg:hidden" style={{ color: "#6b5040" }}>
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -418,6 +418,7 @@ export default function OwnerDashboard() {
           {/* left: hamburger + breadcrumb + title */}
           <div className="flex items-center gap-4">
             <button
+              aria-label="Open menu"
               onClick={() => setSidebarOpen(true)}
               className="lg:hidden p-2 rounded-lg transition-colors"
               style={{ color: "#6b6358" }}
@@ -1236,7 +1237,7 @@ export default function OwnerDashboard() {
               <input type="email" placeholder="Email" value={staffForm.email} onChange={(e) => setStaffForm({ ...staffForm, email: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
               <input type="password" placeholder="Temporary password" value={staffForm.password} onChange={(e) => setStaffForm({ ...staffForm, password: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
               <input placeholder="Phone (optional)" value={staffForm.phone} onChange={(e) => setStaffForm({ ...staffForm, phone: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
-              <select value={staffForm.role} onChange={(e) => setStaffForm({ ...staffForm, role: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
+              <select aria-label="Staff role" value={staffForm.role} onChange={(e) => setStaffForm({ ...staffForm, role: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
                 <option value="CSR">CSR</option>
                 <option value="Cleaner">Cleaner</option>
                 <option value="Owner">Owner</option>

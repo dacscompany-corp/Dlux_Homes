@@ -189,7 +189,7 @@ export default function CleanerDashboard() {
               <Image src="/logo.png" alt="D'Lux Homes" width={80} height={28} className="mix-blend-multiply" style={{ width: "80px", height: "28px", objectFit: "cover" }} />
             </div>
           </Link>
-          <button onClick={() => setSidebarOpen(false)} className="lg:hidden cursor-pointer" style={{ color: "#6b5040" }}>
+          <button onClick={() => setSidebarOpen(false)} aria-label="Close menu" className="lg:hidden cursor-pointer" style={{ color: "#6b5040" }}>
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -239,7 +239,7 @@ export default function CleanerDashboard() {
         <header className="px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-4 sticky top-0 z-30 border-b"
           style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4", height: 72, fontFamily: "'Geist', system-ui, sans-serif" }}>
           <div className="flex items-center gap-4">
-            <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-2 rounded-lg cursor-pointer" style={{ color: "#6b6358" }}>
+            <button onClick={() => setSidebarOpen(true)} aria-label="Open menu" className="lg:hidden p-2 rounded-lg cursor-pointer" style={{ color: "#6b6358" }}>
               <Menu className="w-5 h-5" />
             </button>
             <div className="flex flex-col gap-1">
@@ -557,7 +557,7 @@ export default function CleanerDashboard() {
                       <label className="block text-xs font-semibold mb-1.5 uppercase tracking-wider" style={{ color: "#8B6344" }}>{field.label}</label>
                       {field.type === "select" ? (
                         <div className="relative">
-                          <select value={issueForm[field.field as keyof typeof issueForm]}
+                          <select aria-label={String((field as { label?: string }).label ?? field.field)} value={issueForm[field.field as keyof typeof issueForm]}
                             onChange={(e) => setIssueForm(prev => ({ ...prev, [field.field]: e.target.value }))}
                             className="w-full appearance-none rounded-2xl border px-4 py-3 text-sm outline-none pr-10 cursor-pointer"
                             style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
