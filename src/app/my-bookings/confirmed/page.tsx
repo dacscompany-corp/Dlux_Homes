@@ -5,6 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
+import SiteHeader from "@/components/SiteHeader";
 import type { StoredBooking } from "@/lib/booking-store";
 
 function peso(n: number) { return "₱" + n.toLocaleString("en-PH"); }
@@ -184,15 +185,7 @@ function ConfirmedInner() {
   return (
     <div style={{ minHeight: "100vh", backgroundColor: "var(--bg)", color: "var(--ink)" }}>
       {/* HEADER */}
-      <header style={{ position: "sticky", top: 0, zIndex: 50, background: "rgba(246,239,226,.88)", backdropFilter: "blur(14px)", borderBottom: "1px solid var(--line)" }}>
-        <div style={{ maxWidth: 1320, margin: "0 auto", padding: "14px 28px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <Link href="/rooms" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: "inherit" }}>
-            <div style={{ width: 38, height: 38, borderRadius: 10, background: "var(--ink)", color: "var(--white)", display: "grid", placeItems: "center", fontFamily: "var(--font-fraunces), Georgia, serif", fontWeight: 700, fontSize: 20, fontStyle: "italic" }}>d</div>
-            <div className="serif" style={{ fontSize: 19, fontWeight: 600, letterSpacing: "-.02em" }}>D&apos; Lux Homes</div>
-          </Link>
-          <Link href="/my-bookings" style={{ padding: "9px 14px", borderRadius: 999, fontSize: 13, fontWeight: 600, color: "var(--ink)", textDecoration: "none" }}>My bookings</Link>
-        </div>
-      </header>
+      <SiteHeader bookHref="/rooms" bookLabel="Book again" backHref="/rooms" backLabel="Back to home" />
 
       <div className="page-enter" style={{ maxWidth: 860, margin: "0 auto", padding: "60px 28px 80px" }}>
         {/* Hero check */}
@@ -248,7 +241,7 @@ function ConfirmedInner() {
               </div>
             ) : (
               <div style={{ padding: 28 }}>
-                <p style={{ fontSize: 14, color: "var(--ink-2)", lineHeight: 1.6, margin: "0 0 18px" }}>
+                <p style={{ fontSize: 16, color: "var(--ink-2)", lineHeight: 1.6, margin: "0 0 18px" }}>
                   Send the <strong>{peso(pay.down)}</strong> down payment (50%) to secure your booking, then upload your receipt below. The balance + ₱1,000 refundable deposit are paid at check-in.
                 </p>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "16px 18px", borderRadius: 14, background: "var(--white)", border: "1px solid var(--line)", marginBottom: 18 }}>
@@ -333,7 +326,7 @@ function ConfirmedInner() {
 
         {/* Timeline */}
         <div style={{ marginTop: 32, padding: 24, background: "var(--bg-2)", borderRadius: 20 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--muted)", marginBottom: 16 }}>Before you arrive</div>
+          <div style={{ fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--muted)", marginBottom: 18 }}>Before you arrive</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 24 }}>
             {[
               { h: "Date changes", t: "No cancellations. One free date change if requested at least 7 days before check-in (new date within 1 month)." },
@@ -341,8 +334,8 @@ function ConfirmedInner() {
               { h: "Check-in day", t: "Bring a valid ID at the lobby. Settle the 50% balance + ₱1,000 deposit, then start resting." },
             ].map((b) => (
               <div key={b.h}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--accent-ink)" }}>{b.h}</div>
-                <div style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.6, marginTop: 4 }}>{b.t}</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "var(--accent-ink)" }}>{b.h}</div>
+                <div style={{ fontSize: 15, color: "var(--ink-2)", lineHeight: 1.6, marginTop: 6 }}>{b.t}</div>
               </div>
             ))}
           </div>

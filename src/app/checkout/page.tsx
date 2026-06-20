@@ -410,16 +410,53 @@ function CheckoutInner() {
 
   return (
     <div className="page-enter" style={{ backgroundColor: "var(--bg)", color: "var(--ink)", minHeight: "100vh" }}>
-      {/* HEADER */}
-      <header style={{ position: "sticky", top: 0, zIndex: 50, background: "rgba(246,239,226,.88)", backdropFilter: "blur(14px)", borderBottom: "1px solid var(--line)" }}>
-        <div style={{ maxWidth: 1320, margin: "0 auto", padding: "14px 28px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <Link href="/rooms" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: "inherit" }}>
-            <div style={{ width: 56, height: 56, borderRadius: 10, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Image src="/logo.png" alt="D'Lux Homes" width={56} height={56} unoptimized style={{ objectFit: "contain" }} />
-            </div>
-            <div className="serif" style={{ fontSize: 19, fontWeight: 600, letterSpacing: "-.02em" }}>D&apos; Lux Homes</div>
+      {/* HEADER — checkout step bar (Site Headers design · 04) */}
+      <header style={{ position: "sticky", top: 0, zIndex: 50, background: "#faf7f1", borderBottom: "1px solid #ece5d4", fontFamily: "'Geist', system-ui, -apple-system, sans-serif", color: "#1f1b16" }}>
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap');
+          .co-exit { color: #1f1b16; text-decoration: none; border-bottom: 1px solid #1f1b16; padding-bottom: 1px; }
+          @media (max-width: 860px) { .co-steps { display: none !important; } }
+        `}</style>
+        <div style={{ maxWidth: 1320, margin: "0 auto", height: 72, padding: "0 32px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24 }}>
+
+          {/* wordmark */}
+          <Link href="/rooms" style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none", color: "inherit" }}>
+            <div style={{ width: 30, height: 30, flex: "none", background: "#1f1b16", color: "#faf7f1", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 16, fontStyle: "italic", letterSpacing: "-0.04em" }}>D</div>
+            <div style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 18 }}>D&rsquo; Lux Homes</div>
           </Link>
-          <div style={{ fontSize: 13, color: "var(--muted)" }}>Step {step + 1} of {STEPS.length}</div>
+
+          {/* step indicator */}
+          <div className="co-steps" style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 13 }}>
+            {STEPS.map((s, i) => {
+              const done = i < step, current = i === step;
+              const circle = done
+                ? { background: "#1f1b16", color: "#faf7f1", border: "none" as const }
+                : current
+                ? { background: "#b8754a", color: "#faf7f1", border: "none" as const }
+                : { background: "transparent", color: "#8a8276", border: "1px solid #d9d1c2" };
+              const labelColor = done ? "#6b6358" : current ? "#1f1b16" : "#8a8276";
+              return (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                  {i > 0 && <div style={{ width: 32, height: 1, background: "#d9d1c2" }} />}
+                  <button onClick={() => done && setStep(i)} style={{ display: "flex", alignItems: "center", gap: 8, background: "transparent", border: 0, padding: 0, font: "inherit", color: labelColor, cursor: done ? "pointer" : "default" }}>
+                    <span style={{ width: 18, height: 18, borderRadius: "50%", display: "grid", placeItems: "center", fontSize: 11, fontFamily: "'Geist Mono', ui-monospace, monospace", ...circle }}>
+                      {done ? <IcoCheck /> : i + 1}
+                    </span>
+                    <span>{s}</span>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* secure + exit */}
+          <div style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 13, color: "var(--muted)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+              <span>Secure checkout</span>
+            </div>
+            <Link href={`/rooms/${room.id}`} className="co-exit">Exit</Link>
+          </div>
         </div>
       </header>
 
@@ -469,18 +506,6 @@ function CheckoutInner() {
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 28 }}>
           <h1 className="serif" style={{ fontSize: 48, fontWeight: 400, letterSpacing: "-.025em", margin: 0 }}>Confirm and pay</h1>
-        </div>
-
-        {/* Stepper */}
-        <div style={{ display: "flex", gap: 0, marginBottom: 36, background: "var(--bg-2)", padding: 6, borderRadius: 999, width: "fit-content" }}>
-          {STEPS.map((s, i) => (
-            <button key={i} onClick={() => i < step && setStep(i)}
-              style={{ padding: "8px 18px", borderRadius: 999, fontSize: 12, fontWeight: 600, background: i === step ? "var(--ink)" : "transparent", color: i === step ? "var(--white)" : i < step ? "var(--ink)" : "var(--muted)", display: "inline-flex", alignItems: "center", gap: 6, cursor: i < step ? "pointer" : "default", border: "none" }}>
-              {i < step && <IcoCheck />}
-              {i >= step && <span style={{ width: 18, height: 18, borderRadius: "50%", background: i === step ? "rgba(255,255,255,.2)" : "var(--line-2)", display: "grid", placeItems: "center", fontSize: 10 }}>{i + 1}</span>}
-              {s}
-            </button>
-          ))}
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 48 }}>

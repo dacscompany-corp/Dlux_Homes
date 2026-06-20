@@ -98,13 +98,18 @@ function BookingCard({ booking }: { booking: StoredBooking & { checkInTime?: str
 }
 
 export default function MyBookingsPage() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const userId = session?.user?.id;
   const [bookings, setBookings] = useState<BookingRow[]>([]);
+  const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"upcoming" | "past">("upcoming");
 
   useEffect(() => {
+    // Wait until NextAuth resolves the session, otherwise we'd fetch with an
+    // unknown userId and briefly render the empty state before account data loads.
+    if (status === "loading") return;
     let active = true;
+    setLoading(true);
     // Account bookings (works across devices) + legacy localStorage bookings.
     const ids = getMyBookingIds();
     const localFetches = ids.map((id) =>
@@ -120,27 +125,28 @@ export default function MyBookingsPage() {
       const byId = new Map<string, Record<string, unknown>>();
       rows.forEach((d) => { const id = String(d.booking_id ?? ""); if (id) byId.set(id, d); });
       setBookings(Array.from(byId.values()).map(mapBooking));
+      setLoading(false);
     });
     return () => { active = false; };
-  }, [userId]);
+  }, [userId, status]);
 
   const upcoming = bookings.filter((b) => ["pending", "approved", "confirmed", "on-going", "checked-in"].includes(b.status));
   const past = bookings.filter((b) => ["checked-out", "cancelled", "rejected"].includes(b.status));
   const list = tab === "upcoming" ? upcoming : past;
 
   return (
-    <div style={{ minHeight: "100vh", backgroundColor: "var(--bg)", color: "var(--ink)" }}>
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", backgroundColor: "var(--bg)", color: "var(--ink)" }}>
       {/* HEADER */}
       <SiteHeader bookHref="/rooms" bookLabel="Book again" backHref="/rooms" backLabel="Back to home" />
 
-      <div className="page-enter" style={{ maxWidth: 1180, margin: "0 auto", padding: "40px 28px 80px" }}>
+      <div className="page-enter" style={{ flex: 1, width: "100%", maxWidth: 1180, margin: "0 auto", padding: "40px 28px 80px" }}>
         <div style={{ marginBottom: 28 }}>
           <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: "var(--accent-ink)", marginBottom: 10 }}>Your journeys</div>
           <h1 className="serif" style={{ fontSize: 56, fontWeight: 400, letterSpacing: "-.025em", margin: 0, lineHeight: 1 }}>My bookings</h1>
         </div>
 
         <div style={{ display: "flex", gap: 4, padding: 5, background: "var(--bg-2)", borderRadius: 999, width: "fit-content", marginBottom: 28 }}>
-          {([["upcoming", `Upcoming (${upcoming.length})`], ["past", `Past (${past.length})`]] as const).map(([id, label]) => (
+          {([["upcoming", loading ? "Upcoming" : `Upcoming (${upcoming.length})`], ["past", loading ? "Past" : `Past (${past.length})`]] as const).map(([id, label]) => (
             <button key={id} onClick={() => setTab(id)}
               style={{ padding: "8px 18px", borderRadius: 999, fontSize: 13, fontWeight: 600, background: tab === id ? "var(--ink)" : "transparent", color: tab === id ? "var(--white)" : "var(--ink-2)", border: "none", cursor: "pointer" }}>
               {label}
@@ -148,7 +154,21 @@ export default function MyBookingsPage() {
           ))}
         </div>
 
-        {list.length === 0 ? (
+        {loading ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <style>{`@keyframes bkPulse { 0%,100% { opacity: 1 } 50% { opacity: .45 } } .bk-sk { animation: bkPulse 1.3s ease-in-out infinite; }`}</style>
+            {[0, 1].map((i) => (
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 24, background: "var(--white)", borderRadius: 20, border: "1px solid var(--line)", overflow: "hidden", minHeight: 164 }}>
+                <div className="bk-sk" style={{ background: "var(--bg-2)" }} />
+                <div style={{ padding: "26px 0", display: "flex", flexDirection: "column", gap: 14 }}>
+                  <div className="bk-sk" style={{ width: 140, height: 16, borderRadius: 6, background: "var(--bg-2)" }} />
+                  <div className="bk-sk" style={{ width: 240, height: 26, borderRadius: 6, background: "var(--bg-2)" }} />
+                  <div className="bk-sk" style={{ width: 320, height: 14, borderRadius: 6, background: "var(--bg-2)" }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : list.length === 0 ? (
           <div style={{ padding: 80, textAlign: "center", background: "var(--white)", borderRadius: 24, border: "1px solid var(--line)" }}>
             <div style={{ fontSize: 44, marginBottom: 12 }}>✦</div>
             <div className="serif" style={{ fontSize: 26, fontWeight: 500, letterSpacing: "-.02em" }}>No {tab} stays yet</div>

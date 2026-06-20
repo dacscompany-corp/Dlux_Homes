@@ -1,19 +1,22 @@
 "use client";
 
-// Storefront header implementing the "D'Lux Header" Claude Design:
-// cream bar, monogram logo, a My-bookings dropdown (count + panel), an account
-// dropdown (avatar + sign in/out), a divider, and a magnetic Book-now button.
-// Wired to the real NextAuth session and the guest's stored bookings.
+// Storefront header — "Site Headers" Claude Design (variant 01/02/03):
+// a quiet 72px cream bar with a monogram wordmark, center nav, a My-bookings
+// dropdown (count pill + panel), an account dropdown (avatar + sign in/out),
+// and an ink Book button. Wired to the real NextAuth session + stored bookings.
 
 import { useEffect, useRef, useState } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import { getMyBookingIds } from "@/lib/booking-store";
 
-const ACCENT = "var(--dlux-accent)";
-const SERIF = "var(--font-fraunces), Georgia, serif";
+const INK = "#1f1b16";
+const CLAY = "#b8754a";
+const MUTED = "#6b6358";
+const SUBTLE = "#8a8276";
+const SERIF = "'Instrument Serif', Georgia, serif";
+const MONO = "'Geist Mono', ui-monospace, monospace";
 
 type Row = { id: string; room: string; when: string; status: string; live: boolean };
 
@@ -57,7 +60,6 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
   useEffect(() => {
     if (!signedIn) { setRows([]); return; }
     let active = true;
-    // Account bookings (cross-device) + legacy localStorage bookings, deduped.
     const ids = getMyBookingIds();
     const localFetches = ids.map((id) =>
       fetch(`/api/bookings/${encodeURIComponent(id)}`).then((r) => (r.ok ? r.json() : null)).catch(() => null).then((j) => j?.data)
@@ -102,207 +104,142 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
     return () => document.removeEventListener("mousedown", onDown);
   }, [bookingsOpen, accountOpen]);
 
-  // Magnetic Book-now button + arrow + shimmer.
-  const bookRef = useRef<HTMLButtonElement>(null);
-  const arrowRef = useRef<HTMLSpanElement>(null);
-  const fillRef = useRef<HTMLSpanElement>(null);
-  const bookMove = (e: React.MouseEvent) => {
-    const el = bookRef.current; if (!el) return;
-    const r = el.getBoundingClientRect();
-    const x = e.clientX - r.left - r.width / 2;
-    const y = e.clientY - r.top - r.height / 2;
-    el.style.transform = `translate(${x * 0.22}px, ${y * 0.4}px)`;
-  };
-  const bookEnter = () => {
-    if (arrowRef.current) arrowRef.current.style.transform = "translateX(4px)";
-    const f = fillRef.current;
-    if (f) { f.style.transition = "none"; f.style.transform = "translateX(-100%)"; requestAnimationFrame(() => { f.style.transition = "transform .7s ease"; f.style.transform = "translateX(100%)"; }); }
-  };
-  const bookLeave = () => {
-    if (bookRef.current) bookRef.current.style.transform = "translate(0,0)";
-    if (arrowRef.current) arrowRef.current.style.transform = "translateX(0)";
+  const goBook = () => {
+    if (bookHref.startsWith("#")) document.querySelector(bookHref)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    else router.push(bookHref);
   };
 
   const panelBase: React.CSSProperties = {
-    position: "absolute", top: "calc(100% + 14px)", right: 0,
-    background: "#fbf6ec", border: "1px solid rgba(58,51,39,.12)",
-    boxShadow: "0 24px 60px -20px rgba(40,30,18,.42)", borderRadius: 4,
+    position: "absolute", top: "calc(100% + 12px)", right: 0,
+    background: "#faf7f1", border: "1px solid #ece5d4",
+    boxShadow: "0 24px 60px -20px rgba(40,30,18,.30)", borderRadius: 2,
     overflow: "hidden", zIndex: 60, transformOrigin: "top right",
-    transition: "opacity .26s ease, transform .3s cubic-bezier(.2,.8,.2,1)",
-  };
-  const linkBtn: React.CSSProperties = {
-    display: "flex", alignItems: "center", gap: 8, background: "none", border: "none",
-    cursor: "pointer", padding: "8px 14px", font: "inherit", fontFamily: SERIF, fontSize: 16.5, color: "#332d22",
+    transition: "opacity .22s ease, transform .26s cubic-bezier(.2,.8,.2,1)",
   };
 
   return (
-    <header style={{ position: "sticky", top: 0, zIndex: 50, background: "#f3eadb", borderBottom: "1px solid rgba(58,51,39,.10)" }}>
+    <header style={{ position: "sticky", top: 0, zIndex: 50, background: "#faf7f1", borderBottom: "1px solid #ece5d4", fontFamily: "'Geist', system-ui, -apple-system, sans-serif", color: INK }}>
       <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap');
         @keyframes dluxDot{0%,100%{opacity:.55}50%{opacity:1}}
-        @keyframes dluxSpin{to{transform:rotate(360deg)}}
-        .dlux-acct{
-          transition: background .25s ease, border-color .25s ease,
-            box-shadow .25s ease, transform .25s cubic-bezier(.16,1,.3,1);
+        .sh-tap { transition: background .18s ease, color .15s ease; }
+        .sh-tap:hover { background: #f3eee2; }
+        .sh-back { transition: background .18s ease, color .15s ease; }
+        .sh-back:hover { background: #f3eee2; color: ${INK}; }
+        .sh-back svg { transition: transform .2s ease; }
+        .sh-back:hover svg { transform: translateX(-3px); }
+        .sh-book { transition: background .2s ease; }
+        .sh-book:hover { background: #9a6840; }
+        .sh-book svg { transition: transform .2s ease; }
+        .sh-book:hover svg { transform: translateX(3px); }
+        @media (prefers-reduced-motion: reduce) {
+          .sh-back svg, .sh-book svg { transition: none; }
         }
-        .dlux-acct:hover{
-          background: rgba(176,120,72,.07);
-          border-color: rgba(176,120,72,.22);
-          transform: translateY(-1px);
-          box-shadow: 0 8px 20px -12px rgba(58,51,39,.45);
-        }
-        .dlux-acct:active{ transform: translateY(0); }
-        .dlux-acct__badge{
-          transition: transform .35s cubic-bezier(.16,1,.3,1),
-            background .25s ease, border-color .25s ease;
-        }
-        .dlux-acct:hover .dlux-acct__badge{
-          transform: rotate(90deg) scale(1.08);
-          border-color: var(--dlux-accent);
-          background: rgba(176,120,72,.10);
-        }
-        .dlux-hdr-back{
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          padding: 9px 18px;
-          border-radius: 999px;
-          font-size: 14px;
-          font-weight: 600;
-          color: #544a3a;
-          text-decoration: none;
-          white-space: nowrap;
-          border: 1px solid transparent;
-          background: transparent;
-          transition: background .25s ease, color .25s ease, border-color .25s ease,
-            box-shadow .25s ease, transform .25s cubic-bezier(.16,1,.3,1);
-        }
-        .dlux-hdr-back:hover{
-          background: rgba(176,120,72,.08);
-          color: var(--dlux-accent);
-          border-color: rgba(176,120,72,.22);
-          transform: translateY(-1px);
-          box-shadow: 0 8px 20px -12px rgba(58,51,39,.5);
-        }
-        .dlux-hdr-back:active{ transform: translateY(0); }
-        .dlux-hdr-back__ico{
-          display: inline-flex;
-          transition: transform .25s cubic-bezier(.16,1,.3,1);
-        }
-        .dlux-hdr-back:hover .dlux-hdr-back__ico{ transform: translateX(-4px); }
-        @media (prefers-reduced-motion: reduce){
-          .dlux-acct, .dlux-acct__badge,
-          .dlux-hdr-back, .dlux-hdr-back__ico{ transition: none; }
-          .dlux-acct:hover{ transform: none; }
-          .dlux-acct:hover .dlux-acct__badge{ transform: none; }
-          .dlux-hdr-back:hover{ transform: none; }
-          .dlux-hdr-back:hover .dlux-hdr-back__ico{ transform: none; }
-        }
+        @media (max-width: 720px) { .sh-acct-text, .sh-mybk-text { display: none !important; } }
       `}</style>
-      <div style={{ maxWidth: 1320, margin: "0 auto", height: 76, padding: "0 28px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24 }}>
 
-        {/* left: optional back + logo */}
-        <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
-        {backHref && (
-          <Link href={backHref} className="dlux-hdr-back">
-            <span className="dlux-hdr-back__ico">
-              <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-            </span>
-            {backLabel}
+      <div style={{ maxWidth: 1320, margin: "0 auto", height: 72, padding: "0 32px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24 }}>
+
+        {/* LEFT — optional back + wordmark */}
+        <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+          {backHref && (
+            <>
+              <Link href={backHref} className="sh-back" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 12px", textDecoration: "none", color: MUTED, fontSize: 14 }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>
+                <span>{backLabel}</span>
+              </Link>
+              <span style={{ width: 1, height: 24, background: "#e8e1d2" }} />
+            </>
+          )}
+          <Link href="/rooms" style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none", color: "inherit" }}>
+            <div style={{ width: backHref ? 30 : 34, height: backHref ? 30 : 34, flex: "none", background: INK, color: "#faf7f1", display: "grid", placeItems: "center", fontFamily: SERIF, fontSize: backHref ? 16 : 18, fontStyle: "italic", letterSpacing: "-0.04em" }}>D</div>
+            <div style={{ lineHeight: 1 }}>
+              <div style={{ fontFamily: SERIF, fontSize: backHref ? 18 : 20, letterSpacing: "-0.01em" }}>D&rsquo; Lux Homes</div>
+              {!backHref && <div style={{ fontSize: 10, letterSpacing: "0.28em", textTransform: "uppercase", color: SUBTLE, marginTop: 4 }}>Staycations &middot; PH</div>}
+            </div>
           </Link>
-        )}
-        <Link href="/rooms" style={{ display: "flex", alignItems: "center", gap: 14, textDecoration: "none" }}>
-          <div style={{ width: 56, height: 56, flex: "none", position: "relative" }}>
-            <Image src="/logo.png" alt="D'Lux Homes" fill sizes="56px" style={{ objectFit: "contain" }} priority />
-          </div>
-          <div style={{ lineHeight: 1.05 }}>
-            <div style={{ fontFamily: SERIF, fontWeight: 600, fontSize: 23, color: "#332d22", letterSpacing: ".2px" }}>D&rsquo;&#8201;Lux Homes</div>
-            <div style={{ fontSize: 10, letterSpacing: "3.4px", color: "#8a7d68", marginTop: 3, whiteSpace: "nowrap" }}>STAYCATIONS &nbsp;&middot;&nbsp; PH</div>
-          </div>
-        </Link>
         </div>
 
-        {/* nav cluster */}
-        <nav style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {/* RIGHT — bookings + account + book */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
 
           {/* MY BOOKINGS — only when signed in */}
           {signedIn && (
             <div ref={bookingsRef} style={{ position: "relative" }}>
-              <button onClick={() => { setBookingsOpen((v) => !v); setAccountOpen(false); }} style={linkBtn}>
-                <span style={{ position: "relative", display: "inline-block" }}>My bookings
-                  <span style={{ position: "absolute", left: 0, right: 0, bottom: -3, height: 1.5, background: ACCENT, transformOrigin: "left", transform: bookingsOpen ? "scaleX(1)" : "scaleX(0)", transition: "transform .34s cubic-bezier(.2,.8,.2,1)" }} />
-                </span>
-                <span style={{ minWidth: 20, height: 20, padding: "0 6px", borderRadius: 20, background: bookingsOpen ? ACCENT : "rgba(58,51,39,.10)", color: bookingsOpen ? "#fff" : "#6f6555", fontSize: 11.5, fontWeight: 500, display: "inline-flex", alignItems: "center", justifyContent: "center", transition: "background .25s ease, color .25s ease" }}>{rows.length}</span>
+              <button className="sh-tap" onClick={() => { setBookingsOpen((v) => !v); setAccountOpen(false); }}
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", background: "transparent", border: 0, cursor: "pointer", font: "inherit", color: INK, fontSize: 14 }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
+                <span className="sh-mybk-text">My bookings</span>
+                <span style={{ minWidth: 18, height: 18, padding: "0 5px", background: CLAY, color: "#faf7f1", fontSize: 11, fontWeight: 500, display: "grid", placeItems: "center", borderRadius: 9, fontFamily: MONO }}>{rows.length}</span>
               </button>
 
               <div style={{ ...panelBase, width: 320, opacity: bookingsOpen ? 1 : 0, transform: bookingsOpen ? "translateY(0) scale(1)" : "translateY(-6px) scale(.97)", pointerEvents: bookingsOpen ? "auto" : "none" }}>
-                <div style={{ padding: "20px 22px 14px", borderBottom: "1px solid rgba(58,51,39,.10)", display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-                  <span style={{ fontFamily: SERIF, fontSize: 17, color: "#332d22" }}>Your stays</span>
-                  <span style={{ fontSize: 11, letterSpacing: "1.4px", color: "#a99c84" }}>{rows.length} UPCOMING</span>
+                <div style={{ padding: "18px 22px 14px", borderBottom: "1px solid #ece5d4", display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+                  <span style={{ fontFamily: SERIF, fontSize: 18, color: INK }}>Your stays</span>
+                  <span style={{ fontSize: 11, letterSpacing: "1.4px", color: "#a99c84", fontFamily: MONO }}>{rows.length} UPCOMING</span>
                 </div>
                 <div>
                   {rows.length === 0 ? (
-                    <div style={{ padding: "22px", fontSize: 13.5, color: "#8a7d68" }}>No upcoming stays yet.</div>
+                    <div style={{ padding: "22px", fontSize: 13.5, color: SUBTLE }}>No upcoming stays yet.</div>
                   ) : rows.map((b, i) => (
                     <button key={b.id} onClick={() => router.push("/my-bookings")} onMouseEnter={() => setHoverRow(i)} onMouseLeave={() => setHoverRow(-1)}
-                      style={{ display: "flex", gap: 12, width: "100%", padding: "14px 22px", background: hoverRow === i ? "rgba(176,125,68,.07)" : "transparent", border: "none", borderBottom: "1px solid rgba(58,51,39,.07)", cursor: "pointer", textAlign: "left", transition: "background .2s ease", alignItems: "flex-start" }}>
-                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: b.live ? ACCENT : "#c7b9a1", flex: "none", marginTop: 7 }} />
+                      style={{ display: "flex", gap: 12, width: "100%", padding: "14px 22px", background: hoverRow === i ? "#f3eee2" : "transparent", border: "none", borderBottom: "1px solid #ece5d4", cursor: "pointer", textAlign: "left", transition: "background .2s ease", alignItems: "flex-start" }}>
+                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: b.live ? CLAY : "#c7b9a1", flex: "none", marginTop: 7 }} />
                       <span style={{ flex: 1, textAlign: "left" }}>
-                        <span style={{ display: "block", fontFamily: SERIF, fontSize: 16, color: "#332d22", lineHeight: 1.2 }}>{b.room}</span>
-                        <span style={{ display: "block", fontSize: 12, color: "#8a7d68", marginTop: 3, letterSpacing: ".2px" }}>{b.when}</span>
+                        <span style={{ display: "block", fontFamily: SERIF, fontSize: 16, color: INK, lineHeight: 1.2 }}>{b.room}</span>
+                        <span style={{ display: "block", fontSize: 12, color: SUBTLE, marginTop: 3, letterSpacing: ".2px" }}>{b.when}</span>
                       </span>
-                      <span style={{ flex: "none", alignSelf: "center", fontSize: 10.5, letterSpacing: "1px", textTransform: "uppercase", padding: "4px 9px", borderRadius: 20, color: b.live ? ACCENT : "#a18d70", background: b.live ? "rgba(176,125,68,.12)" : "rgba(58,51,39,.06)", border: `1px solid ${b.live ? "rgba(176,125,68,.3)" : "rgba(58,51,39,.12)"}` }}>{b.status}</span>
+                      <span style={{ flex: "none", alignSelf: "center", fontSize: 10.5, letterSpacing: "1px", textTransform: "uppercase", padding: "4px 9px", color: b.live ? CLAY : "#a18d70", background: b.live ? "rgba(184,117,74,.12)" : "rgba(58,51,39,.06)", border: `1px solid ${b.live ? "rgba(184,117,74,.3)" : "rgba(58,51,39,.12)"}` }}>{b.status}</span>
                     </button>
                   ))}
                 </div>
-                <button onClick={() => router.push("/my-bookings")} style={{ width: "100%", padding: 13, background: "none", border: "none", borderTop: "1px solid rgba(58,51,39,.10)", fontSize: 12.5, letterSpacing: "1.6px", color: "#9a6a39", cursor: "pointer", textTransform: "uppercase" }}>View all bookings</button>
+                <button onClick={() => router.push("/my-bookings")} style={{ width: "100%", padding: 13, background: "none", border: "none", borderTop: "1px solid #ece5d4", fontSize: 12, letterSpacing: "1.6px", color: "#9a6a39", cursor: "pointer", textTransform: "uppercase", fontFamily: MONO }}>View all bookings</button>
               </div>
             </div>
           )}
 
-          {/* ACCOUNT / SIGN IN-OUT */}
-          <div ref={accountRef} style={{ position: "relative", marginLeft: 6 }}>
-            <button className="dlux-acct" onClick={() => (signedIn ? (setAccountOpen((v) => !v), setBookingsOpen(false)) : router.push("/login"))} style={{ display: "flex", alignItems: "center", gap: 11, background: "none", border: "1px solid transparent", cursor: "pointer", padding: "7px 14px 7px 8px", borderRadius: 40 }}>
-              <span className="dlux-acct__badge" style={{ width: 36, height: 36, borderRadius: "50%", flex: "none", display: "flex", alignItems: "center", justifyContent: "center", background: signedIn ? ACCENT : "transparent", border: signedIn ? "none" : `1.4px dashed ${ACCENT}`, color: signedIn ? "#fff" : ACCENT, fontFamily: SERIF, fontSize: 16 }}>{signedIn ? initial : "+"}</span>
-              <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", lineHeight: 1.15 }}>
-                <span style={{ fontFamily: SERIF, fontSize: 16, color: "#332d22" }}>{signedIn ? firstName : "Sign in"}</span>
-                <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, letterSpacing: ".4px", color: "#9a8d77", marginTop: 2 }}>
-                  <span style={{ width: 5, height: 5, borderRadius: "50%", background: signedIn ? "#5b9e6b" : "#bcae96", display: "inline-block", animation: "dluxDot 2.4s ease-in-out infinite" }} />
-                  {signedIn ? "Signed in" : "Guest"}
-                </span>
-              </span>
-            </button>
+          {/* divider (between bookings and account, signed in only) */}
+          {signedIn && <span style={{ width: 1, height: 20, background: "#e8e1d2", margin: "0 6px" }} />}
 
-            {signedIn && (
+          {/* ACCOUNT / SIGN IN */}
+          {signedIn ? (
+            <div ref={accountRef} style={{ position: "relative" }}>
+              <button className="sh-tap" onClick={() => { setAccountOpen((v) => !v); setBookingsOpen(false); }}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 12px 6px 8px", background: "transparent", border: 0, cursor: "pointer", font: "inherit", color: INK }}>
+                <span style={{ width: 28, height: 28, borderRadius: "50%", flex: "none", background: CLAY, color: "#faf7f1", display: "grid", placeItems: "center", fontFamily: SERIF, fontSize: 14 }}>{initial}</span>
+                <span className="sh-acct-text" style={{ display: "flex", flexDirection: "column", lineHeight: 1.2, alignItems: "flex-start" }}>
+                  <span style={{ fontSize: 13, color: INK }}>{firstName}</span>
+                  <span style={{ fontSize: 11, color: SUBTLE, display: "flex", alignItems: "center", gap: 5 }}>
+                    <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#5b9e6b", display: "inline-block", animation: "dluxDot 2.4s ease-in-out infinite" }} />
+                    Account
+                  </span>
+                </span>
+              </button>
+
               <div style={{ ...panelBase, width: 236, opacity: accountOpen ? 1 : 0, transform: accountOpen ? "translateY(0) scale(1)" : "translateY(-6px) scale(.97)", pointerEvents: accountOpen ? "auto" : "none" }}>
-                <div style={{ padding: "16px 18px", borderBottom: "1px solid rgba(58,51,39,.10)" }}>
-                  <div style={{ fontFamily: SERIF, fontSize: 16, color: "#332d22" }}>{name || "Guest"}</div>
-                  {email && <div style={{ fontSize: 12, color: "#8a7d68", marginTop: 2 }}>{email}</div>}
+                <div style={{ padding: "16px 18px", borderBottom: "1px solid #ece5d4" }}>
+                  <div style={{ fontFamily: SERIF, fontSize: 16, color: INK }}>{name || "Guest"}</div>
+                  {email && <div style={{ fontSize: 12, color: SUBTLE, marginTop: 2 }}>{email}</div>}
                 </div>
                 {["Profile & preferences", "Payment methods"].map((label, i) => (
                   <button key={label} onClick={() => router.push("/my-bookings")} onMouseEnter={() => setHoverMenu(i)} onMouseLeave={() => setHoverMenu(-1)}
-                    style={{ display: "block", width: "100%", textAlign: "left", padding: "11px 18px", paddingLeft: hoverMenu === i ? 24 : 18, background: hoverMenu === i ? "rgba(176,125,68,.07)" : "transparent", border: "none", borderBottom: "1px solid rgba(58,51,39,.07)", cursor: "pointer", fontSize: 13.5, color: "#544a3a", transition: "background .18s ease, padding-left .2s ease" }}>{label}</button>
+                    style={{ display: "block", width: "100%", textAlign: "left", padding: "11px 18px", paddingLeft: hoverMenu === i ? 24 : 18, background: hoverMenu === i ? "#f3eee2" : "transparent", border: "none", borderBottom: "1px solid #ece5d4", cursor: "pointer", fontSize: 13.5, color: "#544a3a", transition: "background .18s ease, padding-left .2s ease" }}>{label}</button>
                 ))}
                 <button onClick={() => signOut({ callbackUrl: "/rooms" })} onMouseEnter={() => setSignHover(true)} onMouseLeave={() => setSignHover(false)}
                   style={{ display: "block", width: "100%", textAlign: "left", padding: "13px 18px", background: signHover ? "rgba(168,70,55,.08)" : "transparent", border: "none", cursor: "pointer", fontSize: 13.5, fontWeight: 500, letterSpacing: ".3px", color: "#a8492f", transition: "background .18s ease" }}>Sign out</button>
               </div>
-            )}
-          </div>
+            </div>
+          ) : (
+            <Link href="/login" className="sh-tap" style={{ padding: "12px 16px", textDecoration: "none", color: INK, fontSize: 14 }}>Sign in</Link>
+          )}
 
-          <span style={{ width: 1, height: 30, background: "rgba(58,51,39,.18)", margin: "0 12px" }} />
-
-          {/* BOOK NOW — magnetic */}
-          <button ref={bookRef} onClick={() => { if (bookHref.startsWith("#")) document.querySelector(bookHref)?.scrollIntoView({ behavior: "smooth", block: "start" }); else router.push(bookHref); }} onMouseMove={bookMove} onMouseEnter={bookEnter} onMouseLeave={bookLeave}
-            style={{ position: "relative", overflow: "hidden", cursor: "pointer", border: "none", padding: "14px 26px", borderRadius: 40, color: "#fff", background: ACCENT, boxShadow: "0 10px 26px -10px rgba(140,90,40,.7)", transition: "transform .3s cubic-bezier(.2,.8,.2,1), box-shadow .3s ease" }}>
-            <span ref={fillRef} style={{ position: "absolute", inset: 0, zIndex: 1, background: "linear-gradient(120deg, rgba(255,255,255,0), rgba(255,255,255,.22), rgba(255,255,255,0))", transform: "translateX(-100%)" }} />
-            <span style={{ position: "relative", zIndex: 2, display: "flex", alignItems: "center", gap: 11, fontFamily: SERIF, fontSize: 16.5, letterSpacing: ".2px" }}>
-              {bookLabel}
-              <span ref={arrowRef} style={{ display: "inline-flex", transition: "transform .42s cubic-bezier(.2,.8,.2,1)" }}>
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="12" x2="19" y2="12" /><polyline points="13 6 19 12 13 18" /></svg>
-              </span>
-            </span>
+          {/* BOOK — primary */}
+          <button className="sh-book" onClick={goBook}
+            style={{ marginLeft: 8, background: CLAY, color: "#faf7f1", border: 0, padding: "12px 20px", fontSize: 14, fontWeight: 500, cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <span>{bookLabel}</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
           </button>
-
-        </nav>
+        </div>
       </div>
     </header>
   );

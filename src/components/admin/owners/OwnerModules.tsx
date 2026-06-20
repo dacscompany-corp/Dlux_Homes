@@ -33,7 +33,7 @@ function RangeCalendar({ value, onChange }: { value?: DateRange; onChange: (r: D
   };
 
   const navCls = "px-3 py-1.5 rounded-lg text-sm font-semibold border cursor-pointer";
-  const navStyle = { color: "#B07848", borderColor: "#EDE3D2", backgroundColor: "#F7F0E3" } as const;
+  const navStyle = { color: "#B07848", borderColor: "#ece5d4", backgroundColor: "#F7F0E3" } as const;
   return (
     <div className="w-full">
       <div className="flex items-center justify-between mb-4">
@@ -77,33 +77,26 @@ const dataOf = (x: unknown): Row[] => arr((x as { data?: unknown })?.data ?? x);
 
 // ── shared bits ──────────────────────────────────────────────────────────
 function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <div className={`rounded-2xl border ${className}`} style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }}>{children}</div>;
+  return <div className={className} style={{ backgroundColor: "#fff", border: "1px solid #ece5d4" }}>{children}</div>;
 }
-function SectionHead({ title, sub, icon: Icon }: { title: string; sub?: string; icon?: React.ElementType }) {
+function SectionHead({ title, sub }: { title: string; sub?: string; icon?: React.ElementType }) {
   return (
-    <div className="flex items-center gap-3 mb-6">
-      {Icon && (
-        <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: "#F7F0E3" }}>
-          <Icon className="w-[18px] h-[18px]" strokeWidth={1.75} style={{ color: "#B07848" }} />
-        </div>
-      )}
-      <div>
-        <h2 className="font-bold text-lg leading-tight" style={{ color: "#1a1a1a" }}>{title}</h2>
-        {sub && <p className="text-sm" style={{ color: "#8B6344" }}>{sub}</p>}
-      </div>
+    <div className="mb-6">
+      <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 22, lineHeight: 1, letterSpacing: "-0.01em", color: "#1f1b16", margin: 0 }}>{title}</h2>
+      {sub && <p style={{ fontSize: 13, color: "#8a8276", margin: "10px 0 0", lineHeight: 1.55 }}>{sub}</p>}
     </div>
   );
 }
 function Empty({ label }: { label: string }) {
-  return <div className="rounded-2xl border p-10 text-center" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }}><p className="text-sm" style={{ color: "#8B6344" }}>{label}</p></div>;
+  return <div className="text-center" style={{ background: "#fff", border: "1px solid #ece5d4", padding: 40 }}><p style={{ fontSize: 13, color: "#8a8276", margin: 0 }}>{label}</p></div>;
 }
 function Table({ headers, children }: { headers: string[]; children: React.ReactNode }) {
   return (
     <Card className="overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full">
-          <thead><tr style={{ backgroundColor: "#f9fafb" }}>
-            {headers.map((h) => <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide" style={{ color: "#8B6344" }}>{h}</th>)}
+          <thead><tr style={{ backgroundColor: "#faf7f1", borderBottom: "1px solid #ece5d4" }}>
+            {headers.map((h) => <th key={h} className="px-6 py-3 text-left uppercase" style={{ color: "#8a8276", fontSize: 11, letterSpacing: "0.08em", fontWeight: 400 }}>{h}</th>)}
           </tr></thead>
           <tbody>{children}</tbody>
         </table>
@@ -111,9 +104,19 @@ function Table({ headers, children }: { headers: string[]; children: React.React
     </Card>
   );
 }
-function Pill({ text, tone = "neutral" }: { text: string; tone?: "good" | "warn" | "bad" | "neutral" }) {
-  const map = { good: { bg: "#d1fae5", c: "#065f46" }, warn: { bg: "#fef3c7", c: "#92400e" }, bad: { bg: "#fee2e2", c: "#991b1b" }, neutral: { bg: "#F7F0E3", c: "#B07848" } }[tone];
-  return <span className="text-xs font-semibold px-2.5 py-1 rounded-full capitalize" style={{ backgroundColor: map.bg, color: map.c }}>{text}</span>;
+function Pill({ text, tone = "neutral" }: { text: string; tone?: "good" | "warn" | "bad" | "neutral" | "muted" }) {
+  const map = {
+    good:    { c: "#4a6a3a", dot: "#7a8c5a" },
+    warn:    { c: "#8a6a2f", dot: "#d4a96a" },
+    bad:     { c: "#9a4a3a", dot: "#b85a4a" },
+    neutral: { c: "#9a6233", dot: "#b8754a" },
+    muted:   { c: "#8a8276", dot: "#c9c1b2" },
+  }[tone];
+  return (
+    <span className="inline-flex items-center capitalize" style={{ gap: 7, fontSize: 12, color: map.c }}>
+      <span style={{ width: 6, height: 6, borderRadius: "50%", background: map.dot, flex: "none" }} />{text}
+    </span>
+  );
 }
 const fmtDate = (d: unknown) => (d ? new Date(String(d)).toLocaleDateString() : "—");
 
@@ -132,47 +135,70 @@ export function AnalyticsSection() {
     { label: "Occupancy", value: `${Math.round(Number(s.occupancy_rate ?? 0))}%` },
     { label: "New Guests", value: String(s.new_guests ?? 0) },
   ];
+  const totalRoomRev = Math.max(1, rooms.reduce((t, r) => t + (Number(r.revenue) || 0), 0));
+  const SERIF = "'Instrument Serif', Georgia, serif";
+  const MONO = "'Geist Mono', ui-monospace, monospace";
   return (
     <div>
-      <SectionHead title="Analytics & Reports" icon={BarChart3} sub="Revenue, occupancy and room performance — last 30 days" />
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      {/* stats — flat bordered cells */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 mb-6" style={{ gap: 1, background: "#ece5d4", border: "1px solid #ece5d4" }}>
         {stats.map((st) => (
-          <Card key={st.label} className="p-5">
-            <p className="text-2xl font-bold" style={{ color: "#1a1a1a" }}>{st.value}</p>
-            <p className="text-sm mt-0.5" style={{ color: "#8B6344" }}>{st.label}</p>
-          </Card>
+          <div key={st.label} style={{ background: "#fff", padding: "20px 22px" }}>
+            <div style={{ fontFamily: MONO, fontSize: 24, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1, color: "#1f1b16" }}>{st.value}</div>
+            <div style={{ fontSize: 12, color: "#8a8276", marginTop: 8 }}>{st.label}</div>
+          </div>
         ))}
       </div>
-      <Card className="p-6 mb-6">
-        <h3 className="font-bold mb-6" style={{ color: "#1a1a1a" }}>Revenue — Last 6 Months</h3>
-        {monthly.length === 0 ? (
-          <p className="text-sm" style={{ color: "#8B6344" }}>No revenue recorded yet.</p>
-        ) : (
-          <div className="flex items-end gap-3 h-44">
-            {monthly.map((m) => (
-              <div key={m.month} className="flex-1 flex flex-col items-center gap-2">
-                <span className="text-xs font-semibold" style={{ color: "#5a4a3a" }}>{peso(Number(m.revenue) || 0)}</span>
-                <div className="w-full flex items-end justify-center" style={{ height: "120px" }}>
-                  <div className="w-full rounded-t-lg" style={{ height: `${Math.max(2, ((Number(m.revenue) || 0) / maxRev) * 100)}%`, background: "linear-gradient(to top, #B07848, #D4A96A)" }} />
+
+      {/* revenue chart */}
+      <div style={{ background: "#fff", border: "1px solid #ece5d4", marginBottom: 24 }}>
+        <div style={{ padding: "22px 24px 0" }}>
+          <h3 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 20, margin: 0, lineHeight: 1, color: "#1f1b16" }}>Revenue — last 6 months</h3>
+        </div>
+        <div style={{ padding: "18px 24px 24px" }}>
+          {monthly.length === 0 ? (
+            <p style={{ fontSize: 13, color: "#8a8276", margin: 0 }}>No revenue recorded yet.</p>
+          ) : (
+            <div className="flex items-end gap-3" style={{ height: 200 }}>
+              {monthly.map((m) => (
+                <div key={m.month} className="flex-1 flex flex-col items-center" style={{ gap: 8 }}>
+                  <span style={{ fontFamily: MONO, fontSize: 11, color: "#6b6358" }}>{peso(Number(m.revenue) || 0)}</span>
+                  <div className="w-full flex items-end justify-center" style={{ height: 140 }}>
+                    <div style={{ width: "100%", height: `${Math.max(2, ((Number(m.revenue) || 0) / maxRev) * 100)}%`, background: "#b8754a" }} />
+                  </div>
+                  <span style={{ fontSize: 11, color: "#8a8276" }}>{/^\d{4}-\d{2}/.test(m.month) ? new Date(m.month + "-01").toLocaleString("en", { month: "short" }) : m.month}</span>
                 </div>
-                <span className="text-xs font-medium" style={{ color: "#8B6344" }}>{/^\d{4}-\d{2}/.test(m.month) ? new Date(m.month + "-01").toLocaleString("en", { month: "short" }) : m.month}</span>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* revenue by haven */}
+      <div style={{ background: "#fff", border: "1px solid #ece5d4" }}>
+        <div style={{ padding: "18px 24px", borderBottom: "1px solid #ece5d4" }}>
+          <h3 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 20, margin: 0, lineHeight: 1, color: "#1f1b16" }}>Revenue by haven</h3>
+        </div>
+        <div className="grid" style={{ gridTemplateColumns: "2fr 1fr 1fr 1.4fr", gap: 16, padding: "12px 24px", background: "#faf7f1", borderBottom: "1px solid #ece5d4", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "#8a8276" }}>
+          <span>Haven</span><span style={{ textAlign: "right" }}>Bookings</span><span style={{ textAlign: "right" }}>Revenue</span><span>Share</span>
+        </div>
+        {rooms.length === 0 ? (
+          <div style={{ padding: "22px 24px", fontSize: 13, color: "#8a8276" }}>No room revenue yet.</div>
+        ) : rooms.map((r, i) => {
+          const share = Math.round(((Number(r.revenue) || 0) / totalRoomRev) * 100);
+          return (
+            <div key={i} className="grid items-center" style={{ gridTemplateColumns: "2fr 1fr 1fr 1.4fr", gap: 16, padding: "15px 24px", borderBottom: "1px solid #f3eee2", fontSize: 13.5 }}>
+              <span style={{ color: "#1f1b16" }}>{r.room_name}</span>
+              <span style={{ fontFamily: MONO, fontSize: 12, color: "#6b6358", textAlign: "right" }}>{r.bookings}</span>
+              <span style={{ fontFamily: MONO, fontSize: 13, color: "#1f1b16", textAlign: "right" }}>{peso(Number(r.revenue) || 0)}</span>
+              <div className="flex items-center" style={{ gap: 10 }}>
+                <div style={{ flex: 1, height: 4, background: "#f3eee2" }}><div style={{ width: `${share}%`, height: "100%", background: "#b8754a" }} /></div>
+                <span style={{ fontFamily: MONO, fontSize: 11, color: "#8a8276", width: 32, textAlign: "right" }}>{share}%</span>
               </div>
-            ))}
-          </div>
-        )}
-      </Card>
-      <SectionHead title="Revenue by Room" />
-      {rooms.length === 0 ? <Empty label="No room revenue yet." /> : (
-        <Table headers={["Room", "Bookings", "Revenue"]}>
-          {rooms.map((r, i) => (
-            <tr key={i} style={{ borderTop: i > 0 ? "1px solid #F7F0E3" : "none" }}>
-              <td className="px-4 py-3.5 text-sm" style={{ color: "#1a1a1a" }}>{r.room_name}</td>
-              <td className="px-4 py-3.5 text-sm" style={{ color: "#5a4a3a" }}>{r.bookings}</td>
-              <td className="px-4 py-3.5 font-semibold text-sm" style={{ color: "#1a1a1a" }}>{peso(Number(r.revenue) || 0)}</td>
-            </tr>
-          ))}
-        </Table>
-      )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -230,42 +256,56 @@ export function BookingCalendarSection() {
   return (
     <div>
       <SectionHead title="Booking Calendar" icon={Calendar} sub="Check-ins, check-outs & blocked dates — click a day for details" />
-      <Card className="p-6">
-        <div className="flex items-center justify-between mb-4">
-          <button type="button" onClick={() => shift(-1)} className="px-3 py-1.5 rounded-lg text-sm font-semibold border cursor-pointer" style={{ color: "#B07848", borderColor: "#EDE3D2", backgroundColor: "#F7F0E3" }}>← Prev</button>
-          <h3 className="font-bold" style={{ color: "#1a1a1a" }}>{monthName}</h3>
-          <button type="button" onClick={() => shift(1)} className="px-3 py-1.5 rounded-lg text-sm font-semibold border cursor-pointer" style={{ color: "#B07848", borderColor: "#EDE3D2", backgroundColor: "#F7F0E3" }}>Next →</button>
+      <div style={{ background: "#fff", border: "1px solid #ece5d4", padding: 24 }}>
+        <div className="flex items-center justify-between" style={{ marginBottom: 20 }}>
+          <button type="button" onClick={() => shift(-1)} className="inline-flex items-center cursor-pointer" style={{ gap: 8, padding: "8px 14px", background: "transparent", border: "1px solid #d9d1c2", fontSize: 13, color: "#6b6358" }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
+            <span>Prev</span>
+          </button>
+          <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 22, margin: 0, color: "#1f1b16" }}>{monthName}</h3>
+          <button type="button" onClick={() => shift(1)} className="inline-flex items-center cursor-pointer" style={{ gap: 8, padding: "8px 14px", background: "transparent", border: "1px solid #d9d1c2", fontSize: 13, color: "#6b6358" }}>
+            <span>Next</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
+          </button>
         </div>
-        <div className="grid grid-cols-7 gap-1.5">
-          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => <div key={d} className="text-center text-xs font-semibold py-2" style={{ color: "#8B6344" }}>{d}</div>)}
+        <div className="grid grid-cols-7" style={{ gap: 6, marginBottom: 6 }}>
+          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => <div key={d} style={{ textAlign: "center", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "#8a8276", padding: "6px 0" }}>{d}</div>)}
+        </div>
+        <div className="grid grid-cols-7" style={{ gap: 6 }}>
           {Array.from({ length: startWeekday }).map((_, i) => <div key={`e${i}`} />)}
           {Array.from({ length: daysInMonth }).map((_, i) => {
             const day = i + 1; const ev = dayInfo[day]; const blocked = !!blockInfo[day];
             const occupied = !!occupiedByDay[day]?.length;
+            const boundary = !!(ev?.ins.length || ev?.outs.length);
+            const cellBg = blocked ? "#f7e9e5" : boundary ? "#faf0e6" : occupied ? "#eaf2e3" : "#fff";
+            const cellBorder = blocked ? "#e0b8ad" : boundary ? "#e6c9a8" : occupied ? "#c2d6b0" : "#ece5d4";
             return (
               <button key={day} type="button" onClick={() => setSelectedDay(day)}
-                className="rounded-lg border p-2 min-h-[64px] text-left cursor-pointer transition-colors"
-                style={{ borderColor: blocked ? "#F0C9C0" : occupied ? "#C7E7D2" : "#F0E6D6", backgroundColor: blocked ? "#FCEEEA" : occupied ? "#ECFDF3" : "#ffffff" }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.boxShadow = "0 0 0 1.5px #E6CFA6 inset"; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}>
-                <div className="text-xs font-semibold" style={{ color: blocked ? "#9C3B28" : "#5a4a3a" }}>{day}</div>
-                {blocked ? <div className="text-[10px] mt-1 px-1.5 py-0.5 rounded" style={{ backgroundColor: "#F6D8D0", color: "#9C3B28" }}>Blocked</div> : null}
-                {ev?.ins.length ? <div className="text-[10px] mt-1 px-1.5 py-0.5 rounded" style={{ backgroundColor: "#d1fae5", color: "#065f46" }}>{ev.ins.length} in</div> : null}
-                {ev?.outs.length ? <div className="text-[10px] mt-1 px-1.5 py-0.5 rounded" style={{ backgroundColor: "#F7F0E3", color: "#B07848" }}>{ev.outs.length} out</div> : null}
-                {occupied && !ev?.ins.length && !ev?.outs.length ? <div className="text-[10px] mt-1 px-1.5 py-0.5 rounded" style={{ backgroundColor: "#d1fae5", color: "#065f46" }}>Booked</div> : null}
+                className="text-left cursor-pointer"
+                style={{ border: `1px solid ${cellBorder}`, background: cellBg, padding: 8, minHeight: 64 }}>
+                <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 12, color: blocked ? "#9a4a3a" : "#4a4034" }}>{day}</div>
+                {blocked ? <div style={{ fontSize: 10, marginTop: 4, padding: "1px 6px", background: "#f0d8d0", color: "#9a4a3a", display: "inline-block" }}>Blocked</div> : null}
+                {ev?.ins.length ? <div style={{ fontSize: 10, marginTop: 4, padding: "1px 6px", background: "#eaf2e3", color: "#4a6a3a", display: "inline-block" }}>{ev.ins.length} in</div> : null}
+                {ev?.outs.length ? <div style={{ fontSize: 10, marginTop: 4, padding: "1px 6px", background: "#faf0e6", color: "#8a6a2f", display: "inline-block" }}>{ev.outs.length} out</div> : null}
+                {occupied && !ev?.ins.length && !ev?.outs.length ? <div style={{ fontSize: 10, marginTop: 4, padding: "1px 6px", background: "#eaf2e3", color: "#4a6a3a", display: "inline-block" }}>Booked</div> : null}
               </button>
             );
           })}
         </div>
-      </Card>
+        <div className="flex flex-wrap" style={{ gap: 24, marginTop: 20, paddingTop: 18, borderTop: "1px solid #f3eee2", fontSize: 12, color: "#6b6358" }}>
+          <div className="flex items-center" style={{ gap: 8 }}><span style={{ width: 10, height: 10, background: "#eaf2e3", border: "1px solid #c2d6b0" }} />Booked / staying</div>
+          <div className="flex items-center" style={{ gap: 8 }}><span style={{ width: 10, height: 10, background: "#faf0e6", border: "1px solid #e6c9a8" }} />Check-in / out</div>
+          <div className="flex items-center" style={{ gap: 8 }}><span style={{ width: 10, height: 10, background: "#f7e9e5", border: "1px solid #e0b8ad" }} />Blocked</div>
+        </div>
+      </div>
 
       {/* Day detail popover */}
       {sel && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setSelectedDay(null)}>
-          <div className="w-full max-w-md rounded-3xl border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }} onClick={(e) => e.stopPropagation()}>
+          <div className="w-full max-w-md border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between mb-4">
-              <h3 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>{selDate}</h3>
-              <button type="button" onClick={() => setSelectedDay(null)} title="Close" className="p-1.5 rounded-lg cursor-pointer" style={{ color: "#8B6344" }}><X className="w-4 h-4" /></button>
+              <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 22, lineHeight: 1, color: "#1f1b16", margin: 0 }}>{selDate}</h3>
+              <button type="button" onClick={() => setSelectedDay(null)} title="Close" className="p-1.5 cursor-pointer" style={{ color: "#8a8276" }}><X className="w-4 h-4" /></button>
             </div>
             {sel.blocks?.length ? (
               <div className="rounded-xl border p-3 mb-3" style={{ borderColor: "#F0C9C0", backgroundColor: "#FCEEEA" }}>
@@ -337,7 +377,7 @@ export function BlockedDatesSection() {
   const remove = async (id: string) => { try { await deleteBlocked(id).unwrap(); toast.success("Removed"); } catch { toast.error("Could not remove"); } };
 
   const inputCls = "rounded-xl border px-3 py-2 text-sm outline-none";
-  const inputStyle = { borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" } as const;
+  const inputStyle = { borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" } as const;
   const niceDate = (d?: Date) => (d ? d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "");
   return (
     <div>
@@ -352,14 +392,14 @@ export function BlockedDatesSection() {
           )}
           <input placeholder="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} className={inputCls} style={inputStyle} />
         </div>
-        <div className="rounded-2xl border p-5" style={{ borderColor: "#EDE3D2", backgroundColor: "#ffffff" }}>
+        <div className="border p-5" style={{ borderColor: "#ece5d4", backgroundColor: "#ffffff" }}>
           <RangeCalendar value={range} onChange={setRange} />
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3 mt-4">
           <p className="text-sm" style={{ color: "#8B6344" }}>
             {fromD ? <>Blocking <span className="font-semibold" style={{ color: "#1a1a1a" }}>{niceDate(fromD)}{toD && toD !== fromD ? ` → ${niceDate(toD)}` : ""}</span></> : "Click a start and end date on the calendar."}
           </p>
-          <button type="button" onClick={submit} disabled={creating} className="px-5 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#B07848" }}>{creating ? "Blocking…" : "Block dates"}</button>
+          <button type="button" onClick={submit} disabled={creating} className="px-5 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#1f1b16" }}>{creating ? "Blocking…" : "Block dates"}</button>
         </div>
       </Card>
       {rows.length === 0 ? <Empty label="No blocked dates." /> : (
@@ -460,7 +500,7 @@ export function PaymentMethodsSection() {
     <div>
       <div className="flex items-start justify-between gap-3">
         <SectionHead title="Payment Methods" icon={CreditCard} sub="Channels guests can pay through (GCash, bank, etc.)" />
-        <button onClick={() => setModal(true)} className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer flex-shrink-0" style={{ backgroundColor: "#B07848" }}>
+        <button onClick={() => setModal(true)} className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white cursor-pointer flex-shrink-0" style={{ backgroundColor: "#1f1b16" }}>
           <Plus className="w-4 h-4" /> Add Payment Method
         </button>
       </div>
@@ -485,7 +525,7 @@ export function PaymentMethodsSection() {
 
       {modal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setModal(false)}>
-          <div className="w-full max-w-md rounded-3xl border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }} onClick={(e) => e.stopPropagation()}>
+          <div className="w-full max-w-md border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between mb-4">
               <div>
                 <h3 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>Add Payment Method</h3>
@@ -496,27 +536,27 @@ export function PaymentMethodsSection() {
             <div className="space-y-3">
               <div>
                 <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Display name</label>
-                <input value={form.payment_name} onChange={(e) => setForm((f) => ({ ...f, payment_name: e.target.value }))} placeholder="GCash – Main" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                <input value={form.payment_name} onChange={(e) => setForm((f) => ({ ...f, payment_name: e.target.value }))} placeholder="GCash – Main" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Type</label>
-                  <select aria-label="Payment type" value={form.payment_method} onChange={(e) => setForm((f) => ({ ...f, payment_method: e.target.value }))} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
+                  <select aria-label="Payment type" value={form.payment_method} onChange={(e) => setForm((f) => ({ ...f, payment_method: e.target.value }))} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
                     {PM_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Provider</label>
-                  <input value={form.provider} onChange={(e) => setForm((f) => ({ ...f, provider: e.target.value }))} placeholder="GCash / BPI…" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                  <input value={form.provider} onChange={(e) => setForm((f) => ({ ...f, provider: e.target.value }))} placeholder="GCash / BPI…" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
                 </div>
               </div>
               <div>
                 <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Account details</label>
-                <input value={form.account_details} onChange={(e) => setForm((f) => ({ ...f, account_details: e.target.value }))} placeholder="0917 123 4567 · Juan Dela Cruz" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none font-mono" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                <input value={form.account_details} onChange={(e) => setForm((f) => ({ ...f, account_details: e.target.value }))} placeholder="0917 123 4567 · Juan Dela Cruz" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none font-mono" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
               </div>
               <div>
                 <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Notes (optional)</label>
-                <input value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} placeholder="e.g. for down payments only" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                <input value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} placeholder="e.g. for down payments only" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
               </div>
               <div>
                 <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>QR image (optional)</label>
@@ -524,8 +564,8 @@ export function PaymentMethodsSection() {
               </div>
             </div>
             <div className="flex justify-end gap-2 mt-5">
-              <button type="button" onClick={() => setModal(false)} className="px-4 py-2 rounded-xl text-sm font-semibold border cursor-pointer" style={{ color: "#8B6344", borderColor: "#EDE3D2", backgroundColor: "#ffffff" }}>Cancel</button>
-              <button type="button" onClick={submit} disabled={saving} className="px-4 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#B07848" }}>{saving ? "Adding…" : "Add Method"}</button>
+              <button type="button" onClick={() => setModal(false)} className="px-4 py-2 rounded-xl text-sm font-semibold border cursor-pointer" style={{ color: "#8B6344", borderColor: "#ece5d4", backgroundColor: "#ffffff" }}>Cancel</button>
+              <button type="button" onClick={submit} disabled={saving} className="px-4 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#1f1b16" }}>{saving ? "Adding…" : "Add Method"}</button>
             </div>
           </div>
         </div>

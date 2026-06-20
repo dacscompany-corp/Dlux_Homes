@@ -44,7 +44,7 @@ const checklistItems = [
 
 const statusConfig: Record<string, { label: string; color: string; bg: string; dot: string }> = {
   completed:    { label: "Completed",   color: "#065f46", bg: "#d1fae5", dot: "#10b981" },
-  "in-progress":{ label: "In Progress", color: "#B07848", bg: "#F7F0E3", dot: "#B07848" },
+  "in-progress":{ label: "In Progress", color: "#8a6a2f", bg: "#F7F0E3", dot: "#B07848" },
   pending:      { label: "Pending",     color: "#92400e", bg: "#fef3c7", dot: "#f59e0b" },
 };
 
@@ -63,6 +63,14 @@ const guideTopics = [
   { title: "Schedule & Time Management",  desc: "Understanding your daily schedule and time slots.",                  icon: CalendarDays },
 ];
 
+// Normalize an RTK/fetch result to an array of rows, whether it arrives as a
+// bare array, a { data: [...] } envelope, or undefined/error object.
+function toRows(v: unknown): Record<string, unknown>[] {
+  if (Array.isArray(v)) return v as Record<string, unknown>[];
+  const d = (v as { data?: unknown } | null | undefined)?.data;
+  return Array.isArray(d) ? (d as Record<string, unknown>[]) : [];
+}
+
 export default function CleanerDashboard() {
   const [sidebarOpen,       setSidebarOpen]       = useState(false);
   const [activeNav,         setActiveNav]         = useState("Dashboard");
@@ -76,7 +84,7 @@ export default function CleanerDashboard() {
   const [startCleaningM] = useStartCleaningMutation();
   const [completeCleaningM] = useCompleteCleaningMutation();
   const normCleanStatus = (s: string) => (s === "cleaned" || s === "inspected" ? "completed" : s === "in-progress" ? "in-progress" : "pending");
-  const assignments = ((cleaningTasksData as unknown as Record<string, unknown>[]) || []).map((t) => ({
+  const assignments = toRows(cleaningTasksData).map((t) => ({
     id: String(t.cleaning_id ?? ""),
     room: String(t.haven ?? "—"),
     floor: String(t.booking_id ?? "—"),
@@ -94,7 +102,7 @@ export default function CleanerDashboard() {
   const { data: session } = useSession();
   const cleanerId = (session?.user as { id?: string } | undefined)?.id;
   const { data: havensData } = useGetHavensQuery({});
-  const havenOptions = ((havensData as Record<string, unknown>[]) || []).map((h) => ({
+  const havenOptions = toRows(havensData).map((h) => ({
     value: String(h.uuid_id || h.id || ""),
     label: String(h.haven_name || h.name || "Haven"),
   }));
@@ -122,7 +130,7 @@ export default function CleanerDashboard() {
 
   // Notifications + Messages (live, session-scoped)
   const { data: notifRes } = useGetNotificationsQuery({});
-  const notifications = (((notifRes as { data?: Record<string, unknown>[] } | undefined)?.data) || []).map((n, i) => ({
+  const notifications = toRows(notifRes).map((n, i) => ({
     id: (n.notification_id as string) ?? i,
     title: String(n.title || "Notification"),
     desc: String(n.message || ""),
@@ -131,7 +139,7 @@ export default function CleanerDashboard() {
     type: String(n.notification_type || "assignment"),
   }));
   const { data: convRes } = useGetConversationsQuery({ userId: cleanerId || "" }, { skip: !cleanerId });
-  const messages = (((convRes as unknown as { data?: Record<string, unknown>[] } | undefined)?.data) || []).map((c, i) => ({
+  const messages = toRows(convRes).map((c, i) => ({
     id: (c.id as string | number) ?? i,
     sender: String(c.name || "Staff"),
     role: String(c.role || "csr"),
@@ -165,6 +173,7 @@ export default function CleanerDashboard() {
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: "#ffffff", zoom: "1.1" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist+Mono:wght@400;500&display=swap');`}</style>
       {sidebarOpen && (
         <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setSidebarOpen(false)} />
       )}
@@ -172,10 +181,9 @@ export default function CleanerDashboard() {
       {/* Sidebar */}
       <aside
         className={`fixed inset-y-0 left-0 w-64 z-50 flex flex-col transition-transform duration-300 lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
-        style={{ backgroundColor: "#2C1F14", borderRight: "1px solid #3a2510" }}
+        style={{ backgroundColor: "#1f1b16", borderRight: "1px solid rgba(250,247,241,0.1)" }}
       >
-        <div className="h-0.5 w-full" style={{ background: "linear-gradient(90deg, #B07848, #D4A96A)" }} />
-        <div className="px-5 py-4 flex items-center justify-between border-b" style={{ borderColor: "#3a2510" }}>
+        <div className="px-5 py-4 flex items-center justify-between border-b" style={{ borderColor: "rgba(250,247,241,0.1)" }}>
           <Link href="/rooms">
             <div className="rounded-lg overflow-hidden" style={{ backgroundColor: "#f9fafb" }}>
               <Image src="/logo.png" alt="D'Lux Homes" width={80} height={28} className="mix-blend-multiply" style={{ width: "80px", height: "28px", objectFit: "cover" }} />
@@ -185,7 +193,7 @@ export default function CleanerDashboard() {
             <X className="w-4 h-4" />
           </button>
         </div>
-        <div className="px-5 py-3 border-b" style={{ borderColor: "#3a2510" }}>
+        <div className="px-5 py-3 border-b" style={{ borderColor: "rgba(250,247,241,0.1)" }}>
           <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full" style={{ backgroundColor: "#D4A96A20", color: "#D4A96A" }}>
             <span className="w-1.5 h-1.5 rounded-full bg-current" />
             Cleaner Portal
@@ -209,8 +217,8 @@ export default function CleanerDashboard() {
             );
           })}
         </nav>
-        <div className="px-3 py-4 border-t" style={{ borderColor: "#3a2510" }}>
-          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl" style={{ backgroundColor: "#3a2510" }}>
+        <div className="px-3 py-4 border-t" style={{ borderColor: "rgba(250,247,241,0.1)" }}>
+          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl" style={{ backgroundColor: "rgba(250,247,241,0.1)" }}>
             <Avatar className="w-8 h-8 flex-shrink-0">
               <AvatarFallback className="text-xs font-bold" style={{ backgroundColor: "#D4A96A", color: "#2C1F14" }}>CL</AvatarFallback>
             </Avatar>
@@ -228,27 +236,52 @@ export default function CleanerDashboard() {
       {/* Main */}
       <div className="lg:pl-64 flex flex-col min-h-screen">
         {/* Header */}
-        <header className="px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between gap-4 sticky top-0 z-30 border-b"
-          style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }}>
+        <header className="px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-4 sticky top-0 z-30 border-b"
+          style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4", height: 72, fontFamily: "'Geist', system-ui, sans-serif" }}>
           <div className="flex items-center gap-4">
-            <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-2 rounded-xl cursor-pointer" style={{ color: "#8B6344" }}>
+            <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-2 rounded-lg cursor-pointer" style={{ color: "#6b6358" }}>
               <Menu className="w-5 h-5" />
             </button>
-            <div>
-              <h1 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>{activeNav}</h1>
-              <p className="text-xs" style={{ color: "#8B6344" }}>Housekeeping Staff</p>
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2" style={{ fontSize: 12, color: "#8a8276" }}>
+                <span className="inline-flex items-center gap-1.5" style={{ padding: "2px 8px", background: "rgba(212,169,106,0.22)", color: "#8a6a2f", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                  <span style={{ width: 5, height: 5, background: "#d4a96a", borderRadius: "50%" }} />
+                  Cleaner
+                </span>
+                <span>Housekeeping &middot; {assignments.length} assigned</span>
+              </div>
+              <h1 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 24, lineHeight: 1, letterSpacing: "-0.01em", margin: 0, color: "#1f1b16" }}>{activeNav}</h1>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => setActiveNav("Notifications")} title="Notifications" className="relative p-2 rounded-xl cursor-pointer" style={{ color: "#8B6344" }}>
-              <Bell className="w-5 h-5" />
-              <span className="absolute top-1.5 right-1.5 w-3.5 h-3.5 bg-red-500 rounded-full flex items-center justify-center">
-                <span className="text-white text-xs font-bold leading-none">{notifications.filter(n=>!n.read).length}</span>
+          <div className="flex items-center" style={{ gap: 6 }}>
+            {(() => {
+              const total = assignments.length;
+              const doneN = Object.values(assignmentStatuses).filter((s) => s === "completed").length;
+              const pct = total ? Math.round((doneN / total) * 100) : 0;
+              return (
+                <div className="hidden md:flex items-center gap-2.5" style={{ padding: "8px 14px", border: "1px solid #ece5d4", fontSize: 12, color: "#6b6358" }}>
+                  <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace" }}>{doneN} / {total}</span>
+                  <span style={{ position: "relative", width: 60, height: 3, background: "#ece5d4" }}>
+                    <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${pct}%`, background: "#d4a96a" }} />
+                  </span>
+                  <span>complete</span>
+                </div>
+              );
+            })()}
+            <span style={{ width: 1, height: 24, background: "#e8e1d2", margin: "0 8px" }} />
+            <button onClick={() => setActiveNav("Notifications")} title="Notifications" className="relative p-2.5 rounded-lg cursor-pointer transition-colors" style={{ color: "#6b6358" }}
+              onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#f3eee2"} onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
+              <Bell className="w-[18px] h-[18px]" />
+              <span style={{ position: "absolute", top: 8, right: 8, width: 6, height: 6, background: "#d4a96a", borderRadius: "50%", border: "2px solid #fff" }} />
+            </button>
+            <button type="button" className="flex items-center gap-2.5 rounded-lg cursor-pointer transition-colors" style={{ padding: "6px 12px 6px 6px", background: "transparent", border: 0 }}
+              onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#f3eee2"} onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
+              <span style={{ width: 28, height: 28, borderRadius: "50%", background: "#d4a96a", color: "#2c1f14", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 14 }}>L</span>
+              <span className="flex flex-col items-start" style={{ lineHeight: 1.2 }}>
+                <span style={{ fontSize: 13, color: "#1f1b16" }}>Cleaner Staff</span>
+                <span style={{ fontSize: 11, color: "#8a8276" }}>On route</span>
               </span>
             </button>
-            <Avatar className="w-9 h-9 cursor-pointer">
-              <AvatarFallback className="text-xs font-bold" style={{ backgroundColor: "#D4A96A", color: "#2C1F14" }}>CL</AvatarFallback>
-            </Avatar>
           </div>
         </header>
 
@@ -264,11 +297,11 @@ export default function CleanerDashboard() {
               ].map((card) => {
                 const Icon = card.icon;
                 return (
-                  <div key={card.label} className="rounded-2xl border p-4 text-center" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }}>
+                  <div key={card.label} className="border p-4 text-center" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }}>
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-2" style={{ backgroundColor: card.iconBg }}>
                       <Icon className="w-5 h-5" strokeWidth={1.75} style={{ color: card.iconColor }} />
                     </div>
-                    <p className="text-2xl font-bold" style={{ color: "#1a1a1a" }}>{card.value}</p>
+                    <p style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 24, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1, color: "#1f1b16" }}>{card.value}</p>
                     <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{card.label}</p>
                   </div>
                 );
@@ -279,14 +312,14 @@ export default function CleanerDashboard() {
               {/* Today's assignments preview */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <h2 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>Today&apos;s Assignments</h2>
-                  <button onClick={() => setActiveNav("My Assignment")} className="text-sm font-medium cursor-pointer" style={{ color: "#B07848" }}>View All →</button>
+                  <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>Today&apos;s Assignments</h2>
+                  <button onClick={() => setActiveNav("My Assignment")} className="text-sm font-medium cursor-pointer" style={{ color: "#8a6a2f" }}>View All →</button>
                 </div>
                 {assignments.map((a) => {
                   const cs = assignmentStatuses[a.id];
                   const st = statusConfig[cs];
                   return (
-                    <div key={a.id} className="rounded-2xl border p-4" style={{ borderColor: cs === "in-progress" ? "#D4BFA0" : "#E0CEB8" }}>
+                    <div key={a.id} className="border p-4" style={{ borderColor: cs === "in-progress" ? "#D4BFA0" : "#E0CEB8" }}>
                       <div className="flex items-start justify-between gap-3 mb-2">
                         <div>
                           <p className="font-bold text-sm" style={{ color: "#1a1a1a" }}>{a.room}</p>
@@ -297,10 +330,10 @@ export default function CleanerDashboard() {
                         <span className="text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0" style={{ backgroundColor: st.bg, color: st.color }}>{st.label}</span>
                       </div>
                       <div className="flex items-center gap-1.5 text-xs mb-3" style={{ color: "#8B6344" }}>
-                        <Clock className="w-3.5 h-3.5" style={{ color: "#B07848" }} />{a.timeSlot}
+                        <Clock className="w-3.5 h-3.5" style={{ color: "#8a6a2f" }} />{a.timeSlot}
                       </div>
                       <div className="flex gap-2">
-                        {cs === "pending"     && <button onClick={() => startCleaning(a.id)} className="px-3 py-1.5 rounded-xl text-xs font-semibold text-white cursor-pointer" style={{ background: "linear-gradient(135deg,#B07848,#C8924E)" }}><Circle className="w-3 h-3 inline mr-1" />Start</button>}
+                        {cs === "pending"     && <button onClick={() => startCleaning(a.id)} className="px-3 py-1.5 text-xs font-medium text-white cursor-pointer" style={{ background: "#1f1b16" }}><Circle className="w-3 h-3 inline mr-1" />Start</button>}
                         {cs === "in-progress" && <button onClick={() => markComplete(a.id)}  className="px-3 py-1.5 rounded-xl text-xs font-semibold text-white cursor-pointer" style={{ backgroundColor: "#059669" }}><CheckCircle2 className="w-3 h-3 inline mr-1" />Complete</button>}
                         {cs === "completed"   && <span className="px-3 py-1.5 rounded-xl text-xs font-semibold border" style={{ backgroundColor: "#d1fae5", color: "#065f46", borderColor: "#6ee7b7" }}><CheckCircle2 className="w-3 h-3 inline mr-1" />Done</span>}
                       </div>
@@ -312,20 +345,20 @@ export default function CleanerDashboard() {
               {/* Checklist preview */}
               <div>
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>Cleaning Checklist</h2>
-                  <button onClick={() => setActiveNav("Cleaning Checklist")} className="text-sm font-medium cursor-pointer" style={{ color: "#B07848" }}>View Full →</button>
+                  <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>Cleaning Checklist</h2>
+                  <button onClick={() => setActiveNav("Cleaning Checklist")} className="text-sm font-medium cursor-pointer" style={{ color: "#8a6a2f" }}>View Full →</button>
                 </div>
-                <div className="rounded-2xl border p-5 mb-4" style={{ borderColor: "#EDE3D2" }}>
+                <div className="border p-5 mb-4" style={{ borderColor: "#ece5d4" }}>
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm font-medium" style={{ color: "#5a4a3a" }}>Overall Progress</span>
-                    <span className="text-sm font-bold" style={{ color: "#B07848" }}>{progressPercent}%</span>
+                    <span className="text-sm font-bold" style={{ color: "#8a6a2f" }}>{progressPercent}%</span>
                   </div>
                   <div className="w-full rounded-full h-3 overflow-hidden" style={{ backgroundColor: "#E0CEB8" }}>
-                    <div className="h-3 rounded-full transition-all duration-500" style={{ width: `${progressPercent}%`, background: "linear-gradient(90deg,#B07848,#D4A96A)" }} />
+                    <div className="h-3 rounded-full transition-all duration-500" style={{ width: `${progressPercent}%`, background: "#d4a96a" }} />
                   </div>
                   <p className="text-xs mt-2" style={{ color: "#8B6344" }}>{completedCount} of {checklist.length} tasks completed</p>
                 </div>
-                <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#EDE3D2" }}>
+                <div className="border overflow-hidden" style={{ borderColor: "#ece5d4" }}>
                   {checklist.slice(0,4).map((item, idx) => (
                     <label key={item.id} className="flex items-center gap-4 px-5 py-3.5 cursor-pointer transition-colors"
                       style={{ borderTop: idx > 0 ? "1px solid #F7F0E3" : "none" }}
@@ -340,7 +373,7 @@ export default function CleanerDashboard() {
                     </label>
                   ))}
                   <div className="px-5 py-3 border-t text-center" style={{ borderColor: "#F7F0E3" }}>
-                    <button onClick={() => setActiveNav("Cleaning Checklist")} className="text-xs font-medium cursor-pointer" style={{ color: "#B07848" }}>+ {checklist.length - 4} more tasks</button>
+                    <button onClick={() => setActiveNav("Cleaning Checklist")} className="text-xs font-medium cursor-pointer" style={{ color: "#8a6a2f" }}>+ {checklist.length - 4} more tasks</button>
                   </div>
                 </div>
               </div>
@@ -352,7 +385,7 @@ export default function CleanerDashboard() {
             <div className="space-y-4">
               <div className="flex items-center justify-between mb-2">
                 <div>
-                  <h2 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>My Assignments</h2>
+                  <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>My Assignments</h2>
                   <p className="text-sm" style={{ color: "#8B6344" }}>April 20, 2026 — Today</p>
                 </div>
               </div>
@@ -360,7 +393,7 @@ export default function CleanerDashboard() {
                 const cs = assignmentStatuses[a.id];
                 const st = statusConfig[cs];
                 return (
-                  <div key={a.id} className="rounded-2xl border p-5 transition-shadow hover:shadow-md"
+                  <div key={a.id} className="border p-5 transition-shadow hover:shadow-md"
                     style={{ borderColor: cs === "in-progress" ? "#D4BFA0" : "#E0CEB8", borderLeftWidth: "4px", borderLeftColor: st.dot }}>
                     <div className="flex items-start justify-between gap-3 mb-3">
                       <div className="flex-1 min-w-0">
@@ -380,15 +413,15 @@ export default function CleanerDashboard() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2 text-sm mb-3" style={{ color: "#5a4a3a" }}>
-                      <Clock className="w-4 h-4" style={{ color: "#B07848" }} />{a.timeSlot}
+                      <Clock className="w-4 h-4" style={{ color: "#8a6a2f" }} />{a.timeSlot}
                     </div>
                     {a.notes && (
-                      <div className="rounded-xl p-3 mb-3 border" style={{ backgroundColor: "#F7F0E3", borderColor: "#EDE3D2" }}>
+                      <div className="rounded-xl p-3 mb-3 border" style={{ backgroundColor: "#F7F0E3", borderColor: "#ece5d4" }}>
                         <p className="text-xs" style={{ color: "#6b5040" }}>{a.notes}</p>
                       </div>
                     )}
                     <div className="flex gap-2">
-                      {cs === "pending"     && <button onClick={() => startCleaning(a.id)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-white cursor-pointer" style={{ background: "linear-gradient(135deg,#B07848,#C8924E)" }}><Circle className="w-3.5 h-3.5" />Start Cleaning</button>}
+                      {cs === "pending"     && <button onClick={() => startCleaning(a.id)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white cursor-pointer" style={{ background: "#1f1b16" }}><Circle className="w-3.5 h-3.5" />Start Cleaning</button>}
                       {cs === "in-progress" && <button onClick={() => markComplete(a.id)}  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-white cursor-pointer" style={{ backgroundColor: "#059669" }}><CheckCircle2 className="w-3.5 h-3.5" />Mark Complete</button>}
                       {cs === "completed"   && <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border" style={{ backgroundColor: "#d1fae5", color: "#065f46", borderColor: "#6ee7b7" }}><CheckCircle2 className="w-3.5 h-3.5" />Completed</div>}
                       <button onClick={() => setActiveNav("Report an Issue")}
@@ -408,18 +441,18 @@ export default function CleanerDashboard() {
           {/* ── Property Location ── */}
           {activeNav === "Property Location" && (
             <div className="space-y-4">
-              <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#EDE3D2" }}>
+              <div className="border overflow-hidden" style={{ borderColor: "#ece5d4" }}>
                 {/* Map placeholder */}
                 <div className="relative flex items-center justify-center" style={{ height: "320px", backgroundColor: "#f0ebe3", backgroundImage: "repeating-linear-gradient(0deg,#E0CEB820 0px,#E0CEB820 1px,transparent 1px,transparent 40px),repeating-linear-gradient(90deg,#E0CEB820 0px,#E0CEB820 1px,transparent 1px,transparent 40px)" }}>
                   <div className="text-center">
-                    <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-3" style={{ backgroundColor: "#B07848" }}>
+                    <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-3" style={{ backgroundColor: "#1f1b16" }}>
                       <MapPin className="w-8 h-8 text-white" />
                     </div>
                     <p className="font-bold" style={{ color: "#1a1a1a" }}>D&apos;Lux Homes — Tower 4 Grass Residences</p>
                     <p className="text-sm mt-1" style={{ color: "#8B6344" }}>Grass Residences, SM North EDSA, Quezon City</p>
                     <button
                       onClick={() => window.open("https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent("Grass Residences SM North EDSA Quezon City"), "_blank", "noopener")}
-                      className="mt-3 px-4 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer" style={{ backgroundColor: "#B07848" }}>
+                      className="mt-3 px-4 py-2 text-sm font-medium text-white cursor-pointer" style={{ backgroundColor: "#1f1b16" }}>
                       Open in Google Maps
                     </button>
                   </div>
@@ -427,12 +460,12 @@ export default function CleanerDashboard() {
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {[
-                  { label: "Tower 4",       address: "Grass Residences — 1BR Unit with Balcony (City View)", color: "#B07848", bg: "#F7F0E3" },
+                  { label: "Tower 4",       address: "Grass Residences — 1BR Unit with Balcony (City View)", color: "#8a6a2f", bg: "#F7F0E3" },
                   { label: "SM North EDSA", address: "Walking distance — shopping & groceries",                color: "#059669", bg: "#d1fae5" },
                   { label: "Lobby / CSR",   address: "Ground Floor — Reception & CSR Desk",                   color: "#7c3aed", bg: "#ede9fe" },
                   { label: "Amenities",     address: "Pool · Gym · Basketball Court · Kids Playground",       color: "#0d9488", bg: "#ccfbf1" },
                 ].map((loc) => (
-                  <div key={loc.label} className="rounded-2xl border p-4 flex items-center gap-4" style={{ borderColor: "#EDE3D2" }}>
+                  <div key={loc.label} className="border p-4 flex items-center gap-4" style={{ borderColor: "#ece5d4" }}>
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: loc.bg }}>
                       <Building2 className="w-5 h-5" style={{ color: loc.color }} />
                     </div>
@@ -450,22 +483,22 @@ export default function CleanerDashboard() {
           {activeNav === "Cleaning Checklist" && (
             <div className="max-w-2xl">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>Cleaning Checklist</h2>
-                <span className="text-xs font-medium px-2.5 py-1 rounded-full border" style={{ backgroundColor: "#F7F0E3", color: "#B07848", borderColor: "#D4BFA0" }}>
+                <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>Cleaning Checklist</h2>
+                <span className="text-xs font-medium px-2.5 py-1 rounded-full border" style={{ backgroundColor: "#F7F0E3", color: "#8a6a2f", borderColor: "#D4BFA0" }}>
                   Azure Haven Suite
                 </span>
               </div>
-              <div className="rounded-2xl border p-5 mb-4" style={{ borderColor: "#EDE3D2" }}>
+              <div className="border p-5 mb-4" style={{ borderColor: "#ece5d4" }}>
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm font-medium" style={{ color: "#5a4a3a" }}>Overall Progress</span>
-                  <span className="text-sm font-bold" style={{ color: "#B07848" }}>{progressPercent}%</span>
+                  <span className="text-sm font-bold" style={{ color: "#8a6a2f" }}>{progressPercent}%</span>
                 </div>
                 <div className="w-full rounded-full h-3 overflow-hidden" style={{ backgroundColor: "#E0CEB8" }}>
-                  <div className="h-3 rounded-full transition-all duration-500" style={{ width: `${progressPercent}%`, background: "linear-gradient(90deg,#B07848,#D4A96A)" }} />
+                  <div className="h-3 rounded-full transition-all duration-500" style={{ width: `${progressPercent}%`, background: "#d4a96a" }} />
                 </div>
                 <p className="text-xs mt-2" style={{ color: "#8B6344" }}>{completedCount} of {checklist.length} tasks completed</p>
               </div>
-              <div className="rounded-2xl border overflow-hidden mb-4" style={{ borderColor: "#EDE3D2" }}>
+              <div className="border overflow-hidden mb-4" style={{ borderColor: "#ece5d4" }}>
                 {checklist.map((item, idx) => (
                   <label key={item.id} className="flex items-center gap-4 px-5 py-3.5 cursor-pointer transition-colors"
                     style={{ borderTop: idx > 0 ? "1px solid #F7F0E3" : "none" }}
@@ -489,7 +522,7 @@ export default function CleanerDashboard() {
                   <button
                     onClick={submitChecklistReport}
                     disabled={reportSubmitted}
-                    className="mt-3 px-5 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer disabled:opacity-60"
+                    className="mt-3 px-5 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60"
                     style={{ backgroundColor: "#059669" }}>{reportSubmitted ? "Report Submitted ✓" : "Submit Report"}</button>
                 </div>
               ) : (
@@ -501,14 +534,14 @@ export default function CleanerDashboard() {
           {/* ── Report an Issue ── */}
           {activeNav === "Report an Issue" && (
             <div className="max-w-lg">
-              <h2 className="font-bold text-lg mb-6" style={{ color: "#1a1a1a" }}>Report an Issue</h2>
+              <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16", marginBottom: 24 }}>Report an Issue</h2>
               {issueSubmitted ? (
-                <div className="rounded-2xl border p-8 text-center" style={{ backgroundColor: "#d1fae5", borderColor: "#6ee7b7" }}>
+                <div className="border p-8 text-center" style={{ backgroundColor: "#d1fae5", borderColor: "#6ee7b7" }}>
                   <CheckCircle2 className="w-12 h-12 mx-auto mb-3" style={{ color: "#059669" }} />
                   <p className="font-bold text-lg" style={{ color: "#065f46" }}>Issue Reported!</p>
                   <p className="text-sm mt-1 mb-4" style={{ color: "#059669" }}>The owner has been notified and will assign someone to resolve it.</p>
                   <button onClick={() => { setIssueSubmitted(false); setIssueForm({ haven: "", type: "", priority: "", location: "", description: "" }); }}
-                    className="px-5 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer" style={{ backgroundColor: "#059669" }}>
+                    className="px-5 py-2 text-sm font-medium text-white cursor-pointer" style={{ backgroundColor: "#059669" }}>
                     Report Another
                   </button>
                 </div>
@@ -527,7 +560,7 @@ export default function CleanerDashboard() {
                           <select value={issueForm[field.field as keyof typeof issueForm]}
                             onChange={(e) => setIssueForm(prev => ({ ...prev, [field.field]: e.target.value }))}
                             className="w-full appearance-none rounded-2xl border px-4 py-3 text-sm outline-none pr-10 cursor-pointer"
-                            style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
+                            style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
                             <option value="">Select {field.label}</option>
                             {field.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                           </select>
@@ -538,7 +571,7 @@ export default function CleanerDashboard() {
                           value={issueForm[field.field as keyof typeof issueForm]}
                           onChange={(e) => setIssueForm(prev => ({ ...prev, [field.field]: e.target.value }))}
                           className="w-full rounded-2xl border px-4 py-3 text-sm outline-none"
-                          style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                          style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
                       )}
                     </div>
                   ))}
@@ -548,18 +581,18 @@ export default function CleanerDashboard() {
                       value={issueForm.description}
                       onChange={(e) => setIssueForm(prev => ({ ...prev, description: e.target.value }))}
                       className="w-full rounded-2xl border px-4 py-3 text-sm outline-none resize-none"
-                      style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                      style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
                   </div>
                   <div className="rounded-xl border border-dashed p-4 text-center cursor-pointer" style={{ borderColor: "#D4BFA0", backgroundColor: "#F7F0E3" }}>
-                    <Camera className="w-5 h-5 mx-auto mb-1.5" style={{ color: "#B07848" }} />
-                    <p className="text-sm font-medium" style={{ color: "#B07848" }}>Upload Photos (optional)</p>
+                    <Camera className="w-5 h-5 mx-auto mb-1.5" style={{ color: "#8a6a2f" }} />
+                    <p className="text-sm font-medium" style={{ color: "#8a6a2f" }}>Upload Photos (optional)</p>
                     <p className="text-xs mt-0.5" style={{ color: "#D4BFA0" }}>JPG, PNG — max 5 files</p>
                   </div>
                   <button
                     onClick={submitIssue}
                     disabled={submittingIssue}
                     className="w-full py-3 rounded-2xl text-sm font-semibold text-white cursor-pointer transition-opacity hover:opacity-90 disabled:opacity-60"
-                    style={{ backgroundColor: "#B07848" }}>
+                    style={{ backgroundColor: "#1f1b16" }}>
                     {submittingIssue ? "Submitting…" : "Submit Issue Report"}
                   </button>
                 </div>
@@ -570,10 +603,10 @@ export default function CleanerDashboard() {
           {/* ── Notifications ── */}
           {activeNav === "Notifications" && (
             <div className="space-y-3 max-w-2xl">
-              <h2 className="font-bold text-lg mb-4" style={{ color: "#1a1a1a" }}>Notifications</h2>
+              <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16", marginBottom: 16 }}>Notifications</h2>
               {notifications.map((n) => {
                 const iconMap: Record<string,{ icon: React.ElementType; color: string; bg: string }> = {
-                  assignment: { icon: ClipboardList, color: "#B07848", bg: "#F7F0E3" },
+                  assignment: { icon: ClipboardList, color: "#8a6a2f", bg: "#F7F0E3" },
                   issue:      { icon: AlertTriangle, color: "#ea580c", bg: "#ffedd5" },
                   schedule:   { icon: CalendarDays,  color: "#7c3aed", bg: "#ede9fe" },
                   message:    { icon: MessageSquare, color: "#059669", bg: "#d1fae5" },
@@ -607,11 +640,11 @@ export default function CleanerDashboard() {
           {/* ── My Schedule ── */}
           {activeNav === "My Schedule" && (
             <div className="space-y-4">
-              <h2 className="font-bold text-lg mb-2" style={{ color: "#1a1a1a" }}>My Schedule</h2>
+              <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16", marginBottom: 8 }}>My Schedule</h2>
               {scheduleData.map((day) => (
-                <div key={day.date} className="rounded-2xl border overflow-hidden" style={{ borderColor: "#EDE3D2" }}>
-                  <div className="px-5 py-3 border-b" style={{ backgroundColor: "#F7F0E3", borderColor: "#EDE3D2" }}>
-                    <p className="font-bold text-sm" style={{ color: "#B07848" }}>{day.date}</p>
+                <div key={day.date} className="border overflow-hidden" style={{ borderColor: "#ece5d4" }}>
+                  <div className="px-5 py-3 border-b" style={{ backgroundColor: "#F7F0E3", borderColor: "#ece5d4" }}>
+                    <p className="font-bold text-sm" style={{ color: "#8a6a2f" }}>{day.date}</p>
                   </div>
                   <div className="divide-y" style={{ borderColor: "#F7F0E3" }}>
                     {day.tasks.map((task, i) => (
@@ -632,18 +665,18 @@ export default function CleanerDashboard() {
           {activeNav === "User Guide" && (
             <div className="space-y-4">
               <div className="mb-6">
-                <h2 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>User Guide</h2>
+                <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>User Guide</h2>
                 <p className="text-sm mt-0.5" style={{ color: "#8B6344" }}>Everything you need to know about the cleaner portal</p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {guideTopics.map((topic) => {
                   const Icon = topic.icon;
                   return (
-                    <div key={topic.title} className="rounded-2xl border p-5 cursor-pointer transition-shadow hover:shadow-md" style={{ borderColor: "#EDE3D2" }}
+                    <div key={topic.title} className="border p-5 cursor-pointer transition-shadow hover:shadow-md" style={{ borderColor: "#ece5d4" }}
                       onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
                       onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
                       <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-3" style={{ backgroundColor: "#F7F0E3" }}>
-                        <Icon className="w-5 h-5" strokeWidth={1.75} style={{ color: "#B07848" }} />
+                        <Icon className="w-5 h-5" strokeWidth={1.75} style={{ color: "#8a6a2f" }} />
                       </div>
                       <p className="font-bold text-sm mb-1" style={{ color: "#1a1a1a" }}>{topic.title}</p>
                       <p className="text-xs" style={{ color: "#8B6344" }}>{topic.desc}</p>
@@ -657,7 +690,7 @@ export default function CleanerDashboard() {
           {/* ── Messages ── */}
           {activeNav === "Messages" && (
             <div className="space-y-3 max-w-2xl">
-              <h2 className="font-bold text-lg mb-4" style={{ color: "#1a1a1a" }}>Messages</h2>
+              <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16", marginBottom: 16 }}>Messages</h2>
               {messages.map((msg) => (
                 <div key={msg.id} className="flex items-start gap-4 p-4 rounded-2xl border cursor-pointer transition-colors"
                   style={{ backgroundColor: msg.unread ? "#FDF8F3" : "#ffffff", borderColor: msg.unread ? "#D4BFA0" : "#E0CEB8" }}
@@ -687,12 +720,12 @@ export default function CleanerDashboard() {
           {/* ── Profile ── */}
           {activeNav === "Profile" && (
             <div className="max-w-lg">
-              <h2 className="font-bold text-lg mb-6" style={{ color: "#1a1a1a" }}>My Profile</h2>
-              <div className="rounded-2xl border p-6 mb-4" style={{ borderColor: "#EDE3D2" }}>
+              <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16", marginBottom: 24 }}>My Profile</h2>
+              <div className="border p-6 mb-4" style={{ borderColor: "#ece5d4" }}>
                 <div className="flex items-center gap-4 mb-6">
                   <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-lg font-bold" style={{ backgroundColor: "#D4A96A", color: "#2C1F14" }}>CL</div>
                   <div>
-                    <p className="font-bold text-lg" style={{ color: "#1a1a1a" }}>Cleaner Staff</p>
+                    <p style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 19, lineHeight: 1, color: "#1f1b16" }}>Cleaner Staff</p>
                     <p className="text-sm" style={{ color: "#8B6344" }}>Housekeeping Staff</p>
                     <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full mt-1" style={{ backgroundColor: "#d1fae5", color: "#065f46" }}>
                       <span className="w-1.5 h-1.5 rounded-full bg-current" />Active
@@ -719,7 +752,7 @@ export default function CleanerDashboard() {
                 </div>
               </div>
               <button className="w-full py-3 rounded-2xl text-sm font-semibold border cursor-pointer transition-colors"
-                style={{ color: "#B07848", borderColor: "#D4BFA0", backgroundColor: "#F7F0E3" }}
+                style={{ color: "#8a6a2f", borderColor: "#D4BFA0", backgroundColor: "#F7F0E3" }}
                 onClick={() => toast("Your profile is managed by the Owner. Contact them to update your details.", { icon: "ℹ️" })}
                 onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#EDE0CE"}
                 onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}>

@@ -5,7 +5,7 @@ import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
 import Image from "next/image";
 import toast from "react-hot-toast";
-import { useGetAnalyticsSummaryQuery, useGetMonthlyRevenueQuery } from "@/redux/api/analyticsApi";
+import { useGetAnalyticsSummaryQuery, useGetMonthlyRevenueQuery, useGetRevenueByRoomQuery } from "@/redux/api/analyticsApi";
 import { useGetBookingsQuery, useUpdateBookingStatusMutation } from "@/redux/api/bookingsApi";
 import { useGetHavensQuery, useCreateHavenMutation, useUpdateHavenMutation } from "@/redux/api/roomApi";
 import { useGetEmployeesQuery, useCreateEmployeeMutation } from "@/redux/api/employeeApi";
@@ -27,6 +27,7 @@ import {
   MessageSquare,
   Users,
   Settings,
+  Search,
   Bell,
   TrendingUp,
   Star,
@@ -76,6 +77,13 @@ const statusConfig: Record<string, { label: string; color: string; bg: string; d
   rejected:     { label: "Rejected",   color: "#991b1b", bg: "#fee2e2", dot: "#ef4444" },
 };
 
+// Normalize an RTK/fetch result to an array of rows, whether it arrives as a
+// bare array, a { data: [...] } envelope, or undefined/error object.
+function toRows(v: unknown): Record<string, unknown>[] {
+  if (Array.isArray(v)) return v as Record<string, unknown>[];
+  const d = (v as { data?: unknown } | null | undefined)?.data;
+  return Array.isArray(d) ? (d as Record<string, unknown>[]) : [];
+}
 
 export default function OwnerDashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -91,6 +99,7 @@ export default function OwnerDashboard() {
   // ── Live data from the Supabase-backed API (RTK Query) ──
   const { data: summaryRes }   = useGetAnalyticsSummaryQuery({ period: "30" });
   const { data: monthlyRes }   = useGetMonthlyRevenueQuery({ months: "6" });
+  const { data: roomRevRes }   = useGetRevenueByRoomQuery({ period: "30" });
   const { data: bookingsData, refetch: refetchBookings } = useGetBookingsQuery();
   const [newBookingOpen, setNewBookingOpen] = useState(false);
   const { data: havensData }   = useGetHavensQuery({});
@@ -174,13 +183,17 @@ export default function OwnerDashboard() {
     month: /^\d{4}-\d{2}/.test(m.month) ? new Date(m.month + "-01").toLocaleString("en", { month: "short" }) : m.month,
     value: Math.round(((Number(m.revenue) || 0) / maxRev) * 100),
   }));
+  // Revenue by haven (Finance) + y-axis ticks for the bar chart
+  const roomRev = ((roomRevRes as unknown as { data?: { room_name: string; revenue: number; bookings: number }[] })?.data) || [];
+  const totalRoomRev = Math.max(1, roomRev.reduce((t, r) => t + (Number(r.revenue) || 0), 0));
+  const revYticks = [1, 0.75, 0.5, 0.25, 0].map((f) => `₱${Math.round((maxRev * f) / 1000)}k`);
 
   // Backend statuses → UI statuses the design's statusConfig expects
   const normalizeBookingStatus = (st: string) =>
     st === "approved" ? "confirmed" : st === "completed" ? "checked-out" : st === "on-going" ? "checked-in" : st;
 
   // Bookings table (Overview + Bookings)
-  const allAdminBookings = ((bookingsData as unknown as Record<string, unknown>[]) || []).map((b) => ({
+  const allAdminBookings = toRows(bookingsData).map((b) => ({
     id: String(b.id || b.booking_id || ""),            // UUID — used by status mutations
     displayId: String(b.booking_id || b.id || ""),     // friendly BK-… id for display
     guest: `${b.guest_first_name ?? ""} ${b.guest_last_name ?? ""}`.trim() || "Guest",
@@ -205,7 +218,7 @@ export default function OwnerDashboard() {
   }));
 
   // Staff table (Team)
-  const staffMembers = ((employeesRes?.data as Record<string, unknown>[]) || []).map((e) => ({
+  const staffMembers = toRows(employeesRes).map((e) => ({
     id: String(e.employment_id || e.id || ""),
     name: `${e.first_name ?? ""} ${e.last_name ?? ""}`.trim() || "Staff",
     role: String(e.role ?? ""),
@@ -234,7 +247,7 @@ export default function OwnerDashboard() {
       .then((j) => {
         if (!active) return;
         setAuditLogs(
-          ((j.data as Record<string, unknown>[]) || []).map((l) => ({
+          toRows(j.data).map((l) => ({
             id: String(l.id ?? ""),
             actor: String(l.user || l.actor || "System"),
             action: String(l.action ?? "") + (l.details ? ` — ${l.details}` : ""),
@@ -277,7 +290,7 @@ export default function OwnerDashboard() {
   ];
 
   // Maintenance (Property) — from the report-issue feed
-  const maintenanceIssues = ((reportsRes?.data as Record<string, unknown>[]) || []).map((r) => ({
+  const maintenanceIssues = toRows(reportsRes).map((r) => ({
     id: String(r.report_id ?? ""),
     haven: String(r.haven_name || "—"),
     type: String(r.issue_type || "General"),
@@ -288,7 +301,7 @@ export default function OwnerDashboard() {
   }));
 
   // Internal Messages (Communication) — owner's conversation threads
-  const internalMessages = ((conversationsRes?.data as unknown as Record<string, unknown>[]) || []).map((c, i) => ({
+  const internalMessages = toRows(conversationsRes).map((c, i) => ({
     id: (c.id as number | string) ?? i,
     sender: String(c.name || "Conversation"),
     role: String(c.role || "csr"),
@@ -305,9 +318,9 @@ export default function OwnerDashboard() {
         const on = active === t.id;
         return (
           <button key={t.id} type="button" onClick={() => onPick(t.id)}
-            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium border transition-all cursor-pointer"
-            style={{ backgroundColor: on ? "#B07848" : "transparent", color: on ? "#ffffff" : "#8B6344", borderColor: on ? "#B07848" : "#EADFCB" }}>
-            {Icon && <Icon className="w-4 h-4" style={{ opacity: on ? 1 : 0.75 }} />}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm transition-colors cursor-pointer"
+            style={{ backgroundColor: on ? "#1f1b16" : "transparent", color: on ? "#faf7f1" : "#6b6358", border: `1px solid ${on ? "#1f1b16" : "#d9d1c2"}`, fontWeight: on ? 500 : 400 }}>
+            {Icon && <Icon className="w-4 h-4" style={{ opacity: on ? 1 : 0.7 }} />}
             {t.label}
           </button>
         );
@@ -317,6 +330,7 @@ export default function OwnerDashboard() {
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: "#ffffff", zoom: "1.1" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist+Mono:wght@400;500&display=swap');`}</style>
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setSidebarOpen(false)} />
@@ -325,13 +339,11 @@ export default function OwnerDashboard() {
       {/* Sidebar — always fixed; lg:translate-x-0 keeps it visible on desktop */}
       <aside
         className={`fixed inset-y-0 left-0 w-64 z-50 flex flex-col transition-transform duration-300 lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
-        style={{ backgroundColor: "#2C1F14", borderRight: "1px solid #3a2510" }}
+        style={{ backgroundColor: "#1f1b16", borderRight: "1px solid rgba(250,247,241,0.1)" }}
       >
-        {/* Top accent */}
-        <div className="h-0.5 w-full" style={{ background: "linear-gradient(90deg, #B07848, #D4A96A)" }} />
 
         {/* Logo */}
-        <div className="px-5 py-4 flex items-center justify-between border-b" style={{ borderColor: "#3a2510" }}>
+        <div className="px-5 py-4 flex items-center justify-between border-b" style={{ borderColor: "rgba(250,247,241,0.1)" }}>
           <Link href="/rooms" className="flex items-center gap-2.5">
             <div className="rounded-lg overflow-hidden" style={{ backgroundColor: "#f9fafb" }}>
               <Image src="/logo.png" alt="D'Lux Homes" width={80} height={28} className="mix-blend-multiply" style={{ width: "80px", height: "28px", objectFit: "cover" }} />
@@ -343,7 +355,7 @@ export default function OwnerDashboard() {
         </div>
 
         {/* Role badge */}
-        <div className="px-5 py-3 border-b" style={{ borderColor: "#3a2510" }}>
+        <div className="px-5 py-3 border-b" style={{ borderColor: "rgba(250,247,241,0.1)" }}>
           <span
             className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full"
             style={{ backgroundColor: "#B0784820", color: "#D4A96A" }}
@@ -380,8 +392,8 @@ export default function OwnerDashboard() {
         </nav>
 
         {/* User */}
-        <div className="px-3 py-4 border-t" style={{ borderColor: "#3a2510" }}>
-          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl" style={{ backgroundColor: "#3a2510" }}>
+        <div className="px-3 py-4 border-t" style={{ borderColor: "rgba(250,247,241,0.1)" }}>
+          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl" style={{ backgroundColor: "rgba(250,247,241,0.1)" }}>
             <Avatar className="w-8 h-8 flex-shrink-0">
               <AvatarFallback className="text-white text-xs font-bold" style={{ backgroundColor: "#B07848" }}>AO</AvatarFallback>
             </Avatar>
@@ -400,39 +412,61 @@ export default function OwnerDashboard() {
       <div className="lg:pl-64 flex flex-col min-h-screen">
         {/* Header */}
         <header
-          className="px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between gap-4 sticky top-0 z-30 border-b"
-          style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }}
+          className="px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-4 sticky top-0 z-30 border-b"
+          style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4", height: 72, fontFamily: "'Geist', system-ui, sans-serif" }}
         >
+          {/* left: hamburger + breadcrumb + title */}
           <div className="flex items-center gap-4">
             <button
               onClick={() => setSidebarOpen(true)}
-              className="lg:hidden p-2 rounded-xl transition-colors"
-              style={{ color: "#8B6344" }}
+              className="lg:hidden p-2 rounded-lg transition-colors"
+              style={{ color: "#6b6358" }}
             >
               <Menu className="w-5 h-5" />
             </button>
-            <div>
-              <h1 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>{activeNav}</h1>
-              <p className="text-xs" style={{ color: "#8B6344" }}>Welcome back, Admin Owner</p>
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2" style={{ fontSize: 12, color: "#8a8276" }}>
+                <span>Overview</span>
+                <span style={{ opacity: 0.5 }}>/</span>
+                <span style={{ color: "#1f1b16" }}>{activeNav}</span>
+              </div>
+              <h1 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 24, lineHeight: 1, letterSpacing: "-0.01em", margin: 0, color: "#1f1b16" }}>{activeNav}</h1>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+
+          {/* center: search */}
+          <div className="hidden md:flex items-center gap-2.5" style={{ flex: "0 1 360px", padding: "9px 14px", background: "#faf7f1", border: "1px solid #ece5d4", color: "#8a8276" }}>
+            <Search className="w-[15px] h-[15px]" />
+            <span style={{ fontSize: 13, flex: 1 }}>Search bookings, guests, havens…</span>
+            <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 11, padding: "2px 6px", background: "#fff", border: "1px solid #e8e1d2", color: "#6b6358" }}>⌘K</span>
+          </div>
+
+          {/* right: bell + account */}
+          <div className="flex items-center gap-1">
             <button
               onClick={() => { setActiveNav("Communication"); setSidebarOpen(false); }}
               title="Messages & notifications"
-              className="relative p-2 rounded-xl transition-colors"
-              style={{ color: "#8B6344" }}
-              onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
+              className="relative p-2.5 rounded-lg transition-colors cursor-pointer"
+              style={{ color: "#6b6358" }}
+              onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#f3eee2"}
               onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}
             >
-              <Bell className="w-5 h-5" />
-              <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center">
-                <span className="text-white text-xs font-bold leading-none">3</span>
+              <Bell className="w-[18px] h-[18px]" />
+              <span style={{ position: "absolute", top: 8, right: 8, width: 6, height: 6, background: "#b8754a", borderRadius: "50%", border: "2px solid #fff" }} />
+            </button>
+            <button
+              type="button"
+              className="flex items-center gap-2.5 rounded-lg transition-colors cursor-pointer"
+              style={{ padding: "6px 12px 6px 6px", background: "transparent", border: 0 }}
+              onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#f3eee2"}
+              onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}
+            >
+              <span style={{ width: 28, height: 28, borderRadius: "50%", background: "#b8754a", color: "#faf7f1", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 14 }}>A</span>
+              <span className="flex flex-col items-start" style={{ lineHeight: 1.2 }}>
+                <span style={{ fontSize: 13, color: "#1f1b16" }}>Admin Owner</span>
+                <span style={{ fontSize: 11, color: "#8a8276" }}>Owner</span>
               </span>
             </button>
-            <Avatar className="w-9 h-9 cursor-pointer">
-              <AvatarFallback className="text-white text-xs font-bold" style={{ backgroundColor: "#B07848" }}>AO</AvatarFallback>
-            </Avatar>
           </div>
         </header>
 
@@ -445,27 +479,21 @@ export default function OwnerDashboard() {
           {overviewTab === "analytics" && <AnalyticsSection />}
           {overviewTab === "dashboard" && (<>
 
-          {/* KPI Cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+          {/* KPI Cards — flat bordered cells, mono numbers */}
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 mb-6" style={{ gap: 1, background: "#ece5d4", border: "1px solid #ece5d4" }}>
             {kpis.map((kpi) => {
               const Icon = kpi.icon;
+              const down = kpi.change.startsWith("-");
+              const up = kpi.change.startsWith("+");
+              const dc = down ? "#9a4a3a" : up ? "#5a7a4a" : "#8a8276";
               return (
-                <div
-                  key={kpi.label}
-                  className="rounded-2xl border p-5 transition-shadow hover:shadow-md"
-                  style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }}
-                >
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: kpi.iconBg }}>
-                      <Icon className="w-5 h-5" strokeWidth={1.75} style={{ color: kpi.iconColor }} />
-                    </div>
-                    <div className="flex items-center gap-1 px-2 py-0.5 rounded-full" style={{ backgroundColor: "#d1fae5" }}>
-                      <ArrowUpRight className="w-3 h-3" style={{ color: "#059669" }} />
-                      <span className="text-xs font-medium" style={{ color: "#059669" }}>{kpi.change}</span>
-                    </div>
+                <div key={kpi.label} style={{ background: "#fff", padding: "18px 20px" }}>
+                  <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
+                    <Icon className="w-[18px] h-[18px]" strokeWidth={1.6} style={{ color: "#8a8276" }} />
+                    <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 11, color: dc }}>{kpi.change}</span>
                   </div>
-                  <p className="text-2xl font-bold" style={{ color: "#1a1a1a" }}>{kpi.value}</p>
-                  <p className="text-sm mt-0.5" style={{ color: "#8B6344" }}>{kpi.label}</p>
+                  <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 24, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1, color: "#1f1b16" }}>{kpi.value}</div>
+                  <div style={{ fontSize: 12, color: "#8a8276", marginTop: 6 }}>{kpi.label}</div>
                 </div>
               );
             })}
@@ -473,53 +501,40 @@ export default function OwnerDashboard() {
 
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-6">
             {/* Revenue Chart */}
-            <div
-              className="xl:col-span-2 rounded-2xl border p-6"
-              style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }}
-            >
-              <div className="flex items-center justify-between mb-6">
+            <div className="xl:col-span-2" style={{ background: "#fff", border: "1px solid #ece5d4" }}>
+              <div className="flex items-end justify-between" style={{ padding: "22px 24px 0" }}>
                 <div>
-                  <h3 className="font-bold" style={{ color: "#1a1a1a" }}>Revenue Overview</h3>
-                  <p className="text-sm" style={{ color: "#8B6344" }}>Last 6 months</p>
+                  <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, margin: 0, lineHeight: 1, color: "#1f1b16" }}>Revenue overview</h3>
+                  <p style={{ fontSize: 12, color: "#8a8276", margin: "8px 0 0" }}>Last 6 months</p>
                 </div>
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border" style={{ backgroundColor: "#F7F0E3", borderColor: "#EDE3D2" }}>
-                  <BarChart3 className="w-4 h-4" style={{ color: "#B07848" }} />
-                  <span className="font-semibold text-sm" style={{ color: "#B07848" }}>{peso(monthly.reduce((t, m) => t + (Number(m.revenue) || 0), 0))}</span>
-                </div>
+                <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 20, fontWeight: 500, letterSpacing: "-0.02em", color: "#1f1b16" }}>{peso(monthly.reduce((t, m) => t + (Number(m.revenue) || 0), 0))}</div>
               </div>
-              <div className="flex items-end gap-3 h-40">
-                {revenueData.map((item) => (
-                  <div key={item.month} className="flex-1 flex flex-col items-center gap-2">
-                    <div className="w-full flex items-end justify-center" style={{ height: "120px" }}>
-                      <div
-                        className="w-full rounded-t-lg transition-all cursor-pointer"
-                        style={{
-                          height: `${item.value}%`,
-                          background: "linear-gradient(to top, #B07848, #D4A96A)",
-                        }}
-                        title={`${item.month}: ${item.value}%`}
-                      />
+              <div style={{ padding: "18px 24px 24px" }}>
+                <div className="flex items-end gap-3" style={{ height: 160 }}>
+                  {revenueData.map((item) => (
+                    <div key={item.month} className="flex-1 flex flex-col items-center" style={{ gap: 8 }}>
+                      <div className="w-full flex items-end justify-center" style={{ height: 120 }}>
+                        <div style={{ width: "100%", height: `${item.value}%`, background: "#b8754a" }} title={`${item.month}: ${item.value}%`} />
+                      </div>
+                      <span style={{ fontSize: 11, color: "#8a8276" }}>{item.month}</span>
                     </div>
-                    <span className="text-xs font-medium" style={{ color: "#8B6344" }}>{item.month}</span>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             </div>
 
             {/* Snapshot */}
-            <div
-              className="rounded-2xl border p-6"
-              style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }}
-            >
-              <h3 className="font-bold mb-5" style={{ color: "#1a1a1a" }}>Today&apos;s Snapshot</h3>
-              <div className="space-y-4">
+            <div style={{ background: "#fff", border: "1px solid #ece5d4", padding: "22px 24px" }}>
+              <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, margin: "0 0 4px", lineHeight: 1, color: "#1f1b16" }}>Today&apos;s snapshot</h3>
+              <p style={{ fontSize: 12, color: "#8a8276", margin: "0 0 12px" }}>Live counts</p>
+              <div className="flex flex-col">
                 {snapshot.map((item) => (
-                  <div key={item.label} className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: item.dot }} />
-                      <span className="text-sm" style={{ color: "#5a4a3a" }}>{item.label}</span>
+                  <div key={item.label} className="flex items-center justify-between" style={{ padding: "13px 0", borderBottom: "1px solid #f3eee2" }}>
+                    <div className="flex items-center" style={{ gap: 12 }}>
+                      <span style={{ width: 7, height: 7, borderRadius: "50%", background: item.dot, flex: "none" }} />
+                      <span style={{ fontSize: 13.5, color: "#4a4034" }}>{item.label}</span>
                     </div>
-                    <span className="font-bold" style={{ color: "#1a1a1a" }}>{item.value}</span>
+                    <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 15, fontWeight: 500, color: "#1f1b16" }}>{item.value}</span>
                   </div>
                 ))}
               </div>
@@ -527,32 +542,34 @@ export default function OwnerDashboard() {
           </div>
 
           {/* Bookings Table */}
-          <div className="rounded-2xl border overflow-hidden" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }}>
-            <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: "#EDE3D2" }}>
+          <div style={{ background: "#fff", border: "1px solid #ece5d4" }}>
+            <div className="flex items-center justify-between" style={{ padding: "18px 24px", borderBottom: "1px solid #ece5d4" }}>
               <div>
-                <h3 className="font-bold" style={{ color: "#1a1a1a" }}>Recent Bookings</h3>
-                <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{allAdminBookings.length} total records</p>
+                <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, margin: 0, lineHeight: 1, color: "#1f1b16" }}>Recent bookings</h3>
+                <p style={{ fontSize: 12, color: "#8a8276", margin: "7px 0 0" }}>{allAdminBookings.length} total records</p>
               </div>
               <button
                 onClick={() => { setActiveNav("Bookings"); setSidebarOpen(false); }}
-                className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-xl border transition-colors"
-                style={{ color: "#B07848", borderColor: "#D4BFA0", backgroundColor: "#F7F0E3" }}
+                className="inline-flex items-center transition-colors"
+                style={{ gap: 8, padding: "9px 16px", background: "transparent", border: "1px solid #d9d1c2", fontSize: 13, color: "#1f1b16", cursor: "pointer" }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "#1f1b16"; (e.currentTarget as HTMLElement).style.background = "#f3eee2"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "#d9d1c2"; (e.currentTarget as HTMLElement).style.background = "transparent"; }}
               >
-                <Eye className="w-3.5 h-3.5" />
-                View All
+                <span>View all</span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
               </button>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
-                  <tr style={{ backgroundColor: "#f9fafb" }}>
+                  <tr style={{ backgroundColor: "#faf7f1" }}>
                     {["Booking ID", "Guest", "Room", "Check-in", "Stay Type", "Amount", "Status", "Actions"].map((h, i) => (
                       <th
                         key={h}
-                        className={`px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide ${
+                        className={`px-4 py-3 text-left text-xs uppercase ${
                           i === 2 ? "hidden sm:table-cell" : i === 3 ? "hidden lg:table-cell" : i === 4 ? "hidden md:table-cell" : ""
                         }`}
-                        style={{ color: "#8B6344" }}
+                        style={{ color: "#8a8276", letterSpacing: "0.08em", fontWeight: 400 }}
                       >
                         {h}
                       </th>
@@ -566,17 +583,17 @@ export default function OwnerDashboard() {
                       <tr
                         key={booking.id}
                         className="transition-colors"
-                        style={{ borderTop: idx > 0 ? "1px solid #F7F0E3" : "none" }}
-                        onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
+                        style={{ borderTop: idx > 0 ? "1px solid #f3eee2" : "none" }}
+                        onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#faf7f1"}
                         onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}
                       >
                         <td className="px-4 py-3.5">
-                          <span className="font-mono text-xs" style={{ color: "#8B6344" }}>{booking.displayId}</span>
+                          <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 12, color: "#6b6358" }}>{booking.displayId}</span>
                         </td>
                         <td className="px-4 py-3.5">
                           <div className="flex items-center gap-2.5">
-                            <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: "#f9fafb" }}>
-                              <span className="text-xs font-bold" style={{ color: "#B07848" }}>
+                            <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: "#f3eee2" }}>
+                              <span style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 13, color: "#b8754a" }}>
                                 {booking.guest.split(" ").map((n) => n[0]).join("")}
                               </span>
                             </div>
@@ -601,18 +618,13 @@ export default function OwnerDashboard() {
                           </span>
                         </td>
                         <td className="px-4 py-3.5">
-                          <span className="font-semibold text-sm" style={{ color: "#1a1a1a" }}>₱{booking.amount.toLocaleString()}</span>
+                          <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 13, color: "#1f1b16" }}>₱{booking.amount.toLocaleString()}</span>
                         </td>
                         <td className="px-4 py-3.5">
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: st.dot }} />
-                            <span
-                              className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                              style={{ backgroundColor: st.bg, color: st.color }}
-                            >
-                              {st.label}
-                            </span>
-                          </div>
+                          <span className="inline-flex items-center" style={{ gap: 7, fontSize: 12, color: st.dot }}>
+                            <span style={{ width: 6, height: 6, borderRadius: "50%", background: st.dot, flex: "none" }} />
+                            {st.label}
+                          </span>
                         </td>
                         <td className="px-4 py-3.5">
                           <div className="flex items-center gap-1">
@@ -680,22 +692,22 @@ export default function OwnerDashboard() {
           {bookingsTab === "calendar" && <BookingCalendarSection />}
           {bookingsTab === "blocked" && <BlockedDatesSection />}
           {bookingsTab === "list" && (
-          <div className="rounded-2xl border overflow-hidden" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }}>
-            <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: "#EDE3D2" }}>
+          <div className="border overflow-hidden" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }}>
+            <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: "#ece5d4" }}>
               <div>
                 <h3 className="font-bold" style={{ color: "#1a1a1a" }}>All Bookings</h3>
                 <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{allAdminBookings.length} total records</p>
               </div>
-              <button onClick={() => setNewBookingOpen(true)} className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer" style={{ backgroundColor: "#B07848" }}>
+              <button onClick={() => setNewBookingOpen(true)} className="flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-white cursor-pointer" style={{ backgroundColor: "#1f1b16" }}>
                 <Plus className="w-4 h-4" /> New Booking
               </button>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
-                  <tr style={{ backgroundColor: "#f9fafb" }}>
+                  <tr style={{ backgroundColor: "#faf7f1", borderBottom: "1px solid #ece5d4" }}>
                     {["Booking ID","Guest","Room","Check-in","Stay Type","Amount","Status","Actions"].map((h,i) => (
-                      <th key={h} className={`px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide ${i===2?"hidden sm:table-cell":i===3?"hidden lg:table-cell":i===4?"hidden md:table-cell":""}`} style={{ color: "#8B6344" }}>{h}</th>
+                      <th key={h} className={`px-4 py-3 text-left text-[11px] uppercase tracking-[0.08em] ${i===2?"hidden sm:table-cell":i===3?"hidden lg:table-cell":i===4?"hidden md:table-cell":""}`} style={{ color: "#8B6344" }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -709,8 +721,8 @@ export default function OwnerDashboard() {
                         <td className="px-4 py-3.5"><span className="font-mono text-xs" style={{ color: "#8B6344" }}>{booking.displayId}</span></td>
                         <td className="px-4 py-3.5">
                           <div className="flex items-center gap-2.5">
-                            <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ backgroundColor: "#f9fafb" }}>
-                              <span className="text-xs font-bold" style={{ color: "#B07848" }}>{booking.guest.split(" ").map((n)=>n[0]).join("")}</span>
+                            <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: "#f3eee2" }}>
+                              <span style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 13, color: "#b8754a" }}>{booking.guest.split(" ").map((n)=>n[0]).join("")}</span>
                             </div>
                             <div>
                               <p className="font-medium text-sm" style={{ color: "#1a1a1a" }}>{booking.guest}</p>
@@ -720,10 +732,13 @@ export default function OwnerDashboard() {
                         </td>
                         <td className="px-4 py-3.5 hidden sm:table-cell"><p className="text-sm" style={{ color: "#5a4a3a" }}>{booking.room}</p></td>
                         <td className="px-4 py-3.5 hidden lg:table-cell"><p className="text-sm" style={{ color: "#5a4a3a" }}>{booking.checkIn}</p></td>
-                        <td className="px-4 py-3.5 hidden md:table-cell"><span className="text-xs font-medium px-2.5 py-1 rounded-full" style={{ backgroundColor: "#F7F0E3", color: "#B07848" }}>{booking.stayType}</span></td>
-                        <td className="px-4 py-3.5"><span className="font-semibold text-sm" style={{ color: "#1a1a1a" }}>₱{booking.amount.toLocaleString()}</span></td>
+                        <td className="px-4 py-3.5 hidden md:table-cell"><span style={{ fontSize: 12, color: "#8a8276" }}>{booking.stayType}</span></td>
+                        <td className="px-4 py-3.5"><span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 13, color: "#1f1b16" }}>₱{booking.amount.toLocaleString()}</span></td>
                         <td className="px-4 py-3.5">
-                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: st.bg, color: st.color }}>{st.label}</span>
+                          <span className="inline-flex items-center" style={{ gap: 7, fontSize: 12, color: st.dot }}>
+                            <span style={{ width: 6, height: 6, borderRadius: "50%", background: st.dot, flex: "none" }} />
+                            {st.label}
+                          </span>
                         </td>
                         <td className="px-4 py-3.5">
                           <div className="flex items-center gap-1">
@@ -764,36 +779,81 @@ export default function OwnerDashboard() {
           {tabBar([{ id: "revenue", label: "Revenue Management", icon: PhilippinePeso }, { id: "methods", label: "Payment Methods", icon: CreditCard }], financeTab, (id) => setFinanceTab(id as "revenue" | "methods"))}
           {financeTab === "methods" && <PaymentMethodsSection />}
           {financeTab === "revenue" && (<>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            {/* stat cells */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 mb-6" style={{ gap: 1, background: "#ece5d4", border: "1px solid #ece5d4" }}>
               {[
-                { label: "Total Revenue",  value: peso(Number(s?.total_revenue ?? 0)), sub: "Last 30 days", color: "#059669", bg: "#d1fae5" },
-                { label: "This Month",     value: peso(monthly.length ? Number(monthly[monthly.length - 1].revenue) || 0 : 0), sub: new Date().toLocaleString("en", { month: "long", year: "numeric" }), color: "#B07848", bg: "#F7F0E3" },
-                { label: "Pending Bookings", value: String(allAdminBookings.filter((b) => b.status === "pending").length), sub: "awaiting approval", color: "#ca8a04", bg: "#fef9c3" },
-                { label: "Avg per Booking", value: peso(Number(s?.total_bookings) ? Math.round(Number(s?.total_revenue ?? 0) / Number(s?.total_bookings)) : 0), sub: `${Number(s?.total_bookings ?? 0)} bookings`, color: "#7c3aed", bg: "#ede9fe" },
+                { label: "Revenue · 30d", value: peso(Number(s?.total_revenue ?? 0)) },
+                { label: "Bookings · 30d", value: String(s?.total_bookings ?? 0) },
+                { label: "Occupancy", value: `${Math.round(Number(s?.occupancy_rate ?? 0))}%` },
+                { label: "New guests", value: String(s?.new_guests ?? 0) },
               ].map((item) => (
-                <div key={item.label} className="rounded-2xl border p-5" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }}>
-                  <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-3" style={{ backgroundColor: item.bg }}>
-                    <PhilippinePeso className="w-5 h-5" style={{ color: item.color }} />
-                  </div>
-                  <p className="text-2xl font-bold" style={{ color: "#1a1a1a" }}>{item.value}</p>
-                  <p className="text-sm mt-0.5" style={{ color: "#8B6344" }}>{item.label}</p>
-                  <p className="text-xs mt-1" style={{ color: "#D4BFA0" }}>{item.sub}</p>
+                <div key={item.label} style={{ background: "#fff", padding: "20px 22px" }}>
+                  <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 24, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1, color: "#1f1b16" }}>{item.value}</div>
+                  <div style={{ fontSize: 12, color: "#8a8276", marginTop: 8 }}>{item.label}</div>
                 </div>
               ))}
             </div>
-            <div className="rounded-2xl border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }}>
-              <h3 className="font-bold mb-6" style={{ color: "#1a1a1a" }}>Revenue Overview — Last 6 Months</h3>
-              <div className="flex items-end gap-3 h-48">
-                {revenueData.map((item) => (
-                  <div key={item.month} className="flex-1 flex flex-col items-center gap-2">
-                    <span className="text-xs font-semibold" style={{ color: "#5a4a3a" }}>₱{Math.round(item.value * 12)}K</span>
-                    <div className="w-full flex items-end justify-center" style={{ height: "140px" }}>
-                      <div className="w-full rounded-t-lg cursor-pointer" style={{ height: `${item.value}%`, background: "linear-gradient(to top, #B07848, #D4A96A)" }} />
-                    </div>
-                    <span className="text-xs font-medium" style={{ color: "#8B6344" }}>{item.month}</span>
-                  </div>
-                ))}
+
+            {/* revenue chart with y-axis */}
+            <div className="mb-6" style={{ background: "#fff", border: "1px solid #ece5d4" }}>
+              <div style={{ padding: "22px 24px 0" }}>
+                <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, margin: 0, lineHeight: 1, color: "#1f1b16" }}>Revenue — last 6 months</h3>
               </div>
+              <div style={{ padding: "18px 24px 24px" }}>
+                {monthly.length === 0 ? (
+                  <p style={{ fontSize: 13, color: "#8a8276", margin: 0 }}>No revenue recorded yet.</p>
+                ) : (
+                  <div className="flex" style={{ gap: 14, height: 220 }}>
+                    <div className="flex flex-col justify-between" style={{ paddingBottom: 22, fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 10, color: "#b8b1a6", textAlign: "right" }}>
+                      {revYticks.map((y, i) => <span key={i}>{y}</span>)}
+                    </div>
+                    <div style={{ flex: 1, position: "relative" }}>
+                      <div style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 22 }}>
+                        {[0, 1, 2, 3, 4].map((i) => <div key={i} style={{ position: "absolute", left: 0, right: 0, top: `${i * 25}%`, height: 1, background: "#f3eee2" }} />)}
+                      </div>
+                      <div style={{ position: "relative", zIndex: 1, display: "flex", height: "100%" }}>
+                        {monthly.map((m) => {
+                          const label = /^\d{4}-\d{2}/.test(m.month) ? new Date(m.month + "-01").toLocaleString("en", { month: "short" }) : m.month;
+                          return (
+                            <div key={m.month} className="flex-1 flex flex-col items-center">
+                              <div className="w-full flex items-end justify-center" style={{ flex: 1 }}>
+                                <div title={`${label}: ${peso(Number(m.revenue) || 0)}`} style={{ width: "52%", height: `${Math.max(1, ((Number(m.revenue) || 0) / maxRev) * 100)}%`, background: "#b8754a" }} />
+                              </div>
+                              <div style={{ height: 22, display: "flex", alignItems: "center", fontSize: 11, color: "#8a8276" }}>{label}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* revenue by haven */}
+            <div style={{ background: "#fff", border: "1px solid #ece5d4" }}>
+              <div style={{ padding: "18px 24px", borderBottom: "1px solid #ece5d4" }}>
+                <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, margin: 0, lineHeight: 1, color: "#1f1b16" }}>Revenue by haven</h3>
+              </div>
+              <div className="grid" style={{ gridTemplateColumns: "2fr 1fr 1fr 1.4fr", gap: 16, padding: "12px 24px", background: "#faf7f1", borderBottom: "1px solid #ece5d4", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "#8a8276" }}>
+                <span>Haven</span><span style={{ textAlign: "right" }}>Bookings</span><span style={{ textAlign: "right" }}>Revenue</span><span>Share</span>
+              </div>
+              {roomRev.length === 0 ? (
+                <div style={{ padding: "22px 24px", fontSize: 13, color: "#8a8276" }}>No room revenue yet.</div>
+              ) : roomRev.map((r, i) => {
+                const share = Math.round(((Number(r.revenue) || 0) / totalRoomRev) * 100);
+                return (
+                  <div key={i} className="grid items-center" style={{ gridTemplateColumns: "2fr 1fr 1fr 1.4fr", gap: 16, padding: "15px 24px", borderBottom: "1px solid #f3eee2", fontSize: 13.5 }}>
+                    <span style={{ color: "#1f1b16" }}>{r.room_name}</span>
+                    <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 12, color: "#6b6358", textAlign: "right" }}>{r.bookings}</span>
+                    <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 13, color: "#1f1b16", textAlign: "right" }}>{peso(Number(r.revenue) || 0)}</span>
+                    <div className="flex items-center" style={{ gap: 10 }}>
+                      <div style={{ flex: 1, height: 4, background: "#f3eee2" }}><div style={{ width: `${share}%`, height: "100%", background: "#b8754a" }} /></div>
+                      <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 11, color: "#8a8276", width: 32, textAlign: "right" }}>{share}%</span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </>)}
           </>)}
@@ -804,19 +864,19 @@ export default function OwnerDashboard() {
             {propertyTab === "cleaning" && <CleaningManagementSection />}
             {propertyTab === "havens" && (
               <div className="flex justify-end mb-4">
-                <button type="button" onClick={openHavenWizard} className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer" style={{ backgroundColor: "#B07848" }}>
+                <button type="button" onClick={openHavenWizard} className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white cursor-pointer" style={{ backgroundColor: "#1f1b16" }}>
                   <Plus className="w-4 h-4" /> Add Haven
                 </button>
               </div>
             )}
 
             {propertyTab === "havens" && (
-              <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#EDE3D2" }}>
+              <div className="border overflow-hidden" style={{ borderColor: "#ece5d4" }}>
                 <div className="overflow-x-auto">
                   <table className="w-full">
-                    <thead><tr style={{ backgroundColor: "#f9fafb" }}>
+                    <thead><tr style={{ backgroundColor: "#faf7f1", borderBottom: "1px solid #ece5d4" }}>
                       {["Haven","Type","Location","Rate / night","Occupancy","Status","Actions"].map((h) => (
-                        <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide" style={{ color: "#8B6344" }}>{h}</th>
+                        <th key={h} className="px-4 py-3 text-left text-[11px] uppercase tracking-[0.08em]" style={{ color: "#8B6344" }}>{h}</th>
                       ))}
                     </tr></thead>
                     <tbody>
@@ -882,12 +942,12 @@ export default function OwnerDashboard() {
             )}
 
             {propertyTab === "maintenance" && (
-              <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#EDE3D2" }}>
+              <div className="border overflow-hidden" style={{ borderColor: "#ece5d4" }}>
                 <div className="overflow-x-auto">
                   <table className="w-full">
-                    <thead><tr style={{ backgroundColor: "#f9fafb" }}>
+                    <thead><tr style={{ backgroundColor: "#faf7f1", borderBottom: "1px solid #ece5d4" }}>
                       {["Issue ID","Haven","Type","Priority","Assigned To","Reported","Status"].map((h) => (
-                        <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide" style={{ color: "#8B6344" }}>{h}</th>
+                        <th key={h} className="px-4 py-3 text-left text-[11px] uppercase tracking-[0.08em]" style={{ color: "#8B6344" }}>{h}</th>
                       ))}
                     </tr></thead>
                     <tbody>
@@ -925,52 +985,48 @@ export default function OwnerDashboard() {
             {commTab === "guest" && <GuestAssistanceSection />}
 
             {commTab === "reviews" && (
-              <div className="space-y-4">
+              <div className="grid grid-cols-1 lg:grid-cols-2" style={{ gap: 20 }}>
                 {reviews.map((r) => (
-                  <div key={r.id} className="rounded-2xl border p-5" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }}>
-                    <div className="flex items-start justify-between gap-4 mb-3">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: "#F7F0E3" }}>
-                          <span className="text-xs font-bold" style={{ color: "#B07848" }}>{r.guest.split(" ").map((n)=>n[0]).join("")}</span>
-                        </div>
-                        <div>
-                          <p className="font-semibold text-sm" style={{ color: "#1a1a1a" }}>{r.guest}</p>
-                          <p className="text-xs" style={{ color: "#8B6344" }}>{r.haven}</p>
+                  <div key={r.id} style={{ background: "#fff", border: "1px solid #ece5d4", padding: "22px 24px" }}>
+                    <div className="flex items-center justify-between" style={{ marginBottom: 14 }}>
+                      <div className="flex items-center" style={{ gap: 12 }}>
+                        <span style={{ width: 38, height: 38, borderRadius: "50%", flex: "none", background: "#f3eee2", color: "#b8754a", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 17 }}>{r.guest.split(" ").map((n)=>n[0]).join("")}</span>
+                        <div style={{ lineHeight: 1.3 }}>
+                          <div style={{ fontSize: 14, color: "#1f1b16" }}>{r.guest}</div>
+                          <div style={{ fontSize: 12, color: "#8a8276" }}>{r.haven}</div>
                         </div>
                       </div>
-                      <div className="flex flex-col items-end gap-1">
-                        <div className="flex gap-0.5">{Array.from({length:5}).map((_,i)=><Star key={i} className="w-3.5 h-3.5" style={{ color: i < r.rating ? "#D4A96A" : "#E0CEB8" }} fill={i < r.rating ? "#D4A96A" : "none"} />)}</div>
-                        <span className="text-xs" style={{ color: "#D4BFA0" }}>{r.date}</span>
+                      <div className="flex" style={{ gap: 2 }}>
+                        {Array.from({length:5}).map((_,i)=><span key={i} style={{ color: i < r.rating ? "#d4a96a" : "#e0d6c4", fontSize: 14, lineHeight: 1 }}>★</span>)}
                       </div>
                     </div>
-                    <p className="text-sm" style={{ color: "#5a4a3a" }}>{r.comment}</p>
+                    <p style={{ fontSize: 13.5, color: "#4a4034", lineHeight: 1.6, margin: "0 0 14px" }}>{r.comment}</p>
+                    <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 11, color: "#b8b1a6" }}>{r.date}</div>
                   </div>
                 ))}
               </div>
             )}
 
             {commTab === "messages" && (
-              <div className="space-y-3">
-                {internalMessages.map((msg) => (
-                  <div key={msg.id} className="flex items-start gap-4 p-4 rounded-2xl border transition-colors cursor-pointer"
-                    style={{ backgroundColor: msg.unread ? "#FDF8F3" : "#ffffff", borderColor: msg.unread ? "#D4BFA0" : "#E0CEB8" }}
-                    onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
-                    onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = msg.unread ? "#FDF8F3" : "#ffffff"}>
-                    <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: msg.role === "csr" ? "#d1fae5" : "#F7F0E3" }}>
-                      <span className="text-xs font-bold" style={{ color: msg.role === "csr" ? "#059669" : "#B07848" }}>{msg.sender.split(" ").map((n)=>n[0]).join("")}</span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-2 mb-0.5">
-                        <p className="font-semibold text-sm" style={{ color: "#1a1a1a" }}>{msg.sender}</p>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs" style={{ color: "#D4BFA0" }}>{msg.time}</span>
-                          {msg.unread && <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />}
+              <div style={{ background: "#fff", border: "1px solid #ece5d4" }}>
+                {internalMessages.map((msg) => {
+                  const csr = msg.role === "csr";
+                  return (
+                    <div key={msg.id} className="flex items-center cursor-pointer" style={{ gap: 16, padding: "18px 24px", borderBottom: "1px solid #f3eee2" }}
+                      onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#faf7f1"}
+                      onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
+                      <span style={{ width: 40, height: 40, borderRadius: "50%", flex: "none", background: csr ? "rgba(47,157,107,0.14)" : "#f3eee2", color: csr ? "#2f7d56" : "#b8754a", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 17 }}>{msg.sender.split(" ").map((n)=>n[0]).join("")}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center" style={{ gap: 10 }}>
+                          <span style={{ fontSize: 14, color: "#1f1b16" }}>{msg.sender}</span>
+                          {msg.unread && <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#b8754a" }} />}
                         </div>
+                        <div className="truncate" style={{ fontSize: 13, color: "#8a8276", marginTop: 3 }}>{msg.content}</div>
                       </div>
-                      <p className="text-sm truncate" style={{ color: "#8B6344" }}>{msg.content}</p>
+                      <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 11, color: "#b8b1a6", flex: "none" }}>{msg.time}</span>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </>)}
@@ -986,16 +1042,16 @@ export default function OwnerDashboard() {
                 <h2 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>Staff Management</h2>
                 <p className="text-sm" style={{ color: "#8B6344" }}>{staffMembers.length} staff members</p>
               </div>
-              <button type="button" onClick={() => setStaffModalOpen(true)} className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer" style={{ backgroundColor: "#B07848" }}>
+              <button type="button" onClick={() => setStaffModalOpen(true)} className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white cursor-pointer" style={{ backgroundColor: "#1f1b16" }}>
                 <Plus className="w-4 h-4" /> Add Staff
               </button>
             </div>
-            <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#EDE3D2" }}>
+            <div className="border overflow-hidden" style={{ borderColor: "#ece5d4" }}>
               <div className="overflow-x-auto">
                 <table className="w-full">
-                  <thead><tr style={{ backgroundColor: "#f9fafb" }}>
+                  <thead><tr style={{ backgroundColor: "#faf7f1", borderBottom: "1px solid #ece5d4" }}>
                     {["Employee","Role","Contact","Joined","Status","Actions"].map((h) => (
-                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide" style={{ color: "#8B6344" }}>{h}</th>
+                      <th key={h} className="px-4 py-3 text-left text-[11px] uppercase tracking-[0.08em]" style={{ color: "#8B6344" }}>{h}</th>
                     ))}
                   </tr></thead>
                   <tbody>
@@ -1070,30 +1126,27 @@ export default function OwnerDashboard() {
             {systemTab === "settings" && (
               <div className="space-y-6">
                 <div>
-                  <h2 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>Booking Rates &amp; Windows</h2>
-                  <p className="text-sm" style={{ color: "#8B6344" }}>
+                  <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 22, lineHeight: 1, color: "#1f1b16", margin: 0 }}>Booking rates &amp; windows</h2>
+                  <p style={{ fontSize: 13, color: "#8a8276", margin: "10px 0 0", lineHeight: 1.55 }}>
                     The live rates guests are charged. Weekend/holiday pricing applies on Fri, Sat, Sun &amp; PH holidays. Edit via Property → haven → Pricing.
                   </p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3" style={{ gap: 1, background: "#ece5d4", border: "1px solid #ece5d4" }}>
                   {stayRates.map((rate) => (
-                    <div key={rate.name} className="rounded-2xl border p-5" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }}>
-                      <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-3" style={{ backgroundColor: "#F7F0E3" }}>
-                        <CalendarDays className="w-5 h-5" style={{ color: "#B07848" }} />
+                    <div key={rate.name} style={{ background: "#fff", padding: "22px 24px" }}>
+                      <div style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 19, color: "#1f1b16" }}>{rate.name}</div>
+                      <div className="flex items-center" style={{ gap: 6, fontSize: 12, color: "#8a8276", marginTop: 6 }}>
+                        <span>Check-in</span><span style={{ color: "#4a4034" }}>{rate.window}</span>
                       </div>
-                      <p className="font-bold text-sm" style={{ color: "#1a1a1a" }}>{rate.name}</p>
-                      <div className="flex items-center gap-1.5 text-xs mt-1" style={{ color: "#8B6344" }}>
-                        <span>Check-in</span><span className="font-medium" style={{ color: "#5a4a3a" }}>{rate.window}</span>
-                      </div>
-                      <div className="mt-4 pt-3 space-y-2 text-sm border-t" style={{ borderColor: "#F7F0E3" }}>
+                      <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid #f3eee2", display: "flex", flexDirection: "column", gap: 10 }}>
                         <div className="flex items-center justify-between">
-                          <span style={{ color: "#8B6344" }}>Weekday</span>
-                          <span className="font-bold" style={{ color: "#1a1a1a" }}>{peso(rate.weekday)}</span>
+                          <span style={{ fontSize: 13, color: "#8a8276" }}>Weekday</span>
+                          <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 14, color: "#1f1b16" }}>{peso(rate.weekday)}</span>
                         </div>
                         <div className="flex items-center justify-between">
-                          <span style={{ color: "#8B6344" }}>Weekend / Holiday</span>
-                          <span className="font-bold" style={{ color: "#B07848" }}>{peso(rate.weekend)}</span>
+                          <span style={{ fontSize: 13, color: "#8a8276" }}>Weekend / Holiday</span>
+                          <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 14, color: "#b8754a" }}>{peso(rate.weekend)}</span>
                         </div>
                       </div>
                     </div>
@@ -1103,12 +1156,12 @@ export default function OwnerDashboard() {
             )}
 
             {systemTab === "logs" && (
-              <div className="rounded-2xl border overflow-hidden" style={{ borderColor: "#EDE3D2" }}>
+              <div className="border overflow-hidden" style={{ borderColor: "#ece5d4" }}>
                 <div className="overflow-x-auto">
                   <table className="w-full">
-                    <thead><tr style={{ backgroundColor: "#f9fafb" }}>
+                    <thead><tr style={{ backgroundColor: "#faf7f1", borderBottom: "1px solid #ece5d4" }}>
                       {["Log ID","Actor","Action","Time","Type"].map((h) => (
-                        <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide" style={{ color: "#8B6344" }}>{h}</th>
+                        <th key={h} className="px-4 py-3 text-left text-[11px] uppercase tracking-[0.08em]" style={{ color: "#8B6344" }}>{h}</th>
                       ))}
                     </tr></thead>
                     <tbody>
@@ -1150,7 +1203,7 @@ export default function OwnerDashboard() {
       {/* ── Reject Booking modal ── */}
       {rejectModal.open && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setRejectModal({ open: false, id: "", reason: "" })}>
-          <div className="w-full max-w-md rounded-3xl border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }} onClick={(e) => e.stopPropagation()}>
+          <div className="w-full max-w-md border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }} onClick={(e) => e.stopPropagation()}>
             <h3 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>Reject Booking</h3>
             <p className="text-sm mt-1 mb-4" style={{ color: "#8B6344" }}>Add a reason for the rejection. The guest will be notified.</p>
             <textarea
@@ -1159,11 +1212,11 @@ export default function OwnerDashboard() {
               placeholder="e.g. Payment proof could not be verified"
               rows={3}
               className="w-full rounded-xl border px-3 py-2 text-sm outline-none resize-none"
-              style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}
+              style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}
             />
             <div className="flex justify-end gap-2 mt-5">
-              <button type="button" onClick={() => setRejectModal({ open: false, id: "", reason: "" })} className="px-4 py-2 rounded-xl text-sm font-semibold border cursor-pointer" style={{ color: "#8B6344", borderColor: "#EDE3D2", backgroundColor: "#ffffff" }}>Cancel</button>
-              <button type="button" onClick={submitRejectBooking} disabled={bookingUpdating} className="px-4 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#dc2626" }}>{bookingUpdating ? "Rejecting…" : "Reject Booking"}</button>
+              <button type="button" onClick={() => setRejectModal({ open: false, id: "", reason: "" })} className="px-4 py-2 rounded-xl text-sm font-semibold border cursor-pointer" style={{ color: "#8B6344", borderColor: "#ece5d4", backgroundColor: "#ffffff" }}>Cancel</button>
+              <button type="button" onClick={submitRejectBooking} disabled={bookingUpdating} className="px-4 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#9a4a3a" }}>{bookingUpdating ? "Rejecting…" : "Reject Booking"}</button>
             </div>
           </div>
         </div>
@@ -1172,26 +1225,26 @@ export default function OwnerDashboard() {
       {/* ── Add Staff modal ── */}
       {staffModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setStaffModalOpen(false)}>
-          <div className="w-full max-w-md rounded-3xl border p-6 max-h-[90vh] overflow-y-auto" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }} onClick={(e) => e.stopPropagation()}>
+          <div className="w-full max-w-md border p-6 max-h-[90vh] overflow-y-auto" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }} onClick={(e) => e.stopPropagation()}>
             <h3 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>Add Staff Member</h3>
             <p className="text-sm mt-1 mb-4" style={{ color: "#8B6344" }}>Create a CSR or Cleaner account.</p>
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
-                <input placeholder="First name" value={staffForm.first_name} onChange={(e) => setStaffForm({ ...staffForm, first_name: e.target.value })} className="rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
-                <input placeholder="Last name" value={staffForm.last_name} onChange={(e) => setStaffForm({ ...staffForm, last_name: e.target.value })} className="rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                <input placeholder="First name" value={staffForm.first_name} onChange={(e) => setStaffForm({ ...staffForm, first_name: e.target.value })} className="rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                <input placeholder="Last name" value={staffForm.last_name} onChange={(e) => setStaffForm({ ...staffForm, last_name: e.target.value })} className="rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
               </div>
-              <input type="email" placeholder="Email" value={staffForm.email} onChange={(e) => setStaffForm({ ...staffForm, email: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
-              <input type="password" placeholder="Temporary password" value={staffForm.password} onChange={(e) => setStaffForm({ ...staffForm, password: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
-              <input placeholder="Phone (optional)" value={staffForm.phone} onChange={(e) => setStaffForm({ ...staffForm, phone: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
-              <select value={staffForm.role} onChange={(e) => setStaffForm({ ...staffForm, role: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
+              <input type="email" placeholder="Email" value={staffForm.email} onChange={(e) => setStaffForm({ ...staffForm, email: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+              <input type="password" placeholder="Temporary password" value={staffForm.password} onChange={(e) => setStaffForm({ ...staffForm, password: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+              <input placeholder="Phone (optional)" value={staffForm.phone} onChange={(e) => setStaffForm({ ...staffForm, phone: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+              <select value={staffForm.role} onChange={(e) => setStaffForm({ ...staffForm, role: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
                 <option value="CSR">CSR</option>
                 <option value="Cleaner">Cleaner</option>
                 <option value="Owner">Owner</option>
               </select>
             </div>
             <div className="flex justify-end gap-2 mt-5">
-              <button type="button" onClick={() => setStaffModalOpen(false)} className="px-4 py-2 rounded-xl text-sm font-semibold border cursor-pointer" style={{ color: "#8B6344", borderColor: "#EDE3D2", backgroundColor: "#ffffff" }}>Cancel</button>
-              <button type="button" onClick={submitStaff} disabled={creatingStaff} className="px-4 py-2 rounded-xl text-sm font-semibold text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#B07848" }}>{creatingStaff ? "Creating…" : "Create Staff"}</button>
+              <button type="button" onClick={() => setStaffModalOpen(false)} className="px-4 py-2 rounded-xl text-sm font-semibold border cursor-pointer" style={{ color: "#8B6344", borderColor: "#ece5d4", backgroundColor: "#ffffff" }}>Cancel</button>
+              <button type="button" onClick={submitStaff} disabled={creatingStaff} className="px-4 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#1f1b16" }}>{creatingStaff ? "Creating…" : "Create Staff"}</button>
             </div>
           </div>
         </div>
@@ -1204,7 +1257,7 @@ export default function OwnerDashboard() {
       {/* Reusable detail modal (booking / haven / employee views) */}
       {detailModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setDetailModal(null)}>
-          <div className="w-full max-w-md rounded-3xl border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#EDE3D2" }} onClick={(e) => e.stopPropagation()}>
+          <div className="w-full max-w-md border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between mb-4">
               <div>
                 <h3 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>{detailModal.title}</h3>
