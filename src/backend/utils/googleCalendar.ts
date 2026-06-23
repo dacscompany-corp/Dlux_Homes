@@ -159,7 +159,7 @@ const buildAndInsertCalendarEvent = async (bookingData: CalendarEventData): Prom
     `Guest: ${guest_first_name} ${guest_last_name}`,
     `Email: ${guest_email}`,
     `Phone: ${guest_phone}`,
-    `Guests: ${adults || 0} Adult(s), ${children || 0} Child(ren), ${infants || 0} Infant(s)`,
+    `Guests: ${adults || 0} Adult(s), ${children || 0} Young Adult(s), ${infants || 0} Child(ren)`,
     "",
     "===== ACCOMMODATION =====",
     `Room: ${room_name}`,

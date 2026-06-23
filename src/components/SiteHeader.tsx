@@ -122,18 +122,26 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap');
         @keyframes dluxDot{0%,100%{opacity:.55}50%{opacity:1}}
+        @keyframes shBackIn{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:translateX(0)}}
+        @keyframes shBookIn{from{opacity:0;transform:translateY(-8px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
+        @keyframes shBookGlow{0%,100%{box-shadow:0 0 0 0 rgba(184,117,74,0)}50%{box-shadow:0 0 0 6px rgba(184,117,74,.14)}}
+        @keyframes shBackArrow{0%,100%{transform:translateX(0)}50%{transform:translateX(-3px)}}
         .sh-tap { transition: background .18s ease, color .15s ease; }
         .sh-tap:hover { background: #f3eee2; }
-        .sh-back { transition: background .18s ease, color .15s ease; }
-        .sh-back:hover { background: #f3eee2; color: ${INK}; }
+        .sh-back { animation: shBackIn .4s cubic-bezier(.2,.8,.2,1) both; transition: background .18s ease, color .15s ease, transform .18s ease; }
+        .sh-back:hover { background: #f3eee2; color: ${INK}; transform: translateX(-2px); }
+        .sh-back:active { transform: scale(.96); }
         .sh-back svg { transition: transform .2s ease; }
-        .sh-back:hover svg { transform: translateX(-3px); }
-        .sh-book { transition: background .2s ease; }
-        .sh-book:hover { background: #9a6840; }
+        .sh-back:hover svg { animation: shBackArrow .9s ease-in-out infinite; }
+        .sh-book { animation: shBookIn .45s cubic-bezier(.2,.8,.2,1) both, shBookGlow 3.2s ease-in-out 1s infinite; transition: background .2s ease, transform .18s ease, box-shadow .2s ease; }
+        .sh-book:hover { background: #9a6840; transform: translateY(-2px); box-shadow: 0 8px 20px -6px rgba(154,104,64,.55); animation: none; }
+        .sh-book:active { transform: translateY(0) scale(.97); }
         .sh-book svg { transition: transform .2s ease; }
-        .sh-book:hover svg { transform: translateX(3px); }
+        .sh-book:hover svg { transform: translateX(4px); }
         @media (prefers-reduced-motion: reduce) {
+          .sh-back, .sh-book { animation: none; }
           .sh-back svg, .sh-book svg { transition: none; }
+          .sh-back:hover svg { animation: none; }
         }
         @media (max-width: 720px) { .sh-acct-text, .sh-mybk-text { display: none !important; } }
       `}</style>

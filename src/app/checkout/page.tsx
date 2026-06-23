@@ -255,13 +255,13 @@ function CheckoutInner() {
         const t = guestType(i);
         if (!g.firstName) e.add(`x${i}-firstName`);
         if (!g.lastName) e.add(`x${i}-lastName`);
-        // Age range by type: adults 18–120, children 2–17, infants under 2.
+        // Age range by type: adults 18–120, young adults 7–17, children 7 & under.
         const ageBad = g.age === "" || isNaN(a) ||
-          (t === "adult" ? a < 18 || a > 120 : t === "child" ? a < 2 || a > 17 : a < 0 || a > 1);
+          (t === "adult" ? a < 18 || a > 120 : t === "child" ? a < 7 || a > 17 : a < 0 || a > 7);
         if (ageBad) e.add(`x${i}-age`);
         if (!g.gender) e.add(`x${i}-gender`);
-        // Document: infants always need an ID/birth certificate; others when 10+.
-        const needDoc = t === "infant" || a >= 10;
+        // Document: required when the guest is 10 or older.
+        const needDoc = a >= 10;
         if (needDoc && !g.validIdName) e.add(`x${i}-validId`);
       });
     }
@@ -295,13 +295,13 @@ function CheckoutInner() {
     showErrors && fieldErrors.has(k) ? <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>{msg}</div> : null;
 
   // Live age feedback — warns the moment an out-of-range value is typed, before
-  // any Continue click. Adults 18–120, children 2–17.
+  // any Continue click. Adults 18–120, young adults 7–17, children 7 & under.
   type GType = "adult" | "child" | "infant";
   const ageInvalidNow = (value: string, t: GType): boolean => {
     if (value === "") return false;
     const a = parseInt(value);
     if (isNaN(a)) return true;
-    return t === "adult" ? a < 18 || a > 120 : t === "child" ? a < 2 || a > 17 : a < 0 || a > 1;
+    return t === "adult" ? a < 18 || a > 120 : t === "child" ? a < 7 || a > 17 : a < 0 || a > 7;
   };
   const ageStyle = (value: string, t: GType, key: string): React.CSSProperties =>
     ageInvalidNow(value, t) || (showErrors && fieldErrors.has(key)) ? { ...inputStyle, borderColor: "#ef4444" } : inputStyle;
@@ -311,8 +311,8 @@ function CheckoutInner() {
       const msg = t === "adult"
         ? (a < 18 ? "Must be 18 or older — adults only." : "Enter a realistic age (max 120).")
         : t === "child"
-        ? "Children must be aged 2–17."
-        : "Infants must be under 2 (age 0 or 1).";
+        ? "Young adults must be aged 7–17."
+        : "Children must be aged 7 or under.";
       return <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>{msg}</div>;
     }
     if (showErrors && fieldErrors.has(k) && value === "") return <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>Enter the age.</div>;
@@ -591,12 +591,11 @@ function CheckoutInner() {
                 {/* Additional guests — name, age, gender + valid ID only */}
                 {extraGuests.map((g, i) => {
                   const t = guestType(i);
-                  const typeLabel = t === "adult" ? "Adult (18+)" : t === "child" ? "Child (2–17)" : "Infant (under 2)";
-                  const ageLabel = t === "adult" ? "Age * (18+)" : t === "child" ? "Age * (2–17)" : "Age * (under 2)";
-                  const ageMin = t === "adult" ? 18 : t === "child" ? 2 : 0;
-                  const ageMax = t === "adult" ? 120 : t === "child" ? 17 : 1;
-                  const agePlaceholder = t === "adult" ? "18" : t === "child" ? "10" : "1";
-                  const isInfant = t === "infant";
+                  const typeLabel = t === "adult" ? "Adult (18+)" : t === "child" ? "Young Adult (7–17)" : "Child (7 & under)";
+                  const ageLabel = t === "adult" ? "Age * (18+)" : t === "child" ? "Age * (7–17)" : "Age * (7 & under)";
+                  const ageMin = t === "adult" ? 18 : t === "child" ? 7 : 0;
+                  const ageMax = t === "adult" ? 120 : t === "child" ? 17 : 7;
+                  const agePlaceholder = t === "adult" ? "18" : t === "child" ? "12" : "5";
                   return (
                   <div key={i} style={{ marginTop: 28, paddingTop: 24, borderTop: "1px solid var(--line)" }}>
                     <p style={{ color: "var(--ink)", fontSize: 16, fontWeight: 600, margin: "0 0 16px" }}>Guest {i + 2} <span style={{ color: "var(--muted)", fontWeight: 500, fontSize: 13 }}>· {typeLabel}</span></p>
@@ -625,9 +624,8 @@ function CheckoutInner() {
                       id={`f-x${i}-validId`}
                       valueName={g.validIdName}
                       invalid={showErrors && fieldErrors.has(`x${i}-validId`)}
-                      title={isInfant ? "Valid ID or Birth Certificate (Required)" : "Valid ID (Required for guests 10+ years old)"}
-                      accepted={isInfant ? "Accepted: PSA Birth Certificate, Passport, or any valid ID" : undefined}
-                      requiredMsg={isInfant ? "Please upload the infant's ID or birth certificate." : "Please upload a valid ID for this guest."}
+                      title="Valid ID (Required for guests 10+ years old)"
+                      requiredMsg="Please upload a valid ID for this guest."
                       onPick={(name, data) => updateGuest(i, { validIdName: name, validIdData: data })}
                       onClear={() => updateGuest(i, { validIdName: null, validIdData: null })}
                     />
@@ -693,7 +691,7 @@ function CheckoutInner() {
                 <ReviewBlock title="Stay" onEdit={() => router.back()}>
                   <div style={{ fontSize: 14, fontWeight: 600 }}>{room.name}</div>
                   <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>{formatDateLong(date)} · {checkInTime} → {checkOutTime}</div>
-                  <div style={{ fontSize: 13, color: "var(--muted)" }}>{stayType === "10" ? "10-hour stay" : `Overnight · ${nights} night${nights > 1 ? "s" : ""}`} · {adults + children} guest{adults + children > 1 ? "s" : ""}</div>
+                  <div style={{ fontSize: 13, color: "var(--muted)" }}>{stayType === "10" ? "10-hour stay" : `Overnight · ${nights} night${nights > 1 ? "s" : ""}`} · {adults + children + infants} guest{adults + children + infants > 1 ? "s" : ""}</div>
                 </ReviewBlock>
                 <ReviewBlock title="Payment" onEdit={() => setStep(1)}>
                   <div style={{ fontSize: 14 }}>
@@ -749,7 +747,7 @@ function CheckoutInner() {
               <div style={{ padding: "16px 0", borderBottom: "1px solid var(--line)", fontSize: 13, display: "flex", flexDirection: "column", gap: 8 }}>
                 <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "var(--ink)" }}>Date</span><span style={{ fontWeight: 600 }}>{formatDate(date)}</span></div>
                 <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "var(--ink)" }}>Window</span><span style={{ fontWeight: 600 }}>{checkInTime} → {checkOutTime}</span></div>
-                <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "var(--ink)" }}>Guests</span><span style={{ fontWeight: 600 }}>{adults + children}</span></div>
+                <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "var(--ink)" }}>Guests</span><span style={{ fontWeight: 600 }}>{adults + children + infants}</span></div>
               </div>
               <div style={{ padding: "16px 0", borderBottom: "1px solid var(--line)", fontSize: 13, display: "flex", flexDirection: "column", gap: 6 }}>
                 <PriceRow label={stayType === "10" ? `10-hour stay · ${isWeekendRate ? "Weekend/Holiday" : "Weekday"}` : `Overnight · ${nights} night${nights > 1 ? "s" : ""}`} value={peso(basePrice)} />

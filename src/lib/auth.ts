@@ -579,15 +579,21 @@ export const authOptions: NextAuthOptions = {
       }
     },
 
-    async jwt({ token, user }) {
+    async jwt({ token, user, account }) {
       try {
         if (user) {
           token.id = user.id;
           token.role = (user as { role?: string }).role;
           console.log("✅ JWT token created with role:", (user as { role?: string }).role);
 
-          // For OAuth users (no role), fetch and store DB user_id and provider IDs
-          if (!token.role && user.email) {
+          // OAuth users have no role from authorize(); tag them with the provider
+          // so the session callback knows to resolve their DB user_id.
+          if (!token.role && account?.provider) {
+            token.role = account.provider; // "google" | "facebook"
+          }
+
+          // For OAuth users (no credential role), fetch and store DB user_id and provider IDs
+          if ((!token.role || token.role === account?.provider) && user.email) {
             try {
               const result = await pool.query(
                 "SELECT user_id, facebook_id, google_id FROM users WHERE email = $1",

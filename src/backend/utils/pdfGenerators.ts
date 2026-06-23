@@ -165,7 +165,7 @@ export async function generateReceiptPDF(data: ReceiptData): Promise<Buffer> {
   const infants = data.infants ?? 0;
   const guestSummary =
     data.guests ||
-    `${adults} Adult${adults > 1 ? "s" : ""}${children > 0 ? `, ${children} Child${children > 1 ? "ren" : ""}` : ""}${infants > 0 ? `, ${infants} Infant${infants > 1 ? "s" : ""}` : ""}`;
+    `${adults} Adult${adults > 1 ? "s" : ""}${children > 0 ? `, ${children} Young Adult${children > 1 ? "s" : ""}` : ""}${infants > 0 ? `, ${infants} Child${infants > 1 ? "ren" : ""}` : ""}`;
   pdf.setTextColor(...GRAY);
   pdf.setFontSize(8);
   pdf.setFont("helvetica", "normal");
