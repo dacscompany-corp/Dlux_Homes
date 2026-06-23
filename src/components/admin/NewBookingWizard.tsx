@@ -211,7 +211,7 @@ export default function NewBookingWizard({
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-3">
-                {[["Adults", "adults"], ["Children", "children"], ["Infants", "infants"]].map(([lbl, key]) => (
+                {[["Adults", "adults"], ["Young Adults", "children"], ["Children", "infants"]].map(([lbl, key]) => (
                   <div key={key}>
                     <label className={labelCls} style={labelStyle}>{lbl}</label>
                     <input type="number" min={0} value={form[key as keyof Form] as string} onChange={(e) => set({ [key]: e.target.value } as Partial<Form>)} className={`${field} mt-1`} style={fieldStyle} />

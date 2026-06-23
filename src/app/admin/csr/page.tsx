@@ -20,10 +20,10 @@ import {
 import NewBookingWizard from "@/components/admin/NewBookingWizard";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
-  LayoutDashboard, CalendarDays, MessageSquare, ClipboardList, Settings, Bell, Search,
+  LayoutDashboard, CalendarDays, MessageSquare, Bell,
   Menu, X, LogOut, Check, XCircle, Eye, UserCheck, UserMinus,
-  Clock, Sun, Users, ChevronDown, CreditCard, Package, Tag, Truck, Wrench,
-  BarChart2, Bell as BellIcon, User, Star, MapPin, Plus, FileText, AlertCircle,
+  Clock, Sun, Users, ChevronDown, CreditCard, Package, Wrench,
+  BarChart2, MapPin, Plus, FileText, AlertCircle,
   Mail, Phone, Shield, PhilippinePeso, CheckCircle2, Trash2,
 } from "lucide-react";
 
@@ -45,20 +45,6 @@ const statusConfig: Record<string, { label: string; color: string; bg: string; d
 };
 
 const calendarDays = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-
-const messages = [
-  { id: 1, sender: "Maria Santos",   role: "guest",   content: "Hi! Can I request an early check-in at 11am?",           time: "10:32 AM", unread: true },
-  { id: 2, sender: "Admin Owner",    role: "owner",   content: "Please prioritize the booking from BK-2024-009.",         time: "9:15 AM",  unread: true },
-  { id: 3, sender: "Juan dela Cruz", role: "guest",   content: "Thank you for the smooth check-out. Will book again!",    time: "Yesterday", unread: false },
-  { id: 4, sender: "Cleaner Staff",  role: "cleaner", content: "Azure Haven Suite is ready for the 2PM check-in.",         time: "Yesterday", unread: false },
-];
-
-const notifications = [
-  { id: 1, title: "New Booking Submitted",    desc: "BK-2024-009 from Liza Gomez awaits approval.",      time: "5 min ago",  read: false, type: "booking" },
-  { id: 2, title: "Payment Proof Uploaded",   desc: "Juan Cruz uploaded proof for BK-2024-002.",          time: "22 min ago", read: false, type: "payment" },
-  { id: 3, title: "Cleaning Complete",        desc: "Ana Reyes completed Pearl Executive Room turnover.",  time: "1 hr ago",   read: true,  type: "cleaning" },
-  { id: 4, title: "Issue Reported",           desc: "Plumbing issue reported in Azure Haven Suite.",       time: "3 hrs ago",  read: true,  type: "issue" },
-];
 
 // Normalize an RTK/fetch result to an array of rows, whether it arrives as a
 // bare array, a { data: [...] } envelope, or undefined/error object.
@@ -387,16 +373,6 @@ export default function CSRDashboard() {
     time: t.check_in_time && t.check_out_time ? `${t.check_in_time}–${t.check_out_time}` : "—",
     status: String(t.cleaning_status ?? "pending"),
   }));
-
-  const Placeholder = ({ label, icon: Icon }: { label: string; icon: React.ElementType }) => (
-    <div className="flex flex-col items-center justify-center py-24 text-center">
-      <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4" style={{ backgroundColor: "#F7F0E3" }}>
-        <Icon className="w-7 h-7" style={{ color: "#B07848" }} />
-      </div>
-      <h3 className="font-bold text-lg mb-1" style={{ color: "#1a1a1a" }}>{label}</h3>
-      <p className="text-sm" style={{ color: "#8B6344" }}>This section is coming soon.</p>
-    </div>
-  );
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: "#ffffff", zoom: "1.1" }}>
@@ -1000,7 +976,7 @@ export default function CSRDashboard() {
               <div className="flex items-center justify-between mb-2">
                 <div>
                   <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>Cleaner Assignments</h2>
-                  <p className="text-sm" style={{ color: "#8B6344" }}>Today's schedule</p>
+                  <p className="text-sm" style={{ color: "#8B6344" }}>Today&apos;s schedule</p>
                 </div>
               </div>
               {cleanerAssignments.map((ca) => (

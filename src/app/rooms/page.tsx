@@ -186,7 +186,7 @@ export default function BrowsePage() {
             { h: "28 sqm", s: "1 bedroom · balcony" },
             { h: "Up to 4", s: "Full double + pull-out" },
             { h: "10 or 21 hrs", s: "Pick your window" },
-            { h: "₱1,399", s: "Starting rate" },
+            { h: "₱1,499", s: "Starting rate" },
           ].map((item) => (
             <div key={item.h}>
               <div className="serif" style={{ fontSize: 36, fontWeight: 400, letterSpacing: "-.025em", lineHeight: 1, color: "var(--ink)" }}>{item.h}</div>
@@ -258,7 +258,7 @@ export default function BrowsePage() {
                 <div className="stay-card__inner">
                   <div className="stay-card__sheen" />
                   <div style={{ position: "relative", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--gold)" }}>{w.stayType}-hour</div>
+                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--gold)" }}>{w.stayType}-hours</div>
                     <span className="stay-card__arrow"><IcoArrowRight size={16} /></span>
                   </div>
                   <div className="serif" style={{ position: "relative", fontSize: 36, fontWeight: 400, letterSpacing: "-.02em", marginTop: 14, lineHeight: 1 }}>{w.label}</div>

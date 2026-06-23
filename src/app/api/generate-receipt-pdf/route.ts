@@ -201,7 +201,7 @@ export async function POST(request: NextRequest) {
     const adults = bookingData.adults || 1;
     const children = bookingData.children || 0;
     const infants = bookingData.infants || 0;
-    const guestSummary = `${adults} Adult${adults > 1 ? 's' : ''}${children > 0 ? `, ${children} Child${children > 1 ? 'ren' : ''}` : ''}${infants > 0 ? `, ${infants} Infant${infants > 1 ? 's' : ''}` : ''}`;
+    const guestSummary = `${adults} Adult${adults > 1 ? 's' : ''}${children > 0 ? `, ${children} Young Adult${children > 1 ? 's' : ''}` : ''}${infants > 0 ? `, ${infants} Child${infants > 1 ? 'ren' : ''}` : ''}`;
 
     pdf.setTextColor(...gray);
     pdf.setFontSize(8);

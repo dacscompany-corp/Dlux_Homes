@@ -11,7 +11,7 @@ export const mockRooms = [
     capacity: 4,
     rating: 4.9,
     reviewCount: 48,
-    price10hr: 1500,
+    price10hr: 1499,
     price10hrWeekend: 1800,
     price21hr: 1900,
     price21hrWeekend: 2100,

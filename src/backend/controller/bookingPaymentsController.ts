@@ -778,7 +778,7 @@ export const updateBookingPayment = async (
               ? new Date(booking.check_out_date).toLocaleDateString()
               : "",
             checkOutTime: booking.check_out_time,
-            guests: `${booking.adults} Adults, ${booking.children} Children, ${booking.infants} Infants`,
+            guests: `${booking.adults} Adults, ${booking.children} Young Adults, ${booking.infants} Children`,
             paymentMethod:
               booking.payment_method || updatedPayment.payment_method,
             downPayment: booking.down_payment ?? updatedPayment.down_payment,

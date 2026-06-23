@@ -130,7 +130,7 @@ function Calendar({ selected, onSelect, blocked }: { selected: string; onSelect:
 
 // ── Guest counter ─────────────────────────────────────────────
 function GuestCounter({ guests, setGuests, max }: { guests: Guests; setGuests: (g: Guests) => void; max: number }) {
-  const total = guests.adults + guests.children;
+  const total = guests.adults + guests.children + guests.infants;
   const row = (label: string, sub: string, key: keyof Guests, min = 0, limitedByMax = false) => (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 0", borderBottom: "1px solid var(--line)" }}>
       <div>
@@ -153,8 +153,8 @@ function GuestCounter({ guests, setGuests, max }: { guests: Guests; setGuests: (
   return (
     <div>
       {row("Adults", "Age 18+", "adults", 1, true)}
-      {row("Children", "Ages 2–17", "children", 0, true)}
-      {row("Infants", "Under 2", "infants", 0, false)}
+      {row("Young Adult", "7 to 17", "children", 0, true)}
+      {row("Children", "7 under", "infants", 0, true)}
     </div>
   );
 }
@@ -602,7 +602,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                 {windows.map((w, i) => { const active = selectedWindow.checkIn === w.checkIn && selectedWindow.checkOut === w.checkOut; return (
                   <button key={i} onClick={() => setSelectedWindow(w)} className={`window-card${active ? " active" : ""}`}
                     style={{ padding: 18, textAlign: "left", borderRadius: 16, border: active ? "2px solid var(--ink)" : "1.5px solid var(--line-2)", background: active ? "var(--ink)" : "var(--white)", color: active ? "var(--white)" : "var(--ink)", cursor: "pointer" }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".1em", opacity: 0.7 }}>{w.stayType}-hour</div>
+                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".1em", opacity: 0.7 }}>{w.stayType}-hours</div>
                     <div className="serif" style={{ fontSize: 22, fontWeight: 500, marginTop: 4, letterSpacing: "-.015em" }}>{w.label}</div>
                     <div style={{ fontSize: 12, marginTop: 10, opacity: 0.85, display: "flex", alignItems: "center", gap: 6 }}><IcoClock /> {w.checkIn} → {w.checkOut}</div>
                     <div style={{ fontSize: 13, fontWeight: 600, marginTop: 10 }}>{peso(w.stayType === "10" ? room.price10hr : room.price21hr)}</div>
@@ -705,8 +705,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                   <div>
                     <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--ink)" }}>Guests</div>
                     <div style={{ fontSize: 14, fontWeight: 600, marginTop: 4 }}>
-                      {guests.adults + guests.children} guest{guests.adults + guests.children > 1 ? "s" : ""}
-                      {guests.infants > 0 && `, ${guests.infants} infant${guests.infants > 1 ? "s" : ""}`}
+                      {guests.adults + guests.children + guests.infants} guest{guests.adults + guests.children + guests.infants > 1 ? "s" : ""}
                     </div>
                   </div>
                   <div style={{ transform: guestOpen ? "rotate(180deg)" : "none", transition: ".2s" }}><IcoChevDown /></div>
