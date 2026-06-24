@@ -13,7 +13,7 @@ export const mockRooms = [
     reviewCount: 48,
     price10hr: 1499,
     price10hrWeekend: 1800,
-    price21hr: 1900,
+    price21hr: 1899,
     price21hrWeekend: 2100,
     additionalPaxFee: 150,
     basePax: 2,
@@ -139,9 +139,9 @@ export const mockBookings = [
 ];
 
 export const mockReviews = [
-  { id: "1", author: "Maria Santos", rating: 5, comment: "Amazing stay! The room was spotless and the view was breathtaking. Will definitely come back.", date: "2026-03-10", avatar: "MS" },
-  { id: "2", author: "Jose Reyes", rating: 5, comment: "Excellent service and very comfortable beds. Perfect for our anniversary.", date: "2026-02-28", avatar: "JR" },
-  { id: "3", author: "Ana Cruz", rating: 4, comment: "Great value for money. Clean and cozy. The staff was very helpful.", date: "2026-02-15", avatar: "AC" },
+  { id: "1", author: "Jonathan Bantoc", rating: 5, comment: "Truly a great place to relax. The location is perfect for the couple and group of friends. It gives you a very relaxing ambience escape from the stressful situations because of the very cold temperature room. The swimming pool was so great. The owners were very accommodating and responsive. Highly recommended!", date: "2025-05-16", avatar: "JB" },
+  { id: "2", author: "Donna Marie Osorio", rating: 5, comment: "This will be a little bit late for a reco, ..but anyways. Thank you so much D'Lux Homes .. A very aesthetic vibes room to enjoy! .. Thank you for having us here to celebrate my birthday! .. Thank you also for the very fast response esp. in terms of inquiry. ..onto our next staycation with you!!", date: "2025-03-03", avatar: "DO" },
+  { id: "3", author: "Raechelle Angel", rating: 5, comment: "5 star\nThe place is comfortable and clean, the owner is friendly nag-enjoy kami ng family ko", date: "2024-05-12", avatar: "RA" },
   { id: "4", author: "Carlo Mendoza", rating: 5, comment: "Loved every minute of our stay. The pool pass was totally worth it!", date: "2026-01-20", avatar: "CM" },
 ];
 
