@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
@@ -14,21 +14,20 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   // Where to land after sign-in (e.g. back to checkout). Defaults to My bookings.
-  const [callbackUrl, setCallbackUrl] = useState("/my-bookings");
+  // Derived once from the URL — this is a client component, so window is available.
+  const [callbackUrl] = useState(() => {
+    if (typeof window === "undefined") return "/my-bookings";
+    return new URLSearchParams(window.location.search).get("callbackUrl") || "/my-bookings";
+  });
   // Back target — the room being booked (never the checkout, which would just
   // redirect back here). Falls back to the listing.
-  const [backHref, setBackHref] = useState("/rooms");
-  useEffect(() => {
-    const cb = new URLSearchParams(window.location.search).get("callbackUrl");
-    if (cb) {
-      setCallbackUrl(cb);
-      const rid = new URLSearchParams(cb.split("?")[1] || "").get("roomId");
-      if (rid) setBackHref(`/rooms/${rid}`);
-    }
-  }, []);
+  const [backHref] = useState(() => {
+    const rid = new URLSearchParams(callbackUrl.split("?")[1] || "").get("roomId");
+    return rid ? `/rooms/${rid}` : "/rooms";
+  });
   const isBooking = callbackUrl.includes("/checkout");
 
-  const handleCredentials = async (e?: React.FormEvent) => {
+  const handleCredentials = async (e?: React.FormEvent): Promise<void> => {
     e?.preventDefault();
     if (!email || !password) { toast.error("Enter your email and password"); return; }
     setLoading(true);
