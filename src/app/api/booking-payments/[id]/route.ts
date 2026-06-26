@@ -4,6 +4,7 @@ import {
   updateBookingPayment,
   deleteBookingPayment,
 } from "@/backend/controller/bookingPaymentsController";
+import { requireAdmin } from "@/backend/utils/requireAdmin";
 
 interface RouteContext {
   params: Promise<{
@@ -23,10 +24,14 @@ interface RouteContext {
  * ensure `params` is awaited to conform with the route handler signature.
  */
 
+// All booking-payment item routes are admin-only (Owner/CSR) — used solely by
+// the CSR dashboard for payment review/collection. No guest flow touches these.
 export async function GET(
   request: NextRequest,
   { params }: RouteContext,
 ): Promise<NextResponse> {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
   await params;
   return getBookingPaymentById(request);
 }
@@ -35,6 +40,8 @@ export async function PUT(
   request: NextRequest,
   { params }: RouteContext,
 ): Promise<NextResponse> {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
   await params;
   return updateBookingPayment(request);
 }
@@ -43,6 +50,8 @@ export async function PATCH(
   request: NextRequest,
   { params }: RouteContext,
 ): Promise<NextResponse> {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
   await params;
   return updateBookingPayment(request);
 }
@@ -51,6 +60,8 @@ export async function DELETE(
   request: NextRequest,
   { params }: RouteContext,
 ): Promise<NextResponse> {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
   await params;
   return deleteBookingPayment(request);
 }

@@ -408,6 +408,7 @@ export const createBooking = async (
       // Payment info
       payment_method,
       payment_proof, // base64
+      payment_reference, // guest-entered reference number (pay-at-checkout)
       room_rate,
       security_deposit,
       add_ons_total,
@@ -789,16 +790,17 @@ export const createBooking = async (
     // uses a plain column with a CHECK constraint, so we set it explicitly.)
     const paymentQuery = `
       INSERT INTO booking_payments (
-        booking_id, payment_method, payment_proof_url, room_rate,
+        booking_id, payment_method, payment_proof_url, payment_reference, room_rate,
         add_ons_total, total_amount, down_payment, amount_paid, remaining_balance
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
     `;
 
     const paymentValues = [
       bookingId,
       payment_method,
       paymentProofUrl,
+      payment_reference ?? null,
       room_rate,
       add_ons_total,
       paymentTotalAmount,
@@ -862,11 +864,10 @@ export const createBooking = async (
     await client.query(cleaningQuery, [bookingId]);
     console.log("✅ [BOOKING] Cleaning record created");
 
-    console.log("💾 [BOOKING] Committing database transaction...");
-    await client.query("COMMIT");
-    console.log("✅ [BOOKING] Database transaction committed successfully");
-
-    // Get the complete booking data for response (include the booking payment object)
+    // Fetch the complete booking for the response while STILL inside the
+    // transaction. Reading our own writes pre-COMMIT is safe, and it means a
+    // retrieval failure rolls back cleanly instead of leaving a committed
+    // booking sitting behind a 500 response (the old COMMIT-then-retrieve order).
     const completeBookingQuery = `
     SELECT
       b.*,
@@ -903,10 +904,16 @@ export const createBooking = async (
     ]);
 
     if (completeResult.rows.length === 0) {
-      console.error("❌ [BOOKING] CRITICAL: Booking was created but cannot be retrieved!");
+      // Still inside the transaction, so throwing here rolls everything back —
+      // no orphaned booking is left behind.
+      console.error("❌ [BOOKING] CRITICAL: Booking row missing right after insert — rolling back");
       console.error("❌ [BOOKING] Booking ID:", bookingId);
-      throw new Error(`Booking created but retrieval query returned no results`);
+      throw new Error(`Booking insert could not be verified`);
     }
+
+    console.log("💾 [BOOKING] Committing database transaction...");
+    await client.query("COMMIT");
+    console.log("✅ [BOOKING] Database transaction committed successfully");
 
     const createdBooking = completeResult.rows[0];
     console.log("✅ [BOOKING] Booking created and retrieved successfully");
@@ -1025,8 +1032,9 @@ export const createBooking = async (
       // Don't fail the whole request if email fails
     }
 
-    await client.query("COMMIT");
-
+    // The transaction was already committed above (before the email). Everything
+    // from the COMMIT onward is post-commit, best-effort work — it must never
+    // trigger a ROLLBACK / 500 for an already-persisted booking.
     console.log("🎉 [BOOKING] Booking creation complete - returning success response");
     console.log("📊 [BOOKING] Response includes:", {
       booking_id: completeResult.rows[0].booking_id,
@@ -1165,6 +1173,7 @@ export const getAllBookings = async (
         bg.facebook_link,
         bp.payment_method,
         bp.payment_proof_url,
+        bp.payment_reference,
         bp.payment_status,
         bp.room_rate,
         bp.add_ons_total,
@@ -1244,6 +1253,7 @@ export const getBookingById = async (
         bp.remaining_balance,
         bp.payment_method,
         bp.payment_proof_url,
+        bp.payment_status,
         bp.room_rate,
         bp.add_ons_total,
         COALESCE(bd.amount, 0) as security_deposit,
@@ -1301,7 +1311,7 @@ export const getBookingById = async (
       )
       LEFT JOIN booking_security_deposits bd ON b.id = bd.booking_id
       WHERE (b.id::text = $1 OR b.booking_id = $1)
-      GROUP BY b.id, h.tower, h.uuid_id, bp.total_amount, bp.down_payment, bp.remaining_balance, bp.payment_method, bp.payment_proof_url, bp.room_rate, bp.add_ons_total, bg.first_name, bg.last_name, bg.email, bg.phone, bg.valid_id_url, bg.age, bg.gender, bd.amount
+      GROUP BY b.id, h.tower, h.uuid_id, bp.total_amount, bp.down_payment, bp.remaining_balance, bp.payment_method, bp.payment_proof_url, bp.payment_status, bp.room_rate, bp.add_ons_total, bg.first_name, bg.last_name, bg.email, bg.phone, bg.valid_id_url, bg.age, bg.gender, bd.amount
       LIMIT 1
     `;
     const bookingResult = await pool.query(query, [id]);
@@ -1441,18 +1451,11 @@ export const updateBookingStatus = async (
     const values = [status, rejection_reason ?? null, id];
     const result = await pool.query(query, values);
 
-    // If booking approved, also approve the down payment
-    if (status === "approved" && result.rows.length > 0) {
-      const bookingUuid = result.rows[0].id;
-      await pool.query(
-        `
-        UPDATE booking_payments
-        SET payment_status = 'approved_down_payment', reviewed_at = NOW()
-        WHERE booking_id = $1 AND payment_status = 'pending_down_payment'
-        `,
-        [bookingUuid],
-      );
-    }
+    // NOTE: approving a booking no longer auto-approves the down payment.
+    // Per the "pay after approval" flow, the host pre-approves the booking
+    // (status → approved) and the guest THEN pays the down payment, which is
+    // approved separately once verified. Auto-flipping here made the payment
+    // state lie ("Confirmed" while the guest still owed the down payment).
 
     if (result.rows.length === 0) {
       return NextResponse.json(
@@ -1476,7 +1479,8 @@ export const updateBookingStatus = async (
         bg.valid_id_url,
         bp.payment_method,
         bp.total_amount,
-        bp.down_payment
+        bp.down_payment,
+        bp.remaining_balance
       FROM booking b
       JOIN booking_guests bg ON b.id = bg.booking_id
       JOIN booking_payments bp ON b.id = bp.booking_id
@@ -1634,6 +1638,59 @@ export const updateBookingStatus = async (
       }
     }
 
+    // Send welcome / check-in email when the guest is checked in
+    if (status === "checked-in" && bookingDetailsResult.rows.length > 0) {
+      try {
+        const booking = bookingDetailsResult.rows[0];
+        const emailData = {
+          firstName: booking.first_name,
+          lastName: booking.last_name,
+          email: booking.email,
+          bookingId: booking.booking_id,
+          roomName: booking.room_name,
+          checkInDate: booking.check_in_date ? new Date(booking.check_in_date).toLocaleDateString() : "",
+          checkInTime: booking.check_in_time,
+          checkOutDate: booking.check_out_date ? new Date(booking.check_out_date).toLocaleDateString() : "",
+          checkOutTime: booking.check_out_time,
+          guests: `${booking.adults} Adults, ${booking.children} Young Adults, ${booking.infants} Children`,
+        };
+        const emailResponse = await fetch(
+          `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/send-checkin-email`,
+          { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(emailData) },
+        );
+        if (!emailResponse.ok) console.error("❌ Failed to send check-in email");
+        else console.log("✅ Check-in email sent to:", booking.email);
+      } catch (emailError) {
+        console.error("❌ Email sending error:", emailError);
+      }
+    }
+
+    // Send thank-you / check-out email when the guest checks out
+    if ((status === "completed" || status === "checked-out") && bookingDetailsResult.rows.length > 0) {
+      try {
+        const booking = bookingDetailsResult.rows[0];
+        const emailData = {
+          firstName: booking.first_name,
+          lastName: booking.last_name,
+          email: booking.email,
+          bookingId: booking.booking_id,
+          roomName: booking.room_name,
+          checkInDate: booking.check_in_date ? new Date(booking.check_in_date).toLocaleDateString() : "",
+          checkOutDate: booking.check_out_date ? new Date(booking.check_out_date).toLocaleDateString() : "",
+          totalAmount: booking.total_amount,
+          remainingBalance: Number(booking.remaining_balance ?? 0),
+        };
+        const emailResponse = await fetch(
+          `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/send-checkout-email`,
+          { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(emailData) },
+        );
+        if (!emailResponse.ok) console.error("❌ Failed to send check-out email");
+        else console.log("✅ Check-out email sent to:", booking.email);
+      } catch (emailError) {
+        console.error("❌ Email sending error:", emailError);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       data: result.rows[0],
@@ -1729,6 +1786,7 @@ export const getUserBookings = async (
         bp.down_payment,
         bp.remaining_balance,
         bp.payment_method,
+        bp.payment_status,
         bp.room_rate,
         bp.add_ons_total,
         COALESCE(bd.amount, 0) as security_deposit,
@@ -1765,7 +1823,7 @@ export const getUserBookings = async (
       }
     }
 
-    query += ` GROUP BY b.id, h.tower, h.uuid_id, bp.total_amount, bp.down_payment, bp.remaining_balance, bp.payment_method, bp.room_rate, bp.add_ons_total, bg.first_name, bg.last_name, bg.email, bd.amount ORDER BY b.created_at DESC`;
+    query += ` GROUP BY b.id, h.tower, h.uuid_id, bp.total_amount, bp.down_payment, bp.remaining_balance, bp.payment_method, bp.payment_status, bp.room_rate, bp.add_ons_total, bg.first_name, bg.last_name, bg.email, bd.amount ORDER BY b.created_at DESC`;
 
     const result = await pool.query(query, values);
     console.log(

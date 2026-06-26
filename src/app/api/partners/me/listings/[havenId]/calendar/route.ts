@@ -58,7 +58,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ havenId: st
         `SELECT b.id::text AS id, b.booking_id,
                 b.check_in_date::text, b.check_out_date::text,
                 b.status,
-                COALESCE(b.booking_source, 'staycation') AS booking_source
+                COALESCE(b.booking_source, 'direct') AS booking_source
          FROM booking b
          JOIN havens h ON h.haven_name = b.room_name
          WHERE h.uuid_id = $1 ${bookingDateClause}
@@ -73,7 +73,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ havenId: st
           `SELECT b.id::text AS id, b.booking_id,
                   b.check_in_date::text, b.check_out_date::text,
                   b.status,
-                  'staycation'::text AS booking_source
+                  'direct'::text AS booking_source
            FROM booking b
            JOIN havens h ON h.haven_name = b.room_name
            WHERE h.uuid_id = $1 ${bookingDateClause}

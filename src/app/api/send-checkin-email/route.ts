@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Welcome! Check-In Confirmation - Staycation Haven</title>
+        <title>Welcome! Check-In Confirmation - D'Lux Homes</title>
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@600;700&display=swap" rel="stylesheet">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
         <style>
@@ -311,7 +311,7 @@ export async function POST(request: NextRequest) {
           <!-- Header -->
           <div class="header">
             <div class="logo">
-              <i class="fas fa-umbrella-beach"></i> Staycation Haven
+              <i class="fas fa-umbrella-beach"></i> D'Lux Homes
             </div>
             <div class="tagline">Your Perfect Getaway Awaits</div>
             <div class="status-badge">
@@ -328,7 +328,7 @@ export async function POST(request: NextRequest) {
             </div>
 
             <p class="intro-text">
-              You have successfully checked in! We hope you enjoy your stay at <strong>Staycation Haven</strong>.
+              You have successfully checked in! We hope you enjoy your stay at <strong>D'Lux Homes</strong>.
               If you need anything during your stay, please don't hesitate to contact our staff.
             </p>
 
@@ -392,7 +392,7 @@ export async function POST(request: NextRequest) {
                 <i class="fas fa-star"></i> Enjoy Your Stay! <i class="fas fa-star"></i>
               </div>
               <div class="enjoy-subtitle">
-                We hope you have a wonderful and memorable experience at Staycation Haven
+                We hope you have a wonderful and memorable experience at D'Lux Homes
               </div>
             </div>
           </div>
@@ -415,7 +415,7 @@ export async function POST(request: NextRequest) {
             <div class="footer-divider"></div>
 
             <div class="footer-copyright">
-              &copy; ${new Date().getFullYear()} Staycation Haven. All rights reserved.
+              &copy; ${new Date().getFullYear()} D'Lux Homes. All rights reserved.
             </div>
           </div>
         </div>
@@ -424,7 +424,7 @@ export async function POST(request: NextRequest) {
     `;
 
     const mailOptions = {
-      from: `"Staycation Haven" <${process.env.EMAIL_USER}>`,
+      from: `"D'Lux Homes" <${process.env.EMAIL_USER}>`,
       to: bookingData.email,
       subject: `Welcome! You're Checked In - ${bookingData.bookingId}`,
       html: emailHtml,

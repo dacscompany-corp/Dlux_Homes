@@ -15,7 +15,7 @@ import {
   getDeposits, getDeliverables, getDiscounts,
   updateDepositStatus, markBookingDeliverablesDelivered,
   createDiscount, toggleDiscountStatus, deleteDiscount,
-  approveDownPaymentByBookingId,
+  approveDownPaymentByBookingId, updateDepositStatusByBookingId,
 } from "@/app/admin/csr/actions";
 import NewBookingWizard from "@/components/admin/NewBookingWizard";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -38,11 +38,16 @@ const navItems = [
 
 const statusConfig: Record<string, { label: string; color: string; bg: string; dot: string }> = {
   pending:       { label: "Pending",     color: "#92400e", bg: "#fef3c7", dot: "#f59e0b" },
+  "awaiting-payment": { label: "Awaiting Payment", color: "#9a3412", bg: "#ffedd5", dot: "#f97316" },
+  "down-paid":   { label: "Down Paid",   color: "#3730a3", bg: "#e0e7ff", dot: "#6366f1" },
   confirmed:     { label: "Confirmed",   color: "#B07848", bg: "#F7F0E3", dot: "#B07848" },
   "checked-in":  { label: "Checked In", color: "#065f46", bg: "#d1fae5", dot: "#10b981" },
   "checked-out": { label: "Checked Out",color: "#374151", bg: "#f3f4f6", dot: "#9ca3af" },
   rejected:      { label: "Rejected",   color: "#991b1b", bg: "#fee2e2", dot: "#ef4444" },
 };
+
+// Refundable security deposit collected at check-in (D'Lux house policy).
+const SECURITY_DEPOSIT = 1000;
 
 const calendarDays = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
@@ -92,8 +97,14 @@ export default function CSRDashboard() {
   const [viewBooking, setViewBooking] = useState<{ displayId: string; guest: string; email: string; room: string; checkIn: string; stayType: string; amount: number; status: string } | null>(null);
 
   // Backend statuses → UI statuses the design expects
-  const normalizeStatus = (s: string) =>
-    s === "completed" ? "checked-out" : s === "approved" ? "confirmed" : s === "on-going" ? "checked-in" : s;
+  // "on-going" = down payment approved, awaiting final approval — NOT yet checked in.
+  // "approved" is only "confirmed" once the down payment is approved; until then
+  // it's "awaiting-payment" (host pre-approved, guest hasn't paid yet).
+  const normalizeStatus = (s: string, ps = "") =>
+    s === "completed" ? "checked-out"
+      : s === "on-going" ? "down-paid"
+      : s === "approved" ? (ps.startsWith("approved") ? "confirmed" : "awaiting-payment")
+      : s;
 
   const rawBookings = toRows(bookingsData);
   const bookings = rawBookings.map((b) => ({
@@ -104,7 +115,9 @@ export default function CSRDashboard() {
     checkIn: b.check_in_date ? new Date(String(b.check_in_date)).toLocaleDateString() : "—",
     stayType: b.check_in_time && b.check_out_time ? `${b.check_in_time}–${b.check_out_time}` : "Stay",
     amount: Number(b.total_amount ?? b.down_payment ?? 0),
-    status: normalizeStatus(String(b.status ?? "pending")),
+    remaining: Number(b.remaining_balance ?? 0),
+    paymentStatus: String(b.payment_status ?? ""),
+    status: normalizeStatus(String(b.status ?? "pending"), String(b.payment_status ?? "")),
     email: String(b.guest_email ?? ""),
     rawCheckIn: b.check_in_date,
     rawCheckOut: b.check_out_date,
@@ -122,6 +135,9 @@ export default function CSRDashboard() {
   );
   const openApproval = (b: { id: string; displayId: string; guest: string; amount: number }) =>
     setApproval({ open: true, step: 1, id: b.id, displayId: b.displayId, guest: b.guest, amount: b.amount, busy: false });
+  // Resume a down-paid booking straight at step 2 (down payment already approved).
+  const openApprovalFinal = (b: { id: string; displayId: string; guest: string; amount: number }) =>
+    setApproval({ open: true, step: 2, id: b.id, displayId: b.displayId, guest: b.guest, amount: b.amount, busy: false });
   const approveDownStep = async () => {
     setApproval((a) => ({ ...a, busy: true }));
     try {
@@ -143,8 +159,31 @@ export default function CSRDashboard() {
     await setStatus(rejectModal.id, "rejected", "Booking rejected", rejectModal.reason.trim() || "Rejected by CSR");
     setRejectModal({ open: false, id: "", reason: "" });
   };
-  const checkInBooking  = (id: string) => setStatus(id, "checked-in", "Guest checked in");
   const checkOutBooking = (id: string) => setStatus(id, "completed", "Guest checked out");
+
+  // Check-in collects the remaining balance + ₱1,000 refundable deposit, then
+  // flips the booking to checked-in. updateDepositStatusByBookingId settles the
+  // balance on booking_payments and records the deposit as held.
+  const [checkIn, setCheckIn] = useState<{ open: boolean; id: string; displayId: string; guest: string; remaining: number; method: string; busy: boolean }>(
+    { open: false, id: "", displayId: "", guest: "", remaining: 0, method: "Cash", busy: false }
+  );
+  const openCheckIn = (b: { id: string; displayId: string; guest: string; remaining: number }) =>
+    setCheckIn({ open: true, id: b.id, displayId: b.displayId, guest: b.guest, remaining: Math.max(0, b.remaining), method: "Cash", busy: false });
+  const confirmCheckIn = async () => {
+    setCheckIn((c) => ({ ...c, busy: true }));
+    try {
+      const collected = checkIn.remaining + SECURITY_DEPOSIT;
+      // Records the deposit as held and settles any outstanding balance.
+      await updateDepositStatusByBookingId(checkIn.id, "Paid", undefined, undefined, collected, checkIn.method, "csr");
+      await updateBookingStatus({ id: checkIn.id, status: "checked-in" }).unwrap();
+      toast.success("Checked in — balance & deposit collected");
+      setCheckIn({ open: false, id: "", displayId: "", guest: "", remaining: 0, method: "Cash", busy: false });
+      refetchBookings();
+    } catch {
+      toast.error("Could not complete check-in");
+      setCheckIn((c) => ({ ...c, busy: false }));
+    }
+  };
 
   const filteredBookings = bookings.filter((b) => filterStatus === "all" || b.status === filterStatus);
 
@@ -552,7 +591,7 @@ export default function CSRDashboard() {
                           <div style={{ fontSize: 12, color: "#8a8276", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.room}</div>
                         </div>
                         <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 12, color: "#6b6358", flex: "none" }}>{a.checkIn}</span>
-                        <button type="button" style={a.isIn ? btnEm : btnNeutral} onClick={() => a.isIn ? checkInBooking(a.id) : checkOutBooking(a.id)}>{a.isIn ? "Check in" : "Check out"}</button>
+                        <button type="button" style={a.isIn ? btnEm : btnNeutral} onClick={() => a.isIn ? openCheckIn(a) : checkOutBooking(a.id)}>{a.isIn ? "Check in" : "Check out"}</button>
                       </div>
                     ))}
                   </div>
@@ -609,7 +648,11 @@ export default function CSRDashboard() {
                             <button type="button" style={btnEm} onClick={() => openApproval(b)}>Approve</button>
                             <button type="button" style={btnDanger} onClick={() => rejectBooking(b.id)}>Reject</button>
                           </>)}
-                          {b.status === "confirmed" && <button type="button" style={btnEm} onClick={() => checkInBooking(b.id)}>Check in</button>}
+                          {b.status === "down-paid" && (<>
+                            <button type="button" style={btnEm} onClick={() => openApprovalFinal(b)}>Approve</button>
+                            <button type="button" style={btnDanger} onClick={() => rejectBooking(b.id)}>Reject</button>
+                          </>)}
+                          {b.status === "confirmed" && <button type="button" style={btnEm} onClick={() => openCheckIn(b)}>Check in</button>}
                           {b.status === "checked-in" && <button type="button" style={btnNeutral} onClick={() => checkOutBooking(b.id)}>Check out</button>}
                         </div>
                       </div>
@@ -638,6 +681,7 @@ export default function CSRDashboard() {
                       style={{ backgroundColor: "#F7F0E3", borderColor: "#D4BFA0", color: "#5a4a3a" }}>
                       <option value="all">All Status</option>
                       <option value="pending">Pending</option>
+                      <option value="down-paid">Down Paid</option>
                       <option value="confirmed">Confirmed</option>
                       <option value="checked-in">Checked In</option>
                       <option value="checked-out">Checked Out</option>
@@ -705,7 +749,7 @@ export default function CSRDashboard() {
                                 </button>
                               </>)}
                               {b.status === "confirmed" && (
-                                <button onClick={() => checkInBooking(b.id)} className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium border cursor-pointer" style={{ backgroundColor: "#F7F0E3", color: "#B07848", borderColor: "#D4BFA0" }}
+                                <button onClick={() => openCheckIn(b)} className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium border cursor-pointer" style={{ backgroundColor: "#F7F0E3", color: "#B07848", borderColor: "#D4BFA0" }}
                                   onMouseEnter={(e)=>(e.currentTarget as HTMLElement).style.backgroundColor="#EDE0CE"}
                                   onMouseLeave={(e)=>(e.currentTarget as HTMLElement).style.backgroundColor="#F7F0E3"}>
                                   <UserCheck className="w-3 h-3" /> Check In
@@ -1279,6 +1323,38 @@ export default function CSRDashboard() {
             <div className="flex justify-end gap-2 mt-5">
               <button type="button" onClick={() => setRejectModal({ open: false, id: "", reason: "" })} className="px-4 py-2 text-sm font-medium border cursor-pointer" style={{ color: "#8B6344", borderColor: "#ece5d4", backgroundColor: "#ffffff" }}>Cancel</button>
               <button type="button" onClick={submitReject} disabled={bookingUpdating} className="px-4 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#dc2626" }}>{bookingUpdating ? "Rejecting…" : "Reject Booking"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Check-in: collect balance + ₱1,000 deposit ── */}
+      {checkIn.open && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => !checkIn.busy && setCheckIn((c) => ({ ...c, open: false }))}>
+          <div className="w-full max-w-md border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 19, lineHeight: 1, color: "#1f1b16" }}>Check In Guest</h3>
+            <p className="text-sm mt-0.5" style={{ color: "#8B6344" }}>Collect the remaining balance and refundable deposit.</p>
+
+            <div className="border p-4 mt-4 mb-4" style={{ backgroundColor: "#FAFAF7", borderColor: "#ece5d4" }}>
+              <div className="flex items-center justify-between text-sm"><span style={{ color: "#8B6344" }}>Booking</span><span className="font-mono text-xs" style={{ color: "#1a1a1a" }}>{checkIn.displayId}</span></div>
+              <div className="flex items-center justify-between text-sm mt-2"><span style={{ color: "#8B6344" }}>Guest</span><span style={{ color: "#1a1a1a" }}>{checkIn.guest}</span></div>
+              <div className="flex items-center justify-between text-sm mt-3 pt-3 border-t" style={{ borderColor: "#ece5d4" }}><span style={{ color: "#8B6344" }}>Remaining balance</span><span style={{ color: "#1a1a1a" }}>₱{checkIn.remaining.toLocaleString()}</span></div>
+              <div className="flex items-center justify-between text-sm mt-2"><span style={{ color: "#8B6344" }}>Security deposit (refundable)</span><span style={{ color: "#1a1a1a" }}>₱{SECURITY_DEPOSIT.toLocaleString()}</span></div>
+              <div className="flex items-center justify-between text-sm mt-2 pt-2 border-t font-bold" style={{ borderColor: "#ece5d4" }}><span style={{ color: "#1a1a1a" }}>Total to collect</span><span style={{ color: "#B07848" }}>₱{(checkIn.remaining + SECURITY_DEPOSIT).toLocaleString()}</span></div>
+            </div>
+
+            <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Payment method</label>
+            <select aria-label="Payment method" value={checkIn.method} onChange={(e) => setCheckIn((c) => ({ ...c, method: e.target.value }))} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none cursor-pointer" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
+              <option value="Cash">Cash</option>
+              <option value="GCash">GCash</option>
+              <option value="Bank">BPI bank transfer</option>
+            </select>
+
+            <p className="text-xs mt-3 leading-relaxed" style={{ color: "#8B6344" }}>The ₱{SECURITY_DEPOSIT.toLocaleString()} deposit is refundable on checkout. Confirming marks the balance fully paid and checks the guest in.</p>
+
+            <div className="flex justify-between gap-2 mt-5">
+              <button type="button" onClick={() => setCheckIn((c) => ({ ...c, open: false }))} disabled={checkIn.busy} className="px-4 py-2 text-sm font-medium border cursor-pointer disabled:opacity-60" style={{ color: "#8B6344", borderColor: "#ece5d4", backgroundColor: "#ffffff" }}>Cancel</button>
+              <button type="button" onClick={confirmCheckIn} disabled={checkIn.busy} className="px-5 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#B07848" }}>{checkIn.busy ? "Checking in…" : `Collect ₱${(checkIn.remaining + SECURITY_DEPOSIT).toLocaleString()} & Check In`}</button>
             </div>
           </div>
         </div>

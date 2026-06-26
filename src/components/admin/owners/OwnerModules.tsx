@@ -524,48 +524,87 @@ export function PaymentMethodsSection() {
       )}
 
       {modal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setModal(false)}>
-          <div className="w-full max-w-md border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }} onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <h3 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>Add Payment Method</h3>
-                <p className="text-sm mt-0.5" style={{ color: "#8B6344" }}>A channel guests can pay through.</p>
-              </div>
-              <button type="button" onClick={() => setModal(false)} title="Close" className="p-1.5 rounded-lg cursor-pointer" style={{ color: "#8B6344" }}><X className="w-4 h-4" /></button>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Display name</label>
-                <input value={form.payment_name} onChange={(e) => setForm((f) => ({ ...f, payment_name: e.target.value }))} placeholder="GCash – Main" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Type</label>
-                  <select aria-label="Payment type" value={form.payment_method} onChange={(e) => setForm((f) => ({ ...f, payment_method: e.target.value }))} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
-                    {PM_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
-                  </select>
+        <div onClick={() => setModal(false)} style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", background: "rgba(31,27,22,0.45)" }}>
+          <style>{`@keyframes vb-pop{from{opacity:0;transform:translateY(12px) scale(.985);}to{opacity:1;transform:none;}}`}</style>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 440, background: "#ffffff", border: "1px solid #ece5d4", borderRadius: 16, boxShadow: "0 32px 70px -28px rgba(58,42,24,.45), 0 4px 14px -6px rgba(58,42,24,.18)", overflow: "hidden", display: "flex", flexDirection: "column", maxHeight: "100%", animation: "vb-pop .35s cubic-bezier(.2,.7,.3,1) both" }}>
+
+            {/* Header */}
+            <div style={{ position: "relative", padding: "20px 22px 16px", background: "linear-gradient(180deg, #f3e7d2 0%, rgba(255,255,255,0) 100%)", flexShrink: 0 }}>
+              <button type="button" onClick={() => setModal(false)} title="Close"
+                onMouseEnter={(e) => { const t = e.currentTarget; t.style.background = "#fff"; t.style.color = "#1f1b16"; }}
+                onMouseLeave={(e) => { const t = e.currentTarget; t.style.background = "rgba(255,255,255,.7)"; t.style.color = "#8a6f4d"; }}
+                style={{ position: "absolute", top: 14, right: 14, width: 30, height: 30, display: "grid", placeItems: "center", border: "1px solid #e7dcc5", borderRadius: "50%", background: "rgba(255,255,255,.7)", color: "#8a6f4d", cursor: "pointer", transition: "all .15s" }}>
+                <X className="w-3.5 h-3.5" />
+              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, paddingRight: 40 }}>
+                <div style={{ width: 42, height: 42, flex: "none", borderRadius: 11, background: "#1f1b16", color: "#fff", display: "grid", placeItems: "center", boxShadow: "0 6px 14px -6px rgba(31,27,22,.5)" }}>
+                  <CreditCard className="w-[19px] h-[19px]" />
                 </div>
-                <div>
-                  <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Provider</label>
-                  <input value={form.provider} onChange={(e) => setForm((f) => ({ ...f, provider: e.target.value }))} placeholder="GCash / BPI…" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                <div style={{ minWidth: 0 }}>
+                  <h3 style={{ margin: 0, fontWeight: 700, fontSize: 17, letterSpacing: "-.01em", color: "#1f1b16" }}>Add Payment Method</h3>
+                  <p style={{ margin: "3px 0 0", fontSize: 12, color: "#9b8870" }}>A channel guests can pay through.</p>
                 </div>
               </div>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: "4px 22px 20px", flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: 14 }}>
               <div>
-                <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Account details</label>
-                <input value={form.account_details} onChange={(e) => setForm((f) => ({ ...f, account_details: e.target.value }))} placeholder="0917 123 4567 · Juan Dela Cruz" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none font-mono" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                <label style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: ".09em", textTransform: "uppercase", color: "#b8754a" }}>Display name</label>
+                <input value={form.payment_name} onChange={(e) => setForm((f) => ({ ...f, payment_name: e.target.value }))} placeholder="GCash — Main" style={{ width: "100%", marginTop: 7, borderRadius: 10, border: "1px solid #f1ead9", background: "#faf7f1", padding: "10px 12px", fontSize: 13.5, color: "#1f1b16", outline: "none" }} />
               </div>
-              <div>
-                <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Notes (optional)</label>
-                <input value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} placeholder="e.g. for down payments only" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: ".09em", textTransform: "uppercase", color: "#b8754a" }}>Type</label>
+                  <div style={{ position: "relative", marginTop: 7 }}>
+                    <select aria-label="Payment type" value={form.payment_method} onChange={(e) => setForm((f) => ({ ...f, payment_method: e.target.value }))} style={{ width: "100%", borderRadius: 10, border: "1px solid #f1ead9", background: "#faf7f1", padding: "10px 30px 10px 12px", fontSize: 13.5, color: "#1f1b16", outline: "none", appearance: "none", WebkitAppearance: "none", MozAppearance: "none", cursor: "pointer" }}>
+                      {PM_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#a08a6c" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ position: "absolute", right: 11, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}><path d="M6 9l6 6 6-6" /></svg>
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: ".09em", textTransform: "uppercase", color: "#b8754a" }}>Provider</label>
+                  <input value={form.provider} onChange={(e) => setForm((f) => ({ ...f, provider: e.target.value }))} placeholder="GCash / BPI…" style={{ width: "100%", marginTop: 7, borderRadius: 10, border: "1px solid #f1ead9", background: "#faf7f1", padding: "10px 12px", fontSize: 13.5, color: "#1f1b16", outline: "none" }} />
+                </div>
               </div>
+
               <div>
-                <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>QR image (optional)</label>
-                <input aria-label="QR image" type="file" accept="image/*" onChange={(e) => setForm((f) => ({ ...f, qr: e.target.files?.[0] || null }))} className="w-full mt-1 text-sm" style={{ color: "#5a4a3a" }} />
+                <label style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: ".09em", textTransform: "uppercase", color: "#b8754a" }}>Account details</label>
+                <input value={form.account_details} onChange={(e) => setForm((f) => ({ ...f, account_details: e.target.value }))} placeholder="0917 123 4567 · Juan Dela Cruz" style={{ width: "100%", marginTop: 7, borderRadius: 10, border: "1px solid #f1ead9", background: "#faf7f1", padding: "10px 12px", fontSize: 13.5, color: "#1f1b16", outline: "none", fontFamily: "var(--font-geist-mono), ui-monospace, monospace" }} />
+              </div>
+
+              <div>
+                <label style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: ".09em", textTransform: "uppercase", color: "#b8754a" }}>Notes <span style={{ color: "#c2ad88", fontWeight: 500, letterSpacing: 0 }}>· optional</span></label>
+                <input value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} placeholder="e.g. for down payments only" style={{ width: "100%", marginTop: 7, borderRadius: 10, border: "1px solid #f1ead9", background: "#faf7f1", padding: "10px 12px", fontSize: 13.5, color: "#1f1b16", outline: "none" }} />
+              </div>
+
+              <div>
+                <label style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: ".09em", textTransform: "uppercase", color: "#b8754a" }}>QR image <span style={{ color: "#c2ad88", fontWeight: 500, letterSpacing: 0 }}>· optional</span></label>
+                <label style={{ display: "flex", alignItems: "center", gap: 13, marginTop: 7, padding: "15px 16px", borderRadius: 12, border: `1px ${form.qr ? "solid #dcebe0" : "dashed #d8c8a8"}`, background: form.qr ? "#f1f7f2" : "#fcfaf5", cursor: "pointer" }}>
+                  <span style={{ width: 40, height: 40, flex: "none", borderRadius: 10, background: form.qr ? "#dcebe0" : "#f1ead9", color: form.qr ? "#2f7d55" : "#b8754a", display: "grid", placeItems: "center" }}>
+                    {form.qr ? (
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+                    ) : (
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><path d="M14 14h3v3M21 14v7h-7" /></svg>
+                    )}
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: "block", fontSize: 13, color: "#1f1b16", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {form.qr ? form.qr.name : (<>Drop a QR image, or <span style={{ color: "#b8754a", textDecoration: "underline" }}>browse</span></>)}
+                    </span>
+                    <span style={{ display: "block", fontSize: 11.5, color: form.qr ? "#2f7d55" : "#a08a6c", marginTop: 1 }}>{form.qr ? "Ready to upload" : "PNG or JPG · helps guests pay faster"}</span>
+                  </span>
+                  <input aria-label="QR image" type="file" accept="image/*" onChange={(e) => setForm((f) => ({ ...f, qr: e.target.files?.[0] || null }))} style={{ display: "none" }} />
+                </label>
               </div>
             </div>
-            <div className="flex justify-end gap-2 mt-5">
-              <button type="button" onClick={() => setModal(false)} className="px-4 py-2 rounded-xl text-sm font-semibold border cursor-pointer" style={{ color: "#8B6344", borderColor: "#ece5d4", backgroundColor: "#ffffff" }}>Cancel</button>
-              <button type="button" onClick={submit} disabled={saving} className="px-4 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#1f1b16" }}>{saving ? "Adding…" : "Add Method"}</button>
+
+            {/* Footer */}
+            <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, padding: "13px 22px", borderTop: "1px solid #f4ecdd", background: "#fff", flexShrink: 0 }}>
+              <button type="button" onClick={() => setModal(false)} style={{ padding: "9px 16px", borderRadius: 10, fontSize: 13, fontWeight: 600, border: "none", background: "transparent", color: "#6f5c44", cursor: "pointer" }}>Cancel</button>
+              <button type="button" onClick={submit} disabled={saving} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 18px", borderRadius: 10, fontSize: 13, fontWeight: 600, border: "none", background: "#1f1b16", color: "#fff", cursor: "pointer", opacity: saving ? 0.6 : 1 }}><Plus className="w-3.5 h-3.5" />{saving ? "Adding…" : "Add Method"}</button>
             </div>
           </div>
         </div>

@@ -6,9 +6,13 @@ import {
   deleteBooking,
 } from "@/backend/controller/bookingController";
 import { notifyAdminOfBooking } from "@/backend/utils/messengerNotify";
+import { requireAdmin } from "@/backend/utils/requireAdmin";
 
-// GET /api/bookings
+// GET /api/bookings — admin-only list of ALL bookings (Owner/CSR).
+// Guests read their own via /api/bookings/user/[id] and /api/bookings/[id].
 export async function GET(req: NextRequest) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
   return getAllBookings(req);
 }
 
@@ -27,12 +31,16 @@ export async function POST(req: NextRequest) {
   return res;
 }
 
-// PUT /api/bookings - THIS WAS MISSING!
+// PUT /api/bookings — admin-only: approve / reject / check-in / check-out.
 export async function PUT(req: NextRequest) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
   return updateBookingStatus(req);
 }
 
-// DELETE /api/bookings
+// DELETE /api/bookings — admin-only.
 export async function DELETE(req: NextRequest) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
   return deleteBooking(req);
 }

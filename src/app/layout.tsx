@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, Fraunces } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/Providers";
@@ -22,6 +22,12 @@ const fraunces = Fraunces({
 export const metadata: Metadata = {
   title: "D'Lux Homes",
   description: "Book your perfect stay at D'Lux Homes",
+};
+
+// Ensure the mobile viewport meta is present so responsive breakpoints apply.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({

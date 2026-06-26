@@ -356,7 +356,7 @@ export async function generateReceiptPDF(data: ReceiptData): Promise<Buffer> {
   pdf.setTextColor(...PRIMARY);
   pdf.setFontSize(11);
   pdf.setFont("helvetica", "bold");
-  pdf.text("Thank you for choosing Staycation Haven!", pageWidth / 2, pageHeight - 15, { align: "center" });
+  pdf.text("Thank you for choosing D'Lux Homes!", pageWidth / 2, pageHeight - 15, { align: "center" });
   pdf.setTextColor(...GRAY);
   pdf.setFontSize(7);
   pdf.setFont("helvetica", "normal");
@@ -722,7 +722,7 @@ export async function generatePamphletPDF(data: PamphletData): Promise<Buffer> {
   pdf.setTextColor(...WHITE);
   pdf.setFontSize(14);
   pdf.setFont("helvetica", "bold");
-  pdf.text("We hope you enjoy your stay at Staycation Haven!", pageWidth / 2, pageHeight - 16, { align: "center" });
+  pdf.text("We hope you enjoy your stay at D'Lux Homes!", pageWidth / 2, pageHeight - 16, { align: "center" });
   pdf.setTextColor(...PRIMARY_SOFT);
   pdf.setFontSize(10.5);
   pdf.setFont("helvetica", "normal");

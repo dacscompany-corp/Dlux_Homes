@@ -323,11 +323,17 @@ export default function HavenWizard({
                   </div>
                 ))}
               </div>
-              <div className="pt-1">
-                <label className={labelCls} style={labelStyle}>Security deposit (₱)</label>
-                <input type="number" placeholder="1000" value={form.security_deposit} onChange={(e) => set({ security_deposit: e.target.value })} className={`${field} mt-1`} style={fieldStyle} />
-                <p className="text-xs mt-2" style={{ color: "#C9B79E" }}>D&apos;Lux has no cleaning or extra-pax fee — the nightly rate covers 1–4 guests. Deposit is collected at check-in and refunded on checkout.</p>
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <div>
+                  <label className={labelCls} style={labelStyle}>Security deposit (₱)</label>
+                  <input type="number" placeholder="1000" value={form.security_deposit} onChange={(e) => set({ security_deposit: e.target.value })} className={`${field} mt-1`} style={fieldStyle} />
+                </div>
+                <div>
+                  <label className={labelCls} style={labelStyle}>Extra pax fee (₱ / pax)</label>
+                  <input type="number" placeholder="0" value={form.extra_pax_fee} onChange={(e) => set({ extra_pax_fee: e.target.value })} className={`${field} mt-1`} style={fieldStyle} />
+                </div>
               </div>
+              <p className="text-xs" style={{ color: "#C9B79E" }}>The nightly rate covers 2 guests. The extra-pax fee is charged per adult/young-adult beyond that (children 7 &amp; under are free) — leave it blank for none. Deposit is collected at check-in and refunded on checkout.</p>
             </div>
           )}
 

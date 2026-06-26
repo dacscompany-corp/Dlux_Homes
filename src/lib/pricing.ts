@@ -1,7 +1,7 @@
 // D'Lux Homes pricing rules — single source of truth for weekday vs
 // weekend/holiday rate selection. Matches the official rate card:
-//   Overnight (21h): Weekday ₱1,900 · Weekend/Holiday ₱2,100
-//   Daycation/Nightcation (10h): Weekday ₱1,500 · Weekend/Holiday ₱1,800
+//   Overnight (21h): Weekday ₱1,899 · Weekend/Holiday ₱2,099
+//   Daycation/Nightcation (10h): Weekday ₱1,499 · Weekend/Holiday ₱1,799
 // "Weekend" = a Friday, Saturday or Sunday check-in. "Holiday" = a PH holiday.
 
 // PH holidays — regular + common special non-working days. Update yearly.
@@ -64,4 +64,13 @@ export function stayTotal(stayType: string, checkInISO: string, nights: number, 
   let total = 0;
   for (let i = 0; i < n; i++) total += pickRate("21", addDaysISO(checkInISO, i), rates);
   return total;
+}
+
+// Extra-pax surcharge. The base rate covers `basePax` guests (2 for D'Lux);
+// each additional guest up to the max adds `feePerPax`, charged ONCE per
+// booking (flat — not multiplied by nights). Returns 0 within the allowance
+// or when no fee is configured.
+export function extraPaxFee(totalPax: number, basePax: number, feePerPax: number): number {
+  const extra = Math.max(0, Math.floor(totalPax || 0) - Math.floor(basePax || 0));
+  return extra * Math.max(0, feePerPax || 0);
 }

@@ -8,7 +8,7 @@ import SiteHeader from "@/components/SiteHeader";
 import { getMyBookingIds } from "@/lib/booking-store";
 import type { StoredBooking } from "@/lib/booking-store";
 
-type BookingRow = StoredBooking & { checkInTime?: string; checkOutTime?: string };
+type BookingRow = StoredBooking & { checkInTime?: string; checkOutTime?: string; paymentStatus?: string };
 // Map an API booking record into the shape the page renders.
 function mapBooking(d: Record<string, unknown>): BookingRow {
   return {
@@ -20,6 +20,7 @@ function mapBooking(d: Record<string, unknown>): BookingRow {
     stayType: "",
     guests: { adults: Number(d.adults ?? 0), children: Number(d.children ?? 0), infants: Number(d.infants ?? 0) },
     status: String(d.status ?? "pending") as StoredBooking["status"],
+    paymentStatus: String(d.payment_status ?? ""),
     totalAmount: Number(d.total_amount ?? 0),
     addOns: [],
     createdAt: String(d.created_at ?? ""),
@@ -49,41 +50,58 @@ function IcoTag() { return <svg width={13} height={13} viewBox="0 0 24 24" fill=
 
 const statusStyle = (s: string): { bg: string; ink: string; label: string } => ({
   pending:      { bg: "#F8E8C4", ink: "#7A5A18", label: "Pending approval" },
-  approved:     { bg: "#DDE9D4", ink: "#3B5A24", label: "Approved — pay to confirm" },
+  approved:     { bg: "#DDE9D4", ink: "#3B5A24", label: "Confirmed" },
+  "awaiting-payment": { bg: "#F8E8C4", ink: "#7A5A18", label: "Approved — pay to confirm" },
   confirmed:    { bg: "#DDE9D4", ink: "#3B5A24", label: "Confirmed" },
   "on-going":   { bg: "var(--ink)", ink: "var(--white)", label: "On-going" },
   "checked-in": { bg: "var(--ink)", ink: "var(--white)", label: "Checked in" },
   "checked-out":{ bg: "var(--bg-2)", ink: "var(--muted)", label: "Completed" },
   cancelled:    { bg: "#EFD9D4", ink: "#7A2B18", label: "Cancelled" },
   rejected:     { bg: "#EFD9D4", ink: "#7A2B18", label: "Rejected" },
+  expired:      { bg: "#ECECEC", ink: "#6B7280", label: "Expired" },
 }[s] || { bg: "var(--bg-2)", ink: "var(--muted)", label: s });
+
+// A booking that never got confirmed before its check-in date passed.
+const isExpiredBooking = (b: { status: string; paymentStatus?: string; checkIn?: string }) => {
+  const dpApproved = (b.paymentStatus || "").startsWith("approved");
+  const unconfirmed = b.status === "pending" || (b.status === "approved" && !dpApproved);
+  if (!unconfirmed || !b.checkIn) return false;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return new Date(b.checkIn + "T00:00:00").getTime() < today.getTime();
+};
 
 const ROOM_IMAGE = "https://images.unsplash.com/photo-1631049307264-da0ec9d70304?w=800&q=80";
 
-function BookingCard({ booking }: { booking: StoredBooking & { checkInTime?: string; checkOutTime?: string } }) {
-  const s = statusStyle(booking.status);
+function BookingCard({ booking }: { booking: BookingRow }) {
+  // "approved" means the host pre-approved; it's only "Confirmed" once the
+  // down payment is approved. Until then it's "Approved — pay to confirm".
+  const dpApproved = (booking.paymentStatus || "").startsWith("approved");
+  const statusKey = isExpiredBooking(booking)
+    ? "expired"
+    : booking.status === "approved" && !dpApproved ? "awaiting-payment" : booking.status;
+  const s = statusStyle(statusKey);
   const image = ROOM_IMAGE;
+  // Drop the "D'Lux Homes —" brand prefix; the header already shows the brand.
+  const shortName = booking.roomName.replace(/^\s*D[’‘'`]?\s*Lux\s*Homes\s*[—–-]\s*/i, "").trim() || booking.roomName;
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "200px 1fr auto", gap: 24, background: "var(--white)", borderRadius: 20, border: "1px solid var(--line)", overflow: "hidden" }}>
-      <div style={{ background: "var(--bg-2)", position: "relative" }}>
+    <div className="tr-card" style={{ display: "grid", gridTemplateColumns: "200px 1fr auto", gap: 24, background: "var(--white)", borderRadius: 20, border: "1px solid var(--line)", overflow: "hidden" }}>
+      <div className="tr-img" style={{ background: "var(--bg-2)", position: "relative" }}>
         <Image src={image} alt="" fill unoptimized style={{ objectFit: "cover" }} />
+        <span style={{ position: "absolute", top: 12, left: 12, padding: "5px 12px", borderRadius: 999, background: s.bg, color: s.ink, fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".08em" }}>{s.label}</span>
       </div>
-      <div style={{ padding: "22px 0" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-          <span style={{ padding: "3px 10px", borderRadius: 999, background: s.bg, color: s.ink, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".08em" }}>{s.label}</span>
-          <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "ui-monospace, monospace" }}>{booking.id}</span>
-        </div>
-        <div className="serif" style={{ fontSize: 24, fontWeight: 500, letterSpacing: "-.015em" }}>{booking.roomName}</div>
+      <div className="tr-body" style={{ padding: "22px 0" }}>
+        <div style={{ fontSize: 11, color: "var(--muted)", fontFamily: "ui-monospace, monospace", marginBottom: 4 }}>{booking.id}</div>
+        <div className="serif" style={{ fontSize: 24, fontWeight: 500, letterSpacing: "-.015em", overflowWrap: "anywhere" }}>{shortName}</div>
         <div style={{ display: "flex", gap: 18, fontSize: 13, color: "var(--ink-2)", marginTop: 10, flexWrap: "wrap" }}>
           <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}><IcoCalendar /> {formatDate(booking.checkIn)}</span>
           {booking.checkInTime && (
             <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}><IcoClock /> {booking.checkInTime} → {booking.checkOutTime}</span>
           )}
-          <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}><IcoUsers /> {booking.guests.adults + booking.guests.children} guest{booking.guests.adults + booking.guests.children > 1 ? "s" : ""}</span>
+          <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}><IcoUsers /> {booking.guests.adults + booking.guests.children + booking.guests.infants} guest{booking.guests.adults + booking.guests.children + booking.guests.infants > 1 ? "s" : ""}</span>
           <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}><IcoTag /> {booking.stayType}</span>
         </div>
       </div>
-      <div style={{ padding: "22px 24px 22px 0", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "space-between" }}>
+      <div className="tr-foot" style={{ padding: "22px 24px 22px 0", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "space-between" }}>
         <div style={{ textAlign: "right" }}>
           <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".1em", fontWeight: 600 }}>Total</div>
           <div style={{ fontSize: 22, fontWeight: 700, marginTop: 2 }}>{peso(booking.totalAmount)}</div>
@@ -130,19 +148,40 @@ export default function MyBookingsPage() {
     return () => { active = false; };
   }, [userId, status]);
 
-  const upcoming = bookings.filter((b) => ["pending", "approved", "confirmed", "on-going", "checked-in"].includes(b.status));
-  const past = bookings.filter((b) => ["checked-out", "cancelled", "rejected"].includes(b.status));
+  // A booking is "past" once it reaches a terminal status OR its stay has ended
+  // (check-out date in the past) — an approved booking whose dates already
+  // passed should NOT linger in Upcoming.
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const TERMINAL = ["checked-out", "completed", "cancelled", "rejected"];
+  const stayEnded = (b: BookingRow) => {
+    const end = b.checkOut || b.checkIn; // YYYY-MM-DD
+    if (!end) return false;
+    return new Date(end + "T00:00:00").getTime() < todayStart.getTime();
+  };
+  const past = bookings.filter((b) => TERMINAL.includes(b.status) || stayEnded(b) || isExpiredBooking(b));
+  const upcoming = bookings.filter((b) => !TERMINAL.includes(b.status) && !stayEnded(b) && !isExpiredBooking(b));
   const list = tab === "upcoming" ? upcoming : past;
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", backgroundColor: "var(--bg)", color: "var(--ink)" }}>
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", backgroundColor: "var(--bg)", color: "var(--ink)", overflowX: "hidden" }}>
       {/* HEADER */}
       <SiteHeader bookHref="/rooms" bookLabel="Book again" backHref="/rooms" backLabel="Back to home" />
 
-      <div className="page-enter" style={{ flex: 1, width: "100%", maxWidth: 1180, margin: "0 auto", padding: "40px 28px 80px" }}>
+      <div className="page-enter tr-wrap" style={{ flex: 1, width: "100%", maxWidth: 1180, margin: "0 auto", padding: "40px 28px 80px" }}>
+        <style>{`
+          .tr-card > * { min-width: 0; }
+          @media (max-width: 720px) {
+            .tr-wrap { padding: 26px 16px 56px !important; }
+            .tr-h1 { font-size: 40px !important; }
+            .tr-card, .tr-skel { grid-template-columns: 1fr !important; gap: 0 !important; }
+            .tr-img { height: 158px; }
+            .tr-body { padding: 16px 16px 0 !important; }
+            .tr-foot { flex-direction: row !important; align-items: center !important; justify-content: space-between !important; padding: 14px 16px 16px !important; border-top: 1px solid var(--line); margin-top: 12px; }
+          }
+        `}</style>
         <div style={{ marginBottom: 28 }}>
           <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: "var(--accent-ink)", marginBottom: 10 }}>Your journeys</div>
-          <h1 className="serif" style={{ fontSize: 56, fontWeight: 400, letterSpacing: "-.025em", margin: 0, lineHeight: 1 }}>My bookings</h1>
+          <h1 className="serif tr-h1" style={{ fontSize: 56, fontWeight: 400, letterSpacing: "-.025em", margin: 0, lineHeight: 1 }}>My bookings</h1>
         </div>
 
         <div style={{ display: "flex", gap: 4, padding: 5, background: "var(--bg-2)", borderRadius: 999, width: "fit-content", marginBottom: 28 }}>
@@ -158,8 +197,8 @@ export default function MyBookingsPage() {
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <style>{`@keyframes bkPulse { 0%,100% { opacity: 1 } 50% { opacity: .45 } } .bk-sk { animation: bkPulse 1.3s ease-in-out infinite; }`}</style>
             {[0, 1].map((i) => (
-              <div key={i} style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 24, background: "var(--white)", borderRadius: 20, border: "1px solid var(--line)", overflow: "hidden", minHeight: 164 }}>
-                <div className="bk-sk" style={{ background: "var(--bg-2)" }} />
+              <div key={i} className="tr-skel" style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 24, background: "var(--white)", borderRadius: 20, border: "1px solid var(--line)", overflow: "hidden", minHeight: 164 }}>
+                <div className="bk-sk tr-img" style={{ background: "var(--bg-2)" }} />
                 <div style={{ padding: "26px 0", display: "flex", flexDirection: "column", gap: 14 }}>
                   <div className="bk-sk" style={{ width: 140, height: 16, borderRadius: 6, background: "var(--bg-2)" }} />
                   <div className="bk-sk" style={{ width: 240, height: 26, borderRadius: 6, background: "var(--bg-2)" }} />

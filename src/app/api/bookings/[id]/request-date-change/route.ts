@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
 import { createNotificationsForRoles } from "@/backend/utils/notificationHelper";
+import { requireBookingAccess } from "@/backend/utils/requireAdmin";
 
 export const runtime = "nodejs";
 
@@ -20,6 +21,11 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
   const client = await pool.connect();
   try {
     const { id } = await params;
+
+    // Only the booking's owner (or Owner/CSR) may request a date change.
+    const guard = await requireBookingAccess(id);
+    if (!guard.ok) return guard.response;
+
     const body = await req.json().catch(() => ({} as Record<string, unknown>));
     const newDate = typeof body.new_date === "string" ? body.new_date : "";
     const reason = typeof body.reason === "string" ? body.reason.trim() : "";
@@ -29,7 +35,7 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
     }
 
     const found = await client.query(
-      `SELECT b.id, b.booking_id, b.status, b.room_name, b.check_in_date,
+      `SELECT b.id, b.booking_id, b.status, b.room_name, b.check_in_date, b.date_change_count,
               bg.first_name, bg.last_name
          FROM booking b
          LEFT JOIN booking_guests bg ON bg.booking_id = b.id
@@ -43,6 +49,13 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
     const booking = found.rows[0];
     if (!ACTIVE.includes(booking.status)) {
       return NextResponse.json({ error: "This booking can no longer be changed." }, { status: 409 });
+    }
+    // One-time rule: a booking may only ever have ONE date-change request.
+    if (Number(booking.date_change_count) >= 1) {
+      return NextResponse.json(
+        { error: "You've already used your one-time date change. Please message us directly to arrange any further changes." },
+        { status: 409 }
+      );
     }
 
     // Policy checks.
@@ -65,6 +78,24 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
       return NextResponse.json(
         { error: "The new date must be within 1 month of your original date." },
         { status: 422 }
+      );
+    }
+
+    // Atomically record the request. The `date_change_count = 0` guard makes the
+    // one-time rule race-safe: a concurrent second request updates zero rows.
+    const recorded = await client.query(
+      `UPDATE booking
+          SET date_change_count = date_change_count + 1,
+              date_change_requested_at = NOW(),
+              requested_new_date = $2
+        WHERE id = $1 AND date_change_count = 0
+        RETURNING id`,
+      [booking.id, newDate]
+    );
+    if (recorded.rows.length === 0) {
+      return NextResponse.json(
+        { error: "You've already used your one-time date change. Please message us directly to arrange any further changes." },
+        { status: 409 }
       );
     }
 

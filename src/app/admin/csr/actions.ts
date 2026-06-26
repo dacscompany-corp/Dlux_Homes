@@ -3,6 +3,7 @@
 import pool from "@/backend/config/db";
 import { headers } from "next/headers";
 import { createNotificationsForRoles } from "@/backend/utils/notificationHelper";
+import { requireAdmin } from "@/backend/utils/requireAdmin";
 
 export interface DepositRecord {
   id: string; // UUID from booking_security_deposits
@@ -331,6 +332,9 @@ export async function updateDepositStatusByBookingId(
   paymentMethod?: string,
   source?: string
 ): Promise<void> {
+  // Admin-only (Owner/CSR) — wired into the CSR check-in flow.
+  const guard = await requireAdmin();
+  if (!guard.ok) throw new Error("Forbidden: admin access required");
   const client = await pool.connect();
   try {
     const statusMap: Record<string, string> = {
@@ -394,6 +398,9 @@ export async function updateDepositStatusByBookingId(
         await client.query(
           `UPDATE booking_payments
              SET amount_paid = LEAST(total_amount, amount_paid + $2::numeric),
+                 -- keep remaining_balance in lockstep so the
+                 -- (remaining_balance = total_amount - amount_paid) CHECK holds
+                 remaining_balance = total_amount - LEAST(total_amount, amount_paid + $2::numeric),
                  payment_status = CASE
                    WHEN amount_paid + $2::numeric >= total_amount THEN 'approved_full_payment'
                    ELSE payment_status
@@ -596,6 +603,9 @@ export async function verifyCleanerCollection(
  * Used in Step 1 of the booking approval wizard
  */
 export async function approveDownPaymentByBookingId(bookingId: string): Promise<void> {
+  // Admin-only (Owner/CSR) — this server action bypasses the gated /api/bookings route.
+  const guard = await requireAdmin();
+  if (!guard.ok) throw new Error("Forbidden: admin access required");
   const client = await pool.connect();
   try {
     await client.query('BEGIN');

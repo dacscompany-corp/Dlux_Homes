@@ -7,6 +7,7 @@ import Image from "next/image";
 import toast from "react-hot-toast";
 import { useGetAnalyticsSummaryQuery, useGetMonthlyRevenueQuery, useGetRevenueByRoomQuery } from "@/redux/api/analyticsApi";
 import { useGetBookingsQuery, useUpdateBookingStatusMutation } from "@/redux/api/bookingsApi";
+import { updateDepositStatusByBookingId, approveDownPaymentByBookingId } from "@/app/admin/csr/actions";
 import { useGetHavensQuery, useCreateHavenMutation, useUpdateHavenMutation } from "@/redux/api/roomApi";
 import { useGetEmployeesQuery, useCreateEmployeeMutation } from "@/redux/api/employeeApi";
 import { useGetReviewsQuery } from "@/redux/api/reviewsApi";
@@ -57,6 +58,8 @@ import {
   CreditCard,
   Handshake,
   UsersRound,
+  LogIn,
+  BadgeCheck,
 } from "lucide-react";
 
 const navItems = [
@@ -69,12 +72,17 @@ const navItems = [
   { icon: Settings, label: "System" },
 ];
 
+const SECURITY_DEPOSIT = 1000; // refundable, collected at check-in
+
 const statusConfig: Record<string, { label: string; color: string; bg: string; dot: string }> = {
   pending:      { label: "Pending",     color: "#92400e", bg: "#fef3c7", dot: "#f59e0b" },
+  "awaiting-payment": { label: "Awaiting Payment", color: "#9a3412", bg: "#ffedd5", dot: "#f97316" },
+  "down-paid":  { label: "Down Paid",   color: "#3730a3", bg: "#e0e7ff", dot: "#6366f1" },
   confirmed:    { label: "Confirmed",   color: "#B07848", bg: "#F7F0E3", dot: "#B07848" },
   "checked-in": { label: "Checked In", color: "#065f46", bg: "#d1fae5", dot: "#10b981" },
   "checked-out":{ label: "Checked Out",color: "#374151", bg: "#f3f4f6", dot: "#9ca3af" },
   rejected:     { label: "Rejected",   color: "#991b1b", bg: "#fee2e2", dot: "#ef4444" },
+  expired:      { label: "Expired",    color: "#6b7280", bg: "#f3f4f6", dot: "#9ca3af" },
 };
 
 // Normalize an RTK/fetch result to an array of rows, whether it arrives as a
@@ -130,11 +138,58 @@ export default function OwnerDashboard() {
   const openHavenWizard = () => { setEditHaven(null); setHavenModalOpen(true); };
   const openHavenEdit = (raw: Record<string, unknown>) => { setEditHaven(raw); setHavenModalOpen(true); };
   const closeHavenWizard = () => { setHavenModalOpen(false); setEditHaven(null); };
+  type AdminBookingRow = {
+    id: string; displayId: string; guest: string; room: string;
+    checkIn: string; stayType: string; amount: number; status: string; email: string;
+    checkOut: string; phone: string; roomRate: number; addOns: number;
+    downPayment: number; balance: number; paymentMethod: string; paymentStatus: string;
+    deposit: number; depositStatus: string; depositMethod: string;
+    validIdUrl: string; paymentProofUrl: string; paymentReference: string;
+    checkInRaw: string; checkOutRaw: string; checkInTime: string; checkOutTime: string;
+  };
+  const [bookingModal, setBookingModal] = useState<AdminBookingRow | null>(null);
+  const [refCopied, setRefCopied] = useState(false);
+  const copyRef = (ref: string) => { try { navigator.clipboard?.writeText(ref); } catch { /* ignore */ } setRefCopied(true); setTimeout(() => setRefCopied(false), 1500); };
+  type AdminHaven = {
+    id: string; name: string; type: string; floor: string;
+    rate: number; status: string; occupancy: number;
+    raw: Record<string, unknown>;
+  };
+  const [havenModal, setHavenModal] = useState<AdminHaven | null>(null);
+  // Generic detail modal, still used by the Staff (Team) view.
   const [detailModal, setDetailModal] = useState<{ title: string; subtitle?: string; rows: { label: string; value: string }[] } | null>(null);
+
+  // ── Command-palette search (⌘K / Ctrl+K) ──
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen((o) => !o);
+      } else if (e.key === "Escape") {
+        setSearchOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const handleApproveBooking = async (id: string) => {
     try { await updateBookingStatus({ id, status: "approved" }).unwrap(); toast.success("Booking approved"); }
     catch { toast.error("Could not approve booking"); }
+  };
+  // Approve the down payment → moves an "Awaiting Payment" booking to Confirmed.
+  // Two steps (same as CSR): approveDownPayment flips status to "on-going" and
+  // marks the payment approved, then setting status back to "approved" with the
+  // payment already approved normalizes to "confirmed" (ready to check in).
+  const handleConfirmPayment = async (id: string) => {
+    try {
+      await approveDownPaymentByBookingId(id);
+      await updateBookingStatus({ id, status: "approved" }).unwrap();
+      toast.success("Down payment approved — booking confirmed");
+      refetchBookings();
+    } catch { toast.error("Could not confirm the down payment"); }
   };
   const submitRejectBooking = async () => {
     try {
@@ -142,6 +197,34 @@ export default function OwnerDashboard() {
       toast.success("Booking rejected");
       setRejectModal({ open: false, id: "", reason: "" });
     } catch { toast.error("Could not reject booking"); }
+  };
+
+  // Check-in collects the remaining 50% balance + ₱1,000 refundable deposit, then
+  // flips the booking to checked-in (settles the balance on booking_payments and
+  // records the deposit as held). Mirrors the CSR check-in flow.
+  const [checkIn, setCheckIn] = useState<{ open: boolean; id: string; displayId: string; guest: string; remaining: number; method: string; busy: boolean }>(
+    { open: false, id: "", displayId: "", guest: "", remaining: 0, method: "Cash", busy: false }
+  );
+  const openCheckIn = (b: { id: string; displayId: string; guest: string; remaining: number }) =>
+    setCheckIn({ open: true, id: b.id, displayId: b.displayId, guest: b.guest, remaining: Math.max(0, b.remaining), method: "Cash", busy: false });
+  const confirmCheckIn = async () => {
+    setCheckIn((c) => ({ ...c, busy: true }));
+    try {
+      const collected = checkIn.remaining + SECURITY_DEPOSIT;
+      await updateDepositStatusByBookingId(checkIn.id, "Paid", undefined, undefined, collected, checkIn.method, "owner");
+      await updateBookingStatus({ id: checkIn.id, status: "checked-in" }).unwrap();
+      toast.success("Checked in — balance & deposit collected");
+      setCheckIn({ open: false, id: "", displayId: "", guest: "", remaining: 0, method: "Cash", busy: false });
+      refetchBookings();
+    } catch {
+      toast.error("Could not complete check-in");
+      setCheckIn((c) => ({ ...c, busy: false }));
+    }
+  };
+  // Check out → completes the booking (keeps the record + unlocks guest review).
+  const handleCheckOut = async (id: string) => {
+    try { await updateBookingStatus({ id, status: "completed" }).unwrap(); toast.success("Guest checked out — booking completed"); refetchBookings(); }
+    catch { toast.error("Could not check out the guest"); }
   };
   const submitStaff = async () => {
     if (!staffForm.first_name || !staffForm.last_name || !staffForm.email || !staffForm.password) {
@@ -188,9 +271,25 @@ export default function OwnerDashboard() {
   const totalRoomRev = Math.max(1, roomRev.reduce((t, r) => t + (Number(r.revenue) || 0), 0));
   const revYticks = [1, 0.75, 0.5, 0.25, 0].map((f) => `₱${Math.round((maxRev * f) / 1000)}k`);
 
-  // Backend statuses → UI statuses the design's statusConfig expects
-  const normalizeBookingStatus = (st: string) =>
-    st === "approved" ? "confirmed" : st === "completed" ? "checked-out" : st === "on-going" ? "checked-in" : st;
+  // Backend statuses → UI statuses the design's statusConfig expects.
+  // "on-going" = down payment approved, awaiting final approval — NOT checked in.
+  // "approved" is only "confirmed" once the down payment is approved; until then
+  // it's "awaiting-payment" (host pre-approved, guest hasn't paid yet).
+  const normalizeBookingStatus = (st: string, ps = "") =>
+    st === "completed" ? "checked-out"
+      : st === "on-going" ? "down-paid"
+      : st === "approved" ? (ps.startsWith("approved") ? "confirmed" : "awaiting-payment")
+      : st;
+
+  // Local today as YYYY-MM-DD (DATE columns come back as plain date strings).
+  const nowD = new Date();
+  const todayISO = `${nowD.getFullYear()}-${String(nowD.getMonth() + 1).padStart(2, "0")}-${String(nowD.getDate()).padStart(2, "0")}`;
+  // A still-unpaid booking whose check-in date has passed is treated as expired.
+  const deriveStatus = (rawStatus: string, ps: string, checkInISO: string) => {
+    const normalized = normalizeBookingStatus(rawStatus, ps);
+    const unpaid = normalized === "pending" || normalized === "awaiting-payment";
+    return unpaid && checkInISO && checkInISO < todayISO ? "expired" : normalized;
+  };
 
   // Bookings table (Overview + Bookings)
   const allAdminBookings = toRows(bookingsData).map((b) => ({
@@ -201,9 +300,78 @@ export default function OwnerDashboard() {
     checkIn: b.check_in_date ? new Date(String(b.check_in_date)).toLocaleDateString() : "—",
     stayType: b.check_in_time && b.check_out_time ? `${b.check_in_time}–${b.check_out_time}` : "Stay",
     amount: Number(b.total_amount ?? b.down_payment ?? 0),
-    status: normalizeBookingStatus(String(b.status ?? "pending")),
+    status: deriveStatus(String(b.status ?? "pending"), String(b.payment_status ?? ""), b.check_in_date ? String(b.check_in_date).slice(0, 10) : ""),
     email: String(b.guest_email ?? ""),
+    checkOut: b.check_out_date ? new Date(String(b.check_out_date)).toLocaleDateString() : "—",
+    phone: String(b.guest_phone ?? ""),
+    roomRate: Number(b.room_rate ?? 0),
+    addOns: Number(b.add_ons_total ?? 0),
+    downPayment: Number(b.down_payment ?? 0),
+    balance: Number(b.remaining_balance ?? 0),
+    paymentMethod: String(b.payment_method ?? ""),
+    paymentStatus: String(b.payment_status ?? ""),
+    deposit: Number(b.security_deposit ?? 0),
+    depositStatus: String(b.deposit_status ?? ""),
+    depositMethod: String(b.security_deposit_payment_method ?? ""),
+    validIdUrl: String(b.valid_id_url ?? ""),
+    paymentProofUrl: String(b.payment_proof_url ?? ""),
+    paymentReference: String(b.payment_reference ?? ""),
+    checkInRaw: b.check_in_date ? String(b.check_in_date) : "",
+    checkOutRaw: b.check_out_date ? String(b.check_out_date) : "",
+    checkInTime: String(b.check_in_time ?? ""),
+    checkOutTime: String(b.check_out_time ?? ""),
   }));
+
+  // ── Helpers for the redesigned booking detail modal ──
+  // (peso formatter is defined above.)
+  const dash = (v: string) => (v && v.trim() ? v : "—");
+  const fmtDate = (raw: string) =>
+    raw ? new Date(raw).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—";
+  const fmtTime = (t: string) => {
+    if (!t) return "";
+    const [h, m] = t.split(":");
+    const hr = parseInt(h, 10);
+    if (Number.isNaN(hr)) return t;
+    const ap = hr >= 12 ? "PM" : "AM";
+    const h12 = hr % 12 || 12;
+    return `${h12}:${m ?? "00"} ${ap}`;
+  };
+  const nightsBetween = (a: string, b: string) => {
+    if (!a || !b) return 0;
+    const ms = new Date(b).getTime() - new Date(a).getTime();
+    return Number.isFinite(ms) ? Math.max(0, Math.round(ms / 86400000)) : 0;
+  };
+  const initials = (name: string) =>
+    name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("") || "G";
+  // Status → pill colors, shared by the header status + section pills.
+  // Turn a raw status enum into a clean, human label.
+  const prettyStatus = (raw: string) => {
+    const map: Record<string, string> = {
+      approved_down_payment: "Approved",
+      pending_down_payment: "Awaiting payment",
+      pending_verification: "Verifying",
+      pending: "Pending",
+      paid: "Paid",
+      held: "Held",
+      returned: "Returned",
+      refunded: "Refunded",
+      partial: "Partial",
+      forfeited: "Forfeited",
+    };
+    const key = (raw || "").toLowerCase();
+    if (map[key]) return map[key];
+    return raw ? raw.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "Pending";
+  };
+  const statusPill = (raw: string): { bg: string; color: string; dot: string; label: string } => {
+    const s = (raw || "").toLowerCase();
+    const label = prettyStatus(raw);
+    // Negative states first — "inactive" contains "active" as a substring.
+    if (s.includes("reject") || s.includes("cancel") || s.includes("inactive") || s.includes("suspend") || s.includes("disable") || s.includes("forfeit")) return { bg: "#fee2e2", color: "#991b1b", dot: "#ef4444", label };
+    if (s.includes("confirm") || s.includes("approv") || s.includes("active") || s.includes("available") || s.includes("paid") || s.includes("held") || s.includes("return")) return { bg: "#d1fae5", color: "#065f46", dot: "#10b981", label };
+    if (s.includes("checked-in") || s === "on-going") return { bg: "#dbeafe", color: "#1e40af", dot: "#3b82f6", label };
+    if (s.includes("checked-out") || s.includes("complete")) return { bg: "#f3f0ea", color: "#6f5c44", dot: "#b0a187", label };
+    return { bg: "#fef3c7", color: "#92400e", dot: "#f59e0b", label };
+  };
 
   // Haven table (Property)
   const havens = havensList.map((h) => ({
@@ -211,7 +379,7 @@ export default function OwnerDashboard() {
     name: String(h.haven_name || h.name || "Haven"),
     type: String(h.haven_type || h.type || "Unit"),
     floor: [h.tower, h.floor].filter(Boolean).join(", ") || String(h.location || "—"),
-    rate: Number(h.price_per_night ?? h.price ?? h.rate ?? 0),
+    rate: Number(h.price_per_night ?? h.price ?? h.rate ?? h.weekday_rate ?? h.ten_hour_rate ?? 0),
     status: String(h.listing_status || h.status || "available"),
     occupancy: Number(h.occupancy ?? 0),
     raw: h, // full record, used to pre-fill the edit wizard
@@ -277,7 +445,8 @@ export default function OwnerDashboard() {
   const rawBookings = (bookingsData as unknown as Record<string, unknown>[]) || [];
   const checkInsToday  = rawBookings.filter((b) => sameDay(b.check_in_date)  && ["approved", "confirmed", "checked-in"].includes(String(b.status))).length;
   const checkOutsToday = rawBookings.filter((b) => sameDay(b.check_out_date) && ["checked-in", "completed", "checked-out"].includes(String(b.status))).length;
-  const pendingApproval = rawBookings.filter((b) => String(b.status) === "pending").length;
+  // Exclude past-dated (expired) pendings — they're no longer actionable.
+  const pendingApproval = rawBookings.filter((b) => String(b.status) === "pending" && (!b.check_in_date || String(b.check_in_date).slice(0, 10) >= todayISO)).length;
   const activeGuests = rawBookings.filter((b) => String(b.status) === "checked-in").length;
   const occupiedRooms = new Set(rawBookings.filter((b) => String(b.status) === "checked-in").map((b) => b.room_name)).size;
   const availableRooms = Math.max(0, havensList.length - occupiedRooms);
@@ -436,11 +605,11 @@ export default function OwnerDashboard() {
           </div>
 
           {/* center: search */}
-          <div className="hidden md:flex items-center gap-2.5" style={{ flex: "0 1 360px", padding: "9px 14px", background: "#faf7f1", border: "1px solid #ece5d4", color: "#8a8276" }}>
+          <button type="button" onClick={() => setSearchOpen(true)} className="hidden md:flex items-center gap-2.5 cursor-pointer text-left" style={{ flex: "0 1 360px", padding: "9px 14px", background: "#faf7f1", border: "1px solid #ece5d4", color: "#8a8276" }}>
             <Search className="w-[15px] h-[15px]" />
             <span style={{ fontSize: 13, flex: 1 }}>Search bookings, guests, havens…</span>
             <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 11, padding: "2px 6px", background: "#fff", border: "1px solid #e8e1d2", color: "#6b6358" }}>⌘K</span>
-          </div>
+          </button>
 
           {/* right: bell + account */}
           <div className="flex items-center gap-1">
@@ -630,14 +799,7 @@ export default function OwnerDashboard() {
                         <td className="px-4 py-3.5">
                           <div className="flex items-center gap-1">
                             <button
-                              onClick={() => setDetailModal({ title: booking.guest, subtitle: booking.displayId, rows: [
-                                { label: "Email", value: booking.email || "—" },
-                                { label: "Room", value: booking.room },
-                                { label: "Check-in", value: booking.checkIn },
-                                { label: "Stay", value: booking.stayType },
-                                { label: "Amount", value: `₱${booking.amount.toLocaleString()}` },
-                                { label: "Status", value: booking.status },
-                              ] })}
+                              onClick={() => setBookingModal(booking)}
                               title="View booking"
                               className="p-1.5 rounded-lg transition-colors"
                               style={{ color: "#8B6344" }}
@@ -673,6 +835,48 @@ export default function OwnerDashboard() {
                                   <XCircle className="w-3.5 h-3.5" />
                                 </button>
                               </>
+                            )}
+                            {booking.status === "awaiting-payment" && (
+                              <button
+                                type="button"
+                                onClick={() => handleConfirmPayment(booking.id)}
+                                disabled={bookingUpdating}
+                                title="Confirm down payment (mark paid → Confirmed)"
+                                className="p-1.5 rounded-lg transition-colors disabled:opacity-50"
+                                style={{ color: "#6b7280" }}
+                                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "#d1fae5"; (e.currentTarget as HTMLElement).style.color = "#059669"; }}
+                                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; (e.currentTarget as HTMLElement).style.color = "#6b7280"; }}
+                              >
+                                <BadgeCheck className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            {(booking.status === "confirmed" || booking.status === "down-paid") && (
+                              <button
+                                type="button"
+                                onClick={() => openCheckIn({ id: booking.id, displayId: booking.displayId, guest: booking.guest, remaining: booking.balance })}
+                                disabled={bookingUpdating}
+                                title="Check in (collect balance + deposit)"
+                                className="p-1.5 rounded-lg transition-colors disabled:opacity-50"
+                                style={{ color: "#6b7280" }}
+                                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "#d1fae5"; (e.currentTarget as HTMLElement).style.color = "#059669"; }}
+                                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; (e.currentTarget as HTMLElement).style.color = "#6b7280"; }}
+                              >
+                                <LogIn className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            {booking.status === "checked-in" && (
+                              <button
+                                type="button"
+                                onClick={() => handleCheckOut(booking.id)}
+                                disabled={bookingUpdating}
+                                title="Check out (complete booking)"
+                                className="p-1.5 rounded-lg transition-colors disabled:opacity-50"
+                                style={{ color: "#6b7280" }}
+                                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "#f3f4f6"; (e.currentTarget as HTMLElement).style.color = "#374151"; }}
+                                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; (e.currentTarget as HTMLElement).style.color = "#6b7280"; }}
+                              >
+                                <LogOut className="w-3.5 h-3.5" />
+                              </button>
                             )}
                           </div>
                         </td>
@@ -744,14 +948,7 @@ export default function OwnerDashboard() {
                         <td className="px-4 py-3.5">
                           <div className="flex items-center gap-1">
                             <button title="View booking"
-                              onClick={() => setDetailModal({ title: booking.guest, subtitle: booking.displayId, rows: [
-                                { label: "Email", value: booking.email || "—" },
-                                { label: "Room", value: booking.room },
-                                { label: "Check-in", value: booking.checkIn },
-                                { label: "Stay", value: booking.stayType },
-                                { label: "Amount", value: `₱${booking.amount.toLocaleString()}` },
-                                { label: "Status", value: booking.status },
-                              ] })}
+                              onClick={() => setBookingModal(booking)}
                               className="p-1.5 rounded-lg transition-colors" style={{ color: "#8B6344" }}
                               onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#F7F0E3";}}
                               onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";}}><Eye className="w-3.5 h-3.5"/></button>
@@ -763,6 +960,21 @@ export default function OwnerDashboard() {
                                 onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#fee2e2";(e.currentTarget as HTMLElement).style.color="#dc2626";}}
                                 onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><XCircle className="w-3.5 h-3.5"/></button>
                             </>)}
+                            {booking.status === "awaiting-payment" && (
+                              <button type="button" onClick={() => handleConfirmPayment(booking.id)} disabled={bookingUpdating} title="Confirm down payment (mark paid → Confirmed)" className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#6b7280" }}
+                                onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#d1fae5";(e.currentTarget as HTMLElement).style.color="#059669";}}
+                                onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><BadgeCheck className="w-3.5 h-3.5"/></button>
+                            )}
+                            {(booking.status === "confirmed" || booking.status === "down-paid") && (
+                              <button type="button" onClick={() => openCheckIn({ id: booking.id, displayId: booking.displayId, guest: booking.guest, remaining: booking.balance })} disabled={bookingUpdating} title="Check in (collect balance + deposit)" className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#6b7280" }}
+                                onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#d1fae5";(e.currentTarget as HTMLElement).style.color="#059669";}}
+                                onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><LogIn className="w-3.5 h-3.5"/></button>
+                            )}
+                            {booking.status === "checked-in" && (
+                              <button type="button" onClick={() => handleCheckOut(booking.id)} disabled={bookingUpdating} title="Check out (complete booking)" className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#6b7280" }}
+                                onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#f3f4f6";(e.currentTarget as HTMLElement).style.color="#374151";}}
+                                onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><LogOut className="w-3.5 h-3.5"/></button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -913,13 +1125,7 @@ export default function OwnerDashboard() {
                           <td className="px-4 py-3.5">
                             <div className="flex items-center gap-1">
                               <button title="View haven"
-                                onClick={() => setDetailModal({ title: h.name, subtitle: h.id, rows: [
-                                  { label: "Type", value: h.type },
-                                  { label: "Location", value: h.floor },
-                                  { label: "Rate", value: `₱${h.rate.toLocaleString()} / night` },
-                                  { label: "Occupancy", value: `${h.occupancy}%` },
-                                  { label: "Status", value: h.status },
-                                ] })}
+                                onClick={() => setHavenModal(h)}
                                 className="p-1.5 rounded-lg" style={{ color: "#8B6344" }}
                                 onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
                                 onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
@@ -1223,6 +1429,38 @@ export default function OwnerDashboard() {
         </div>
       )}
 
+      {/* ── Check-in: collect remaining balance + ₱1,000 deposit ── */}
+      {checkIn.open && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => !checkIn.busy && setCheckIn((c) => ({ ...c, open: false }))}>
+          <div className="w-full max-w-md border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 19, lineHeight: 1, color: "#1f1b16" }}>Check In Guest</h3>
+            <p className="text-sm mt-0.5" style={{ color: "#8B6344" }}>Collect the remaining balance and refundable deposit.</p>
+
+            <div className="border p-4 mt-4 mb-4" style={{ backgroundColor: "#FAFAF7", borderColor: "#ece5d4" }}>
+              <div className="flex items-center justify-between text-sm"><span style={{ color: "#8B6344" }}>Booking</span><span className="font-mono text-xs" style={{ color: "#1a1a1a" }}>{checkIn.displayId}</span></div>
+              <div className="flex items-center justify-between text-sm mt-2"><span style={{ color: "#8B6344" }}>Guest</span><span style={{ color: "#1a1a1a" }}>{checkIn.guest}</span></div>
+              <div className="flex items-center justify-between text-sm mt-3 pt-3 border-t" style={{ borderColor: "#ece5d4" }}><span style={{ color: "#8B6344" }}>Remaining balance</span><span style={{ color: "#1a1a1a" }}>₱{checkIn.remaining.toLocaleString()}</span></div>
+              <div className="flex items-center justify-between text-sm mt-2"><span style={{ color: "#8B6344" }}>Security deposit (refundable)</span><span style={{ color: "#1a1a1a" }}>₱{SECURITY_DEPOSIT.toLocaleString()}</span></div>
+              <div className="flex items-center justify-between text-sm mt-2 pt-2 border-t font-bold" style={{ borderColor: "#ece5d4" }}><span style={{ color: "#1a1a1a" }}>Total to collect</span><span style={{ color: "#B07848" }}>₱{(checkIn.remaining + SECURITY_DEPOSIT).toLocaleString()}</span></div>
+            </div>
+
+            <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Payment method</label>
+            <select aria-label="Payment method" value={checkIn.method} onChange={(e) => setCheckIn((c) => ({ ...c, method: e.target.value }))} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none cursor-pointer" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
+              <option value="Cash">Cash</option>
+              <option value="GCash">GCash</option>
+              <option value="Bank">BPI bank transfer</option>
+            </select>
+
+            <p className="text-xs mt-3 leading-relaxed" style={{ color: "#8B6344" }}>The ₱{SECURITY_DEPOSIT.toLocaleString()} deposit is refundable on checkout. Confirming marks the balance fully paid and checks the guest in.</p>
+
+            <div className="flex justify-between gap-2 mt-5">
+              <button type="button" onClick={() => setCheckIn((c) => ({ ...c, open: false }))} disabled={checkIn.busy} className="px-4 py-2 text-sm font-medium border cursor-pointer disabled:opacity-60" style={{ color: "#8B6344", borderColor: "#ece5d4", backgroundColor: "#ffffff" }}>Cancel</button>
+              <button type="button" onClick={confirmCheckIn} disabled={checkIn.busy} className="px-5 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#B07848" }}>{checkIn.busy ? "Checking in…" : `Collect ₱${(checkIn.remaining + SECURITY_DEPOSIT).toLocaleString()} & Check In`}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Add Staff modal ── */}
       {staffModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setStaffModalOpen(false)}>
@@ -1255,7 +1493,455 @@ export default function OwnerDashboard() {
       <HavenWizard open={havenModalOpen} onClose={closeHavenWizard} createHaven={createHaven} updateHaven={updateHaven} editHaven={editHaven} />
       <NewBookingWizard open={newBookingOpen} onClose={() => setNewBookingOpen(false)} onCreated={refetchBookings} />
 
-      {/* Reusable detail modal (booking / haven / employee views) */}
+      {/* Command-palette search (⌘K) — bookings, guests, havens */}
+      {searchOpen && (() => {
+        const q = searchQuery.trim().toLowerCase();
+        const bookingHits = q
+          ? allAdminBookings.filter((b) =>
+              [b.displayId, b.guest, b.email, b.room].some((f) => String(f).toLowerCase().includes(q))
+            ).slice(0, 8)
+          : [];
+        const havenHits = q
+          ? havens.filter((h) =>
+              [h.name, h.id, h.type, h.floor].some((f) => String(f).toLowerCase().includes(q))
+            ).slice(0, 6)
+          : [];
+        const total = bookingHits.length + havenHits.length;
+        const closeSearch = () => { setSearchOpen(false); setSearchQuery(""); };
+        const openBooking = (b: AdminBookingRow) => { closeSearch(); setBookingModal(b); };
+        const openHaven = (h: AdminHaven) => { closeSearch(); setHavenModal(h); };
+        const rowBase: React.CSSProperties = { display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 12px", borderRadius: 11, border: "none", background: "transparent", cursor: "pointer", textAlign: "left" };
+        const hov = (e: React.MouseEvent<HTMLButtonElement>, on: boolean) => { e.currentTarget.style.background = on ? "#faf7f1" : "transparent"; };
+
+        return (
+          <div onClick={closeSearch} style={{ position: "fixed", inset: 0, zIndex: 120, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "12vh 24px 24px", background: "rgba(31,27,22,0.45)" }}>
+            <style>{`@keyframes vb-pop{from{opacity:0;transform:translateY(12px) scale(.985);}to{opacity:1;transform:none;}}`}</style>
+            <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 560, background: "#ffffff", border: "1px solid #ece5d4", borderRadius: 16, boxShadow: "0 32px 70px -28px rgba(58,42,24,.45), 0 4px 14px -6px rgba(58,42,24,.18)", overflow: "hidden", display: "flex", flexDirection: "column", maxHeight: "100%", animation: "vb-pop .3s cubic-bezier(.2,.7,.3,1) both" }}>
+
+              {/* Input */}
+              <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "14px 16px", borderBottom: "1px solid #f1ead9", flexShrink: 0 }}>
+                <Search className="w-[17px] h-[17px]" style={{ color: "#b8754a" }} />
+                <input
+                  autoFocus
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search bookings, guests, havens…"
+                  className="flex-1 outline-none"
+                  style={{ fontSize: 15, color: "#1f1b16", background: "transparent", border: "none" }}
+                />
+                <button type="button" onClick={closeSearch} title="Close (Esc)" style={{ fontFamily: "var(--font-geist-mono), ui-monospace, monospace", fontSize: 11, padding: "3px 7px", background: "#faf7f1", border: "1px solid #e8e1d2", borderRadius: 6, color: "#6b6358", cursor: "pointer" }}>Esc</button>
+              </div>
+
+              {/* Results */}
+              <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "8px 8px 10px" }}>
+                {!q ? (
+                  <div style={{ padding: "26px 16px", textAlign: "center", fontSize: 13, color: "#a08a6c" }}>Type to search bookings, guests, and havens.</div>
+                ) : total === 0 ? (
+                  <div style={{ padding: "26px 16px", textAlign: "center", fontSize: 13, color: "#a08a6c" }}>No matches for “{searchQuery.trim()}”.</div>
+                ) : (
+                  <>
+                    {bookingHits.length > 0 && (
+                      <>
+                        <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: ".12em", textTransform: "uppercase", color: "#b8754a", padding: "8px 12px 6px" }}>Bookings</div>
+                        {bookingHits.map((b) => (
+                          <button key={`b-${b.id}`} type="button" onClick={() => openBooking(b)} onMouseEnter={(e) => hov(e, true)} onMouseLeave={(e) => hov(e, false)} style={rowBase}>
+                            <span style={{ width: 30, height: 30, flex: "none", borderRadius: 8, background: "#f1ead9", color: "#8a6f4d", display: "grid", placeItems: "center" }}>
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 9h18M8 3v4M16 3v4" /></svg>
+                            </span>
+                            <span style={{ flex: 1, minWidth: 0 }}>
+                              <span style={{ display: "block", fontSize: 13.5, color: "#1f1b16", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{b.guest}</span>
+                              <span style={{ display: "block", fontSize: 11.5, color: "#a08a6c", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{b.displayId} · {b.room}</span>
+                            </span>
+                            <span style={{ fontSize: 11, color: "#9b8870", textTransform: "capitalize", flex: "none" }}>{b.status}</span>
+                          </button>
+                        ))}
+                      </>
+                    )}
+                    {havenHits.length > 0 && (
+                      <>
+                        <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: ".12em", textTransform: "uppercase", color: "#b8754a", padding: "10px 12px 6px" }}>Havens</div>
+                        {havenHits.map((h) => (
+                          <button key={`h-${h.id}`} type="button" onClick={() => openHaven(h)} onMouseEnter={(e) => hov(e, true)} onMouseLeave={(e) => hov(e, false)} style={rowBase}>
+                            <span style={{ width: 30, height: 30, flex: "none", borderRadius: 8, background: "#f1ead9", color: "#8a6f4d", display: "grid", placeItems: "center" }}>
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21V9l9-6 9 6v12" /><path d="M9 21v-6h6v6" /></svg>
+                            </span>
+                            <span style={{ flex: 1, minWidth: 0 }}>
+                              <span style={{ display: "block", fontSize: 13.5, color: "#1f1b16", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{h.name}</span>
+                              <span style={{ display: "block", fontSize: 11.5, color: "#a08a6c", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textTransform: "capitalize" }}>{h.type} · {h.floor}</span>
+                            </span>
+                            <span style={{ fontSize: 11, color: "#9b8870", textTransform: "capitalize", flex: "none" }}>{h.status}</span>
+                          </button>
+                        ))}
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Redesigned booking detail modal */}
+      {bookingModal && (() => {
+        const bk = bookingModal;
+        const sp = statusPill(bk.status);
+        const pp = statusPill(bk.paymentStatus);
+        const dp = statusPill(bk.depositStatus);
+        const nights = nightsBetween(bk.checkInRaw, bk.checkOutRaw);
+        const total = bk.amount;
+        const paid = total > 0 ? Math.min(total, Math.max(0, total - bk.balance)) : bk.downPayment;
+        const pct = total > 0 ? Math.min(100, Math.max(0, Math.round((paid / total) * 100))) : 0;
+        const serif = "var(--font-fraunces), Georgia, serif";
+        const mono = "var(--font-geist-mono), ui-monospace, monospace";
+        const docCard = (name: string, url: string) =>
+          url && url.trim() ? (
+            <a href={url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none", border: "1px solid #f1ead9", borderRadius: 12, overflow: "hidden", background: "#faf7f1", display: "block" }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={url} alt={name} style={{ height: 92, width: "100%", objectFit: "cover", display: "block" }} />
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 11px" }}>
+                <span style={{ fontSize: 12, color: "#1f1b16" }}>{name}</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "#2f7d55" }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>Uploaded
+                </span>
+              </div>
+            </a>
+          ) : (
+            <div style={{ border: "1px dashed #e0d2b8", borderRadius: 12, overflow: "hidden", background: "#fcfaf5" }}>
+              <div style={{ height: 92, display: "grid", placeItems: "center" }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#c9b58f" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 16V4M7 9l5-5 5 5" /><path d="M5 16v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" /></svg>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 11px" }}>
+                <span style={{ fontSize: 12, color: "#1f1b16" }}>{name}</span>
+                <span style={{ fontSize: 11, color: "#b0a187" }}>Not uploaded</span>
+              </div>
+            </div>
+          );
+
+        return (
+          <div onClick={() => setBookingModal(null)} style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", background: "rgba(31,27,22,0.45)" }}>
+            <style>{`@keyframes vb-pop{from{opacity:0;transform:translateY(12px) scale(.985);}to{opacity:1;transform:none;}}`}</style>
+            <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 24, boxShadow: "0 24px 64px rgba(31,22,14,.16)", overflow: "hidden", display: "flex", flexDirection: "column", maxHeight: "100%", animation: "vb-pop .45s cubic-bezier(.2,.7,.3,1) both" }}>
+
+              {/* Header band */}
+              <div style={{ position: "relative", padding: "24px 26px 22px", background: "#FFFCF4", borderBottom: "1px solid #E0CEB2", flexShrink: 0 }}>
+                <button type="button" onClick={() => setBookingModal(null)} title="Close"
+                  onMouseEnter={(e) => { const t = e.currentTarget; t.style.background = "#fff"; t.style.color = "#1f1b16"; t.style.borderColor = "#d8c8a8"; }}
+                  onMouseLeave={(e) => { const t = e.currentTarget; t.style.background = "rgba(255,255,255,.6)"; t.style.color = "#8a6f4d"; t.style.borderColor = "#e7dcc5"; }}
+                  style={{ position: "absolute", top: 16, right: 16, width: 32, height: 32, display: "grid", placeItems: "center", border: "1px solid #e7dcc5", borderRadius: 9, background: "rgba(255,255,255,.6)", color: "#8a6f4d", cursor: "pointer", transition: "all .15s" }}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                </button>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 14, paddingRight: 90 }}>
+                  <div style={{ width: 52, height: 52, flex: "none", borderRadius: 14, background: "#b8754a", color: "#faf7f1", display: "grid", placeItems: "center", fontFamily: serif, fontSize: 23, boxShadow: "inset 0 0 0 1px rgba(255,255,255,.18), 0 6px 14px -6px rgba(184,117,74,.6)" }}>{initials(bk.guest)}</div>
+                  <div style={{ minWidth: 0 }}>
+                    <h3 style={{ margin: 0, fontFamily: serif, fontWeight: 400, fontSize: 27, lineHeight: 1, letterSpacing: "-.01em", color: "#1f1b16" }}>{bk.guest}</h3>
+                    <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 8 }}>
+                      <span style={{ fontFamily: mono, fontSize: 11, letterSpacing: ".02em", color: "#9b8870" }}>{bk.displayId}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 16 }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 11px 5px 9px", borderRadius: 999, background: sp.bg, color: sp.color, fontSize: 12, fontWeight: 600, textTransform: "capitalize" }}>
+                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: sp.dot }} />{sp.label}
+                  </span>
+                  {nights > 0 && (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 11px", borderRadius: 999, background: "#fff", border: "1px solid #ece5d4", color: "#6f5c44", fontSize: 12, fontWeight: 500 }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 9h18M8 3v4M16 3v4" /></svg>
+                      {nights} night{nights > 1 ? "s" : ""}
+                    </span>
+                  )}
+                  <span style={{ marginLeft: "auto", fontFamily: serif, fontSize: 22, color: "#1f1b16" }}>{peso(total)}</span>
+                </div>
+              </div>
+
+              {/* Scroll body */}
+              <div style={{ padding: "20px 22px 24px", flex: 1, minHeight: 0, overflowY: "auto" }}>
+
+                {/* Contact */}
+                <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: ".12em", textTransform: "uppercase", color: "#b8754a", marginBottom: 10 }}>Contact</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 22 }}>
+                  <div style={{ padding: "12px 13px", background: "#faf7f1", border: "1px solid #f1ead9", borderRadius: 12 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#a08a6c", fontSize: 11, marginBottom: 5 }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></svg>Email
+                    </div>
+                    <div style={{ fontSize: 13, color: "#1f1b16", wordBreak: "break-all" }}>{dash(bk.email)}</div>
+                  </div>
+                  <div style={{ padding: "12px 13px", background: "#faf7f1", border: "1px solid #f1ead9", borderRadius: 12 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#a08a6c", fontSize: 11, marginBottom: 5 }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L20 13l-1 4a2 2 0 0 1-2 2A14 14 0 0 1 3 6a2 2 0 0 1 2-2z" /></svg>Phone
+                    </div>
+                    <div style={{ fontSize: 13, color: "#1f1b16" }}>{dash(bk.phone)}</div>
+                  </div>
+                </div>
+
+                {/* Stay */}
+                <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: ".12em", textTransform: "uppercase", color: "#b8754a", marginBottom: 10 }}>Stay</div>
+                <div style={{ border: "1px solid #f1ead9", borderRadius: 14, overflow: "hidden", marginBottom: 22 }}>
+                  <div style={{ display: "flex", alignItems: "stretch" }}>
+                    <div style={{ flex: 1, padding: "14px 16px" }}>
+                      <div style={{ fontSize: 11, color: "#a08a6c", marginBottom: 4 }}>Check-in</div>
+                      <div style={{ fontFamily: serif, fontSize: 20, color: "#1f1b16", lineHeight: 1 }}>{fmtDate(bk.checkInRaw)}</div>
+                      {bk.checkInTime && <div style={{ fontSize: 12, color: "#8a7556", marginTop: 5 }}>{fmtTime(bk.checkInTime)}</div>}
+                    </div>
+                    <div style={{ display: "grid", placeItems: "center", padding: "0 4px", color: "#c9b58f" }}>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+                    </div>
+                    <div style={{ flex: 1, padding: "14px 16px", textAlign: "right" }}>
+                      <div style={{ fontSize: 11, color: "#a08a6c", marginBottom: 4 }}>Check-out</div>
+                      <div style={{ fontFamily: serif, fontSize: 20, color: "#1f1b16", lineHeight: 1 }}>{fmtDate(bk.checkOutRaw)}</div>
+                      {bk.checkOutTime && <div style={{ fontSize: 12, color: "#8a7556", marginTop: 5 }}>{fmtTime(bk.checkOutTime)}</div>}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 16px", background: "#faf7f1", borderTop: "1px solid #f1ead9", color: "#6f5c44", fontSize: 12.5 }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#b8754a" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21V9l9-6 9 6v12" /><path d="M9 21v-6h6v6" /></svg>
+                    <span style={{ color: "#1f1b16", fontWeight: 500 }}>{bk.room}</span>
+                  </div>
+                </div>
+
+                {/* Payment */}
+                <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: ".12em", textTransform: "uppercase", color: "#b8754a", marginBottom: 14 }}>Payment</div>
+
+                {/* reference no. (copy) */}
+                {bk.paymentReference && (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "#F6EFE2", border: "1.5px dashed #B07848", borderRadius: 14, padding: "13px 16px", marginBottom: 16 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".1em", color: "#8C5A2E" }}>{((bk.paymentMethod || "Payment").charAt(0).toUpperCase() + (bk.paymentMethod || "Payment").slice(1))} reference no.</div>
+                      <div style={{ fontFamily: mono, fontSize: 24, fontWeight: 500, letterSpacing: ".08em", marginTop: 3, color: "#1f1b16", wordBreak: "break-all" }}>{bk.paymentReference}</div>
+                    </div>
+                    <button type="button" onClick={() => copyRef(bk.paymentReference)} style={{ flex: "none", display: "inline-flex", alignItems: "center", gap: 7, padding: "10px 16px", borderRadius: 10, border: "1px solid #D4BE9A", background: "#FFFCF4", color: "#8C5A2E", fontSize: 13, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+                      {refCopied ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                )}
+
+                {/* totals */}
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5, color: "#4A3A2A", padding: "5px 0" }}><span>Room rate{nights > 0 ? ` · ${nights} night${nights > 1 ? "s" : ""}` : ""}</span><span>{peso(bk.roomRate || total)}</span></div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5, color: "#4A3A2A", padding: "5px 0" }}><span>Add-ons</span><span style={{ color: "#8B7458" }}>{peso(bk.addOns)}</span></div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0 14px", borderTop: "1px solid #EFE4CE", marginTop: 8 }}>
+                  <span style={{ fontSize: 14, fontWeight: 600 }}>Total</span>
+                  <span style={{ fontFamily: serif, fontSize: 22, fontWeight: 500 }}>{peso(total)}</span>
+                </div>
+
+                {/* progress */}
+                <div style={{ height: 8, borderRadius: 999, background: "#EFE4CE", overflow: "hidden" }}><div style={{ width: `${pct}%`, height: "100%", borderRadius: 999, background: "#B07848" }} /></div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: "#8B7458", marginTop: 7 }}><span>{peso(paid)} paid</span><span>{pct}%</span></div>
+
+                {/* down / balance */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 16 }}>
+                  <div style={{ background: "rgba(91,158,107,.09)", border: "1px solid rgba(91,158,107,.28)", borderRadius: 14, padding: "14px 16px" }}>
+                    <div style={{ fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".1em", color: "#3F7A4F" }}>Down payment</div>
+                    <div style={{ fontFamily: serif, fontSize: 21, fontWeight: 500, color: "#3F7A4F", marginTop: 4 }}>{peso(bk.downPayment)}</div>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 7, padding: "3px 10px", borderRadius: 999, background: "rgba(91,158,107,.18)", color: "#3F7A4F", fontSize: 11, fontWeight: 600 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "#5B9E6B" }} />{(bk.paymentStatus || "").startsWith("approved") ? "Paid & approved" : "Paid"}</span>
+                  </div>
+                  <div style={{ background: "rgba(176,120,72,.08)", border: "1px solid rgba(176,120,72,.28)", borderRadius: 14, padding: "14px 16px" }}>
+                    <div style={{ fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".1em", color: "#8C5A2E" }}>Balance due</div>
+                    <div style={{ fontFamily: serif, fontSize: 21, fontWeight: 500, color: "#8C5A2E", marginTop: 4 }}>{peso(bk.balance)}</div>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 7, padding: "3px 10px", borderRadius: 999, background: "rgba(176,120,72,.16)", color: "#8C5A2E", fontSize: 11, fontWeight: 600 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "#B07848" }} />{bk.balance > 0 ? "Due at check-in" : "Settled"}</span>
+                  </div>
+                </div>
+
+                {/* method / deposit */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12, marginBottom: 22 }}>
+                  <div style={{ padding: "13px 15px", border: "1px solid #E0CEB2", borderRadius: 14 }}>
+                    <div style={{ fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".1em", color: "#8B7458" }}>Method</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 6, fontSize: 14, fontWeight: 500, textTransform: "capitalize" }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#0A7CFF" }} />{dash(bk.paymentMethod)}</div>
+                    {bk.paymentStatus ? (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 8, padding: "3px 10px", borderRadius: 999, background: pp.bg, color: pp.color, fontSize: 11, fontWeight: 600 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: pp.dot }} />{pp.label}</span>
+                    ) : (
+                      <div style={{ fontSize: 11.5, color: "#8B7458", marginTop: 5 }}>e-wallet transfer</div>
+                    )}
+                  </div>
+                  <div style={{ padding: "13px 15px", border: "1px solid #E0CEB2", borderRadius: 14 }}>
+                    <div style={{ fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".1em", color: "#8B7458" }}>Security deposit</div>
+                    <div style={{ fontSize: 14, fontWeight: 500, marginTop: 6 }}>{peso(bk.deposit)} <span style={{ fontWeight: 400, color: "#8B7458", fontSize: 12.5 }}>refundable</span></div>
+                    {bk.depositStatus ? (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 8, padding: "3px 10px", borderRadius: 999, background: dp.bg, color: dp.color, fontSize: 11, fontWeight: 600 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: dp.dot }} />{dp.label}</span>
+                    ) : (
+                      <div style={{ fontSize: 11.5, color: "#8C5A2E", marginTop: 5 }}>Collected at check-in</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Documents */}
+                <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: ".12em", textTransform: "uppercase", color: "#b8754a", marginBottom: 10 }}>Documents</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  {docCard("Valid ID", bk.validIdUrl)}
+                  {docCard("Payment proof", bk.paymentProofUrl)}
+                </div>
+
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Redesigned haven (Property) detail modal */}
+      {havenModal && (() => {
+        const hv = havenModal;
+        const r = hv.raw;
+        const num = (v: unknown) => Number(v ?? 0);
+        const str = (v: unknown) => String(v ?? "").trim();
+        const serif = "var(--font-fraunces), Georgia, serif";
+        const mono = "var(--font-geist-mono), ui-monospace, monospace";
+        const sp = statusPill(hv.status);
+
+        const amenityRows = Array.isArray(r.verified_amenities) ? (r.verified_amenities as Record<string, unknown>[]) : [];
+        const amenities = amenityRows.map((a) => str(a.label) || str(a.key)).filter(Boolean);
+
+        const basePax = num(r.base_pax) || 0;
+        const capacity = num(r.capacity) || basePax;
+        const paxLabel = basePax && capacity && capacity !== basePax ? `${basePax}–${capacity} pax` : capacity ? `${capacity} pax` : "—";
+        const beds = str(r.beds) || "—";
+        const roomSize = num(r.room_size) ? `${num(r.room_size)} sqm` : "—";
+        const description = str(r.description);
+        const locationText = str(r.google_map_address) || hv.floor || "—";
+        const rating = num(r.rating);
+        const reviewCount = num(r.review_count);
+
+        // D'Lux 4-rate model (see haven-adapter): 10h Daycation + 21h Overnight,
+        // each with weekday & weekend prices, plus an extra-pax fee.
+        const dayWeekday = num(r.ten_hour_rate);
+        const dayWeekend = num(r.six_hour_rate) || dayWeekday;
+        const nightWeekday = num(r.weekday_rate);
+        const nightWeekend = num(r.weekend_rate) || nightWeekday;
+        const extraPax = num(r.extra_pax_fee);
+        const headlineRate = nightWeekday || hv.rate;
+        const occ = Math.min(100, Math.max(0, hv.occupancy));
+
+        const sectionLabel: React.CSSProperties = { fontSize: 10.5, fontWeight: 600, letterSpacing: ".12em", textTransform: "uppercase", color: "#b8754a", marginBottom: 10 };
+        const statCard: React.CSSProperties = { padding: "12px 13px", background: "#faf7f1", border: "1px solid #f1ead9", borderRadius: 12 };
+        const statCap: React.CSSProperties = { fontSize: 11, color: "#a08a6c", marginBottom: 4 };
+        const statVal: React.CSSProperties = { fontSize: 14, color: "#1f1b16", fontWeight: 500 };
+
+        return (
+          <div onClick={() => setHavenModal(null)} style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", background: "rgba(31,27,22,0.45)" }}>
+            <style>{`@keyframes vb-pop{from{opacity:0;transform:translateY(12px) scale(.985);}to{opacity:1;transform:none;}}`}</style>
+            <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 560, background: "#ffffff", border: "1px solid #ece5d4", borderRadius: 18, boxShadow: "0 32px 70px -28px rgba(58,42,24,.45), 0 4px 14px -6px rgba(58,42,24,.18)", overflow: "hidden", display: "flex", flexDirection: "column", maxHeight: "100%", animation: "vb-pop .45s cubic-bezier(.2,.7,.3,1) both" }}>
+
+              {/* Header band */}
+              <div style={{ position: "relative", padding: "22px 22px 20px", background: "linear-gradient(165deg, #faf5ea 0%, #f4ead6 100%)", borderBottom: "1px solid #eee2cb", flexShrink: 0 }}>
+                <button type="button" onClick={() => setHavenModal(null)} title="Close"
+                  onMouseEnter={(e) => { const t = e.currentTarget; t.style.background = "#fff"; t.style.color = "#1f1b16"; t.style.borderColor = "#d8c8a8"; }}
+                  onMouseLeave={(e) => { const t = e.currentTarget; t.style.background = "rgba(255,255,255,.6)"; t.style.color = "#8a6f4d"; t.style.borderColor = "#e7dcc5"; }}
+                  style={{ position: "absolute", top: 16, right: 16, width: 32, height: 32, display: "grid", placeItems: "center", border: "1px solid #e7dcc5", borderRadius: 9, background: "rgba(255,255,255,.6)", color: "#8a6f4d", cursor: "pointer", transition: "all .15s" }}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                </button>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 14, paddingRight: 90 }}>
+                  <div style={{ width: 52, height: 52, flex: "none", borderRadius: 14, background: "#b8754a", color: "#faf7f1", display: "grid", placeItems: "center", overflow: "hidden", boxShadow: "inset 0 0 0 1px rgba(255,255,255,.18), 0 6px 14px -6px rgba(184,117,74,.6)" }}>
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21V9l9-6 9 6v12" /><path d="M9 21v-6h6v6" /></svg>
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <h3 style={{ margin: 0, fontFamily: serif, fontWeight: 400, fontSize: 24, lineHeight: 1.1, letterSpacing: "-.01em", color: "#1f1b16" }}>{hv.name}</h3>
+                    <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 8 }}>
+                      <span style={{ fontFamily: mono, fontSize: 11, letterSpacing: ".02em", color: "#9b8870" }}>{hv.id}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 16 }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 11px 5px 9px", borderRadius: 999, background: sp.bg, color: sp.color, fontSize: 12, fontWeight: 600, textTransform: "capitalize" }}>
+                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: sp.dot }} />{sp.label}
+                  </span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 11px", borderRadius: 999, background: "#fff", border: "1px solid #ece5d4", color: "#6f5c44", fontSize: 12, fontWeight: 500 }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg>
+                    {paxLabel}
+                  </span>
+                  {reviewCount > 0 && (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 11px", borderRadius: 999, background: "#fff", border: "1px solid #ece5d4", color: "#6f5c44", fontSize: 12, fontWeight: 500 }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="#f5b301" stroke="#f5b301" strokeWidth="1.2" strokeLinejoin="round"><path d="M12 2l3 6.5 7 .9-5 4.8 1.3 7L12 18l-6.6 3.2L6.7 14l-5-4.8 7-.9z" /></svg>
+                      {rating.toFixed(1)} ({reviewCount})
+                    </span>
+                  )}
+                  <span style={{ marginLeft: "auto", textAlign: "right" }}>
+                    <span style={{ fontFamily: serif, fontSize: 22, color: "#1f1b16" }}>{peso(headlineRate)}</span>
+                    <span style={{ fontSize: 11, color: "#8a7556", marginLeft: 3 }}>/night</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Scroll body */}
+              <div style={{ padding: "20px 22px 24px", flex: 1, minHeight: 0, overflowY: "auto" }}>
+
+                {/* Overview */}
+                <div style={sectionLabel}>Overview</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+                  <div style={statCard}><div style={statCap}>Type</div><div style={{ ...statVal, textTransform: "capitalize" }}>{hv.type || "—"}</div></div>
+                  <div style={statCard}><div style={statCap}>Capacity</div><div style={statVal}>{paxLabel}</div></div>
+                  <div style={statCard}><div style={statCap}>Bed</div><div style={{ ...statVal, textTransform: "capitalize" }}>{beds}</div></div>
+                  <div style={statCard}><div style={statCap}>Room size</div><div style={statVal}>{roomSize}</div></div>
+                  <div style={{ ...statCard, gridColumn: "1 / -1" }}>
+                    <div style={{ ...statCap, display: "flex", alignItems: "center", gap: 6 }}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#b8754a" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 12-9 12s-9-5-9-12a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg>Location
+                    </div>
+                    <div style={statVal}>{locationText}</div>
+                  </div>
+                </div>
+
+                {/* Occupancy */}
+                <div style={{ ...statCard, marginBottom: 22 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 7 }}>
+                    <span style={statCap}>Occupancy</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "#1f1b16" }}>{occ}%</span>
+                  </div>
+                  <div style={{ height: 7, borderRadius: 999, background: "#eee2cb", overflow: "hidden" }}><div style={{ width: `${occ}%`, height: "100%", borderRadius: 999, background: "linear-gradient(90deg, #c8915a, #b8754a)" }} /></div>
+                </div>
+
+                {/* Rates */}
+                <div style={sectionLabel}>Rates</div>
+                <div style={{ border: "1px solid #f1ead9", borderRadius: 14, overflow: "hidden", marginBottom: 22, background: "linear-gradient(180deg, #fffdf9 0%, #faf6ed 100%)" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr" }}>
+                    <div style={{ padding: "14px 16px", borderRight: "1px solid #f1ead9" }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: "#1f1b16", marginBottom: 8 }}>Daycation <span style={{ color: "#a08a6c", fontWeight: 400 }}>· 10h</span></div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "#6f5c44", padding: "3px 0" }}><span>Weekday</span><span style={{ color: "#1f1b16" }}>{peso(dayWeekday)}</span></div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "#6f5c44", padding: "3px 0" }}><span>Weekend</span><span style={{ color: "#1f1b16" }}>{peso(dayWeekend)}</span></div>
+                    </div>
+                    <div style={{ padding: "14px 16px" }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: "#1f1b16", marginBottom: 8 }}>Overnight <span style={{ color: "#a08a6c", fontWeight: 400 }}>· 21h</span></div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "#6f5c44", padding: "3px 0" }}><span>Weekday</span><span style={{ color: "#1f1b16" }}>{peso(nightWeekday)}</span></div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "#6f5c44", padding: "3px 0" }}><span>Weekend</span><span style={{ color: "#1f1b16" }}>{peso(nightWeekend)}</span></div>
+                    </div>
+                  </div>
+                  {extraPax > 0 && (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 16px", background: "#faf7f1", borderTop: "1px solid #f1ead9", fontSize: 12.5, color: "#6f5c44" }}>
+                      <span>Extra pax fee</span>
+                      <span style={{ color: "#1f1b16", fontWeight: 500 }}>{peso(extraPax)} <span style={{ color: "#a08a6c", fontWeight: 400 }}>/ pax</span></span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Amenities */}
+                <div style={sectionLabel}>Verified Amenities</div>
+                {amenities.length ? (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: description ? 22 : 0 }}>
+                    {amenities.map((a) => (
+                      <span key={a} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 11px", borderRadius: 999, background: "#faf7f1", border: "1px solid #f1ead9", color: "#5f4f3a", fontSize: 12, textTransform: "capitalize" }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#2f7d55" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>{a}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 12.5, color: "#b0a187", marginBottom: description ? 22 : 0 }}>No verified amenities yet</div>
+                )}
+
+                {/* Description */}
+                {description && (
+                  <>
+                    <div style={sectionLabel}>Description</div>
+                    <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: "#5f4f3a" }}>{description}</p>
+                  </>
+                )}
+
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Generic detail modal — Staff (Team) view */}
       {detailModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setDetailModal(null)}>
           <div className="w-full max-w-md border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }} onClick={(e) => e.stopPropagation()}>
@@ -1266,7 +1952,7 @@ export default function OwnerDashboard() {
               </div>
               <button type="button" onClick={() => setDetailModal(null)} title="Close" className="p-1.5 rounded-lg cursor-pointer" style={{ color: "#8B6344" }}><X className="w-4 h-4" /></button>
             </div>
-            <div className="space-y-2.5">
+            <div className="space-y-2.5 max-h-[60vh] overflow-y-auto pr-1">
               {detailModal.rows.map((row) => (
                 <div key={row.label} className="flex items-center gap-3 px-3 py-2.5 rounded-xl" style={{ backgroundColor: "#FAFAF7" }}>
                   <span className="text-xs font-medium w-24 flex-shrink-0" style={{ color: "#8B6344" }}>{row.label}</span>

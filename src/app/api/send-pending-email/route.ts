@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Booking Pending Approval - Staycation Haven</title>
+        <title>Booking Pending Approval - D'Lux Homes</title>
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@600;700&display=swap" rel="stylesheet">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
         <style>
@@ -107,7 +107,7 @@ export async function POST(request: NextRequest) {
       <body>
         <div class="email-container">
           <div class="header">
-            <div class="logo"><i class="fas fa-umbrella-beach"></i> Staycation Haven</div>
+            <div class="logo"><i class="fas fa-umbrella-beach"></i> D'Lux Homes</div>
             <div class="tagline">Your Perfect Getaway Awaits</div>
             <div class="status-badge"><i class="fas fa-clock"></i><span>Pending Approval</span></div>
           </div>
@@ -115,7 +115,7 @@ export async function POST(request: NextRequest) {
           <div class="content">
             <div class="greeting">Dear ${bookingData.firstName} ${bookingData.lastName},</div>
             <p class="intro-text">
-              Thank you for choosing <span class="highlight">Staycation Haven</span>! We have received your booking request
+              Thank you for choosing <span class="highlight">D'Lux Homes</span>! We have received your booking request
               and it is currently pending approval from our team. We will review your booking
               and get back to you within 24 hours.
             </p>
@@ -164,7 +164,7 @@ export async function POST(request: NextRequest) {
             </div>
 
             <p class="intro-text" style="margin-top:30px;">
-              Thank you for your patience! We're excited to host you at <span class="highlight">Staycation Haven</span>.
+              Thank you for your patience! We're excited to host you at <span class="highlight">D'Lux Homes</span>.
             </p>
 
             <div class="cta-button">
@@ -177,7 +177,7 @@ export async function POST(request: NextRequest) {
             <div class="footer-info"><i class="fas fa-phone"></i><span>+63 123 456 7890</span></div>
             <div class="footer-info"><i class="fas fa-map-marker-alt"></i><span>Your Perfect Destination</span></div>
             <div class="footer-divider"></div>
-            <div class="footer-copyright">&copy; ${new Date().getFullYear()} Staycation Haven. All rights reserved.</div>
+            <div class="footer-copyright">&copy; ${new Date().getFullYear()} D'Lux Homes. All rights reserved.</div>
           </div>
         </div>
       </body>
@@ -185,13 +185,13 @@ export async function POST(request: NextRequest) {
     `;
 
     const mailOptions = {
-      from: `"Staycation Haven" <${process.env.EMAIL_USER}>`,
+      from: `"D'Lux Homes" <${process.env.EMAIL_USER}>`,
       to: bookingData.email,
       subject: `Booking Pending Approval - ${bookingData.bookingId}`,
       html: emailHtml,
       attachments: [
         {
-          filename: `Staycation-Pamphlet-${bookingData.bookingId}.pdf`,
+          filename: `DLux-Pamphlet-${bookingData.bookingId}.pdf`,
           content: pamphletBuffer,
           contentType: 'application/pdf',
         },

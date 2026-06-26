@@ -73,7 +73,24 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
       const all = [...(acct as Record<string, unknown>[]), ...(locals.filter(Boolean) as Record<string, unknown>[])];
       const byId = new Map<string, Record<string, unknown>>();
       all.forEach((d) => { const id = String(d.booking_id ?? ""); if (id) byId.set(id, d); });
+      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+      const ACTIVE = ["pending", "approved", "confirmed", "on-going", "checked-in"];
+      // Upcoming = active status AND the stay hasn't ended (date not in the past).
+      const stayEnded = (d: Record<string, unknown>) => {
+        const end = String(d.check_out_date ?? "").slice(0, 10) || String(d.check_in_date ?? "").slice(0, 10);
+        return !!end && new Date(end + "T00:00:00").getTime() < todayStart.getTime();
+      };
+      // Expired = still unconfirmed (pending / approved-unpaid) and the check-in
+      // date has already passed — drop it from "upcoming" like the admin does.
+      const expired = (d: Record<string, unknown>) => {
+        const ci = String(d.check_in_date ?? "").slice(0, 10);
+        if (!ci || new Date(ci + "T00:00:00").getTime() >= todayStart.getTime()) return false;
+        const st = String(d.status ?? "pending");
+        const dpApproved = String(d.payment_status ?? "").startsWith("approved");
+        return st === "pending" || (st === "approved" && !dpApproved);
+      };
       const list = Array.from(byId.values())
+        .filter((d) => ACTIVE.includes(String(d.status ?? "pending")) && !stayEnded(d) && !expired(d))
         .map((d) => {
           const st = String(d.status ?? "pending");
           return {
@@ -83,8 +100,7 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
             status: st.charAt(0).toUpperCase() + st.slice(1),
             live: ["confirmed", "checked-in", "approved"].includes(st),
           } as Row;
-        })
-        .filter((r) => ["Pending", "Confirmed", "Approved", "Checked-in"].includes(r.status));
+        });
       setRows(list);
     });
     return () => { active = false; };
@@ -143,33 +159,38 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
           .sh-back svg, .sh-book svg { transition: none; }
           .sh-back:hover svg { animation: none; }
         }
-        @media (max-width: 720px) { .sh-acct-text, .sh-mybk-text { display: none !important; } }
+        @media (max-width: 720px) { .sh-acct-text, .sh-mybk-text, .sh-back-text { display: none !important; } }
+        @media (max-width: 560px) {
+          .sh-bar { padding: 0 14px !important; gap: 8px !important; }
+          .sh-book { padding: 11px 13px !important; margin-left: 4px !important; }
+          .sh-book-text { display: none !important; }
+        }
       `}</style>
 
-      <div style={{ maxWidth: 1320, margin: "0 auto", height: 72, padding: "0 32px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24 }}>
+      <div className="sh-bar" style={{ maxWidth: 1320, margin: "0 auto", height: 72, padding: "0 32px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24 }}>
 
         {/* LEFT — optional back + wordmark */}
-        <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flex: "1 1 auto", minWidth: 0 }}>
           {backHref && (
             <>
-              <Link href={backHref} className="sh-back" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 12px", textDecoration: "none", color: MUTED, fontSize: 14 }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>
-                <span>{backLabel}</span>
+              <Link href={backHref} className="sh-back" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 12px", textDecoration: "none", color: MUTED, fontSize: 14, flex: "none" }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>
+                <span className="sh-back-text" style={{ whiteSpace: "nowrap" }}>{backLabel}</span>
               </Link>
               <span style={{ width: 1, height: 24, background: "#e8e1d2" }} />
             </>
           )}
-          <Link href="/rooms" style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none", color: "inherit" }}>
+          <Link href="/rooms" style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none", color: "inherit", minWidth: 0 }}>
             <div style={{ width: backHref ? 30 : 34, height: backHref ? 30 : 34, flex: "none", background: INK, color: "#faf7f1", display: "grid", placeItems: "center", fontFamily: SERIF, fontSize: backHref ? 16 : 18, fontStyle: "italic", letterSpacing: "-0.04em" }}>D</div>
-            <div style={{ lineHeight: 1 }}>
-              <div style={{ fontFamily: SERIF, fontSize: backHref ? 18 : 20, letterSpacing: "-0.01em" }}>D&rsquo; Lux Homes</div>
+            <div style={{ lineHeight: 1, minWidth: 0, overflow: "hidden" }}>
+              <div style={{ fontFamily: SERIF, fontSize: backHref ? 18 : 20, letterSpacing: "-0.01em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>D&rsquo; Lux Homes</div>
               {!backHref && <div style={{ fontSize: 10, letterSpacing: "0.28em", textTransform: "uppercase", color: SUBTLE, marginTop: 4 }}>Staycations &middot; PH</div>}
             </div>
           </Link>
         </div>
 
         {/* RIGHT — bookings + account + book */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
 
           {/* MY BOOKINGS — only when signed in */}
           {signedIn && (
@@ -243,9 +264,9 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
 
           {/* BOOK — primary */}
           <button className="sh-book" onClick={goBook}
-            style={{ marginLeft: 8, background: CLAY, color: "#faf7f1", border: 0, padding: "12px 20px", fontSize: 14, fontWeight: 500, cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center", gap: 8 }}>
-            <span>{bookLabel}</span>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
+            style={{ marginLeft: 8, background: CLAY, color: "#faf7f1", border: 0, padding: "12px 20px", fontSize: 14, fontWeight: 500, cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center", gap: 8, flex: "none", whiteSpace: "nowrap" }}>
+            <span className="sh-book-text">{bookLabel}</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
           </button>
         </div>
       </div>

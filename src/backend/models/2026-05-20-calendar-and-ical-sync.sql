@@ -63,10 +63,11 @@ CREATE TRIGGER ical_feeds_updated_at
   FOR EACH ROW EXECUTE FUNCTION trg_ical_feeds_updated_at();
 
 -- =========================================================================
--- 3) Booking source (so the UI can show "Booked via Airbnb / Staycation")
+-- 3) Booking source (so the UI can show "Booked direct / via Airbnb / Booking.com")
+-- 'direct' = booked on the D'Lux Homes website; iCal imports set their own source.
 -- =========================================================================
 ALTER TABLE booking
-  ADD COLUMN IF NOT EXISTS booking_source TEXT NOT NULL DEFAULT 'staycation';
+  ADD COLUMN IF NOT EXISTS booking_source TEXT NOT NULL DEFAULT 'direct';
 
 COMMIT;
 

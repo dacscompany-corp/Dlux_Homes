@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { signIn } from "next-auth/react";
+import { useState, useEffect } from "react";
+import { signIn, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import Link from "next/link";
@@ -14,18 +14,36 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   // Where to land after sign-in (e.g. back to checkout). Defaults to My bookings.
-  // Derived once from the URL — this is a client component, so window is available.
-  const [callbackUrl] = useState(() => {
-    if (typeof window === "undefined") return "/my-bookings";
-    return new URLSearchParams(window.location.search).get("callbackUrl") || "/my-bookings";
-  });
+  // IMPORTANT: read the ?callbackUrl= param on the CLIENT after mount. A useState
+  // lazy-initialiser runs during SSR (window undefined) and locks in the default;
+  // React keeps that server state on hydration and never re-reads the real param —
+  // which is exactly why booking guests kept landing on My bookings instead of
+  // resuming checkout. cbResolved gates the redirect so we never act on the stale default.
+  const [callbackUrl, setCallbackUrl] = useState("/my-bookings");
+  const [cbResolved, setCbResolved] = useState(false);
+  useEffect(() => {
+    const cb = new URLSearchParams(window.location.search).get("callbackUrl");
+    if (cb) setCallbackUrl(cb);
+    setCbResolved(true);
+  }, []);
+
   // Back target — the room being booked (never the checkout, which would just
   // redirect back here). Falls back to the listing.
-  const [backHref] = useState(() => {
+  const backHref = (() => {
     const rid = new URLSearchParams(callbackUrl.split("?")[1] || "").get("roomId");
     return rid ? `/rooms/${rid}` : "/rooms";
-  });
+  })();
   const isBooking = callbackUrl.includes("/checkout");
+
+  // Once authenticated, always land on the callbackUrl (e.g. back to checkout).
+  // This covers credentials sign-in, Google OAuth, and the case where the
+  // checkout page bounced us here while its session was still propagating —
+  // without this, an authenticated user could get stranded on the default page.
+  // Wait for cbResolved so we redirect to the real target, not the placeholder.
+  const { status } = useSession();
+  useEffect(() => {
+    if (status === "authenticated" && cbResolved) router.replace(callbackUrl);
+  }, [status, cbResolved, callbackUrl, router]);
 
   const handleCredentials = async (e?: React.FormEvent): Promise<void> => {
     e?.preventDefault();

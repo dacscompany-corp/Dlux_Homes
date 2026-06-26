@@ -1,4 +1,12 @@
-import { Pool } from 'pg';
+import { Pool, types } from 'pg';
+
+// Return DATE columns (type OID 1082) as raw 'YYYY-MM-DD' strings instead of JS
+// Date objects. node-postgres otherwise parses a DATE into a Date at the server's
+// local midnight, which JSON-serialises to a UTC ISO string shifted back a day in
+// +UTC zones (PH is UTC+8) — turning a Jun 25 check-in into Jun 24. Keeping the
+// raw string preserves the exact calendar date the guest picked. DATE has no time
+// or zone, so a plain string is the only lossless representation.
+types.setTypeParser(1082, (v) => v);
 
 // PostgreSQL connection pool.
 //

@@ -38,6 +38,7 @@
 import { getServerSession, type Session } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
+import pool from "@/backend/config/db";
 
 const ADMIN_ROLES = new Set(["Owner", "CSR"]);
 const EMPLOYEE_ROLES = new Set(["Owner", "CSR", "Cleaner"]);
@@ -92,6 +93,52 @@ export async function requireAdmin(): Promise<GuardResult> {
 // decision). The guard only blocks unauthenticated users and guests.
 export async function requireEmployee(): Promise<GuardResult> {
   return requireRole(EMPLOYEE_ROLES);
+}
+
+// Ownership-aware guard for per-booking routes (/api/bookings/[id]). Closes the
+// IDOR where any signed-in user could read/modify ANY booking by id.
+//   - Owner/CSR  → may access any booking.
+//   - Regular user → only their OWN booking (booking.user_id === session id).
+//   - Unauthenticated / mismatched owner → 401 / 403.
+// `id` may be the booking UUID (booking.id) or the friendly booking_id.
+export async function requireBookingAccess(id: string): Promise<GuardResult> {
+  const session = await getServerSession(authOptions);
+
+  if (!session?.user) {
+    return {
+      ok: false,
+      response: NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 }),
+    };
+  }
+
+  const role = (session.user as { role?: string }).role ?? "";
+  // Admins (Owner/CSR) may access any booking.
+  if (ADMIN_ROLES.has(role)) {
+    return { ok: true, session: session as AuthedSession, role };
+  }
+
+  // Otherwise the caller must own the booking.
+  const userId = (session.user as { id?: string }).id;
+  if (userId && id) {
+    try {
+      // id::text avoids a UUID cast error when `id` is the friendly booking_id.
+      const result = await pool.query(
+        `SELECT user_id FROM booking WHERE booking_id = $1 OR id::text = $1 LIMIT 1`,
+        [id],
+      );
+      const ownerId = result.rows[0]?.user_id;
+      if (ownerId != null && String(ownerId) === String(userId)) {
+        return { ok: true, session: session as AuthedSession, role };
+      }
+    } catch (err) {
+      console.error("requireBookingAccess lookup failed:", err);
+    }
+  }
+
+  return {
+    ok: false,
+    response: NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 }),
+  };
 }
 
 // Backwards-compat alias kept in case anything imports the old type name.

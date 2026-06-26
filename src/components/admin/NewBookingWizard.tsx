@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import { generateBookingId } from "@/lib/booking-store";
+import { extraPaxFee } from "@/lib/pricing";
 import { User, CalendarDays, Wallet, Check } from "lucide-react";
 
 const STEPS = [
@@ -11,7 +12,7 @@ const STEPS = [
   { id: "payment", label: "Payment", icon: Wallet },
 ] as const;
 
-type Haven = { id: string; name: string; rate: number };
+type Haven = { id: string; name: string; rate: number; extraPaxFee: number };
 
 const empty = {
   first_name: "", last_name: "", email: "", phone: "", age: "", gender: "Male",
@@ -55,6 +56,7 @@ export default function NewBookingWizard({
           id: String(h.uuid_id || h.id || ""),
           name: String(h.haven_name || h.name || "Haven"),
           rate: Number(h.ten_hour_rate || h.weekend_rate || h.six_hour_rate || h.price_per_night || 0),
+          extraPaxFee: Number(h.extra_pax_fee ?? 300),
         })));
       })
       .catch(() => {});
@@ -69,7 +71,15 @@ export default function NewBookingWizard({
   if (!open) return null;
 
   const roomRate = Number(form.room_rate) || 0;
-  const total = roomRate;
+  // Extra-pax fee mirrors the storefront: a flat per-pax fee for each adult/young
+  // adult beyond the base 2. "Children (7 under)" (the infants field) are exempt.
+  // Added on top of the (editable) room rate.
+  const BASE_PAX = 2;
+  const perPaxFee = havens.find((x) => x.id === form.haven_id)?.extraPaxFee ?? 300;
+  const feePax = (Number(form.adults) || 0) + (Number(form.children) || 0); // adults + young adults
+  const extraPaxCount = Math.max(0, feePax - BASE_PAX);
+  const paxFee = extraPaxFee(feePax, BASE_PAX, perPaxFee);
+  const total = roomRate + paxFee;
 
   const step1Valid = !!(form.first_name && form.last_name && form.email && form.phone);
   const step2Valid = !!(form.room_name && form.check_in_date && roomRate > 0);
@@ -240,6 +250,9 @@ export default function NewBookingWizard({
               </div>
               <div className="rounded-2xl border p-4 mt-2" style={{ backgroundColor: "#FAFAF7", borderColor: "#EDE3D2" }}>
                 <div className="flex justify-between text-sm"><span style={{ color: "#8B6344" }}>Room</span><span style={{ color: "#1a1a1a" }}>₱{roomRate.toLocaleString()}</span></div>
+                {paxFee > 0 && (
+                  <div className="flex justify-between text-sm mt-2"><span style={{ color: "#8B6344" }}>Extra pax · {extraPaxCount} × ₱{perPaxFee.toLocaleString()}</span><span style={{ color: "#1a1a1a" }}>₱{paxFee.toLocaleString()}</span></div>
+                )}
                 <div className="flex justify-between text-sm mt-2 pt-2 border-t font-bold" style={{ borderColor: "#EDE3D2" }}><span style={{ color: "#1a1a1a" }}>Total</span><span style={{ color: "#B07848" }}>₱{total.toLocaleString()}</span></div>
               </div>
             </div>

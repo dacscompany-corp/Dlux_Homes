@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
       <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Booking Request Update - Staycation Haven</title>
+        <title>Booking Request Update - D'Lux Homes</title>
         <style>
           body { font-family: Arial, sans-serif; line-height: 1.6; color: #1F2937; background: #F9F6F0; padding: 20px; }
           .card { max-width: 680px; margin: 0 auto; background: #fff; border-radius: 12px; overflow: hidden; border: 1px solid rgba(184,134,11,0.15); }
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
       <body>
         <div class="card">
           <div class="header">
-            <div style="font-size: 22px; font-weight: 800;">Staycation Haven</div>
+            <div style="font-size: 22px; font-weight: 800;">D'Lux Homes</div>
             <div style="opacity: 0.95; margin-top: 6px;">Booking Request Update</div>
           </div>
           <div class="content">
@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
             <p class="muted" style="margin-top: 18px;">If you have questions, you may reply to this email or submit a new request.</p>
           </div>
           <div class="footer">
-            Staycation Haven | This is an automated message
+            D'Lux Homes | This is an automated message
           </div>
         </div>
       </body>
@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
       to: bookingData.email,
-      subject: `Booking Request Rejected - ${bookingData.bookingId || "Staycation Haven"}`,
+      subject: `Booking Request Rejected - ${bookingData.bookingId || "D'Lux Homes"}`,
       html: emailHtml,
     });
 

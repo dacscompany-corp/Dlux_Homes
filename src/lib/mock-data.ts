@@ -12,10 +12,10 @@ export const mockRooms = [
     rating: 4.9,
     reviewCount: 48,
     price10hr: 1499,
-    price10hrWeekend: 1800,
+    price10hrWeekend: 1799,
     price21hr: 1899,
-    price21hrWeekend: 2100,
-    additionalPaxFee: 150,
+    price21hrWeekend: 2099,
+    additionalPaxFee: 300,
     basePax: 2,
     maxPax: 4,
     images: [

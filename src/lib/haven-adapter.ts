@@ -66,7 +66,7 @@ export function havenToRoom(h: Record<string, unknown>): Room & RoomExtras {
     price10hrWeekend: Number(h.six_hour_rate ?? h.ten_hour_rate ?? 0),         // 10h weekend/holiday
     price21hr: Number(h.weekday_rate ?? 0),                                    // 21h weekday
     price21hrWeekend: Number(h.weekend_rate ?? h.weekday_rate ?? 0),           // 21h weekend/holiday
-    additionalPaxFee: Number(h.extra_pax_fee ?? 150),
+    additionalPaxFee: Number(h.extra_pax_fee ?? 300),
     basePax: Number(h.base_pax ?? 2),
     maxPax: Number(h.capacity ?? 4),
     // Keep a local placeholder if the haven has no uploaded images yet, so the

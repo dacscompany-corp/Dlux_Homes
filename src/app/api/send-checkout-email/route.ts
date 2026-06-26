@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Thank You For Your Stay! - Staycation Haven</title>
+        <title>Thank You For Your Stay! - D'Lux Homes</title>
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@600;700&display=swap" rel="stylesheet">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
         <style>
@@ -404,7 +404,7 @@ export async function POST(request: NextRequest) {
           <!-- Header -->
           <div class="header">
             <div class="logo">
-              <i class="fas fa-umbrella-beach"></i> Staycation Haven
+              <i class="fas fa-umbrella-beach"></i> D'Lux Homes
             </div>
             <div class="tagline">Thank You For Staying With Us</div>
             <div class="status-badge">
@@ -421,7 +421,7 @@ export async function POST(request: NextRequest) {
             </div>
 
             <p class="intro-text">
-              You have successfully checked out. We hope you enjoyed your stay at <strong>Staycation Haven</strong>!
+              You have successfully checked out. We hope you enjoyed your stay at <strong>D'Lux Homes</strong>!
               We would love to hear about your experience and hope to see you again soon.
             </p>
 
@@ -510,7 +510,7 @@ export async function POST(request: NextRequest) {
             <div class="footer-divider"></div>
 
             <div class="footer-copyright">
-              &copy; ${new Date().getFullYear()} Staycation Haven. All rights reserved.
+              &copy; ${new Date().getFullYear()} D'Lux Homes. All rights reserved.
             </div>
           </div>
         </div>
@@ -550,7 +550,7 @@ export async function POST(request: NextRequest) {
     `;
 
     const mailOptions = {
-      from: `"Staycation Haven" <${process.env.EMAIL_USER}>`,
+      from: `"D'Lux Homes" <${process.env.EMAIL_USER}>`,
       to: bookingData.email,
       subject: `Thank You For Your Stay! - ${bookingData.bookingId}`,
       html: emailHtml,

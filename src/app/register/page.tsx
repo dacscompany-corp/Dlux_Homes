@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { signIn } from "next-auth/react";
+import { signIn, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import Link from "next/link";
@@ -14,6 +14,7 @@ export default function RegisterPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [callbackUrl, setCallbackUrl] = useState("/my-bookings");
+  const [cbResolved, setCbResolved] = useState(false);
   // Back target — the room being booked. Falls back to the listing.
   const [backHref, setBackHref] = useState("/rooms");
   useEffect(() => {
@@ -23,7 +24,15 @@ export default function RegisterPage() {
       const rid = new URLSearchParams(cb.split("?")[1] || "").get("roomId");
       if (rid) setBackHref(`/rooms/${rid}`);
     }
+    setCbResolved(true);
   }, []);
+  // Once authenticated (credentials or Google), land on the callbackUrl rather
+  // than getting stranded on the default page. Wait for cbResolved so an already
+  // signed-in visitor isn't redirected to the placeholder before we read the URL.
+  const { status } = useSession();
+  useEffect(() => {
+    if (status === "authenticated" && cbResolved) router.replace(callbackUrl);
+  }, [status, cbResolved, callbackUrl, router]);
 
   const handleRegister = async (e?: React.FormEvent) => {
     e?.preventDefault();

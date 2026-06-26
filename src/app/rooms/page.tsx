@@ -8,10 +8,13 @@ import { mockRooms, mockReviews } from "@/lib/mock-data";
 import { useGetHavensQuery } from "@/redux/api/roomApi";
 import { havenToRoom } from "@/lib/haven-adapter";
 
+// Fallback labels + times (mock mode / haven with no configured times). The live
+// haven's actual check-in/out times override these via room.windows — see
+// displayWindows below. Times here match the official D'Lux rate card.
 const stayWindows = [
-  { stayType: "10", checkIn: "9:00 AM", checkOut: "7:00 PM", label: "Daycation" },
-  { stayType: "10", checkIn: "9:00 PM", checkOut: "7:00 AM", label: "Nightcation" },
-  { stayType: "21", checkIn: "10:00 AM", checkOut: "7:00 AM", label: "Full stay" },
+  { stayType: "10", checkIn: "7:00 AM", checkOut: "5:00 PM", label: "Daycation" },
+  { stayType: "10", checkIn: "7:00 PM", checkOut: "5:00 AM", label: "Nightcation" },
+  { stayType: "21", checkIn: "7:00 PM", checkOut: "4:00 PM", label: "Full stay" },
 ];
 
 // ── Amenity icons ──────────────────────────────────────────────
@@ -91,6 +94,15 @@ export default function BrowsePage() {
   const { data: havensData } = useGetHavensQuery({});
   const liveHaven = (havensData as Record<string, unknown>[] | undefined)?.[0];
   const room = liveHaven ? havenToRoom(liveHaven) : mockRooms[0];
+  // Display windows: keep the listing's labels/stayType but take the actual
+  // check-in/out times from the live haven (room.windows, same day/night/overnight
+  // order), so the cards always reflect what the owner configured in admin.
+  const liveWindows = (room as { windows?: { checkIn: string; checkOut: string }[] }).windows;
+  const displayWindows = stayWindows.map((w, i) => ({
+    ...w,
+    checkIn: liveWindows?.[i]?.checkIn ?? w.checkIn,
+    checkOut: liveWindows?.[i]?.checkOut ?? w.checkOut,
+  }));
 
   useEffect(() => {
     const id = setInterval(() => setHeroImg((i) => (i + 1) % room.images.length), 5500);
@@ -126,11 +138,114 @@ export default function BrowsePage() {
   }, []);
 
   return (
-    <div className="page-enter" style={{ minHeight: "100vh", backgroundColor: "var(--bg)", color: "var(--ink)" }}>
+    <div className="page-enter hm-root" style={{ minHeight: "100vh", backgroundColor: "var(--bg)", color: "var(--ink)" }}>
 
-      {/* HEADER */}
-      <SiteHeader bookHref={`/rooms/${room.id}`} />
+      {/* HEADER (desktop only — mobile uses its own header inside .rm-mobile) */}
+      <div className="rm-deskhdr">
+        <SiteHeader bookHref={`/rooms/${room.id}`} />
+      </div>
 
+      <style>{`
+        .hm-root { overflow-x: hidden; }
+        .rm-mobile { display: none; }
+        @media (max-width: 860px) {
+          .rm-desktop, .rm-deskhdr { display: none !important; }
+          .rm-mobile { display: block; }
+        }
+        @media (max-width: 900px) {
+          .hm-4col { grid-template-columns: repeat(2,1fr) !important; }
+          .about-grid { grid-template-columns: 1fr !important; gap: 36px !important; }
+          .amen-grid { grid-template-columns: 1fr !important; gap: 36px !important; }
+          .hm-stay { grid-template-columns: 1fr !important; }
+          .hm-2col { grid-template-columns: 1fr !important; gap: 24px !important; }
+          .review-grid { grid-template-columns: repeat(2,1fr) !important; }
+          .hm-foot { grid-template-columns: 1fr 1fr !important; gap: 28px !important; }
+          .hm-h2 { font-size: 40px !important; }
+          .hm-sec { padding-left: 18px !important; padding-right: 18px !important; }
+        }
+        @media (max-width: 560px) {
+          .hm-4col, .review-grid, .hm-foot { grid-template-columns: 1fr !important; }
+          .hm-h2 { font-size: 33px !important; }
+        }
+      `}</style>
+
+      {/* ═══════════ MOBILE HOME (D'Lux Mobile Guest View) ═══════════ */}
+      <div className="rm-mobile" style={{ background: "#F6EFE2" }}>
+        <div style={{ position: "sticky", top: 0, zIndex: 20, background: "#FAF7F1", borderBottom: "1px solid #ECE5D4", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 31, height: 31, background: "#1F160E", color: "#FAF7F1", display: "grid", placeItems: "center", fontFamily: "'Fraunces', serif", fontStyle: "italic", fontSize: 17 }}>D</div>
+            <div style={{ fontFamily: "'Fraunces', serif", fontSize: 19 }}>D&rsquo; Lux Homes</div>
+          </div>
+          <Link href="/my-bookings" aria-label="My bookings" style={{ width: 40, height: 40, borderRadius: "50%", border: "1px solid #E0CEB2", background: "#FFFCF4", display: "grid", placeItems: "center", color: "#1F160E", textDecoration: "none" }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+          </Link>
+        </div>
+        <div style={{ padding: "16px 16px 0" }}>
+          <div onClick={() => setHeroImg((i) => (i + 1) % room.images.length)} style={{ position: "relative", height: 356, borderRadius: 22, overflow: "hidden", cursor: "pointer" }}>
+            <Image src={room.images[heroImg]} alt="" fill unoptimized style={{ objectFit: "cover" }} />
+            <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(31,22,14,.3) 0%, rgba(31,22,14,0) 32%, rgba(31,22,14,.5) 100%)" }} />
+            <div style={{ position: "absolute", top: 14, left: 14, right: 14, display: "flex", justifyContent: "space-between" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999, background: "rgba(255,255,255,.18)", backdropFilter: "blur(8px)", color: "#fff", fontSize: 11.5, fontWeight: 600 }}><IcoMapPin /> Grass Residences</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999, background: "rgba(255,255,255,.18)", backdropFilter: "blur(8px)", color: "#fff", fontSize: 11.5, fontWeight: 600 }}><IcoStar size={12} /> {room.rating}</span>
+            </div>
+            <div style={{ position: "absolute", left: 0, right: 0, bottom: 16, display: "flex", justifyContent: "center", gap: 6 }}>
+              {room.images.map((_, i) => (
+                <button key={i} onClick={(e) => { e.stopPropagation(); setHeroImg(i); }} aria-label={`Photo ${i + 1}`} style={{ width: i === heroImg ? 22 : 6, height: 6, borderRadius: 99, border: "none", padding: 0, cursor: "pointer", background: i === heroImg ? "#fff" : "rgba(255,255,255,.5)" }} />
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ padding: "26px 24px 0" }}>
+          <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".2em", color: "#8C5A2E" }}>A staycation in the sky</div>
+          <h1 style={{ fontFamily: "'Fraunces', serif", fontWeight: 400, fontSize: 42, lineHeight: 0.98, letterSpacing: "-.03em", margin: "14px 0 0" }}>The city, <em style={{ color: "#8C5A2E" }}>on pause.</em></h1>
+          <p style={{ fontSize: 14.5, lineHeight: 1.55, color: "#4A3A2A", margin: "14px 0 0" }}>One quiet home on the 14th floor of Grass Residences. Book by the hour, check in within minutes, leave rested.</p>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 20, fontSize: 12.5, color: "#4A3A2A", fontWeight: 500 }}><span>28 sqm</span><span style={{ width: 3, height: 3, borderRadius: "50%", background: "#C4B69C" }} /><span>Up to 4 guests</span><span style={{ width: 3, height: 3, borderRadius: "50%", background: "#C4B69C" }} /><span>10 / 21 hrs</span></div>
+        </div>
+
+        <div style={{ padding: "30px 24px 0" }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+            <h2 style={{ fontFamily: "'Fraunces', serif", fontWeight: 500, fontSize: 23, margin: 0, letterSpacing: "-.01em" }}>Choose your stay</h2>
+            <span style={{ fontSize: 12, color: "#8B7458" }}>from ₱{room.price10hr.toLocaleString()}</span>
+          </div>
+          <div style={{ marginTop: 14, borderTop: "1px solid #E0CEB2" }}>
+            {displayWindows.map((w, i) => (
+              <Link key={i} href={`/rooms/${room.id}?win=${i}`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", padding: "17px 0", borderBottom: "1px solid #E0CEB2", textDecoration: "none", color: "inherit" }}>
+                <span><span style={{ display: "block", fontFamily: "'Fraunces', serif", fontSize: 18, color: "#1F160E" }}>{w.label}</span><span style={{ display: "block", fontSize: 12, color: "#8B7458", marginTop: 3 }}>{w.checkIn} → {w.checkOut}</span></span>
+                <span style={{ display: "flex", alignItems: "center", gap: 12 }}><span style={{ fontSize: 15, fontWeight: 700, color: "#1F160E" }}>₱{(w.stayType === "10" ? room.price10hr : room.price21hr).toLocaleString()}</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#B07848" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg></span>
+              </Link>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ padding: "30px 24px 0" }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 18 }}>
+            <h2 style={{ fontFamily: "'Fraunces', serif", fontWeight: 500, fontSize: 23, margin: 0, letterSpacing: "-.01em" }}>What&rsquo;s inside</h2>
+            <Link href={`/rooms/${room.id}`} style={{ fontSize: 12.5, color: "#8C5A2E", textDecoration: "none" }}>See all</Link>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            {AMENITIES.slice(0, 4).map((a, i) => { const Icon = a.icon; return (
+              <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 9, flex: 1 }}>
+                <div style={{ width: 46, height: 46, borderRadius: "50%", background: "#EFE4CE", display: "grid", placeItems: "center", color: "#6B3F1C" }}><Icon /></div>
+                <span style={{ fontSize: 11.5, color: "#4A3A2A", fontWeight: 500, textAlign: "center" }}>{["WiFi", "Aircon", "Smart TV", "Balcony"][i]}</span>
+              </div>
+            ); })}
+          </div>
+        </div>
+
+        <div style={{ padding: "30px 24px 30px" }}>
+          <div style={{ display: "flex", gap: 3, marginBottom: 14, color: "#1F160E" }}>{[0, 1, 2, 3, 4].map((i) => <IcoStar key={i} size={14} />)}</div>
+          <p style={{ fontFamily: "'Fraunces', serif", fontWeight: 400, fontSize: 20, lineHeight: 1.4, letterSpacing: "-.01em", color: "#1F160E", margin: 0 }}>&ldquo;{mockReviews[0].comment}&rdquo;</p>
+          <div style={{ display: "flex", alignItems: "center", gap: 11, marginTop: 18 }}><div style={{ width: 34, height: 34, borderRadius: "50%", background: "#6B3F1C", color: "#fff", display: "grid", placeItems: "center", fontSize: 12, fontWeight: 700 }}>{mockReviews[0].avatar}</div><div><div style={{ fontSize: 13, fontWeight: 600 }}>{mockReviews[0].author}</div><div style={{ fontSize: 11.5, color: "#8B7458" }}>{room.rating} from {room.reviewCount} stays</div></div></div>
+        </div>
+
+        <div style={{ padding: "0 24px 40px" }}>
+          <Link href={`/rooms/${room.id}`} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", padding: 16, borderRadius: 16, background: "#B07848", color: "#FFFCF4", fontSize: 15, fontWeight: 600, textDecoration: "none" }}>Book your stay <IcoArrowRight size={16} /></Link>
+        </div>
+      </div>
+
+      {/* ═══════════ DESKTOP (hidden on mobile) ═══════════ */}
+      <div className="rm-desktop">
       {/* HERO */}
       <section style={{ position: "relative", height: "min(720px, 88vh)", overflow: "hidden" }}>
         {room.images.map((src, i) => (
@@ -181,7 +296,7 @@ export default function BrowsePage() {
 
       {/* SNAPSHOT STRIP */}
       <section style={{ maxWidth: 1320, margin: "0 auto", padding: "56px 28px 0" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 28, paddingBottom: 40, borderBottom: "1px solid var(--line)" }}>
+        <div className="hm-4col" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 28, paddingBottom: 40, borderBottom: "1px solid var(--line)" }}>
           {[
             { h: "28 sqm", s: "1 bedroom · balcony" },
             { h: "Up to 4", s: "Full double + pull-out" },
@@ -201,7 +316,7 @@ export default function BrowsePage() {
         <div className={`about-grid${aboutVisible ? " about-grid--in" : ""}`} style={{ display: "grid", gridTemplateColumns: "1fr 1.05fr", gap: 80, alignItems: "center" }}>
           <div className="about-copy">
             <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: "var(--accent-ink)", marginBottom: 18 }}>About this home</div>
-            <h2 className="serif" style={{ fontSize: 56, fontWeight: 400, letterSpacing: "-.025em", lineHeight: 1, margin: 0 }}>
+            <h2 className="serif hm-h2" style={{ fontSize: 56, fontWeight: 400, letterSpacing: "-.025em", lineHeight: 1, margin: 0 }}>
               A corner of the sky, <em>set aside for you.</em>
             </h2>
             <p style={{ fontSize: 16, color: "var(--ink-2)", lineHeight: 1.7, marginTop: 20 }}>{room.description}</p>
@@ -236,22 +351,22 @@ export default function BrowsePage() {
       {/* PICK YOUR WINDOW */}
       <section id="book-section" style={{ background: "var(--ink)", color: "var(--white)", padding: "80px 28px" }}>
         <div style={{ maxWidth: 1320, margin: "0 auto" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 60, alignItems: "end", marginBottom: 44 }}>
+          <div className="hm-2col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 60, alignItems: "end", marginBottom: 44 }}>
             <div>
-              <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: "var(--gold)", marginBottom: 16 }}>How we do stays</div>
-              <h2 className="serif" style={{ fontSize: 64, fontWeight: 400, letterSpacing: "-.03em", lineHeight: 0.95, margin: 0 }}>
-                Pick the <em>window</em> that fits your day.
+              <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: "var(--gold)", marginBottom: 16 }}>Choose your time</div>
+              <h2 className="serif hm-h2" style={{ fontSize: 64, fontWeight: 400, letterSpacing: "-.03em", lineHeight: 0.95, margin: 0 }}>
+                Pick the <em>time</em> that fits your day.
               </h2>
             </div>
             <p style={{ fontSize: 16, color: "rgba(255,255,252,.75)", lineHeight: 1.6, margin: 0 }}>
-              Three preset check-in windows. No &quot;4pm check-in / 11am check-out&quot; nonsense. Show up, settle in, leave rested.
+              Three simple check-in times to choose from. The prices here are for regular days &mdash; weekends and holidays cost a little more. Don&rsquo;t worry, we&rsquo;ll show you the full price before you book.
             </p>
           </div>
-          <div ref={stayCardsRef} style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
-            {stayWindows.map((w, i) => (
+          <div ref={stayCardsRef} className="hm-stay" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
+            {displayWindows.map((w, i) => (
               <Link
                 key={i}
-                href={`/rooms/${room.id}`}
+                href={`/rooms/${room.id}?win=${i}`}
                 className={`stay-card${stayCardsVisible ? " stay-card--in" : ""}`}
                 style={{ textDecoration: "none", transitionDelay: `${i * 110}ms` }}
               >
@@ -281,7 +396,7 @@ export default function BrowsePage() {
         <div className={`amen-grid${amenitiesVisible ? " amen-grid--in" : ""}`} style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr", gap: 64 }}>
           <div className="amen-copy">
             <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: "var(--accent-ink)", marginBottom: 16 }}>What&apos;s inside</div>
-            <h2 className="serif" style={{ fontSize: 52, fontWeight: 400, letterSpacing: "-.025em", lineHeight: 1, margin: "0 0 20px" }}>Everything you&apos;d reach for.</h2>
+            <h2 className="serif hm-h2" style={{ fontSize: 52, fontWeight: 400, letterSpacing: "-.025em", lineHeight: 1, margin: "0 0 20px" }}>Everything you&apos;d reach for.</h2>
             <p style={{ fontSize: 15, color: "var(--ink-2)", lineHeight: 1.65 }}>Kitchenette, balcony, Netflix, videoke — and a welcome pack that means you can walk in with just a backpack.</p>
             <div style={{ marginTop: 28, padding: 20, background: "var(--bg-2)", borderRadius: 16 }}>
               <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--ink)", marginBottom: 12 }}>On the house</div>
@@ -310,7 +425,7 @@ export default function BrowsePage() {
         <div style={{ maxWidth: 1320, margin: "0 auto" }}>
           <div style={{ marginBottom: 40 }}>
             <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: "var(--accent-ink)", marginBottom: 14 }}>Guests say</div>
-            <h2 className="serif" style={{ fontSize: 52, fontWeight: 400, letterSpacing: "-.025em", lineHeight: 1, margin: 0, display: "flex", alignItems: "center", gap: 12 }}>
+            <h2 className="serif hm-h2" style={{ fontSize: 52, fontWeight: 400, letterSpacing: "-.025em", lineHeight: 1, margin: 0, display: "flex", alignItems: "center", gap: 12 }}>
               <IcoStar size={36} /> {room.rating} from {room.reviewCount} stays
             </h2>
           </div>
@@ -348,7 +463,7 @@ export default function BrowsePage() {
       {/* FOOTER */}
       <footer ref={footerRef} className={`footer-sec${footerVisible ? " footer-sec--in" : ""}`} style={{ borderTop: "1px solid var(--line)", background: "var(--bg)" }}>
         <div style={{ maxWidth: 1320, margin: "0 auto", padding: "48px 28px 28px" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 40 }}>
+          <div className="hm-foot" style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 40 }}>
             <div className="footer-col" style={{ animationDelay: "0ms" }}>
               <div className="serif" style={{ fontSize: 34, fontWeight: 500, letterSpacing: "-.02em", lineHeight: 1 }}>Come home to <em>rest.</em></div>
               <p style={{ color: "var(--ink)", fontSize: 13, maxWidth: 360, marginTop: 12, lineHeight: 1.6 }}>
@@ -374,6 +489,7 @@ export default function BrowsePage() {
           </div>
         </div>
       </footer>
+      </div>{/* end .rm-desktop */}
     </div>
   );
 }

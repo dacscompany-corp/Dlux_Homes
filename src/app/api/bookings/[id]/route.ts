@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getBookingById, updateBookingDetails, updateBookingStatus, deleteBooking } from "@/backend/controller/bookingController";
+import { requireAdmin, requireEmployee, requireBookingAccess } from "@/backend/utils/requireAdmin";
 import pool from "@/backend/config/db";
 
 interface RouteContext {
@@ -9,30 +10,48 @@ interface RouteContext {
 }
 
 export async function GET(request: NextRequest, context: RouteContext): Promise<NextResponse> {
-  await context.params; // Just await it, we don't need to extract it
+  const { id } = await context.params;
+  // Owner/CSR can read any booking; a guest only their own (closes IDOR / PII leak).
+  const guard = await requireBookingAccess(id);
+  if (!guard.ok) return guard.response;
   return getBookingById(request);
 }
 
 export async function PUT(request: NextRequest, { params }: RouteContext): Promise<NextResponse> {
-  await params;
+  const { id } = await params;
   const peek = await request.clone().json().catch(() => ({} as any));
+  const has = (k: string) => !!peek && typeof peek === "object" && k in peek;
+
+  // The ONLY guest-facing use of this route is submitting payment proof for
+  // their own booking ({ payment_method, payment_proof }). Anything else —
+  // editing dates/room/guests or changing status — is admin-only.
+  const isPaymentSubmission =
+    (has("payment_method") || has("payment_proof")) &&
+    !has("room_name") && !has("check_in_date") && !has("check_out_date") &&
+    !has("guest_first_name") && !has("guest_last_name") && !has("guest_email") &&
+    !has("guest_phone") && !has("add_ons") && !has("status");
+
+  if (isPaymentSubmission) {
+    const guard = await requireBookingAccess(id);
+    if (!guard.ok) return guard.response;
+    return updateBookingDetails(request);
+  }
+
+  // All other detail edits and every status change require admin (Owner/CSR).
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
   const isDetailsUpdate =
-    peek &&
-    typeof peek === "object" &&
-    ("room_name" in peek ||
-      "check_in_date" in peek ||
-      "check_out_date" in peek ||
-      "guest_first_name" in peek ||
-      "guest_last_name" in peek ||
-      "guest_email" in peek ||
-      "guest_phone" in peek ||
-      "payment_method" in peek ||
-      "add_ons" in peek);
+    has("room_name") || has("check_in_date") || has("check_out_date") ||
+    has("guest_first_name") || has("guest_last_name") || has("guest_email") ||
+    has("guest_phone") || has("payment_method") || has("add_ons");
 
   return isDetailsUpdate ? updateBookingDetails(request) : updateBookingStatus(request);
 }
 
 export async function PATCH(request: NextRequest, { params }: RouteContext): Promise<NextResponse> {
+  // Cleaning-status updates are staff-only (Owner/CSR/Cleaner).
+  const guard = await requireEmployee();
+  if (!guard.ok) return guard.response;
   try {
     const { id } = await params;
     const body = await request.json();
@@ -155,5 +174,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext): Pro
 
 export async function DELETE(request: NextRequest, { params }: RouteContext): Promise<NextResponse> {
   await params;
+  // Admin-only — guests cannot delete bookings (no-cancellation policy).
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
   return deleteBooking(request);
 }

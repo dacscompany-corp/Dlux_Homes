@@ -480,7 +480,7 @@ export async function POST(request: NextRequest) {
     pdf.setTextColor(...primaryColor);
     pdf.setFontSize(11);
     pdf.setFont('helvetica', 'bold');
-    pdf.text('Thank you for choosing Staycation Haven!', pageWidth / 2, pageHeight - 15, { align: 'center' });
+    pdf.text("Thank you for choosing D'Lux Homes!", pageWidth / 2, pageHeight - 15, { align: 'center' });
 
     pdf.setTextColor(...gray);
     pdf.setFontSize(7);
