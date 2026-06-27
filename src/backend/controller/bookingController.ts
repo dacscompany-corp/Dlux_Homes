@@ -3,6 +3,38 @@ import pool from "../config/db";
 import { upload_file } from "../utils/cloudinary";
 import { createCalendarEvent, createCalendarEventWithResult, CalendarEventData } from "../utils/googleCalendar";
 
+// A guest may attach several ID photos. We persist them in the single
+// `valid_id_url` TEXT column as newline-separated Cloudinary URLs — a single
+// URL has no newline, so existing single-ID rows keep working unchanged.
+const ID_URL_SEP = "\n";
+
+// Resolve a guest's ID image(s) to a stored value. Accepts a base64 array
+// (`images`), a single base64 (`single`), and/or already-hosted URL(s)
+// (`existingUrl`). Uploads every base64 image and joins all resulting URLs.
+async function resolveValidIdUrls(
+  images: unknown,
+  single: unknown,
+  existingUrl?: unknown,
+): Promise<string | null> {
+  const base64s: string[] = [];
+  if (Array.isArray(images)) {
+    for (const img of images) if (typeof img === "string" && img.trim()) base64s.push(img);
+  } else if (typeof single === "string" && single.trim()) {
+    base64s.push(single);
+  }
+
+  const urls: string[] = [];
+  for (const b of base64s) {
+    const uploadResult = await upload_file(b, "dlux-homes/valid-ids");
+    if (uploadResult?.url) urls.push(uploadResult.url);
+  }
+
+  if (urls.length === 0 && typeof existingUrl === "string" && existingUrl.trim()) {
+    return existingUrl; // keep previously-stored URL(s) when no new uploads
+  }
+  return urls.length ? urls.join(ID_URL_SEP) : null;
+}
+
 // Add-on prices
 const ADD_ON_PRICES = {
   poolPass: 100,
@@ -40,6 +72,7 @@ export const updateBookingDetails = async (
       guest_gender,
       facebook_link,
       valid_id,
+      valid_ids,
       valid_id_url,
       additional_guests,
       payment_method,
@@ -105,16 +138,7 @@ export const updateBookingDetails = async (
       ],
     );
 
-    let mainValidIdUrl: string | null = null;
-    if (valid_id) {
-      const uploadResult = await upload_file(
-        valid_id,
-        "dlux-homes/valid-ids",
-      );
-      mainValidIdUrl = uploadResult.url;
-    } else if (typeof valid_id_url === "string" && valid_id_url.trim()) {
-      mainValidIdUrl = valid_id_url;
-    }
+    const mainValidIdUrl = await resolveValidIdUrls(valid_ids, valid_id, valid_id_url);
 
     const allGuests: any[] = [];
     allGuests.push({
@@ -130,19 +154,7 @@ export const updateBookingDetails = async (
     });
     if (Array.isArray(additional_guests)) {
       for (const g of additional_guests) {
-        let guestIdUrl: string | null = null;
-        if (g?.validId) {
-          const uploadResult = await upload_file(
-            g.validId,
-            "dlux-homes/valid-ids",
-          );
-          guestIdUrl = uploadResult.url;
-        } else if (
-          typeof g?.valid_id_url === "string" &&
-          g.valid_id_url.trim()
-        ) {
-          guestIdUrl = g.valid_id_url;
-        }
+        const guestIdUrl = await resolveValidIdUrls(g?.validIds, g?.validId, g?.valid_id_url);
         allGuests.push({
           firstName: g?.firstName,
           lastName: g?.lastName,
@@ -338,7 +350,8 @@ interface AdditionalGuest {
   lastName: string;
   age?: number;
   gender?: string;
-  validId?: string;
+  validId?: string; // legacy single base64
+  validIds?: string[]; // one or more ID photos (base64)
   validIdUrl?: string | null;
 }
 
@@ -402,7 +415,8 @@ export const createBooking = async (
       guest_age,
       guest_gender,
       facebook_link,
-      valid_id, // base64
+      valid_id, // base64 (legacy single)
+      valid_ids, // base64[] (one or more ID photos)
       // Additional guests
       additional_guests = [],
       // Payment info
@@ -682,33 +696,27 @@ export const createBooking = async (
     console.log("✅ [BOOKING] Booking record created with ID:", bookingId);
 
     // Step 2: Create main guest record
-    let validIdUrl = null;
-    if (valid_id) {
-      try {
-        const uploadResult = await upload_file(
-          valid_id,
-          "dlux-homes/valid-ids",
-        );
-        validIdUrl = uploadResult.url;
-      } catch (err: unknown) {
-        const e = err as {
-          message?: string;
-          http_code?: number;
-          name?: string;
-        };
-        return NextResponse.json(
-          {
-            success: false,
-            error: "Failed to upload valid ID.",
-            details: {
-              message: e?.message,
-              name: e?.name,
-              http_code: e?.http_code,
-            },
+    let validIdUrl: string | null = null;
+    try {
+      validIdUrl = await resolveValidIdUrls(valid_ids, valid_id);
+    } catch (err: unknown) {
+      const e = err as {
+        message?: string;
+        http_code?: number;
+        name?: string;
+      };
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Failed to upload valid ID.",
+          details: {
+            message: e?.message,
+            name: e?.name,
+            http_code: e?.http_code,
           },
-          { status: 500 },
-        );
-      }
+        },
+        { status: 500 },
+      );
     }
 
     const mainGuestQuery = `
@@ -737,14 +745,7 @@ export const createBooking = async (
     // Step 3: Create additional guests records
     if (additional_guests && additional_guests.length > 0) {
       for (const guest of additional_guests) {
-        let guestIdUrl = null;
-        if (guest.validId) {
-          const uploadResult = await upload_file(
-            guest.validId,
-            "dlux-homes/valid-ids",
-          );
-          guestIdUrl = uploadResult.url;
-        }
+        const guestIdUrl = await resolveValidIdUrls(guest.validIds, guest.validId);
 
         const additionalGuestQuery = `
           INSERT INTO booking_guests (

@@ -73,9 +73,11 @@ const STEPS = ["Your details", "Payment", "Confirm", "Review"];
 // Refundable security deposit collected at check-in (D'Lux house policy).
 const SECURITY_DEPOSIT = 1000;
 
-type Info = { firstName: string; lastName: string; age: string; gender: string; email: string; phone: string; facebook: string; notes: string; validIdName: string | null; validIdData: string | null };
-// Additional (non-main) guests collect only name, age, gender + valid ID.
-type ExtraGuest = { firstName: string; lastName: string; age: string; gender: string; validIdName: string | null; validIdData: string | null };
+// One uploaded ID photo: original filename + base64 data. Guests may attach several.
+type IdDoc = { name: string; data: string };
+type Info = { firstName: string; lastName: string; age: string; gender: string; email: string; phone: string; facebook: string; notes: string; validIds: IdDoc[] };
+// Additional (non-main) guests collect only name, age, gender + valid ID(s).
+type ExtraGuest = { firstName: string; lastName: string; age: string; gender: string; validIds: IdDoc[] };
 // A payment method configured by the owner (Admin → Payment methods).
 type PayMethod = { id: string; payment_name: string; payment_method: string; provider: string; account_details: string; payment_qr_link: string | null; is_active: boolean };
 type Payment = { methodId: string; method: string; reference: string; proofName: string | null; proofData: string | null; idName: string | null; idData: string | null };
@@ -126,14 +128,16 @@ function ReviewBlock({ title, onEdit, children }: { title: string; onEdit: () =>
   );
 }
 
-// Compact dark valid-ID uploader reused for each additional guest.
-function GuestIdUpload({ valueName, onPick, onClear, invalid, id, title = "Valid ID (Required for guests 10+ years old)", accepted, requiredMsg = "Please upload a valid ID for this guest." }: { valueName: string | null; onPick: (name: string, data: string) => void; onClear: () => void; invalid?: boolean; id?: string; title?: string; accepted?: string; requiredMsg?: string }) {
+// Compact dark valid-ID uploader reused for each additional guest. Supports
+// attaching several photos (e.g. front & back of an ID, or multiple IDs).
+function GuestIdUpload({ values, onAdd, onRemove, invalid, id, title = "Valid ID (Required for guests 10+ years old)", accepted, requiredMsg = "Please upload a valid ID for this guest." }: { values: IdDoc[]; onAdd: (name: string, data: string) => void; onRemove: (index: number) => void; invalid?: boolean; id?: string; title?: string; accepted?: string; requiredMsg?: string }) {
   const pick = (capture?: boolean) => {
     const f = document.createElement("input");
     f.type = "file";
     f.accept = "image/*";
+    if (!capture) f.multiple = true; // file picker may select several at once
     if (capture) (f as unknown as { capture: string }).capture = "environment";
-    f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) fileToBase64(file).then((data) => onPick(file.name, data)); };
+    f.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) Array.from(files).forEach((file) => fileToBase64(file).then((data) => onAdd(file.name, data))); };
     f.click();
   };
   const btn: React.CSSProperties = { flex: 1, minWidth: 150, padding: 14, borderRadius: 12, fontSize: 13, fontWeight: 600, background: "#4d4337", color: "#F6EFE2", border: "1px solid #5d5347", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 };
@@ -145,24 +149,27 @@ function GuestIdUpload({ valueName, onPick, onClear, invalid, id, title = "Valid
       </div>
       {accepted && <div style={{ fontSize: 12, color: "#B8A68E", marginBottom: 14 }}>{accepted}</div>}
       {invalid && <div style={{ fontSize: 11, color: "#ff8f8f", marginBottom: 12 }}>{requiredMsg}</div>}
-      {!valueName ? (
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <button onClick={() => pick(false)} style={btn}><IcoUpload /> Upload ID photo</button>
-          <button onClick={() => pick(true)} style={btn}>
-            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6}><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-            Take photo
-          </button>
-        </div>
-      ) : (
-        <div style={{ background: "#4d4337", borderRadius: 14, padding: 16, display: "flex", alignItems: "center", gap: 14 }}>
-          <div style={{ width: 40, height: 40, borderRadius: 10, background: "#22c55e", display: "grid", placeItems: "center", color: "white", flexShrink: 0 }}><IcoCheckLg /></div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: "#F6EFE2", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{valueName}</div>
-            <div style={{ fontSize: 12, color: "#B8A68E" }}>ID uploaded successfully</div>
-          </div>
-          <button onClick={onClear} style={{ fontSize: 13, color: "#ef4444", background: "transparent", border: "none", cursor: "pointer", textDecoration: "underline", fontWeight: 500 }}>Remove</button>
+      {values.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
+          {values.map((doc, idx) => (
+            <div key={idx} style={{ background: "#4d4337", borderRadius: 14, padding: 16, display: "flex", alignItems: "center", gap: 14 }}>
+              <div style={{ width: 40, height: 40, borderRadius: 10, background: "#22c55e", display: "grid", placeItems: "center", color: "white", flexShrink: 0 }}><IcoCheckLg /></div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#F6EFE2", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.name}</div>
+                <div style={{ fontSize: 12, color: "#B8A68E" }}>ID uploaded successfully</div>
+              </div>
+              <button onClick={() => onRemove(idx)} style={{ fontSize: 13, color: "#ef4444", background: "transparent", border: "none", cursor: "pointer", textDecoration: "underline", fontWeight: 500 }}>Remove</button>
+            </div>
+          ))}
         </div>
       )}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <button onClick={() => pick(false)} style={btn}><IcoUpload /> {values.length > 0 ? "Add another photo" : "Upload ID photo"}</button>
+        <button onClick={() => pick(true)} style={btn}>
+          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6}><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          Take photo
+        </button>
+      </div>
     </div>
   );
 }
@@ -199,7 +206,7 @@ function CheckoutInner() {
   const room = liveHaven ? havenToRoom(liveHaven) : (mockRooms.find((r) => r.id === roomId) || mockRooms[0]);
 
   const [step, setStep] = useState(0);
-  const [info, setInfo] = useState<Info>({ firstName: "", lastName: "", age: "", gender: "Male", email: "", phone: "", facebook: "", notes: "", validIdName: null, validIdData: null });
+  const [info, setInfo] = useState<Info>({ firstName: "", lastName: "", age: "", gender: "Male", email: "", phone: "", facebook: "", notes: "", validIds: [] });
   const [payment, setPayment] = useState<Payment>({ methodId: "", method: "", reference: "", proofName: null, proofData: null, idName: null, idData: null });
   // Active payment methods (with QR + account details) configured by the owner.
   const [methods, setMethods] = useState<PayMethod[]>([]);
@@ -232,7 +239,7 @@ function CheckoutInner() {
   useEffect(() => {
     setExtraGuests((prev) => {
       const next = prev.slice(0, extraCount);
-      while (next.length < extraCount) next.push({ firstName: "", lastName: "", age: "", gender: "Male", validIdName: null, validIdData: null });
+      while (next.length < extraCount) next.push({ firstName: "", lastName: "", age: "", gender: "Male", validIds: [] });
       return next;
     });
   }, [extraCount]);
@@ -275,7 +282,7 @@ function CheckoutInner() {
       if (!info.gender) e.add("gender");
       if (!info.email || !/@/.test(info.email)) e.add("email");
       if (!/^\d{11}$/.test(info.phone)) e.add("phone");
-      if (age >= 10 && !info.validIdName) e.add("validId");
+      if (age >= 10 && info.validIds.length === 0) e.add("validId");
       extraGuests.forEach((g, i) => {
         const a = Number(g.age);
         const t = guestType(i);
@@ -288,7 +295,7 @@ function CheckoutInner() {
         if (!g.gender) e.add(`x${i}-gender`);
         // Document: required when the guest is 10 or older.
         const needDoc = a >= 10;
-        if (needDoc && !g.validIdName) e.add(`x${i}-validId`);
+        if (needDoc && g.validIds.length === 0) e.add(`x${i}-validId`);
       });
     }
     // Step 1 (Payment): a payment method must be selected.
@@ -385,13 +392,13 @@ function CheckoutInner() {
       guest_age: parseInt(info.age, 10) || null,
       guest_gender: info.gender,
       facebook_link: info.facebook || null,
-      valid_id: info.validIdData || undefined,           // base64; uploaded to Cloudinary when configured
-      additional_guests: extraGuests.map((g) => ({       // non-main guests: name, age, gender, ID
+      valid_ids: info.validIds.map((d) => d.data),       // base64[]; each uploaded to Cloudinary when configured
+      additional_guests: extraGuests.map((g) => ({       // non-main guests: name, age, gender, ID(s)
         firstName: g.firstName,
         lastName: g.lastName,
         age: g.age,
         gender: g.gender,
-        validId: g.validIdData || undefined,
+        validIds: g.validIds.map((d) => d.data),
       })),
       payment_proof: payment.proofData || undefined,     // base64; uploaded to Cloudinary when configured
       payment_method: payment.method,
@@ -660,35 +667,38 @@ function CheckoutInner() {
                   <div style={{ padding: "16px 18px" }}>
                     <div style={{ fontSize: 12.5, color: "#8B7458", marginBottom: 14 }}>Accepted: Driver&apos;s License, Passport, National ID, School ID.</div>
                     {showErrors && fieldErrors.has("validId") && <div style={{ fontSize: 12, color: "#ef4444", marginBottom: 14 }}>Please upload a valid ID for the main guest.</div>}
-                    {!info.validIdName ? (
-                      <div>
-                        <div style={{ border: "1px dashed #D4BE9A", borderRadius: 14, padding: 32, textAlign: "center", marginBottom: 12, cursor: "pointer", background: "#FAF7F1" }} onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) fileToBase64(file).then((data) => setInfo({ ...info, validIdName: file.name, validIdData: data })); }; f.click(); }}>
-                          <div style={{ width: 52, height: 52, borderRadius: 12, background: "#EFE4CE", display: "grid", placeItems: "center", margin: "0 auto 14px", color: "#A88E63" }}>
-                            <IcoUpload />
+                    {info.validIds.length > 0 && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 12 }}>
+                        {info.validIds.map((doc, idx) => (
+                          <div key={idx} style={{ display: "flex", alignItems: "center", gap: 14, padding: 12, border: "1px solid #E0CEB2", borderRadius: 14, background: "#FAF7F1" }}>
+                            <div style={{ position: "relative", width: 66, height: 66, flex: "none" }}>
+                              <div style={{ width: "100%", height: "100%", borderRadius: 11, background: "repeating-linear-gradient(135deg,#EFE4CE,#EFE4CE 6px,#E6D8BC 6px,#E6D8BC 12px)", display: "grid", placeItems: "center", color: "#A88E63" }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></div>
+                              <div style={{ position: "absolute", right: -5, bottom: -5, width: 22, height: 22, borderRadius: "50%", background: "#22C55E", border: "2px solid #FAF7F1", display: "grid", placeItems: "center", color: "#fff" }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13.5, fontWeight: 600, color: "#1F160E", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.name}</div>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 5 }}>
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "#15803D", background: "#DCFCE7", padding: "3px 9px", borderRadius: 999 }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Uploaded</span>
+                              </div>
+                            </div>
+                            <button onClick={() => setInfo({ ...info, validIds: info.validIds.filter((_, j) => j !== idx) })} style={{ fontSize: 12.5, fontWeight: 600, color: "#B4453C", background: "transparent", border: "none", cursor: "pointer", padding: "7px 8px" }}>Remove</button>
                           </div>
-                          <div style={{ fontSize: 14, fontWeight: 600, color: "#1F160E", marginBottom: 6 }}>Click to upload ID photo</div>
-                          <div style={{ fontSize: 12, color: "#8B7458" }}>PNG, JPG, JPEG up to 5MB</div>
-                        </div>
-                        <button onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.capture = "environment" as any; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) fileToBase64(file).then((data) => setInfo({ ...info, validIdName: file.name, validIdData: data })); }; f.click(); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: 10, border: "1px dashed #D4BE9A", borderRadius: 12, background: "transparent", color: "#8C5A2E", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
-                          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-                          Take photo with camera
-                        </button>
-                      </div>
-                    ) : (
-                      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: 12, border: "1px solid #E0CEB2", borderRadius: 14, background: "#FAF7F1" }}>
-                        <div style={{ position: "relative", width: 66, height: 66, flex: "none" }}>
-                          <div style={{ width: "100%", height: "100%", borderRadius: 11, background: "repeating-linear-gradient(135deg,#EFE4CE,#EFE4CE 6px,#E6D8BC 6px,#E6D8BC 12px)", display: "grid", placeItems: "center", color: "#A88E63" }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></div>
-                          <div style={{ position: "absolute", right: -5, bottom: -5, width: 22, height: 22, borderRadius: "50%", background: "#22C55E", border: "2px solid #FAF7F1", display: "grid", placeItems: "center", color: "#fff" }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
-                        </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 13.5, fontWeight: 600, color: "#1F160E", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{info.validIdName}</div>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 5 }}>
-                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "#15803D", background: "#DCFCE7", padding: "3px 9px", borderRadius: 999 }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Uploaded</span>
-                          </div>
-                        </div>
-                        <button onClick={() => setInfo({ ...info, validIdName: null, validIdData: null })} style={{ fontSize: 12.5, fontWeight: 600, color: "#B4453C", background: "transparent", border: "none", cursor: "pointer", padding: "7px 8px" }}>Remove</button>
+                        ))}
                       </div>
                     )}
+                    <div>
+                      <div style={{ border: "1px dashed #D4BE9A", borderRadius: 14, padding: 32, textAlign: "center", marginBottom: 12, cursor: "pointer", background: "#FAF7F1" }} onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.multiple = true; f.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) Array.from(files).forEach((file) => fileToBase64(file).then((data) => setInfo((prev) => ({ ...prev, validIds: [...prev.validIds, { name: file.name, data }] })))); }; f.click(); }}>
+                        <div style={{ width: 52, height: 52, borderRadius: 12, background: "#EFE4CE", display: "grid", placeItems: "center", margin: "0 auto 14px", color: "#A88E63" }}>
+                          <IcoUpload />
+                        </div>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: "#1F160E", marginBottom: 6 }}>{info.validIds.length > 0 ? "Add another ID photo" : "Click to upload ID photo"}</div>
+                        <div style={{ fontSize: 12, color: "#8B7458" }}>PNG, JPG, JPEG up to 5MB · you can add more than one</div>
+                      </div>
+                      <button onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.capture = "environment" as any; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) fileToBase64(file).then((data) => setInfo((prev) => ({ ...prev, validIds: [...prev.validIds, { name: file.name, data }] }))); }; f.click(); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: 10, border: "1px dashed #D4BE9A", borderRadius: 12, background: "transparent", color: "#8C5A2E", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
+                        <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                        Take photo with camera
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -726,12 +736,12 @@ function CheckoutInner() {
                     </div>
                     <GuestIdUpload
                       id={`f-x${i}-validId`}
-                      valueName={g.validIdName}
+                      values={g.validIds}
                       invalid={showErrors && fieldErrors.has(`x${i}-validId`)}
                       title="Valid ID (Required for guests 10+ years old)"
                       requiredMsg="Please upload a valid ID for this guest."
-                      onPick={(name, data) => updateGuest(i, { validIdName: name, validIdData: data })}
-                      onClear={() => updateGuest(i, { validIdName: null, validIdData: null })}
+                      onAdd={(name, data) => updateGuest(i, { validIds: [...g.validIds, { name, data }] })}
+                      onRemove={(index) => updateGuest(i, { validIds: g.validIds.filter((_, j) => j !== index) })}
                     />
                   </div>
                   );

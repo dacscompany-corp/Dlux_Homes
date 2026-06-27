@@ -1594,18 +1594,25 @@ export default function OwnerDashboard() {
         const pct = total > 0 ? Math.min(100, Math.max(0, Math.round((paid / total) * 100))) : 0;
         const serif = "var(--font-fraunces), Georgia, serif";
         const mono = "var(--font-geist-mono), ui-monospace, monospace";
-        const docCard = (name: string, url: string) =>
-          url && url.trim() ? (
-            <a href={url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none", border: "1px solid #f1ead9", borderRadius: 12, overflow: "hidden", background: "#faf7f1", display: "block" }}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={url} alt={name} style={{ height: 92, width: "100%", objectFit: "cover", display: "block" }} />
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 11px" }}>
-                <span style={{ fontSize: 12, color: "#1f1b16" }}>{name}</span>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "#2f7d55" }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>Uploaded
-                </span>
-              </div>
-            </a>
+        const docCard = (name: string, url: string) => {
+          // A document field may hold several newline-separated URLs (e.g. front
+          // & back of an ID, or multiple IDs). Render one card per image.
+          const urls = (url || "").split("\n").map((u) => u.trim()).filter(Boolean);
+          return urls.length > 0 ? (
+            <>
+              {urls.map((u, idx) => (
+                <a key={idx} href={u} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none", border: "1px solid #f1ead9", borderRadius: 12, overflow: "hidden", background: "#faf7f1", display: "block" }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={u} alt={urls.length > 1 ? `${name} ${idx + 1}` : name} style={{ height: 92, width: "100%", objectFit: "cover", display: "block" }} />
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 11px" }}>
+                    <span style={{ fontSize: 12, color: "#1f1b16" }}>{urls.length > 1 ? `${name} ${idx + 1}` : name}</span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "#2f7d55" }}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>Uploaded
+                    </span>
+                  </div>
+                </a>
+              ))}
+            </>
           ) : (
             <div style={{ border: "1px dashed #e0d2b8", borderRadius: 12, overflow: "hidden", background: "#fcfaf5" }}>
               <div style={{ height: 92, display: "grid", placeItems: "center" }}>
@@ -1617,6 +1624,7 @@ export default function OwnerDashboard() {
               </div>
             </div>
           );
+        };
 
         return (
           <div onClick={() => setBookingModal(null)} style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", background: "rgba(31,27,22,0.45)" }}>
