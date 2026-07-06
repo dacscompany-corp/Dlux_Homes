@@ -5,11 +5,6 @@ import { requireBookingAccess } from "@/backend/utils/requireAdmin";
 
 export const runtime = "nodejs";
 
-// D'Lux policy: NO cancellations, but a guest may request a ONE-TIME date change
-// — only if requested at least 7 days before the scheduled check-in, and the new
-// date is within 1 month of the original. This endpoint records the request and
-// notifies Owner + CSR, who reschedule it (so availability + the one-time rule
-// stay under staff control). It does not move the booking itself.
 const ACTIVE = ["pending", "approved", "confirmed", "on-going"];
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -22,7 +17,6 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
   try {
     const { id } = await params;
 
-    // Only the booking's owner (or Owner/CSR) may request a date change.
     const guard = await requireBookingAccess(id);
     if (!guard.ok) return guard.response;
 
@@ -50,7 +44,6 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
     if (!ACTIVE.includes(booking.status)) {
       return NextResponse.json({ error: "This booking can no longer be changed." }, { status: 409 });
     }
-    // One-time rule: a booking may only ever have ONE date-change request.
     if (Number(booking.date_change_count) >= 1) {
       return NextResponse.json(
         { error: "You've already used your one-time date change. Please message us directly to arrange any further changes." },
@@ -58,7 +51,6 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
       );
     }
 
-    // Policy checks.
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const original = new Date(booking.check_in_date); original.setHours(0, 0, 0, 0);
     const requested = new Date(newDate + "T00:00:00");
@@ -81,8 +73,6 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
       );
     }
 
-    // Atomically record the request. The `date_change_count = 0` guard makes the
-    // one-time rule race-safe: a concurrent second request updates zero rows.
     const recorded = await client.query(
       `UPDATE booking
           SET date_change_count = date_change_count + 1,
@@ -99,7 +89,6 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
       );
     }
 
-    // Notify staff to action the reschedule.
     try {
       const guestName = `${booking.first_name || ""} ${booking.last_name || ""}`.trim() || "A guest";
       const fmt = (d: Date) => d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });

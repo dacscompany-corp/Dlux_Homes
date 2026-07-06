@@ -234,11 +234,6 @@ function ConfirmedInner() {
     const ci = new Date(booking.checkIn + "T00:00:00");
     return Math.floor((ci.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
   })();
-  // Mirror the server policy: active booking, ONE-TIME only, and requested at
-  // least 7 days before check-in — so a past or too-soon stay hides the button.
-  const canChange = ["pending", "approved", "confirmed", "on-going"].includes(String(booking.status))
-    && Number(booking.dateChangeCount ?? 0) < 1
-    && daysUntilCheckIn >= 7;
   // Constrain the date picker to the allowed window: today → original + 1 month.
   const isoDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   const minChangeDate = isoDay(new Date());
@@ -274,6 +269,13 @@ function ConfirmedInner() {
   // Confirmed = down payment approved (or the booking is already past that point).
   // From here the guest just waits for check-in day and settles the rest then.
   const isConfirmed = !lapsed && !isCompleted && (dpApproved || ["confirmed", "on-going", "checked-in"].includes(String(booking.status)));
+  // Mirror the server policy: active booking, ONE-TIME only, and requested at
+  // least 7 days before check-in — so a past or too-soon stay hides the button.
+  // isConfirmed covers the dpApproved path where booking.status may still be
+  // "approved" but the down payment has been verified by the admin.
+  const canChange = (isConfirmed || ["pending", "approved", "confirmed", "down-paid", "on-going"].includes(String(booking.status)))
+    && Number(booking.dateChangeCount ?? 0) < 1
+    && daysUntilCheckIn >= 7;
   // Remaining balance + ₱1,000 refundable deposit are collected at check-in.
   const remainingBalance = Math.max(0, (booking.totalAmount || 0) - (pay.down || 0));
   const checkInDeposit = 1000;

@@ -146,6 +146,7 @@ export default function OwnerDashboard() {
     deposit: number; depositStatus: string; depositMethod: string;
     validIdUrl: string; paymentProofUrl: string; paymentReference: string;
     checkInRaw: string; checkOutRaw: string; checkInTime: string; checkOutTime: string;
+    requestedNewDate: string;
   };
   const [bookingModal, setBookingModal] = useState<AdminBookingRow | null>(null);
   const [refCopied, setRefCopied] = useState(false);
@@ -225,6 +226,21 @@ export default function OwnerDashboard() {
   const handleCheckOut = async (id: string) => {
     try { await updateBookingStatus({ id, status: "completed" }).unwrap(); toast.success("Guest checked out — booking completed"); refetchBookings(); }
     catch { toast.error("Could not check out the guest"); }
+  };
+  const decideDateChange = async (id: string, action: "approve" | "reject") => {
+    try {
+      const res = await fetch(`/api/admin/bookings/${encodeURIComponent(id)}/date-change`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(data?.error || "Could not process the date-change request"); return; }
+      toast.success(action === "approve" ? "Date change approved" : "Date change rejected");
+      refetchBookings();
+    } catch {
+      toast.error("Something went wrong. Please try again.");
+    }
   };
   const submitStaff = async () => {
     if (!staffForm.first_name || !staffForm.last_name || !staffForm.email || !staffForm.password) {
@@ -320,6 +336,7 @@ export default function OwnerDashboard() {
     checkOutRaw: b.check_out_date ? String(b.check_out_date) : "",
     checkInTime: String(b.check_in_time ?? ""),
     checkOutTime: String(b.check_out_time ?? ""),
+    requestedNewDate: b.requested_new_date ? String(b.requested_new_date) : "",
   }));
 
   // ── Helpers for the redesigned booking detail modal ──
@@ -975,6 +992,14 @@ export default function OwnerDashboard() {
                                 onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#f3f4f6";(e.currentTarget as HTMLElement).style.color="#374151";}}
                                 onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><LogOut className="w-3.5 h-3.5"/></button>
                             )}
+                            {booking.requestedNewDate && (<>
+                              <button type="button" onClick={() => decideDateChange(booking.id, "approve")} title="Approve date change" className="p-1.5 rounded-lg transition-colors" style={{ color: "#6b7280" }}
+                                onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#d1fae5";(e.currentTarget as HTMLElement).style.color="#059669";}}
+                                onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><CalendarDays className="w-3.5 h-3.5"/></button>
+                              <button type="button" onClick={() => decideDateChange(booking.id, "reject")} title="Reject date change" className="p-1.5 rounded-lg transition-colors" style={{ color: "#6b7280" }}
+                                onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#fee2e2";(e.currentTarget as HTMLElement).style.color="#dc2626";}}
+                                onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><CalendarOff className="w-3.5 h-3.5"/></button>
+                            </>)}
                           </div>
                         </td>
                       </tr>
