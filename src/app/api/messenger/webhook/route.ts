@@ -3,7 +3,7 @@ import crypto from "crypto";
 import pool from "@/backend/config/db";
 
 // Facebook Messenger webhook for the D'Lux Homes page.
-// A guest sends their booking ID (e.g. "BK1762050261") and the bot replies with
+// A guest sends their booking ID (e.g. "DL-BK1762050261") and the bot replies with
 // that booking's current status. Look-up / report only — it never changes a
 // booking (confirmation stays with the admin after the down payment).
 //
@@ -70,9 +70,9 @@ async function handleMessage(senderId: string, text: string): Promise<void> {
     await send(senderId, `Your Messenger PSID is:\n${senderId}\n\nSet this as MESSENGER_ADMIN_PSID to receive booking alerts here.`);
     return;
   }
-  const match = text.match(/BK\d{6,}/i);
+  const match = text.match(/DL-BK\d{6,}/i);
   if (!match) {
-    await send(senderId, "Hi! 👋 To check a booking, send your Booking ID (e.g. BK1762050261). You'll find it in your D'Lux Homes confirmation.");
+    await send(senderId, "Hi! 👋 To check a booking, send your Booking ID (e.g. DL-BK1762050261). You'll find it in your D'Lux Homes confirmation.");
     return;
   }
   const bookingId = match[0].toUpperCase();

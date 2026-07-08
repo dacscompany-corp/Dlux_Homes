@@ -42,7 +42,7 @@ export function updateStoredBookingStatus(id: string, status: StoredBooking["sta
 }
 
 export function generateBookingId(): string {
-  return "BK" + Date.now().toString().slice(-10);
+  return "DL-BK" + Date.now().toString().slice(-10);
 }
 
 // ── "My bookings on this device" ────────────────────────────────────────────

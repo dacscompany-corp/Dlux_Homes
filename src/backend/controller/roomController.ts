@@ -47,6 +47,14 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
       ten_hour_rate,
       weekday_rate,
       weekend_rate,
+      // Length-of-stay bundle discounts (Overnight/21h only) — see
+      // 2026-07-07-add-haven-bundle-rates.sql. null/undefined = not configured.
+      weekday_week_rate,
+      weekday_twoweek_rate,
+      weekday_month_rate,
+      weekend_week_rate,
+      weekend_twoweek_rate,
+      weekend_month_rate,
       six_hour_check_in,
       six_hour_check_out,
       ten_hour_check_in,
@@ -186,12 +194,15 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
         google_map_address, google_map_lat, google_map_lng, virtual_tour_url,
         bathrooms, property_type, cleaning_fee,
         commission_rate,
+        weekday_week_rate, weekday_twoweek_rate, weekday_month_rate,
+        weekend_week_rate, weekend_twoweek_rate, weekend_month_rate,
         created_at, updated_at
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb,
                 $23, $24, $25, $26, $27, $28, $29, $30, $31, $32,
                 $33, $34, $35,
                 $36,
+                $37, $38, $39, $40, $41, $42,
                 NOW(), NOW())
       RETURNING *
     `;
@@ -237,6 +248,12 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
       effectiveCommissionRate === undefined
         ? null
         : parseFloat(String(effectiveCommissionRate)),
+      weekday_week_rate ? parseFloat(weekday_week_rate) : null,
+      weekday_twoweek_rate ? parseFloat(weekday_twoweek_rate) : null,
+      weekday_month_rate ? parseFloat(weekday_month_rate) : null,
+      weekend_week_rate ? parseFloat(weekend_week_rate) : null,
+      weekend_twoweek_rate ? parseFloat(weekend_twoweek_rate) : null,
+      weekend_month_rate ? parseFloat(weekend_month_rate) : null,
     ];
 
     const havenResult = await pool.query(havenQuery, havenValues);
@@ -630,6 +647,14 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
       ten_hour_rate,
       weekday_rate,
       weekend_rate,
+      // Length-of-stay bundle discounts (Overnight/21h only) — see
+      // 2026-07-07-add-haven-bundle-rates.sql. null/undefined = not configured.
+      weekday_week_rate,
+      weekday_twoweek_rate,
+      weekday_month_rate,
+      weekend_week_rate,
+      weekend_twoweek_rate,
+      weekend_month_rate,
       six_hour_check_in,
       six_hour_check_out,
       ten_hour_check_in,
@@ -722,6 +747,12 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
           property_type = $34,
           cleaning_fee = $35,
           commission_rate = $36,
+          weekday_week_rate = $37,
+          weekday_twoweek_rate = $38,
+          weekday_month_rate = $39,
+          weekend_week_rate = $40,
+          weekend_twoweek_rate = $41,
+          weekend_month_rate = $42,
           updated_at = NOW()
       WHERE uuid_id = $22
       RETURNING *
@@ -768,6 +799,12 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
       effectiveCommissionRate === undefined
         ? null
         : parseFloat(String(effectiveCommissionRate)),
+      weekday_week_rate ? parseFloat(weekday_week_rate) : null,
+      weekday_twoweek_rate ? parseFloat(weekday_twoweek_rate) : null,
+      weekday_month_rate ? parseFloat(weekday_month_rate) : null,
+      weekend_week_rate ? parseFloat(weekend_week_rate) : null,
+      weekend_twoweek_rate ? parseFloat(weekend_twoweek_rate) : null,
+      weekend_month_rate ? parseFloat(weekend_month_rate) : null,
     ];
 
     const result = await pool.query(query, values);

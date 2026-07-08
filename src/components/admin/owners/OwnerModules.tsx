@@ -613,6 +613,147 @@ export function PaymentMethodsSection() {
   );
 }
 
+// ── 5b. Pricing Calendar (Weekend & Holiday rules) ─────────────────────────
+// Owner-editable version of what src/lib/pricing.ts used to hardcode: which
+// weekdays count as "weekend" and which specific dates count as "holiday"
+// for weekend/holiday-rate pricing. Rate AMOUNTS are still edited via
+// Property → haven → Pricing — this only controls which days/dates qualify.
+const DOW = [
+  { n: 0, label: "Sun" }, { n: 1, label: "Mon" }, { n: 2, label: "Tue" }, { n: 3, label: "Wed" },
+  { n: 4, label: "Thu" }, { n: 5, label: "Fri" }, { n: 6, label: "Sat" },
+];
+// "YYYY-MM-DD" → local-midnight display date (avoids the UTC-parse day-shift
+// that plain `new Date(iso)` + toLocaleDateString() can cause in -UTC zones).
+const fmtHolidayDate = (iso: string) =>
+  iso ? new Date(iso + "T00:00:00").toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "—";
+
+export function PricingCalendarSection() {
+  const [weekendDays, setWeekendDays] = useState<number[]>([5, 6]);
+  const [holidays, setHolidays] = useState<{ date: string; label: string }[]>([]);
+  const [savingDays, setSavingDays] = useState(false);
+  const [newHoliday, setNewHoliday] = useState({ date: "", label: "" });
+  const [addingHoliday, setAddingHoliday] = useState(false);
+
+  const reload = () =>
+    fetch("/api/admin/pricing-calendar")
+      .then((r) => (r.ok ? r.json() : { data: null }))
+      .then((j) => {
+        if (!j?.data) return;
+        setWeekendDays(((j.data.weekendDays || []) as unknown[]).map(Number));
+        setHolidays(arr(j.data.holidays) as unknown as { date: string; label: string }[]);
+      })
+      .catch(() => {});
+  useEffect(() => { reload(); }, []);
+
+  const toggleDay = (n: number) => {
+    setWeekendDays((prev) => (prev.includes(n) ? prev.filter((d) => d !== n) : [...prev, n].sort((a, b) => a - b)));
+  };
+
+  const saveWeekendDays = async () => {
+    if (weekendDays.length === 0) { toast.error("Pick at least one weekend day"); return; }
+    setSavingDays(true);
+    try {
+      const res = await fetch("/api/admin/pricing-calendar", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ weekendDays }),
+      });
+      if (!res.ok) throw new Error();
+      toast.success("Weekend days updated");
+    } catch { toast.error("Could not update weekend days"); }
+    finally { setSavingDays(false); }
+  };
+
+  const addHoliday = async () => {
+    if (!newHoliday.date) { toast.error("Pick a date"); return; }
+    setAddingHoliday(true);
+    try {
+      const res = await fetch("/api/admin/pricing-calendar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: newHoliday.date, label: newHoliday.label.trim() }),
+      });
+      if (!res.ok) throw new Error();
+      toast.success("Holiday added");
+      setNewHoliday({ date: "", label: "" });
+      reload();
+    } catch { toast.error("Could not add holiday"); }
+    finally { setAddingHoliday(false); }
+  };
+
+  const removeHoliday = async (date: string) => {
+    try {
+      const res = await fetch(`/api/admin/pricing-calendar?date=${encodeURIComponent(date)}`, { method: "DELETE" });
+      if (!res.ok) throw new Error();
+      toast.success("Holiday removed");
+      reload();
+    } catch { toast.error("Could not remove holiday"); }
+  };
+
+  return (
+    <div>
+      <SectionHead title="Weekend &amp; Holiday Calendar" sub="Which days &amp; dates guests are charged the weekend/holiday rate. Rate amounts are edited via Property → haven → Pricing." />
+
+      <Card className="p-6 mb-6">
+        <div style={{ fontSize: 13, fontWeight: 600, color: "#1f1b16", marginBottom: 12 }}>Weekend days</div>
+        <div className="flex flex-wrap items-center" style={{ gap: 8 }}>
+          {DOW.map((d) => {
+            const on = weekendDays.includes(d.n);
+            return (
+              <button key={d.n} type="button" onClick={() => toggleDay(d.n)}
+                style={{
+                  padding: "8px 16px", borderRadius: 999, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                  border: on ? "1px solid #B07848" : "1px solid #ece5d4",
+                  background: on ? "#B07848" : "#fff", color: on ? "#fff" : "#5a4a3a",
+                }}>
+                {d.label}
+              </button>
+            );
+          })}
+          <button type="button" onClick={saveWeekendDays} disabled={savingDays}
+            style={{ marginLeft: 8, padding: "8px 18px", borderRadius: 999, fontSize: 13, fontWeight: 600, border: "none", background: "#1f1b16", color: "#fff", cursor: "pointer", opacity: savingDays ? 0.6 : 1 }}>
+            {savingDays ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </Card>
+
+      <div style={{ fontSize: 13, fontWeight: 600, color: "#1f1b16", marginBottom: 12 }}>Holidays</div>
+      <Card className="p-4 mb-4">
+        <div className="flex flex-wrap items-end" style={{ gap: 10 }}>
+          <div>
+            <label style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: ".09em", textTransform: "uppercase", color: "#b8754a" }}>Date</label>
+            <input aria-label="Holiday date" type="date" value={newHoliday.date} onChange={(e) => setNewHoliday((f) => ({ ...f, date: e.target.value }))}
+              style={{ display: "block", marginTop: 6, borderRadius: 10, border: "1px solid #f1ead9", background: "#faf7f1", padding: "9px 12px", fontSize: 13.5, color: "#1f1b16", outline: "none" }} />
+          </div>
+          <div style={{ flex: 1, minWidth: 180 }}>
+            <label style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: ".09em", textTransform: "uppercase", color: "#b8754a" }}>Label <span style={{ color: "#c2ad88", fontWeight: 500, letterSpacing: 0 }}>· optional</span></label>
+            <input value={newHoliday.label} onChange={(e) => setNewHoliday((f) => ({ ...f, label: e.target.value }))} placeholder="e.g. Founding Anniversary"
+              style={{ width: "100%", marginTop: 6, borderRadius: 10, border: "1px solid #f1ead9", background: "#faf7f1", padding: "9px 12px", fontSize: 13.5, color: "#1f1b16", outline: "none" }} />
+          </div>
+          <button type="button" onClick={addHoliday} disabled={addingHoliday}
+            style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 18px", borderRadius: 10, fontSize: 13, fontWeight: 600, border: "none", background: "#1f1b16", color: "#fff", cursor: "pointer", opacity: addingHoliday ? 0.6 : 1 }}>
+            <Plus className="w-3.5 h-3.5" />{addingHoliday ? "Adding…" : "Add holiday"}
+          </button>
+        </div>
+      </Card>
+
+      {holidays.length === 0 ? <Empty label="No holidays configured yet." /> : (
+        <Table headers={["Date", "Label", "Actions"]}>
+          {holidays.map((h, i) => (
+            <tr key={h.date} style={{ borderTop: i > 0 ? "1px solid #F7F0E3" : "none" }}>
+              <td className="px-4 py-3.5 text-sm font-mono" style={{ color: "#1a1a1a" }}>{fmtHolidayDate(h.date)}</td>
+              <td className="px-4 py-3.5 text-sm" style={{ color: "#5a4a3a" }}>{h.label || "—"}</td>
+              <td className="px-4 py-3.5">
+                <button onClick={() => removeHoliday(h.date)} title="Remove holiday" className="p-1.5 rounded-lg cursor-pointer" style={{ color: "#991b1b" }}><Trash2 className="w-3.5 h-3.5" /></button>
+              </td>
+            </tr>
+          ))}
+        </Table>
+      )}
+    </div>
+  );
+}
+
 // ── 6. Guest Assistance ───────────────────────────────────────────────────
 export function GuestAssistanceSection() {
   const [rows, setRows] = useState<Row[]>([]);

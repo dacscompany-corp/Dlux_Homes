@@ -104,7 +104,7 @@ export const createEmployee = async (req: NextRequest): Promise<NextResponse> =>
       fullName,
       password,
       role,
-      `${process.env.NEXT_PUBLIC_BASE_URL || 'https://staycationhavenph.com'}/admin/login`
+      `${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/admin/login`
     );
 
     if (!emailSent) {

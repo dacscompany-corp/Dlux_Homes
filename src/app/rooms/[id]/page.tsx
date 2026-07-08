@@ -8,7 +8,8 @@ import { mockRooms } from "@/lib/mock-data";
 import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
 import { useGetBlockedDatesQuery } from "@/redux/api/blockedDatesApi";
 import { havenToRoom } from "@/lib/haven-adapter";
-import { stayTotal, isWeekendOrHoliday, extraPaxFee } from "@/lib/pricing";
+import { stayTotal, isWeekendOrHoliday, extraPaxFee, bundleNightlyRate, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS } from "@/lib/pricing";
+import { useCalendarRules } from "@/lib/useCalendarRules";
 import type { Room } from "@/types";
 
 // ── Inline SVG icons ───────────────────────────────────────────
@@ -362,8 +363,18 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
   // a flat per-pax fee (once per booking). Only adults + young adults are
   // chargeable — "Children (7 under)" are exempt from the fee (but still count
   // toward the 4-pax max). No cleaning or service fee.
-  const isWeekendRate = isWeekendOrHoliday(date);
-  const basePrice = stayTotal(selectedWindow.stayType, date, stayNights, room);
+  // Owner-editable weekend/holiday calendar (System → Settings in the admin
+  // portal); falls back to Fri/Sat + built-in PH holidays if unreachable.
+  const calendarRules = useCalendarRules();
+  const isWeekendRate = isWeekendOrHoliday(date, calendarRules);
+  const basePrice = stayTotal(selectedWindow.stayType, date, stayNights, room, calendarRules);
+  // Length-of-stay bundle discount (7/14/30+ nights, Overnight only) — null if
+  // this stay doesn't qualify or the haven hasn't configured that tier.
+  const bundleRate = selectedWindow.stayType === "10" ? undefined : bundleNightlyRate(stayNights, date, room, calendarRules);
+  const bundleLabel = bundleRate == null ? null
+    : stayNights >= BUNDLE_MONTH_NIGHTS ? "Monthly rate"
+    : stayNights >= BUNDLE_TWOWEEK_NIGHTS ? "Two-week rate"
+    : "Weekly rate";
   const feePax = guests.adults + guests.children; // adults + young adults; excludes 7-under
   const extraPaxCount = Math.max(0, feePax - room.basePax);
   const paxFee = extraPaxFee(feePax, room.basePax, room.additionalPaxFee);
@@ -594,10 +605,10 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
                           <button onClick={() => setGuests({ ...guests, infants: Math.max(0, guests.infants - 1) })} style={stepStyle(guests.infants > 0)}>{minus}</button>
                           <span style={{ minWidth: 16, textAlign: "center", fontWeight: 700 }}>{guests.infants}</span>
-                          <button onClick={() => setGuests({ ...guests, infants: guests.infants + 1 })} style={stepStyle(true)}>{plus}</button>
+                          <button onClick={() => { if (guests.infants < 4) setGuests({ ...guests, infants: guests.infants + 1 }); }} style={stepStyle(guests.infants < 4)}>{plus}</button>
                         </div>
                       </div>
-                      <div style={{ fontSize: 11, color: "#9B8B73", padding: "0 0 12px", lineHeight: 1.5 }}>Rate covers 2 guests. Each extra adult or teen is {peso(room.additionalPaxFee)} (up to 4). Little ones stay free. For 5+, message us on <a href="https://www.facebook.com/messages/t/270893736109969" target="_blank" rel="noopener" style={{ color: "#B07848", fontWeight: 600 }}>Facebook</a>.</div>
+                      <div style={{ fontSize: 11, color: "#9B8B73", padding: "0 0 12px", lineHeight: 1.5 }}>Rate covers 2 guests. Each extra adult or teen is {peso(room.additionalPaxFee)} (up to 4). Little ones stay free, up to 4. For 5+, message us on <a href="https://www.facebook.com/messages/t/270893736109969" target="_blank" rel="noopener" style={{ color: "#B07848", fontWeight: 600 }}>Facebook</a>.</div>
                     </div>
                   );
                 })()}
@@ -606,7 +617,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
               {/* price summary */}
               {date && (
                 <div style={{ borderTop: "1px solid #EFE4CE", paddingTop: 15, display: "flex", flexDirection: "column", gap: 8, fontSize: 13.5 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#4A3A2A" }}><span style={{ whiteSpace: "nowrap" }}>{selectedWindow.label} · {isOvernight ? `${stayNights} night${stayNights > 1 ? "s" : ""}` : (isWeekendRate ? "Weekend/Holiday" : "Weekday")}</span><span>{peso(basePrice)}</span></div>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#4A3A2A" }}><span style={{ whiteSpace: "nowrap" }}>{selectedWindow.label} · {isOvernight ? `${stayNights} night${stayNights > 1 ? "s" : ""}${bundleLabel ? ` · ${bundleLabel}` : ""}` : (isWeekendRate ? "Weekend/Holiday" : "Weekday")}</span><span>{peso(basePrice)}</span></div>
                   {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra guests · {extraPaxCount} × {peso(room.additionalPaxFee)}</span><span>{peso(paxFee)}</span></div>}
                   <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16, paddingTop: 9, borderTop: "1px solid #EFE4CE" }}><span>Total</span><span>{peso(total)}</span></div>
                 </div>
@@ -1009,10 +1020,10 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                             <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
                               <button onClick={() => setGuests({ ...guests, infants: Math.max(0, guests.infants - 1) })} style={stepStyle(guests.infants > 0)}>{minus}</button>
                               <span style={{ minWidth: 16, textAlign: "center", fontWeight: 700 }}>{guests.infants}</span>
-                              <button onClick={() => setGuests({ ...guests, infants: guests.infants + 1 })} style={stepStyle(true)}>{plus}</button>
+                              <button onClick={() => { if (guests.infants < 4) setGuests({ ...guests, infants: guests.infants + 1 }); }} style={stepStyle(guests.infants < 4)}>{plus}</button>
                             </div>
                           </div>
-                          <div style={{ fontSize: 11.5, color: "#9B8B73", padding: "0 0 12px", lineHeight: 1.5 }}>The rate covers 2 guests. Each extra adult or teen is {peso(room.additionalPaxFee)} (up to 4). Little ones stay free. For 5+ adults/teens, message us on <a href="https://www.facebook.com/messages/t/270893736109969" target="_blank" rel="noopener" style={{ color: "#B07848", fontWeight: 600 }}>Facebook</a>.</div>
+                          <div style={{ fontSize: 11.5, color: "#9B8B73", padding: "0 0 12px", lineHeight: 1.5 }}>The rate covers 2 guests. Each extra adult or teen is {peso(room.additionalPaxFee)} (up to 4). Little ones stay free, up to 4. For 5+ adults/teens, message us on <a href="https://www.facebook.com/messages/t/270893736109969" target="_blank" rel="noopener" style={{ color: "#B07848", fontWeight: 600 }}>Facebook</a>.</div>
                         </div>
                       );
                     })()}
@@ -1021,7 +1032,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                   {/* price summary */}
                   {date && (
                     <div style={{ borderTop: "1px solid #EFE4CE", paddingTop: 16, display: "flex", flexDirection: "column", gap: 8, fontSize: 13.5 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#4A3A2A" }}><span style={{ whiteSpace: "nowrap" }}>{selectedWindow.label} · {isOvernight ? `${stayNights} night${stayNights > 1 ? "s" : ""}` : (isWeekendRate ? "Weekend/Holiday" : "Weekday")}</span><span>{peso(basePrice)}</span></div>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#4A3A2A" }}><span style={{ whiteSpace: "nowrap" }}>{selectedWindow.label} · {isOvernight ? `${stayNights} night${stayNights > 1 ? "s" : ""}${bundleLabel ? ` · ${bundleLabel}` : ""}` : (isWeekendRate ? "Weekend/Holiday" : "Weekday")}</span><span>{peso(basePrice)}</span></div>
                       {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra guests · {extraPaxCount} × {peso(room.additionalPaxFee)}</span><span>{peso(paxFee)}</span></div>}
                       <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16, paddingTop: 9, borderTop: "1px solid #EFE4CE" }}><span>Total</span><span>{peso(total)}</span></div>
                     </div>

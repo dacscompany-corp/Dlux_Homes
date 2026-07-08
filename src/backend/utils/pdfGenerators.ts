@@ -708,7 +708,7 @@ export async function generatePamphletPDF(data: PamphletData): Promise<Buffer> {
     : "Contact number not configured";
   const emailDisplay = data.contactEmail && data.contactEmail.trim()
     ? data.contactEmail.trim()
-    : "staycationhaven9@gmail.com";
+    : "homesdlux@gmail.com";
   pdf.text("Front Desk  —  Visit us anytime during your stay", margin + 11, y + 27);
   pdf.text(`Phone          —  ${phoneDisplay}`,                margin + 11, y + 41);
   pdf.text(`Email           —  ${emailDisplay}`,               margin + 11, y + 55);

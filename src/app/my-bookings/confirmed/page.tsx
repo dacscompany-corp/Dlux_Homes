@@ -53,6 +53,7 @@ type ExtendedBooking = StoredBooking & {
   windowLabel?: string;
   notes?: string;
   dateChangeCount?: number;
+  requestedNewDate?: string;
 };
 
 function ConfirmedInner() {
@@ -90,6 +91,7 @@ function ConfirmedInner() {
       if (!res.ok) { toast.error(data?.error || "Could not submit your request"); setChanging(false); return; }
       setShowChange(false); setNewDate(""); setChangeReason("");
       toast.success(data?.message || "Date-change request sent.");
+      setReloadKey((k) => k + 1); // re-fetch so the pending state (and disabled button) reflect the new request
     } catch {
       toast.error("Something went wrong. Please try again.");
     } finally {
@@ -127,6 +129,7 @@ function ConfirmedInner() {
             checkInTime: d.check_in_time ?? undefined,
             checkOutTime: d.check_out_time ?? undefined,
             dateChangeCount: Number(d.date_change_count ?? 0),
+            requestedNewDate: d.requested_new_date ? String(d.requested_new_date).slice(0, 10) : "",
           } as ExtendedBooking);
           setPay({
             down: Number(d.down_payment ?? Math.round(Number(d.total_amount ?? 0) * 0.5)),
@@ -225,7 +228,6 @@ function ConfirmedInner() {
     ? `${booking.guestInfo.firstName} ${booking.guestInfo.lastName}`.trim()
     : "";
   const guestEmail = booking.guestInfo?.email || "";
-  const guestPhone = booking.guestInfo?.phone || "";
   const isCancelled = String(booking.status) === "cancelled";
   // Days until check-in (local-midnight comparison, avoids UTC drift in PH).
   const daysUntilCheckIn = (() => {
@@ -269,12 +271,13 @@ function ConfirmedInner() {
   // Confirmed = down payment approved (or the booking is already past that point).
   // From here the guest just waits for check-in day and settles the rest then.
   const isConfirmed = !lapsed && !isCompleted && (dpApproved || ["confirmed", "on-going", "checked-in"].includes(String(booking.status)));
-  // Mirror the server policy: active booking, ONE-TIME only, and requested at
-  // least 7 days before check-in — so a past or too-soon stay hides the button.
-  // isConfirmed covers the dpApproved path where booking.status may still be
-  // "approved" but the down payment has been verified by the admin.
-  const canChange = (isConfirmed || ["pending", "approved", "confirmed", "down-paid", "on-going"].includes(String(booking.status)))
+  // Mirror the server policy: self-service date changes are only offered while
+  // the booking is still pending host review — once approved/confirmed, the
+  // guest must message us instead (see request-date-change/route.ts).
+  const hasPendingDateChange = !!booking.requestedNewDate;
+  const canChange = String(booking.status) === "pending"
     && Number(booking.dateChangeCount ?? 0) < 1
+    && !hasPendingDateChange
     && daysUntilCheckIn >= 7;
   // Remaining balance + ₱1,000 refundable deposit are collected at check-in.
   const remainingBalance = Math.max(0, (booking.totalAmount || 0) - (pay.down || 0));
@@ -322,7 +325,7 @@ function ConfirmedInner() {
             <div style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".16em", color: "#8C5A2E", marginBottom: 14 }}>Booking confirmed</div>
             <h1 className="cf2-h1" style={{ fontFamily: SERIF, fontSize: 52, fontWeight: 400, letterSpacing: "-.03em", lineHeight: 1.04, margin: 0 }}>You&rsquo;re all set{guestName ? <>, {guestName}</> : null}.</h1>
             <p style={{ fontSize: 17, color: "#4A3A2A", lineHeight: 1.6, margin: "18px auto 0", maxWidth: 440 }}>
-              Your stay is locked in.{guestEmail ? <> We&rsquo;ve emailed everything to <strong>{guestEmail}</strong> —</> : <> We&rsquo;ve emailed everything over —</>} and we&rsquo;ll text you the night before with how to get in.
+              Your stay is locked in.{guestEmail ? <> We&rsquo;ve emailed everything to <strong>{guestEmail}</strong> —</> : <> We&rsquo;ve emailed everything over —</>} and we&rsquo;ll email you the night before with how to get in.
             </p>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 20, padding: "8px 16px", borderRadius: 999, background: "#fff", border: "1px solid #E0CEB2", fontSize: 13, color: "#4A3A2A", fontFamily: MONO }}>
               Booking <span style={{ color: "#1F160E", fontWeight: 500 }}>{booking.id}</span>
@@ -394,7 +397,7 @@ function ConfirmedInner() {
             <h2 style={{ fontFamily: SERIF, fontSize: 22, fontWeight: 500, letterSpacing: "-.015em", margin: "0 0 12px" }}>What happens next</h2>
             <div style={{ background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 18, padding: "4px 22px" }}>
               {[
-                ["We’ll text you the night before", "Address, unit number & door code by SMS — no app to download."],
+                ["We’ll email you the night before", "Address, unit number & door code by email — no app to download."],
                 ["Bring a valid ID on check-in day", "Show it at the lobby — staff hand you the keys and walk you up."],
                 ["Pay the rest when you arrive", "Balance & deposit at check-in — cash or GCash, whatever’s easiest."],
               ].map(([t, s], i) => (
@@ -419,11 +422,15 @@ function ConfirmedInner() {
           {/* CHANGE / HELP */}
           <div className="cf-enter" style={{ marginTop: 18, textAlign: "center" }}>
             <p style={{ fontSize: 14, color: "#8B7458", lineHeight: 1.6, margin: 0 }}>
-              Need to move your dates? You can change them once, free, up to 7 days before check-in.<br />
               {canChange ? (
-                <button type="button" onClick={() => setShowChange(true)} style={{ background: "none", border: "none", padding: "1px 0 1px", color: "#8C5A2E", fontWeight: 500, fontSize: 14, cursor: "pointer", borderBottom: "1px solid #D4BE9A", fontFamily: "inherit" }}>Change my dates</button>
+                <>
+                  Need to move your dates? You can change them once, free, up to 7 days before check-in.<br />
+                  <button type="button" onClick={() => setShowChange(true)} style={{ background: "none", border: "none", padding: "1px 0 1px", color: "#8C5A2E", fontWeight: 500, fontSize: 14, cursor: "pointer", borderBottom: "1px solid #D4BE9A", fontFamily: "inherit" }}>Change my dates</button>
+                </>
+              ) : hasPendingDateChange ? (
+                <span style={{ color: "#8C5A2E", fontWeight: 500 }}>Date-change request pending — we&apos;ll notify you once it&apos;s reviewed.</span>
               ) : (
-                <a href={MESSENGER_URL} target="_blank" rel="noopener noreferrer" style={{ color: "#8C5A2E", fontWeight: 500, textDecoration: "none", borderBottom: "1px solid #D4BE9A", paddingBottom: 1 }}>Message us to reschedule</a>
+                "Need to change your dates? Just message us and we'll sort it out for you."
               )}
             </p>
           </div>
@@ -617,6 +624,9 @@ function ConfirmedInner() {
             .cf-3col { gap: 12px !important; padding: 22px !important; }
             .cf-deskhero { display: none !important; }
             .cf-mobhero { display: block !important; }
+            .cf-totalrow { flex-direction: column !important; align-items: flex-start !important; gap: 14px !important; }
+            .cf-totalrow > div:last-child { width: 100%; }
+            .cf-totalrow > div:last-child > a, .cf-totalrow > div:last-child > button, .cf-totalrow > div:last-child > span { flex: 1 1 auto; justify-content: center; }
           }
         `}</style>
 
@@ -652,7 +662,7 @@ function ConfirmedInner() {
             ) : (
               <>
                 {guestEmail && <>Confirmation emailed to <strong>{guestEmail}</strong>. </>}
-                {guestName && guestPhone && <>{guestName}, we&apos;ll text check-in details to {guestPhone} the day before.</>}
+                {guestName && guestEmail && <>{guestName}, we&apos;ll email your check-in details the day before.</>}
               </>
             )}
           </p>
@@ -747,7 +757,7 @@ function ConfirmedInner() {
                 </div>
               </div>
               <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 12, lineHeight: 1.5 }}>
-                The ₱{checkInDeposit.toLocaleString("en-PH")} deposit is refundable on checkout. We&apos;ll text your check-in details the day before.
+                The ₱{checkInDeposit.toLocaleString("en-PH")} deposit is refundable on checkout. We&apos;ll email your check-in details the day before.
               </p>
             </div>
           </div>
@@ -780,7 +790,7 @@ function ConfirmedInner() {
               <div style={{ fontSize: 13, color: "var(--ink-2)", marginTop: 2 }}>{booking.stayType} stay</div>
             </div>
           </div>
-          <div style={{ borderTop: "1px solid var(--line)", padding: 28, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div className="cf-totalrow" style={{ borderTop: "1px solid var(--line)", padding: 28, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
               <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--muted)" }}>Total</div>
               <div style={{ fontSize: 28, fontWeight: 700, marginTop: 4 }}>{peso(booking.totalAmount)}</div>
@@ -795,6 +805,11 @@ function ConfirmedInner() {
                   style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 20px", borderRadius: 999, background: "var(--white)", color: "var(--ink)", border: "1px solid var(--line-2)", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
                   Request date change
                 </button>
+              )}
+              {hasPendingDateChange && (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 20px", borderRadius: 999, background: "var(--bg-2)", color: "var(--ink-2)", fontSize: 14, fontWeight: 600 }}>
+                  Date-change request pending
+                </span>
               )}
               <Link href="/my-bookings"
                 style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 20px", borderRadius: 999, background: "var(--ink)", color: "var(--white)", fontSize: 14, fontWeight: 600, textDecoration: "none" }}>
@@ -814,7 +829,7 @@ function ConfirmedInner() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 24 }}>
             {[
               { h: "Date changes", t: "No cancellations. One free date change if requested at least 7 days before check-in (new date within 1 month)." },
-              { h: "24 hrs before", t: "Your host sends unit access codes and building instructions via SMS." },
+              { h: "24 hrs before", t: "Your host sends unit access codes and building instructions via email." },
               { h: "Check-in day", t: "Bring a valid ID at the lobby. Settle the 50% balance + ₱1,000 deposit, then start resting." },
             ].map((b) => (
               <div key={b.h}>

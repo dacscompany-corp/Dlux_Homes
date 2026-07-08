@@ -56,6 +56,10 @@ const empty = {
   haven_name: "", property_type: "Studio", tower: "", floor: "", view_type: "", description: "", google_map_address: "",
   // pricing
   six_hour_rate: "", ten_hour_rate: "", weekday_rate: "", weekend_rate: "",
+  // Overnight (21h) length-of-stay bundle discounts — flat per-night rate once
+  // a stay reaches 7/14/30 nights. Blank = not configured for that tier.
+  weekday_week_rate: "", weekday_twoweek_rate: "", weekday_month_rate: "",
+  weekend_week_rate: "", weekend_twoweek_rate: "", weekend_month_rate: "",
   cleaning_fee: "", security_deposit: "", extra_pax_fee: "",
   // check-in
   six_hour_check_in: "09:00", six_hour_check_out: "15:00",
@@ -114,6 +118,8 @@ function havenToForm(h: Record<string, unknown>): { form: Form; images: ImgRef[]
       description: s(h.description), google_map_address: s(h.google_map_address),
       six_hour_rate: s(h.six_hour_rate), ten_hour_rate: s(h.ten_hour_rate),
       weekday_rate: s(h.weekday_rate), weekend_rate: s(h.weekend_rate),
+      weekday_week_rate: s(h.weekday_week_rate), weekday_twoweek_rate: s(h.weekday_twoweek_rate), weekday_month_rate: s(h.weekday_month_rate),
+      weekend_week_rate: s(h.weekend_week_rate), weekend_twoweek_rate: s(h.weekend_twoweek_rate), weekend_month_rate: s(h.weekend_month_rate),
       cleaning_fee: s(h.cleaning_fee), security_deposit: s(h.security_deposit), extra_pax_fee: s(h.extra_pax_fee),
       six_hour_check_in: s(h.six_hour_check_in) || empty.six_hour_check_in, six_hour_check_out: s(h.six_hour_check_out) || empty.six_hour_check_out,
       ten_hour_check_in: s(h.ten_hour_check_in) || empty.ten_hour_check_in, ten_hour_check_out: s(h.ten_hour_check_out) || empty.ten_hour_check_out,
@@ -204,6 +210,8 @@ export default function HavenWizard({
         bathrooms: form.bathrooms || undefined,
         six_hour_rate: num(form.six_hour_rate), ten_hour_rate: num(form.ten_hour_rate),
         weekday_rate: num(form.weekday_rate), weekend_rate: num(form.weekend_rate),
+        weekday_week_rate: num(form.weekday_week_rate), weekday_twoweek_rate: num(form.weekday_twoweek_rate), weekday_month_rate: num(form.weekday_month_rate),
+        weekend_week_rate: num(form.weekend_week_rate), weekend_twoweek_rate: num(form.weekend_twoweek_rate), weekend_month_rate: num(form.weekend_month_rate),
         cleaning_fee: form.cleaning_fee || undefined, security_deposit: form.security_deposit || undefined,
         extra_pax_fee: form.extra_pax_fee || undefined,
         six_hour_check_in: form.six_hour_check_in, six_hour_check_out: form.six_hour_check_out,
@@ -309,7 +317,7 @@ export default function HavenWizard({
           {/* Step 2 — Pricing */}
           {step === 1 && (
             <div className="space-y-3">
-              <p className="text-xs" style={{ color: "#8B6344" }}>Rates per the D&apos;Lux card. Numbers only — no ₱ or commas. Weekend/holiday rate applies on Fri/Sat/Sun &amp; PH holidays.</p>
+              <p className="text-xs" style={{ color: "#8B6344" }}>Rates per the D&apos;Lux card. Numbers only — no ₱ or commas. Weekend/holiday rate applies on Fri/Sat &amp; PH holidays.</p>
               <div className="grid grid-cols-2 gap-3">
                 {[
                   ["Daycation/Nightcation 10h — Weekday (₱)", "ten_hour_rate"],
@@ -322,6 +330,25 @@ export default function HavenWizard({
                     <input type="number" value={form[key as keyof Form] as string} onChange={(e) => set({ [key]: e.target.value } as Partial<Form>)} className={`${field} mt-1`} style={fieldStyle} />
                   </div>
                 ))}
+              </div>
+              <div className="pt-2">
+                <p className="text-xs font-semibold" style={{ color: "#8B6344" }}>Overnight (21h) length-of-stay bundle discounts <span className="font-normal" style={{ color: "#C9B79E" }}>· optional</span></p>
+                <p className="text-xs mt-1" style={{ color: "#C9B79E" }}>Flat nightly rate once a stay reaches 7 / 14 / 30 nights, based on the check-in day (weekday vs weekend/holiday). Leave a tier blank to charge the normal nightly rate instead.</p>
+                <div className="grid grid-cols-3 gap-3 mt-2">
+                  {[
+                    ["Weekday — 1 week (₱/night)", "weekday_week_rate"],
+                    ["Weekday — 2 weeks (₱/night)", "weekday_twoweek_rate"],
+                    ["Weekday — 1 month (₱/night)", "weekday_month_rate"],
+                    ["Weekend — 1 week (₱/night)", "weekend_week_rate"],
+                    ["Weekend — 2 weeks (₱/night)", "weekend_twoweek_rate"],
+                    ["Weekend — 1 month (₱/night)", "weekend_month_rate"],
+                  ].map(([lbl, key]) => (
+                    <div key={key}>
+                      <label className={labelCls} style={labelStyle}>{lbl}</label>
+                      <input type="number" placeholder="—" value={form[key as keyof Form] as string} onChange={(e) => set({ [key]: e.target.value } as Partial<Form>)} className={`${field} mt-1`} style={fieldStyle} />
+                    </div>
+                  ))}
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-3 pt-1">
                 <div>

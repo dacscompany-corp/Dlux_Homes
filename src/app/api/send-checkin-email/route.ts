@@ -13,6 +13,11 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    // Email HTML template for CHECKED-IN status — from the same Claude
+    // Design project as the other status emails. Table-based layout
+    // throughout (see send-pending-email/route.ts for why: Gmail's
+    // spam-quarantine view doesn't reliably honor margin:0 auto/display:flex).
+    const guestName = bookingData.firstName || 'Guest';
     const emailHtml = `
       <!DOCTYPE html>
       <html lang="en">
@@ -20,405 +25,121 @@ export async function POST(request: NextRequest) {
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Welcome! Check-In Confirmation - D'Lux Homes</title>
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@600;700&display=swap" rel="stylesheet">
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-        <style>
-          * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-          }
-
-          body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            line-height: 1.6;
-            color: #1F2937;
-            background-color: #F9F6F0;
-            padding: 20px;
-            min-height: 100vh;
-          }
-
-          .email-container {
-            max-width: 680px;
-            margin: 0 auto;
-            background: #ffffff;
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 4px 20px rgba(184, 134, 11, 0.1);
-            border: 1px solid rgba(184, 134, 11, 0.1);
-          }
-
-          .header {
-            background-color: #10B981;
-            color: #ffffff;
-            padding: 40px 30px;
-            text-align: center;
-          }
-
-          .logo {
-            font-family: 'Poppins', 'Inter', sans-serif;
-            font-size: 32px;
-            font-weight: 700;
-            margin-bottom: 8px;
-            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-          }
-
-          .tagline {
-            font-size: 16px;
-            font-weight: 400;
-            opacity: 0.95;
-            margin-bottom: 20px;
-          }
-
-          .status-badge {
-            background-color: rgba(255, 255, 255, 0.2);
-            color: white;
-            padding: 8px 20px;
-            border-radius: 20px;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 14px;
-            font-weight: 600;
-            border: 1px solid rgba(255, 255, 255, 0.3);
-          }
-
-          .content {
-            padding: 40px 35px;
-            background: #ffffff;
-          }
-
-          .welcome-message {
-            font-size: 28px;
-            color: #10B981;
-            margin-bottom: 20px;
-            font-weight: 700;
-            font-family: 'Poppins', 'Inter', sans-serif;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-          }
-
-          .intro-text {
-            color: #6B7280;
-            margin-bottom: 30px;
-            line-height: 1.7;
-            font-size: 16px;
-          }
-
-          .info-card {
-            background-color: #F0FDF4;
-            border-left: 4px solid #10B981;
-            padding: 25px 30px;
-            margin: 20px 0;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(16, 185, 129, 0.08);
-            transition: transform 0.2s ease;
-          }
-
-          .info-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.12);
-          }
-
-          .card-title {
-            font-family: 'Poppins', 'Inter', sans-serif;
-            font-size: 18px;
-            color: #059669;
-            font-weight: 600;
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-          }
-
-          .info-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px 0;
-            border-bottom: 1px solid rgba(16, 185, 129, 0.1);
-          }
-
-          .info-row:last-child {
-            border-bottom: none;
-          }
-
-          .info-label {
-            font-weight: 600;
-            color: #6B7280;
-            font-size: 14px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-          }
-
-          .info-value {
-            color: #1F2937;
-            font-weight: 500;
-            font-size: 15px;
-            text-align: right;
-          }
-
-          .alert-box {
-            background-color: #FEF3C7;
-            border: 1px solid #F59E0B;
-            border-left: 4px solid #F59E0B;
-            padding: 25px 30px;
-            margin: 30px 0;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(245, 158, 11, 0.1);
-          }
-
-          .alert-title {
-            font-weight: 700;
-            color: #92400E;
-            margin-bottom: 15px;
-            font-size: 16px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-          }
-
-          .alert-box ul {
-            margin-left: 20px;
-            color: #78350F;
-          }
-
-          .alert-box li {
-            margin: 10px 0;
-            line-height: 1.6;
-            position: relative;
-            padding-left: 8px;
-          }
-
-          .alert-box li::before {
-            content: '•';
-            position: absolute;
-            left: -8px;
-            color: #F59E0B;
-            font-weight: bold;
-          }
-
-          .contact-card {
-            background-color: #F9FAFB;
-            border: 1px solid #E5E7EB;
-            padding: 25px 30px;
-            margin: 30px 0;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-          }
-
-          .contact-title {
-            font-family: 'Poppins', 'Inter', sans-serif;
-            font-size: 18px;
-            color: #374151;
-            font-weight: 600;
-            margin-bottom: 15px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-          }
-
-          .enjoy-card {
-            background-color: #DBEAFE;
-            border: 1px solid #3B82F6;
-            padding: 30px;
-            margin: 30px 0;
-            border-radius: 8px;
-            text-align: center;
-            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
-          }
-
-          .enjoy-title {
-            font-family: 'Poppins', 'Inter', sans-serif;
-            font-size: 24px;
-            color: #1E40AF;
-            font-weight: 700;
-            margin-bottom: 10px;
-          }
-
-          .enjoy-subtitle {
-            color: #3B82F6;
-            font-size: 16px;
-            font-weight: 500;
-          }
-
-          .footer {
-            background-color: #1F2937;
-            color: #D1D5DB;
-            padding: 35px 30px;
-            text-align: center;
-          }
-
-          .footer-info {
-            margin: 10px 0;
-            font-size: 14px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-          }
-
-          .footer-divider {
-            height: 1px;
-            background-color: #374151;
-            margin: 20px 0;
-          }
-
-          .footer-copyright {
-            font-size: 13px;
-            color: #9CA3AF;
-            margin-top: 15px;
-          }
-
-          @media only screen and (max-width: 600px) {
-            .email-container {
-              border-radius: 0;
-              margin: 0;
-            }
-
-            .header {
-              padding: 30px 20px;
-            }
-
-            .logo {
-              font-size: 28px;
-            }
-
-            .content {
-              padding: 30px 20px;
-            }
-
-            .info-row {
-              flex-direction: column;
-              align-items: flex-start;
-              gap: 8px;
-            }
-
-            .info-value {
-              text-align: left;
-            }
-
-            .footer-info {
-              flex-direction: column;
-              gap: 5px;
-            }
-          }
-        </style>
+        <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+        <style>* { margin: 0; padding: 0; box-sizing: border-box; } body { background: #F3EAD9; } a { color: inherit; }</style>
       </head>
-      <body>
-        <div class="email-container">
-          <!-- Header -->
-          <div class="header">
-            <div class="logo">
-              <i class="fas fa-umbrella-beach"></i> D'Lux Homes
-            </div>
-            <div class="tagline">Your Perfect Getaway Awaits</div>
-            <div class="status-badge">
-              <i class="fas fa-check-circle"></i>
-              <span>Checked In</span>
-            </div>
-          </div>
+      <body style="margin:0;padding:0;background:#F3EAD9;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F3EAD9;">
+          <tr>
+            <td align="center" style="padding:24px 16px;font-family:'Inter',Arial,Helvetica,sans-serif;">
+              <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 1px 3px rgba(30,20,10,0.08);">
+                <tr>
+                  <td>
 
-          <!-- Content -->
-          <div class="content">
-            <div class="welcome-message">
-              <span>Welcome, ${bookingData.firstName}!</span>
-              <i class="fas fa-party-horn"></i>
-            </div>
+                    <!-- Header -->
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#2b1b12;">
+                      <tr>
+                        <td style="padding:28px 32px;">
+                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                              <td valign="middle" align="left">
+                                <div style="font-family:'Fraunces',Georgia,serif;font-size:21px;font-weight:600;color:#f6ede0;letter-spacing:0.3px;">D&rsquo;Lux Homes</div>
+                                <div style="font-size:12px;color:#CBB89C;margin-top:2px;">Your Perfect Getaway Awaits</div>
+                              </td>
+                              <td valign="middle" align="right" style="white-space:nowrap;">
+                                <span style="display:inline-block;background:rgba(246,237,224,0.12);border:1px solid rgba(246,237,224,0.35);border-radius:999px;padding:6px 14px;white-space:nowrap;">
+                                  <span style="width:7px;height:7px;border-radius:50%;background:#d9a25c;display:inline-block;margin-right:6px;"></span>
+                                  <span style="font-size:12px;font-weight:600;color:#f6ede0;">Checked In</span>
+                                </span>
+                              </td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
 
-            <p class="intro-text">
-              You have successfully checked in! We hope you enjoy your stay at <strong>D'Lux Homes</strong>.
-              If you need anything during your stay, please don't hesitate to contact our staff.
-            </p>
-
-            <!-- Booking Details Card -->
-            <div class="info-card">
-              <div class="card-title">
-                <i class="fas fa-clipboard-list"></i>
-                <span>Your Booking Details</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">Booking ID</span>
-                <span class="info-value">${bookingData.bookingId}</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">Room</span>
-                <span class="info-value">${bookingData.roomName}</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">Check-In</span>
-                <span class="info-value">${bookingData.checkInDate} at ${bookingData.checkInTime}</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">Check-Out</span>
-                <span class="info-value">${bookingData.checkOutDate} at ${bookingData.checkOutTime}</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">Guests</span>
-                <span class="info-value">${bookingData.guests}</span>
-              </div>
-            </div>
-
-            <!-- Important Information -->
-            <div class="alert-box">
-              <div class="alert-title">
-                <i class="fas fa-exclamation-triangle"></i>
-                <span>Important Information</span>
-              </div>
-              <ul>
-                <li>Check-out time is at ${bookingData.checkOutTime} on ${bookingData.checkOutDate}</li>
-                <li>Late check-out may incur additional charges</li>
-                <li>Please take care of the property and amenities</li>
-                <li>For emergencies, contact the front desk immediately</li>
-              </ul>
-            </div>
-
-            <!-- Contact Information -->
-            <div class="contact-card">
-              <div class="contact-title">
-                <i class="fas fa-phone-alt"></i>
-                <span>Need Assistance?</span>
-              </div>
-              <p class="intro-text" style="margin: 0;">
-                Our staff is available 24/7 to help you with any questions or concerns during your stay.
-                Feel free to reach out to us anytime!
+            <!-- Body -->
+            <div style="padding:28px 32px 4px;">
+              <p style="font-size:16px;font-weight:600;color:#2b1b12;margin:0 0 6px;">Welcome, ${guestName}!</p>
+              <p style="font-size:15px;line-height:1.5;color:#3a2a1e;margin:0 0 20px;">
+                You&rsquo;re all checked in and ready to relax at D&rsquo;Lux Homes. Need anything at all during your stay? Just reach out &mdash; we&rsquo;re happy to help.
               </p>
-            </div>
 
-            <!-- Enjoy Your Stay Message -->
-            <div class="enjoy-card">
-              <div class="enjoy-title">
-                <i class="fas fa-star"></i> Enjoy Your Stay! <i class="fas fa-star"></i>
+              <!-- Stay details -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#faf5ec;border-radius:12px;margin-bottom:16px;">
+                <tr>
+                  <td style="padding:18px 20px 12px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:13px;">
+                      <tr>
+                        <td align="left" style="color:#9c8974;">${bookingData.bookingId}</td>
+                        <td align="right" style="font-weight:600;color:#2b1b12;">${bookingData.roomName}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 20px 12px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td width="50%" valign="top">
+                          <div style="font-size:11px;color:#9c8974;">Checked in</div>
+                          <div style="font-size:14px;font-weight:600;color:#2b1b12;">${bookingData.checkInDate} &middot; ${bookingData.checkInTime}</div>
+                        </td>
+                        <td width="1" style="background:#e9dcc8;font-size:0;line-height:0;">&nbsp;</td>
+                        <td width="50%" valign="top" style="padding-left:14px;">
+                          <div style="font-size:11px;color:#9c8974;">Check-out by</div>
+                          <div style="font-size:14px;font-weight:600;color:#2b1b12;">${bookingData.checkOutDate} &middot; ${bookingData.checkOutTime}</div>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:12px 20px 18px;border-top:1px solid #e9dcc8;font-size:13px;color:#5c4a3c;">${bookingData.guests}</td>
+                </tr>
+              </table>
+
+              <!-- A few things to know -->
+              <div style="font-size:12px;font-weight:700;color:#9c8974;letter-spacing:0.6px;text-transform:uppercase;margin-bottom:10px;">A Few Things to Know</div>
+              <div style="margin-bottom:16px;">
+                <div style="font-size:13px;line-height:1.5;color:#5c4a3c;margin-bottom:6px;">&bull; Check-out is at ${bookingData.checkOutTime} &mdash; let us know if you need a bit more time.</div>
+                <div style="font-size:13px;line-height:1.5;color:#5c4a3c;margin-bottom:6px;">&bull; Please take care of the property and its amenities.</div>
+                <div style="font-size:13px;line-height:1.5;color:#5c4a3c;">&bull; Any concerns? Just contact us right away &mdash; we&rsquo;ll sort it out.</div>
               </div>
-              <div class="enjoy-subtitle">
-                We hope you have a wonderful and memorable experience at D'Lux Homes
+
+              <!-- Need help -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#2b1b12;border-radius:12px;margin-bottom:24px;">
+                <tr>
+                  <td style="padding:16px 20px;">
+                    <div style="font-size:13px;font-weight:600;color:#f6ede0;margin-bottom:4px;">Need a Hand?</div>
+                    <div style="font-size:13px;line-height:1.5;color:#CBB89C;">We&rsquo;re here 24/7 &mdash; just reply to this email or message us on our Facebook page if anything comes up.</div>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- CTA -->
+              <div style="text-align:center;margin-bottom:24px;">
+                <div style="font-family:'Fraunces',Georgia,serif;font-size:17px;color:#2b1b12;margin-bottom:8px;">Enjoy Your Stay!</div>
+                <div style="font-size:13px;color:#5c4a3c;">We hope this is a stay to remember at D&rsquo;Lux Homes.</div>
               </div>
             </div>
-          </div>
 
-          <!-- Footer -->
-          <div class="footer">
-            <div class="footer-info">
-              <i class="fas fa-envelope"></i>
-              <span>staycationhaven9@gmail.com</span>
-            </div>
-            <div class="footer-info">
-              <i class="fas fa-phone"></i>
-              <span>+63 123 456 7890</span>
-            </div>
-            <div class="footer-info">
-              <i class="fas fa-map-marker-alt"></i>
-              <span>Your Perfect Destination</span>
-            </div>
+            <!-- Footer -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#faf5ec;border-top:1px solid #f0e6d8;">
+              <tr>
+                <td align="center" style="padding:16px 32px;">
+                  <div style="font-size:12px;color:#5c4a3c;">homesdlux@gmail.com &middot; Tower 4, Grass Residences, QC</div>
+                  <div style="font-size:11px;color:#b3a48f;margin-top:6px;">&copy; ${new Date().getFullYear()} D&rsquo;Lux Homes. All rights reserved.</div>
+                </td>
+              </tr>
+            </table>
 
-            <div class="footer-divider"></div>
-
-            <div class="footer-copyright">
-              &copy; ${new Date().getFullYear()} D'Lux Homes. All rights reserved.
-            </div>
-          </div>
-        </div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
       </body>
       </html>
     `;

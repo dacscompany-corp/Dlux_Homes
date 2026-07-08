@@ -10,7 +10,8 @@ import { mockRooms } from "@/lib/mock-data";
 import { generateBookingId, addMyBookingId } from "@/lib/booking-store";
 import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
 import { havenToRoom } from "@/lib/haven-adapter";
-import { stayTotal, isWeekendOrHoliday, addDaysISO, extraPaxFee } from "@/lib/pricing";
+import { stayTotal, isWeekendOrHoliday, addDaysISO, extraPaxFee, bundleNightlyRate, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS } from "@/lib/pricing";
+import { useCalendarRules } from "@/lib/useCalendarRules";
 
 // ── Helpers ────────────────────────────────────────────────────
 function peso(n: number) { return "₱" + n.toLocaleString("en-PH"); }
@@ -254,10 +255,20 @@ function CheckoutInner() {
     return "infant";
   };
 
+  // Owner-editable weekend/holiday calendar (System → Settings in the admin
+  // portal); falls back to Fri/Sat + built-in PH holidays if unreachable.
+  const calendarRules = useCalendarRules();
   // Weekday vs weekend/holiday rate based on the check-in date.
-  const isWeekendRate = isWeekendOrHoliday(date);
-  // Stay price: 10h single session, or 21h × nights (each night priced by its own date).
-  const basePrice = stayTotal(stayType, date, nights, room);
+  const isWeekendRate = isWeekendOrHoliday(date, calendarRules);
+  // Stay price: 10h single session, or 21h × nights (each night priced by its
+  // own date) — UNLESS the stay is long enough to qualify for a length-of-stay
+  // bundle discount (7/14/30+ nights), in which case a flat nightly rate applies.
+  const basePrice = stayTotal(stayType, date, nights, room, calendarRules);
+  const bundleRate = stayType === "10" ? undefined : bundleNightlyRate(nights, date, room, calendarRules);
+  const bundleLabel = bundleRate == null ? null
+    : nights >= BUNDLE_MONTH_NIGHTS ? "Monthly rate"
+    : nights >= BUNDLE_TWOWEEK_NIGHTS ? "Two-week rate"
+    : "Weekly rate";
   // D'Lux pricing: base rate covers 2 pax; each extra adult/young adult adds a
   // flat per-pax fee (once per booking). "Children (7 under)" are exempt from
   // the fee. No cleaning or service fee.
@@ -647,7 +658,7 @@ function CheckoutInner() {
                     </select>
                   </FieldLabel>
                   <FieldLabel label="Email Address *">
-                    <input id="f-email" style={fieldStyle("email")} type="email" value={info.email} onChange={(e) => setInfo({ ...info, email: e.target.value })} placeholder="csr@staycationhavenph.com" />
+                    <input id="f-email" style={fieldStyle("email")} type="email" value={info.email} onChange={(e) => setInfo({ ...info, email: e.target.value })} placeholder="juan@email.com" />
                     <Req k="email" msg="Enter a valid email address" />
                   </FieldLabel>
                   <FieldLabel label="Phone Number *">
@@ -939,7 +950,7 @@ function CheckoutInner() {
                   <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#4A3A2A" }}>Guests</span><span style={{ fontWeight: 600 }}>{adults + children + infants}</span></div>
                 </div>
                 <div style={{ padding: "16px 0 0", fontSize: 13, display: "flex", flexDirection: "column", gap: 6 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>{stayType === "10" ? `10-hour stay · ${isWeekendRate ? "Weekend/Holiday" : "Weekday"}` : `Overnight · ${nights} night${nights > 1 ? "s" : ""}`}</span><span>{peso(basePrice)}</span></div>
+                  <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>{stayType === "10" ? `10-hour stay · ${isWeekendRate ? "Weekend/Holiday" : "Weekday"}` : `Overnight · ${nights} night${nights > 1 ? "s" : ""}${bundleLabel ? ` · ${bundleLabel}` : ""}`}</span><span>{peso(basePrice)}</span></div>
                   {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra pax · {extraPaxCount} × {peso(room.additionalPaxFee)}</span><span>{peso(paxFee)}</span></div>}
                   <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16, marginTop: 6, paddingTop: 10, borderTop: "1px solid #E0CEB2" }}><span>Total stay value</span><span>{peso(total)}</span></div>
                 </div>
