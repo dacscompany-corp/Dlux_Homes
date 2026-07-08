@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
-import { upload_file } from "@/backend/utils/cloudinary";
+import { upload_image_from_form } from "@/backend/utils/fileUpload";
 import { requireEmployee } from "@/backend/utils/requireAdmin";
 
 export async function GET(req: NextRequest) {
@@ -45,21 +45,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!file.type.startsWith("image/")) {
+    // Security: verify the upload is a real image (magic-byte check) before storing.
+    let uploadResult;
+    try {
+      uploadResult = await upload_image_from_form(file, "dlux-homes/cleaning-checklist-photos");
+    } catch (e) {
       return NextResponse.json(
-        { success: false, error: "Only image files are allowed" },
+        { success: false, error: e instanceof Error ? e.message : "Only image files are allowed" },
         { status: 400 },
       );
     }
-
-    const bytes = await file.arrayBuffer();
-    const base64 = Buffer.from(bytes).toString("base64");
-    const dataUrl = `data:${file.type};base64,${base64}`;
-
-    const uploadResult = await upload_file(
-      dataUrl,
-      "dlux-homes/cleaning-checklist-photos",
-    );
 
     await pool.query(
       `INSERT INTO cleaning_checklist_photos (checklist_id, category, image_url, cloudinary_public_id, uploaded_at)

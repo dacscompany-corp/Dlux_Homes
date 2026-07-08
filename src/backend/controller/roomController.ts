@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { upload_file, delete_file } from "../utils/cloudinary";
+import { validateImageDataUrl } from "../utils/imageGuard";
 import pool from "../config/db";
 import { syncAmenityVerifications } from "../utils/amenityVerifySync";
 
@@ -146,6 +147,11 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
     if (haven_images && haven_images.length > 0) {
       const uploaded = await Promise.all(
         haven_images.map(async (image: string, index: number) => {
+          const check = validateImageDataUrl(image);
+          if (!check.ok) {
+            console.warn(`[haven] rejected non-image upload: ${check.reason}`);
+            return { image_url: "", public_id: "", display_order: index };
+          }
           const result = await upload_file(image, "dlux-homes/havens");
           return {
             image_url: result.url,
@@ -164,6 +170,11 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
         if (Array.isArray(images) && images.length > 0) {
           const categoryUrls = await Promise.all(
             images.map(async (image: string, index: number) => {
+              const check = validateImageDataUrl(image);
+              if (!check.ok) {
+                console.warn(`[haven] rejected non-image photo-tour upload: ${check.reason}`);
+                return { category, image_url: "", public_id: "", display_order: index };
+              }
               const result = await upload_file(
                 image,
                 `dlux-homes/photo-tours/${category}`
@@ -858,6 +869,11 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
     if (haven_images && haven_images.length > 0) {
       const havenImageUrls = await Promise.all(
         haven_images.map(async (image: string, index: number) => {
+          const check = validateImageDataUrl(image);
+          if (!check.ok) {
+            console.warn(`[haven] rejected non-image upload: ${check.reason}`);
+            return { image_url: "", public_id: "", display_order: index };
+          }
           const result = await upload_file(image, "dlux-homes/havens");
           return {
             image_url: result.url,
@@ -867,8 +883,8 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
         })
       );
 
-      // Insert new images
-      for (const img of havenImageUrls) {
+      // Insert new images (skip any that were rejected as non-images / failed to upload)
+      for (const img of havenImageUrls.filter((img) => img.image_url)) {
         await pool.query(
           `INSERT INTO haven_images (haven_id, image_url, cloudinary_public_id, display_order, uploaded_at)
            VALUES ($1, $2, $3, $4, NOW())`,
@@ -883,6 +899,11 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
         if (Array.isArray(images) && images.length > 0) {
           const categoryUrls = await Promise.all(
             images.map(async (image: string, index: number) => {
+              const check = validateImageDataUrl(image);
+              if (!check.ok) {
+                console.warn(`[haven] rejected non-image photo-tour upload: ${check.reason}`);
+                return { category, image_url: "", public_id: "", display_order: index };
+              }
               const result = await upload_file(
                 image,
                 `dlux-homes/photo-tours/${category}`
@@ -896,8 +917,8 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
             })
           );
 
-          // Insert new photo tour images
-          for (const img of categoryUrls) {
+          // Insert new photo tour images (skip any rejected as non-images / failed to upload)
+          for (const img of categoryUrls.filter((img) => img.image_url)) {
             await pool.query(
               `INSERT INTO photo_tour_images (haven_id, category, image_url, cloudinary_public_id, display_order, uploaded_at)
                VALUES ($1, $2, $3, $4, $5, NOW())`,

@@ -6,6 +6,7 @@ import Image from "next/image";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import toast from "react-hot-toast";
+import { imageFileError } from "@/lib/validateImageFile";
 import { mockRooms } from "@/lib/mock-data";
 import { generateBookingId, addMyBookingId } from "@/lib/booking-store";
 import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
@@ -101,7 +102,7 @@ function UploadField({ label, sub, value, onChange, invalid, id }: { label: stri
   return (
     <div id={id}>
       <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "#1F160E", marginBottom: 8 }}>{label}</div>
-      <input ref={ref} type="file" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) fileToBase64(f).then((data) => onChange(f.name, data)); }} />
+      <input ref={ref} type="file" accept="image/png,image/jpeg,image/gif,image/webp" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) { const err = imageFileError(f); if (err) { toast.error(err); e.target.value = ""; return; } fileToBase64(f).then((data) => onChange(f.name, data)); } }} />
       <button onClick={() => ref.current?.click()}
         style={{ width: "100%", padding: 16, borderRadius: 14, border: invalid ? "1px solid #ef4444" : value ? "1px solid #B07848" : "1px dashed #D4BE9A", background: value ? "rgba(176,120,72,.06)" : "#FAF7F1", display: "flex", alignItems: "center", gap: 14, textAlign: "left", cursor: "pointer" }}>
         <div style={{ width: 44, height: 44, borderRadius: 11, background: value ? "#22C55E" : "#EFE4CE", display: "grid", placeItems: "center", color: value ? "#fff" : "#A88E63", flex: "none" }}>
@@ -138,7 +139,7 @@ function GuestIdUpload({ values, onAdd, onRemove, invalid, id, title = "Valid ID
     f.accept = "image/*";
     if (!capture) f.multiple = true; // file picker may select several at once
     if (capture) (f as unknown as { capture: string }).capture = "environment";
-    f.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) Array.from(files).forEach((file) => fileToBase64(file).then((data) => onAdd(file.name, data))); };
+    f.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) Array.from(files).forEach((file) => { const err = imageFileError(file); if (err) { toast.error(err); return; } fileToBase64(file).then((data) => onAdd(file.name, data)); }); };
     f.click();
   };
   const btn: React.CSSProperties = { flex: 1, minWidth: 150, padding: 14, borderRadius: 12, fontSize: 13, fontWeight: 600, background: "#4d4337", color: "#F6EFE2", border: "1px solid #5d5347", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 };

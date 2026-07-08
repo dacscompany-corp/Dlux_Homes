@@ -5,6 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
+import { imageFileError } from "@/lib/validateImageFile";
 import SiteHeader from "@/components/SiteHeader";
 import type { StoredBooking } from "@/lib/booking-store";
 
@@ -713,7 +714,7 @@ function ConfirmedInner() {
                   </div>
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
-                  <button type="button" onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) fileToBase64(file).then((data) => { setProofName(file.name); setProofData(data); }); }; f.click(); }}
+                  <button type="button" onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/png,image/jpeg,image/gif,image/webp"; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) { const err = imageFileError(file); if (err) { toast.error(err); return; } fileToBase64(file).then((data) => { setProofName(file.name); setProofData(data); }); } }; f.click(); }}
                     style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 20px", borderRadius: 999, background: "var(--white)", color: "var(--ink)", border: "1px solid var(--line-2)", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
                     {proofName ? `✓ ${proofName.length > 22 ? proofName.slice(0, 22) + "…" : proofName}` : "Upload payment proof"}
                   </button>

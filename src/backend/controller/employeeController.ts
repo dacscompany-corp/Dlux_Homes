@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import pool from '../config/db';
 import bcrypt from 'bcryptjs';
 import { upload_file } from '../utils/cloudinary';
+import { validateImageDataUrl } from '../utils/imageGuard';
 import { sendEmployeeWelcomeEmail } from '../utils/mailer';
 
 export type EmployeeRole = 'Owner' | 'CSR' | 'Cleaner' | 'Partner';
@@ -57,6 +58,13 @@ export const createEmployee = async (req: NextRequest): Promise<NextResponse> =>
 
     let profileImageUrl = null;
     if (profile_image) {
+      const imgCheck = validateImageDataUrl(profile_image);
+      if (!imgCheck.ok) {
+        return NextResponse.json(
+          { success: false, message: `Profile image must be an image: ${imgCheck.reason}` },
+          { status: 400 },
+        );
+      }
       const uploadResult = await upload_file(profile_image, "dlux-homes/profiles");
       profileImageUrl = uploadResult.url;
     }
@@ -224,7 +232,14 @@ export const updateEmployee = async (req: NextRequest): Promise<NextResponse> =>
 
     // Handle profile image upload to Cloudinary if it's a base64 string
     let profileImageUrl = profile_image_url;
-    if (profile_image_url && profile_image_url.startsWith('data:image')) {
+    if (profile_image_url && profile_image_url.startsWith('data:')) {
+      const imgCheck = validateImageDataUrl(profile_image_url);
+      if (!imgCheck.ok) {
+        return NextResponse.json(
+          { success: false, message: `Profile image must be an image: ${imgCheck.reason}` },
+          { status: 400 },
+        );
+      }
       const uploadResult = await upload_file(profile_image_url, "dlux-homes/profiles");
       profileImageUrl = uploadResult.url;
     }

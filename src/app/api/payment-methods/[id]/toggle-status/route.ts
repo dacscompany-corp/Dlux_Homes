@@ -18,22 +18,12 @@ export async function PATCH(
       );
     }
 
-    const body = await request.json();
-    const { is_active } = body;
-
-    if (is_active === undefined) {
-      return NextResponse.json(
-        { success: false, message: 'is_active field is required' },
-        { status: 400 }
-      );
-    }
-
     const client = await pool.connect();
-    
-    // Get payment method details before update for logging
-    const getQuery = 'SELECT payment_name, provider FROM payment_methods WHERE id = $1';
+
+    // Get payment method details before update for logging and to flip its status
+    const getQuery = 'SELECT payment_name, provider, is_active FROM payment_methods WHERE id = $1';
     const getResult = await client.query(getQuery, [id]);
-    
+
     if (getResult.rows.length === 0) {
       client.release();
       return NextResponse.json(
@@ -43,7 +33,8 @@ export async function PATCH(
     }
 
     const paymentMethod = getResult.rows[0];
-    
+    const is_active = !paymentMethod.is_active;
+
     const query = `
       UPDATE payment_methods SET
         is_active = $1,

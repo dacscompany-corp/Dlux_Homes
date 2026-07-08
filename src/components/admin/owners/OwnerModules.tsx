@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
-import { BarChart3, Calendar, CalendarOff, Sparkles, CreditCard, Headphones, UsersRound, Handshake, Plus, Trash2, Power, X } from "lucide-react";
+import { imageFileError } from "@/lib/validateImageFile";
+import { BarChart3, Calendar, CalendarOff, Sparkles, CreditCard, Headphones, UsersRound, Handshake, Plus, Trash2, Power, Pencil, X } from "lucide-react";
 import { useGetAnalyticsSummaryQuery, useGetMonthlyRevenueQuery, useGetRevenueByRoomQuery } from "@/redux/api/analyticsApi";
 import { useGetBookingsQuery } from "@/redux/api/bookingsApi";
 import { useGetBlockedDatesQuery, useCreateBlockedDateMutation, useDeleteBlockedDateMutation } from "@/redux/api/blockedDatesApi";
@@ -453,17 +454,35 @@ export function CleaningManagementSection() {
 
 // ── 5. Payment Methods ────────────────────────────────────────────────────
 const PM_METHODS = ["GCash", "Bank Transfer", "Maya", "Card", "Cash", "Other"];
-const emptyPM = { payment_name: "", payment_method: "GCash", provider: "", account_details: "", description: "", qr: null as File | null };
+const emptyPM = { payment_name: "", payment_method: "GCash", provider: "", account_details: "", description: "", qr: null as File | null, qrUrl: "", is_active: true };
 
 export function PaymentMethodsSection() {
   const [rows, setRows] = useState<Row[]>([]);
   const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(emptyPM);
+  const [editId, setEditId] = useState<string | null>(null);
 
   const reload = () =>
     fetch("/api/payment-methods").then((r) => (r.ok ? r.json() : { data: [] })).then((j) => setRows(arr(j.data))).catch(() => {});
   useEffect(() => { reload(); }, []);
+
+  const openAdd = () => { setEditId(null); setForm(emptyPM); setModal(true); };
+  const closeModal = () => { setModal(false); setEditId(null); setForm(emptyPM); };
+  const startEdit = (m: Row) => {
+    setEditId(String(m.id));
+    setForm({
+      payment_name: String(m.payment_name ?? ""),
+      payment_method: String(m.payment_method ?? "GCash"),
+      provider: String(m.provider ?? ""),
+      account_details: String(m.account_details ?? ""),
+      description: String(m.description ?? ""),
+      qr: null,
+      qrUrl: String(m.payment_qr_link ?? ""),
+      is_active: Boolean(m.is_active),
+    });
+    setModal(true);
+  };
 
   const submit = async () => {
     if (!form.payment_name.trim() || !form.provider.trim() || !form.account_details.trim()) {
@@ -477,13 +496,15 @@ export function PaymentMethodsSection() {
       fd.append("provider", form.provider.trim());
       fd.append("account_details", form.account_details.trim());
       fd.append("description", form.description.trim());
-      fd.append("is_active", "true");
+      fd.append("is_active", String(form.is_active));
       if (form.qr) fd.append("qr_image", form.qr);
-      const res = await fetch("/api/payment-methods", { method: "POST", body: fd });
+      const res = editId
+        ? await fetch(`/api/payment-methods/${editId}`, { method: "PUT", body: fd })
+        : await fetch("/api/payment-methods", { method: "POST", body: fd });
       if (!res.ok) throw new Error();
-      toast.success("Payment method added");
-      setModal(false); setForm(emptyPM); reload();
-    } catch { toast.error("Could not add payment method"); }
+      toast.success(editId ? "Payment method updated" : "Payment method added");
+      closeModal(); reload();
+    } catch { toast.error(editId ? "Could not update payment method" : "Could not add payment method"); }
     finally { setSaving(false); }
   };
 
@@ -500,7 +521,7 @@ export function PaymentMethodsSection() {
     <div>
       <div className="flex items-start justify-between gap-3">
         <SectionHead title="Payment Methods" icon={CreditCard} sub="Channels guests can pay through (GCash, bank, etc.)" />
-        <button onClick={() => setModal(true)} className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white cursor-pointer flex-shrink-0" style={{ backgroundColor: "#1f1b16" }}>
+        <button onClick={openAdd} className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white cursor-pointer flex-shrink-0" style={{ backgroundColor: "#1f1b16" }}>
           <Plus className="w-4 h-4" /> Add Payment Method
         </button>
       </div>
@@ -514,6 +535,7 @@ export function PaymentMethodsSection() {
               <td className="px-4 py-3.5"><Pill text={m.is_active ? "active" : "inactive"} tone={m.is_active ? "good" : "neutral"} /></td>
               <td className="px-4 py-3.5">
                 <div className="flex items-center gap-1">
+                  <button onClick={() => startEdit(m)} title="Edit" className="p-1.5 rounded-lg cursor-pointer" style={{ color: "#5a4a3a" }}><Pencil className="w-3.5 h-3.5" /></button>
                   <button onClick={() => toggle(m.id)} title={m.is_active ? "Deactivate" : "Activate"} className="p-1.5 rounded-lg cursor-pointer" style={{ color: m.is_active ? "#92400e" : "#065f46" }}><Power className="w-3.5 h-3.5" /></button>
                   <button onClick={() => remove(m.id)} title="Delete" className="p-1.5 rounded-lg cursor-pointer" style={{ color: "#991b1b" }}><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
@@ -524,13 +546,13 @@ export function PaymentMethodsSection() {
       )}
 
       {modal && (
-        <div onClick={() => setModal(false)} style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", background: "rgba(31,27,22,0.45)" }}>
+        <div onClick={closeModal} style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", background: "rgba(31,27,22,0.45)" }}>
           <style>{`@keyframes vb-pop{from{opacity:0;transform:translateY(12px) scale(.985);}to{opacity:1;transform:none;}}`}</style>
           <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 440, background: "#ffffff", border: "1px solid #ece5d4", borderRadius: 16, boxShadow: "0 32px 70px -28px rgba(58,42,24,.45), 0 4px 14px -6px rgba(58,42,24,.18)", overflow: "hidden", display: "flex", flexDirection: "column", maxHeight: "100%", animation: "vb-pop .35s cubic-bezier(.2,.7,.3,1) both" }}>
 
             {/* Header */}
             <div style={{ position: "relative", padding: "20px 22px 16px", background: "linear-gradient(180deg, #f3e7d2 0%, rgba(255,255,255,0) 100%)", flexShrink: 0 }}>
-              <button type="button" onClick={() => setModal(false)} title="Close"
+              <button type="button" onClick={closeModal} title="Close"
                 onMouseEnter={(e) => { const t = e.currentTarget; t.style.background = "#fff"; t.style.color = "#1f1b16"; }}
                 onMouseLeave={(e) => { const t = e.currentTarget; t.style.background = "rgba(255,255,255,.7)"; t.style.color = "#8a6f4d"; }}
                 style={{ position: "absolute", top: 14, right: 14, width: 30, height: 30, display: "grid", placeItems: "center", border: "1px solid #e7dcc5", borderRadius: "50%", background: "rgba(255,255,255,.7)", color: "#8a6f4d", cursor: "pointer", transition: "all .15s" }}>
@@ -541,7 +563,7 @@ export function PaymentMethodsSection() {
                   <CreditCard className="w-[19px] h-[19px]" />
                 </div>
                 <div style={{ minWidth: 0 }}>
-                  <h3 style={{ margin: 0, fontWeight: 700, fontSize: 17, letterSpacing: "-.01em", color: "#1f1b16" }}>Add Payment Method</h3>
+                  <h3 style={{ margin: 0, fontWeight: 700, fontSize: 17, letterSpacing: "-.01em", color: "#1f1b16" }}>{editId ? "Edit Payment Method" : "Add Payment Method"}</h3>
                   <p style={{ margin: "3px 0 0", fontSize: 12, color: "#9b8870" }}>A channel guests can pay through.</p>
                 </div>
               </div>
@@ -582,6 +604,13 @@ export function PaymentMethodsSection() {
 
               <div>
                 <label style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: ".09em", textTransform: "uppercase", color: "#b8754a" }}>QR image <span style={{ color: "#c2ad88", fontWeight: 500, letterSpacing: 0 }}>· optional</span></label>
+                {form.qrUrl && !form.qr && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 7, padding: "10px 12px", borderRadius: 12, border: "1px solid #ece5d4", background: "#fbf8f2" }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={form.qrUrl} alt="Current QR" style={{ width: 52, height: 52, objectFit: "cover", borderRadius: 8, border: "1px solid #ece5d4", flex: "none" }} />
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: "#6f5c44" }}>Current QR image · choose a file below to replace it.</span>
+                  </div>
+                )}
                 <label style={{ display: "flex", alignItems: "center", gap: 13, marginTop: 7, padding: "15px 16px", borderRadius: 12, border: `1px ${form.qr ? "solid #dcebe0" : "dashed #d8c8a8"}`, background: form.qr ? "#f1f7f2" : "#fcfaf5", cursor: "pointer" }}>
                   <span style={{ width: 40, height: 40, flex: "none", borderRadius: 10, background: form.qr ? "#dcebe0" : "#f1ead9", color: form.qr ? "#2f7d55" : "#b8754a", display: "grid", placeItems: "center" }}>
                     {form.qr ? (
@@ -596,15 +625,15 @@ export function PaymentMethodsSection() {
                     </span>
                     <span style={{ display: "block", fontSize: 11.5, color: form.qr ? "#2f7d55" : "#a08a6c", marginTop: 1 }}>{form.qr ? "Ready to upload" : "PNG or JPG · helps guests pay faster"}</span>
                   </span>
-                  <input aria-label="QR image" type="file" accept="image/*" onChange={(e) => setForm((f) => ({ ...f, qr: e.target.files?.[0] || null }))} style={{ display: "none" }} />
+                  <input aria-label="QR image" type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={(e) => { const file = e.target.files?.[0] || null; if (file) { const err = imageFileError(file); if (err) { toast.error(err); e.target.value = ""; return; } } setForm((f) => ({ ...f, qr: file })); }} style={{ display: "none" }} />
                 </label>
               </div>
             </div>
 
             {/* Footer */}
             <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, padding: "13px 22px", borderTop: "1px solid #f4ecdd", background: "#fff", flexShrink: 0 }}>
-              <button type="button" onClick={() => setModal(false)} style={{ padding: "9px 16px", borderRadius: 10, fontSize: 13, fontWeight: 600, border: "none", background: "transparent", color: "#6f5c44", cursor: "pointer" }}>Cancel</button>
-              <button type="button" onClick={submit} disabled={saving} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 18px", borderRadius: 10, fontSize: 13, fontWeight: 600, border: "none", background: "#1f1b16", color: "#fff", cursor: "pointer", opacity: saving ? 0.6 : 1 }}><Plus className="w-3.5 h-3.5" />{saving ? "Adding…" : "Add Method"}</button>
+              <button type="button" onClick={closeModal} style={{ padding: "9px 16px", borderRadius: 10, fontSize: 13, fontWeight: 600, border: "none", background: "transparent", color: "#6f5c44", cursor: "pointer" }}>Cancel</button>
+              <button type="button" onClick={submit} disabled={saving} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 18px", borderRadius: 10, fontSize: 13, fontWeight: 600, border: "none", background: "#1f1b16", color: "#fff", cursor: "pointer", opacity: saving ? 0.6 : 1 }}>{editId ? <Pencil className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}{saving ? (editId ? "Saving…" : "Adding…") : (editId ? "Save Changes" : "Add Method")}</button>
             </div>
           </div>
         </div>

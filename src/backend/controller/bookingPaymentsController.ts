@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "../config/db";
 import { upload_file } from "../utils/cloudinary";
+import { validateImageDataUrl } from "../utils/imageGuard";
 
 /**
  * Controller for booking payments (booking_payments table)
@@ -45,6 +46,13 @@ export const createBookingPayment = async (
     // Upload payment proof if provided
     let paymentProofUrl: string | null = null;
     if (payment_proof) {
+      const proofCheck = validateImageDataUrl(payment_proof);
+      if (!proofCheck.ok) {
+        return NextResponse.json(
+          { success: false, error: `Payment proof must be an image: ${proofCheck.reason}` },
+          { status: 400 },
+        );
+      }
       const uploadResult = await upload_file(
         payment_proof,
         "dlux-homes/payment-proofs",
@@ -482,6 +490,14 @@ export const updateBookingPayment = async (
 
     // Handle upload if provided
     if (payment_proof) {
+      const proofCheck = validateImageDataUrl(payment_proof);
+      if (!proofCheck.ok) {
+        await client.query("ROLLBACK");
+        return NextResponse.json(
+          { success: false, error: `Payment proof must be an image: ${proofCheck.reason}` },
+          { status: 400 },
+        );
+      }
       const uploadResult = await upload_file(
         payment_proof,
         "dlux-homes/payment-proofs",
