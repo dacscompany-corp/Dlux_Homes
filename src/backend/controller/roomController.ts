@@ -56,6 +56,10 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
       weekend_week_rate,
       weekend_twoweek_rate,
       weekend_month_rate,
+      // Per-tier activate/deactivate for the length-of-stay bundles (default on).
+      week_bundle_active,
+      twoweek_bundle_active,
+      month_bundle_active,
       six_hour_check_in,
       six_hour_check_out,
       ten_hour_check_in,
@@ -207,6 +211,7 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
         commission_rate,
         weekday_week_rate, weekday_twoweek_rate, weekday_month_rate,
         weekend_week_rate, weekend_twoweek_rate, weekend_month_rate,
+        week_bundle_active, twoweek_bundle_active, month_bundle_active,
         created_at, updated_at
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb,
@@ -214,6 +219,7 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
                 $33, $34, $35,
                 $36,
                 $37, $38, $39, $40, $41, $42,
+                $43, $44, $45,
                 NOW(), NOW())
       RETURNING *
     `;
@@ -265,6 +271,9 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
       weekend_week_rate ? parseFloat(weekend_week_rate) : null,
       weekend_twoweek_rate ? parseFloat(weekend_twoweek_rate) : null,
       weekend_month_rate ? parseFloat(weekend_month_rate) : null,
+      week_bundle_active !== false,
+      twoweek_bundle_active !== false,
+      month_bundle_active !== false,
     ];
 
     const havenResult = await pool.query(havenQuery, havenValues);
@@ -666,6 +675,10 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
       weekend_week_rate,
       weekend_twoweek_rate,
       weekend_month_rate,
+      // Per-tier activate/deactivate for the length-of-stay bundles (default on).
+      week_bundle_active,
+      twoweek_bundle_active,
+      month_bundle_active,
       six_hour_check_in,
       six_hour_check_out,
       ten_hour_check_in,
@@ -764,6 +777,9 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
           weekend_week_rate = $40,
           weekend_twoweek_rate = $41,
           weekend_month_rate = $42,
+          week_bundle_active = $43,
+          twoweek_bundle_active = $44,
+          month_bundle_active = $45,
           updated_at = NOW()
       WHERE uuid_id = $22
       RETURNING *
@@ -816,6 +832,9 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
       weekend_week_rate ? parseFloat(weekend_week_rate) : null,
       weekend_twoweek_rate ? parseFloat(weekend_twoweek_rate) : null,
       weekend_month_rate ? parseFloat(weekend_month_rate) : null,
+      week_bundle_active !== false,
+      twoweek_bundle_active !== false,
+      month_bundle_active !== false,
     ];
 
     const result = await pool.query(query, values);

@@ -548,7 +548,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                 </button>
                 {dateOpen && (
                   <div style={{ marginTop: 10, border: "1px solid #E0CEB2", borderRadius: 16, background: "#FAF7F1", padding: 14 }}>
-                    <Calendar selected={date} blocked={blockedDates} onSelect={(d) => { setDate(d); setDateOpen(false); setCardStep(3); setGuestOpen(true); }} />
+                    <Calendar selected={date} blocked={blockedDates} onSelect={(d) => { setDate(d); setDateOpen(false); if (isOvernight) { setCardStep(2); } else { setCardStep(3); setGuestOpen(true); } }} />
                     <div style={{ fontSize: 11, color: "#9B8B73", marginTop: 11, display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 9, height: 9, borderRadius: "50%", background: "#1F160E", display: "inline-block" }} /> Crossed-out days are already booked.</div>
                   </div>
                 )}
@@ -963,7 +963,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                     </button>
                     {dateOpen && (
                       <div style={{ marginTop: 10, border: "1px solid #E0CEB2", borderRadius: 16, background: "#FAF7F1", padding: 16 }}>
-                        <Calendar selected={date} blocked={blockedDates} onSelect={(d) => { setDate(d); setDateOpen(false); setCardStep(3); setGuestOpen(true); }} />
+                        <Calendar selected={date} blocked={blockedDates} onSelect={(d) => { setDate(d); setDateOpen(false); if (isOvernight) { setCardStep(2); } else { setCardStep(3); setGuestOpen(true); } }} />
                         <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: 12, display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 9, height: 9, borderRadius: "50%", background: "#1F160E", display: "inline-block" }} /> Crossed-out days are already booked.</div>
                       </div>
                     )}

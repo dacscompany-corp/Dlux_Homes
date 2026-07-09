@@ -455,9 +455,9 @@ export default function OwnerDashboard() {
   // isn't configured yet (see System → Settings → Pricing Calendar below).
   const rnumOrNull = (v: unknown) => (v == null || v === "" ? null : Number(v));
   const overnightBundles = [
-    { label: "1 week (7+ nights)", weekday: rnumOrNull(h0.weekday_week_rate), weekend: rnumOrNull(h0.weekend_week_rate) },
-    { label: "2 weeks (14+ nights)", weekday: rnumOrNull(h0.weekday_twoweek_rate), weekend: rnumOrNull(h0.weekend_twoweek_rate) },
-    { label: "1 month (30+ nights)", weekday: rnumOrNull(h0.weekday_month_rate), weekend: rnumOrNull(h0.weekend_month_rate) },
+    { label: "1 week (7+ nights)", weekday: rnumOrNull(h0.weekday_week_rate), weekend: rnumOrNull(h0.weekend_week_rate), active: h0.week_bundle_active !== false },
+    { label: "2 weeks (14+ nights)", weekday: rnumOrNull(h0.weekday_twoweek_rate), weekend: rnumOrNull(h0.weekend_twoweek_rate), active: h0.twoweek_bundle_active !== false },
+    { label: "1 month (30+ nights)", weekday: rnumOrNull(h0.weekday_month_rate), weekend: rnumOrNull(h0.weekend_month_rate), active: h0.month_bundle_active !== false },
   ];
   const stayRates = [
     { name: "Daycation (10h)",  window: "07:00 – 17:00", weekday: rnum(h0.ten_hour_rate), weekend: rnum(h0.six_hour_rate) },
@@ -1393,9 +1393,12 @@ export default function OwnerDashboard() {
                           <div style={{ marginTop: 6, paddingTop: 10, borderTop: "1px dashed #f3eee2", display: "flex", flexDirection: "column", gap: 8 }}>
                             <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".07em", color: "#c2ad88" }}>Length-of-stay bundles</div>
                             {overnightBundles.map((b) => (
-                              <div key={b.label} className="flex items-center justify-between" style={{ fontSize: 12.5 }}>
-                                <span style={{ color: "#8a8276" }}>{b.label}</span>
-                                <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", color: "#4a4034" }}>
+                              <div key={b.label} className="flex items-center justify-between" style={{ fontSize: 12.5, opacity: b.active ? 1 : 0.55 }}>
+                                <span style={{ color: "#8a8276", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                                  {b.label}
+                                  {!b.active && <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", color: "#a0632f", backgroundColor: "#f6e9d9", padding: "1px 6px", borderRadius: 999 }}>Off</span>}
+                                </span>
+                                <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", color: "#4a4034", textDecoration: b.active ? "none" : "line-through" }}>
                                   {b.weekday != null ? peso(b.weekday) : "—"} <span style={{ color: "#c2ad88" }}>/</span> {b.weekend != null ? peso(b.weekend) : "—"}
                                 </span>
                               </div>

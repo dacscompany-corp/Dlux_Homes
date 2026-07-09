@@ -69,12 +69,15 @@ export function havenToRoom(h: Record<string, unknown>): Room & RoomExtras {
     // Length-of-stay bundle discounts for Overnight (21h) — flat per-night
     // rate once a stay reaches 7/14/30 nights. undefined = not configured for
     // that tier, so stayTotal() falls back to pricing every night normally.
-    weekdayWeekRate: h.weekday_week_rate != null ? Number(h.weekday_week_rate) : undefined,
-    weekdayTwoWeekRate: h.weekday_twoweek_rate != null ? Number(h.weekday_twoweek_rate) : undefined,
-    weekdayMonthRate: h.weekday_month_rate != null ? Number(h.weekday_month_rate) : undefined,
-    weekendWeekRate: h.weekend_week_rate != null ? Number(h.weekend_week_rate) : undefined,
-    weekendTwoWeekRate: h.weekend_twoweek_rate != null ? Number(h.weekend_twoweek_rate) : undefined,
-    weekendMonthRate: h.weekend_month_rate != null ? Number(h.weekend_month_rate) : undefined,
+    // A tier that's DEACTIVATED (week/twoweek/month_bundle_active = false) is
+    // treated as undefined too, so its discount doesn't apply even though the
+    // rate is still stored — same fallback to normal nightly pricing.
+    weekdayWeekRate: h.week_bundle_active !== false && h.weekday_week_rate != null ? Number(h.weekday_week_rate) : undefined,
+    weekdayTwoWeekRate: h.twoweek_bundle_active !== false && h.weekday_twoweek_rate != null ? Number(h.weekday_twoweek_rate) : undefined,
+    weekdayMonthRate: h.month_bundle_active !== false && h.weekday_month_rate != null ? Number(h.weekday_month_rate) : undefined,
+    weekendWeekRate: h.week_bundle_active !== false && h.weekend_week_rate != null ? Number(h.weekend_week_rate) : undefined,
+    weekendTwoWeekRate: h.twoweek_bundle_active !== false && h.weekend_twoweek_rate != null ? Number(h.weekend_twoweek_rate) : undefined,
+    weekendMonthRate: h.month_bundle_active !== false && h.weekend_month_rate != null ? Number(h.weekend_month_rate) : undefined,
     additionalPaxFee: Number(h.extra_pax_fee ?? 300),
     basePax: Number(h.base_pax ?? 2),
     maxPax: Number(h.capacity ?? 4),

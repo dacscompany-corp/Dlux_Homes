@@ -60,6 +60,9 @@ const empty = {
   // a stay reaches 7/14/30 nights. Blank = not configured for that tier.
   weekday_week_rate: "", weekday_twoweek_rate: "", weekday_month_rate: "",
   weekend_week_rate: "", weekend_twoweek_rate: "", weekend_month_rate: "",
+  // Per-tier activate/deactivate — a deactivated tier keeps its configured rates
+  // but won't apply the discount until re-activated.
+  week_bundle_active: true, twoweek_bundle_active: true, month_bundle_active: true,
   cleaning_fee: "", security_deposit: "", extra_pax_fee: "",
   // check-in
   six_hour_check_in: "09:00", six_hour_check_out: "15:00",
@@ -120,6 +123,7 @@ function havenToForm(h: Record<string, unknown>): { form: Form; images: ImgRef[]
       weekday_rate: s(h.weekday_rate), weekend_rate: s(h.weekend_rate),
       weekday_week_rate: s(h.weekday_week_rate), weekday_twoweek_rate: s(h.weekday_twoweek_rate), weekday_month_rate: s(h.weekday_month_rate),
       weekend_week_rate: s(h.weekend_week_rate), weekend_twoweek_rate: s(h.weekend_twoweek_rate), weekend_month_rate: s(h.weekend_month_rate),
+      week_bundle_active: h.week_bundle_active !== false, twoweek_bundle_active: h.twoweek_bundle_active !== false, month_bundle_active: h.month_bundle_active !== false,
       cleaning_fee: s(h.cleaning_fee), security_deposit: s(h.security_deposit), extra_pax_fee: s(h.extra_pax_fee),
       six_hour_check_in: s(h.six_hour_check_in) || empty.six_hour_check_in, six_hour_check_out: s(h.six_hour_check_out) || empty.six_hour_check_out,
       ten_hour_check_in: s(h.ten_hour_check_in) || empty.ten_hour_check_in, ten_hour_check_out: s(h.ten_hour_check_out) || empty.ten_hour_check_out,
@@ -212,6 +216,7 @@ export default function HavenWizard({
         weekday_rate: num(form.weekday_rate), weekend_rate: num(form.weekend_rate),
         weekday_week_rate: num(form.weekday_week_rate), weekday_twoweek_rate: num(form.weekday_twoweek_rate), weekday_month_rate: num(form.weekday_month_rate),
         weekend_week_rate: num(form.weekend_week_rate), weekend_twoweek_rate: num(form.weekend_twoweek_rate), weekend_month_rate: num(form.weekend_month_rate),
+        week_bundle_active: form.week_bundle_active, twoweek_bundle_active: form.twoweek_bundle_active, month_bundle_active: form.month_bundle_active,
         cleaning_fee: form.cleaning_fee || undefined, security_deposit: form.security_deposit || undefined,
         extra_pax_fee: form.extra_pax_fee || undefined,
         six_hour_check_in: form.six_hour_check_in, six_hour_check_out: form.six_hour_check_out,
@@ -333,21 +338,39 @@ export default function HavenWizard({
               </div>
               <div className="pt-2">
                 <p className="text-xs font-semibold" style={{ color: "#8B6344" }}>Overnight (21h) length-of-stay bundle discounts <span className="font-normal" style={{ color: "#C9B79E" }}>· optional</span></p>
-                <p className="text-xs mt-1" style={{ color: "#C9B79E" }}>Flat nightly rate once a stay reaches 7 / 14 / 30 nights, based on the check-in day (weekday vs weekend/holiday). Leave a tier blank to charge the normal nightly rate instead.</p>
-                <div className="grid grid-cols-3 gap-3 mt-2">
+                <p className="text-xs mt-1" style={{ color: "#C9B79E" }}>Flat nightly rate once a stay reaches 7 / 14 / 30 nights, based on the check-in day (weekday vs weekend/holiday). Toggle a tier off to pause its discount without clearing the rates.</p>
+                <div className="space-y-2 mt-2">
                   {[
-                    ["Weekday — 1 week (₱/night)", "weekday_week_rate"],
-                    ["Weekday — 2 weeks (₱/night)", "weekday_twoweek_rate"],
-                    ["Weekday — 1 month (₱/night)", "weekday_month_rate"],
-                    ["Weekend — 1 week (₱/night)", "weekend_week_rate"],
-                    ["Weekend — 2 weeks (₱/night)", "weekend_twoweek_rate"],
-                    ["Weekend — 1 month (₱/night)", "weekend_month_rate"],
-                  ].map(([lbl, key]) => (
-                    <div key={key}>
-                      <label className={labelCls} style={labelStyle}>{lbl}</label>
-                      <input type="number" placeholder="—" value={form[key as keyof Form] as string} onChange={(e) => set({ [key]: e.target.value } as Partial<Form>)} className={`${field} mt-1`} style={fieldStyle} />
-                    </div>
-                  ))}
+                    { label: "1 week", nights: "7+ nights", activeKey: "week_bundle_active", weekday: "weekday_week_rate", weekend: "weekend_week_rate" },
+                    { label: "2 weeks", nights: "14+ nights", activeKey: "twoweek_bundle_active", weekday: "weekday_twoweek_rate", weekend: "weekend_twoweek_rate" },
+                    { label: "1 month", nights: "30+ nights", activeKey: "month_bundle_active", weekday: "weekday_month_rate", weekend: "weekend_month_rate" },
+                  ].map((tier) => {
+                    const active = form[tier.activeKey as keyof Form] as boolean;
+                    return (
+                      <div key={tier.activeKey} className="rounded-xl border p-3" style={{ borderColor: "#EDE3D2", backgroundColor: active ? "#FFFFFF" : "#FAF7F1" }}>
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-xs font-semibold" style={{ color: "#B07848" }}>{tier.label} <span className="font-normal" style={{ color: "#C9B79E" }}>· {tier.nights}</span></p>
+                          <button type="button" role="switch" aria-checked={active ? "true" : "false"} aria-label={`${tier.label} bundle active`}
+                            onClick={() => set({ [tier.activeKey]: !active } as Partial<Form>)}
+                            className="relative inline-flex items-center rounded-full transition-colors cursor-pointer flex-shrink-0"
+                            style={{ width: 40, height: 22, backgroundColor: active ? "#059669" : "#D4BFA0" }}>
+                            <span className="inline-block rounded-full bg-white transition-transform" style={{ width: 16, height: 16, transform: active ? "translateX(21px)" : "translateX(3px)" }} />
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3" style={{ opacity: active ? 1 : 0.5 }}>
+                          <div>
+                            <label className={labelCls} style={labelStyle}>Weekday (₱/night)</label>
+                            <input type="number" placeholder="—" disabled={!active} value={form[tier.weekday as keyof Form] as string} onChange={(e) => set({ [tier.weekday]: e.target.value } as Partial<Form>)} className={`${field} mt-1`} style={fieldStyle} />
+                          </div>
+                          <div>
+                            <label className={labelCls} style={labelStyle}>Weekend (₱/night)</label>
+                            <input type="number" placeholder="—" disabled={!active} value={form[tier.weekend as keyof Form] as string} onChange={(e) => set({ [tier.weekend]: e.target.value } as Partial<Form>)} className={`${field} mt-1`} style={fieldStyle} />
+                          </div>
+                        </div>
+                        {!active && <p className="text-xs mt-2" style={{ color: "#B0A187" }}>Deactivated — normal nightly pricing applies for stays of this length.</p>}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3 pt-1">
