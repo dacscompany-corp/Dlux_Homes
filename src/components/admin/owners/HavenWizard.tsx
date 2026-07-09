@@ -470,7 +470,7 @@ export default function HavenWizard({
                     {existingImages.map((img, i) => (
                       <div key={i} className="relative rounded-xl overflow-hidden border" style={{ borderColor: "#EDE3D2", aspectRatio: "1" }}>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={img.image_url} alt={`Current ${i + 1}`} className="w-full h-full object-cover" />
+                        <img src={img.image_url} alt={`Current ${i + 1}`} title="Click to view full image" onClick={() => window.open(img.image_url, "_blank", "noopener,noreferrer")} className="w-full h-full object-cover" style={{ cursor: "zoom-in" }} />
                         <button type="button" onClick={() => setExistingImages(existingImages.filter((_, j) => j !== i))} title="Remove" className="absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center text-white" style={{ backgroundColor: "rgba(0,0,0,0.55)" }}>
                           <X className="w-3 h-3" />
                         </button>
@@ -492,7 +492,7 @@ export default function HavenWizard({
                   {form.haven_images.map((src, i) => (
                     <div key={i} className="relative rounded-xl overflow-hidden border" style={{ borderColor: "#EDE3D2", aspectRatio: "1" }}>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={src} alt={`Photo ${i + 1}`} className="w-full h-full object-cover" />
+                      <img src={src} alt={`Photo ${i + 1}`} title="Click to view full image" onClick={() => window.open(src, "_blank", "noopener,noreferrer")} className="w-full h-full object-cover" style={{ cursor: "zoom-in" }} />
                       <button type="button" onClick={() => set({ haven_images: form.haven_images.filter((_, j) => j !== i) })} title="Remove" className="absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center text-white" style={{ backgroundColor: "rgba(0,0,0,0.55)" }}>
                         <X className="w-3 h-3" />
                       </button>
@@ -526,7 +526,7 @@ export default function HavenWizard({
                         {existing.map((t, i) => (
                           <div key={`e${i}`} className="relative rounded-lg overflow-hidden border" style={{ borderColor: "#EDE3D2", aspectRatio: "1" }}>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={t.image_url} alt={`${cat.label} current ${i + 1}`} className="w-full h-full object-cover" />
+                            <img src={t.image_url} alt={`${cat.label} current ${i + 1}`} title="Click to view full image" onClick={() => window.open(t.image_url, "_blank", "noopener,noreferrer")} className="w-full h-full object-cover" style={{ cursor: "zoom-in" }} />
                             <button type="button" onClick={() => setExistingTours(existingTours.filter((x) => x !== t))} title="Remove" className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full flex items-center justify-center text-white" style={{ backgroundColor: "rgba(0,0,0,0.55)" }}>
                               <X className="w-2.5 h-2.5" />
                             </button>
@@ -535,7 +535,7 @@ export default function HavenWizard({
                         {imgs.map((src, i) => (
                           <div key={i} className="relative rounded-lg overflow-hidden border" style={{ borderColor: "#EDE3D2", aspectRatio: "1" }}>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={src} alt={`${cat.label} ${i + 1}`} className="w-full h-full object-cover" />
+                            <img src={src} alt={`${cat.label} ${i + 1}`} title="Click to view full image" onClick={() => window.open(src, "_blank", "noopener,noreferrer")} className="w-full h-full object-cover" style={{ cursor: "zoom-in" }} />
                             <button type="button" onClick={() => set({ photo_tour_images: { ...form.photo_tour_images, [cat.key]: imgs.filter((_, j) => j !== i) } })} title="Remove" className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full flex items-center justify-center text-white" style={{ backgroundColor: "rgba(0,0,0,0.55)" }}>
                               <X className="w-2.5 h-2.5" />
                             </button>

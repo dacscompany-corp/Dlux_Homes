@@ -5,6 +5,8 @@ import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
 import Image from "next/image";
 import toast from "react-hot-toast";
+import ImageThumb from "@/components/ImageThumb";
+import { imageFileError } from "@/lib/validateImageFile";
 import { useGetHavensQuery } from "@/redux/api/roomApi";
 import { useSubmitReportMutation } from "@/redux/api/reportApi";
 import { useGetNotificationsQuery } from "@/redux/api/notificationsApi";
@@ -88,6 +90,8 @@ export default function CleanerDashboard() {
     id: String(t.cleaning_id ?? ""),
     room: String(t.haven ?? "—"),
     floor: String(t.booking_id ?? "—"),
+    bookingUuid: String(t.booking_uuid ?? ""),
+    depositProofUrl: t.deposit_proof_url ? String(t.deposit_proof_url) : "",
     timeSlot: t.check_in_time && t.check_out_time ? `${t.check_in_time} – ${t.check_out_time}` : "—",
     status: normCleanStatus(String(t.cleaning_status ?? "pending")),
     priority: "normal",
@@ -164,6 +168,77 @@ export default function CleanerDashboard() {
 
   const completedCount  = checklist.filter((i) => i.done).length;
   const progressPercent = Math.round((completedCount / checklist.length) * 100);
+
+  // ── Checklist photos — proof shots attached to the cleaner's active assignment
+  // (keyed by its cleaning_id + the task label as category). Uploaded & fetched
+  // via /api/admin/cleaners/checklist-photos; shown back as clickable thumbnails.
+  const activeAssignment = assignments.find((a) => assignmentStatuses[a.id] === "in-progress") || assignments[0];
+  const checklistCleaningId = activeAssignment?.id || "";
+  const [checklistPhotos, setChecklistPhotos] = useState<Record<string, string>>({});
+  const [photoUploading, setPhotoUploading] = useState<string | null>(null);
+  useEffect(() => {
+    if (!checklistCleaningId) { setChecklistPhotos({}); return; }
+    fetch(`/api/admin/cleaners/checklist-photos?checklist_id=${encodeURIComponent(checklistCleaningId)}`)
+      .then((r) => (r.ok ? r.json() : { data: {} }))
+      .then((j) => setChecklistPhotos((j?.data as Record<string, string>) || {}))
+      .catch(() => {});
+  }, [checklistCleaningId]);
+  const uploadChecklistPhoto = async (category: string, file: File) => {
+    const err = imageFileError(file);
+    if (err) { toast.error(err); return; }
+    if (!checklistCleaningId) { toast.error("No active assignment to attach the photo to"); return; }
+    setPhotoUploading(category);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("checklist_id", checklistCleaningId);
+      fd.append("category", category);
+      const r = await fetch("/api/admin/cleaners/checklist-photos", { method: "POST", body: fd });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j?.url) { toast.error(j?.error || "Could not upload photo"); return; }
+      setChecklistPhotos((prev) => ({ ...prev, [category]: j.url as string }));
+      toast.success("Photo attached");
+    } catch { toast.error("Could not upload photo"); }
+    finally { setPhotoUploading(null); }
+  };
+  const pickChecklistPhoto = (category: string) => {
+    const f = document.createElement("input");
+    f.type = "file";
+    f.accept = "image/png,image/jpeg,image/gif,image/webp";
+    f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) uploadChecklistPhoto(category, file); };
+    f.click();
+  };
+
+  // ── Security-deposit proof — the ₱1,000 deposit receipt for an assignment's
+  // booking. Read from the cleaning task (deposit_proof_url), uploaded via
+  // /api/admin/cleaners/deposit-proof (keyed by booking_uuid). Local overrides
+  // reflect a just-uploaded proof without a full refetch.
+  const [depositProofs, setDepositProofs] = useState<Record<string, string>>({});
+  const [depositUploading, setDepositUploading] = useState<string | null>(null);
+  const uploadDepositProof = async (bookingUuid: string, file: File) => {
+    const err = imageFileError(file);
+    if (err) { toast.error(err); return; }
+    if (!bookingUuid) { toast.error("No booking linked to this assignment"); return; }
+    setDepositUploading(bookingUuid);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("booking_uuid", bookingUuid);
+      const r = await fetch("/api/admin/cleaners/deposit-proof", { method: "POST", body: fd });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j?.url) { toast.error(j?.error || "Could not upload deposit proof"); return; }
+      setDepositProofs((prev) => ({ ...prev, [bookingUuid]: j.url as string }));
+      toast.success("Deposit proof uploaded");
+    } catch { toast.error("Could not upload deposit proof"); }
+    finally { setDepositUploading(null); }
+  };
+  const pickDepositProof = (bookingUuid: string) => {
+    const f = document.createElement("input");
+    f.type = "file";
+    f.accept = "image/png,image/jpeg,image/gif,image/webp";
+    f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) uploadDepositProof(bookingUuid, file); };
+    f.click();
+  };
 
   const [reportSubmitted, setReportSubmitted] = useState(false);
   const submitChecklistReport = () => {
@@ -420,6 +495,24 @@ export default function CleanerDashboard() {
                         <p className="text-xs" style={{ color: "#6b5040" }}>{a.notes}</p>
                       </div>
                     )}
+                    {(() => {
+                      const proof = depositProofs[a.bookingUuid] || a.depositProofUrl;
+                      const uploading = depositUploading === a.bookingUuid;
+                      return (
+                        <div className="rounded-xl p-3 mb-3 border flex items-center gap-3" style={{ backgroundColor: "#FAF7F1", borderColor: "#ece5d4" }}>
+                          {proof ? <ImageThumb src={proof} alt="Security deposit proof" size={40} /> : null}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold" style={{ color: "#5a4a3a" }}>Security deposit proof</p>
+                            <p className="text-xs" style={{ color: proof ? "#059669" : "#8B6344" }}>{proof ? "Uploaded · tap image to view" : "Not uploaded yet"}</p>
+                          </div>
+                          <button type="button" disabled={uploading || !a.bookingUuid} onClick={() => pickDepositProof(a.bookingUuid)}
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium border cursor-pointer disabled:opacity-50"
+                            style={{ backgroundColor: "#F7F0E3", color: "#8B6344", borderColor: "#D4BFA0" }}>
+                            <Camera className="w-3.5 h-3.5" />{uploading ? "Uploading…" : proof ? "Replace" : "Upload"}
+                          </button>
+                        </div>
+                      );
+                    })()}
                     <div className="flex gap-2">
                       {cs === "pending"     && <button onClick={() => startCleaning(a.id)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white cursor-pointer" style={{ background: "#1f1b16" }}><Circle className="w-3.5 h-3.5" />Start Cleaning</button>}
                       {cs === "in-progress" && <button onClick={() => markComplete(a.id)}  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-white cursor-pointer" style={{ backgroundColor: "#059669" }}><CheckCircle2 className="w-3.5 h-3.5" />Mark Complete</button>}
@@ -485,7 +578,7 @@ export default function CleanerDashboard() {
               <div className="flex items-center justify-between mb-4">
                 <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>Cleaning Checklist</h2>
                 <span className="text-xs font-medium px-2.5 py-1 rounded-full border" style={{ backgroundColor: "#F7F0E3", color: "#8a6a2f", borderColor: "#D4BFA0" }}>
-                  Azure Haven Suite
+                  {activeAssignment?.room || "No active assignment"}
                 </span>
               </div>
               <div className="border p-5 mb-4" style={{ borderColor: "#ece5d4" }}>
@@ -510,6 +603,12 @@ export default function CleanerDashboard() {
                       {item.done && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
                     </div>
                     <span className="text-sm flex-1" style={{ color: item.done ? "#A89080" : "#5a4a3a", textDecoration: item.done ? "line-through" : "none" }}>{item.label}</span>
+                    {checklistPhotos[item.label] ? <ImageThumb src={checklistPhotos[item.label]} alt={item.label} size={32} /> : null}
+                    <button type="button" title={checklistPhotos[item.label] ? "Replace photo" : "Attach photo"} disabled={photoUploading === item.label}
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); pickChecklistPhoto(item.label); }}
+                      className="flex-shrink-0 p-1.5 rounded-lg cursor-pointer disabled:opacity-50" style={{ color: "#8a6a2f", border: "1px solid #E0CEB8", backgroundColor: "#FAF7F1" }}>
+                      <Camera className="w-3.5 h-3.5" />
+                    </button>
                     {item.done && <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ backgroundColor: "#d1fae5", color: "#065f46" }}>Done</span>}
                   </label>
                 ))}

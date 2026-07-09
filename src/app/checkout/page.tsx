@@ -7,6 +7,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import toast from "react-hot-toast";
 import { imageFileError } from "@/lib/validateImageFile";
+import ImageThumb from "@/components/ImageThumb";
 import { mockRooms } from "@/lib/mock-data";
 import { generateBookingId, addMyBookingId } from "@/lib/booking-store";
 import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
@@ -155,10 +156,10 @@ function GuestIdUpload({ values, onAdd, onRemove, invalid, id, title = "Valid ID
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
           {values.map((doc, idx) => (
             <div key={idx} style={{ background: "#4d4337", borderRadius: 14, padding: 16, display: "flex", alignItems: "center", gap: 14 }}>
-              <div style={{ width: 40, height: 40, borderRadius: 10, background: "#22c55e", display: "grid", placeItems: "center", color: "white", flexShrink: 0 }}><IcoCheckLg /></div>
+              <ImageThumb src={doc.data} alt={doc.name} size={44} rounded={10} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: "#F6EFE2", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.name}</div>
-                <div style={{ fontSize: 12, color: "#B8A68E" }}>ID uploaded successfully</div>
+                <div style={{ fontSize: 12, color: "#B8A68E" }}>Uploaded · tap to view</div>
               </div>
               <button onClick={() => onRemove(idx)} style={{ fontSize: 13, color: "#ef4444", background: "transparent", border: "none", cursor: "pointer", textDecoration: "underline", fontWeight: 500 }}>Remove</button>
             </div>
@@ -684,8 +685,8 @@ function CheckoutInner() {
                         {info.validIds.map((doc, idx) => (
                           <div key={idx} style={{ display: "flex", alignItems: "center", gap: 14, padding: 12, border: "1px solid #E0CEB2", borderRadius: 14, background: "#FAF7F1" }}>
                             <div style={{ position: "relative", width: 66, height: 66, flex: "none" }}>
-                              <div style={{ width: "100%", height: "100%", borderRadius: 11, background: "repeating-linear-gradient(135deg,#EFE4CE,#EFE4CE 6px,#E6D8BC 6px,#E6D8BC 12px)", display: "grid", placeItems: "center", color: "#A88E63" }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></div>
-                              <div style={{ position: "absolute", right: -5, bottom: -5, width: 22, height: 22, borderRadius: "50%", background: "#22C55E", border: "2px solid #FAF7F1", display: "grid", placeItems: "center", color: "#fff" }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
+                              <ImageThumb src={doc.data} alt={doc.name} size={66} rounded={11} />
+                              <div style={{ position: "absolute", right: -5, bottom: -5, width: 22, height: 22, borderRadius: "50%", background: "#22C55E", border: "2px solid #FAF7F1", display: "grid", placeItems: "center", color: "#fff", pointerEvents: "none" }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
                             </div>
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ fontSize: 13.5, fontWeight: 600, color: "#1F160E", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.name}</div>
@@ -699,14 +700,14 @@ function CheckoutInner() {
                       </div>
                     )}
                     <div>
-                      <div style={{ border: "1px dashed #D4BE9A", borderRadius: 14, padding: 32, textAlign: "center", marginBottom: 12, cursor: "pointer", background: "#FAF7F1" }} onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.multiple = true; f.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) Array.from(files).forEach((file) => fileToBase64(file).then((data) => setInfo((prev) => ({ ...prev, validIds: [...prev.validIds, { name: file.name, data }] })))); }; f.click(); }}>
+                      <div style={{ border: "1px dashed #D4BE9A", borderRadius: 14, padding: 32, textAlign: "center", marginBottom: 12, cursor: "pointer", background: "#FAF7F1" }} onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/png,image/jpeg,image/gif,image/webp"; f.multiple = true; f.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) Array.from(files).forEach((file) => { const err = imageFileError(file); if (err) { toast.error(err); return; } fileToBase64(file).then((data) => setInfo((prev) => ({ ...prev, validIds: [...prev.validIds, { name: file.name, data }] }))); }); }; f.click(); }}>
                         <div style={{ width: 52, height: 52, borderRadius: 12, background: "#EFE4CE", display: "grid", placeItems: "center", margin: "0 auto 14px", color: "#A88E63" }}>
                           <IcoUpload />
                         </div>
                         <div style={{ fontSize: 14, fontWeight: 600, color: "#1F160E", marginBottom: 6 }}>{info.validIds.length > 0 ? "Add another ID photo" : "Click to upload ID photo"}</div>
                         <div style={{ fontSize: 12, color: "#8B7458" }}>PNG, JPG, JPEG up to 5MB · you can add more than one</div>
                       </div>
-                      <button onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.capture = "environment" as any; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) fileToBase64(file).then((data) => setInfo((prev) => ({ ...prev, validIds: [...prev.validIds, { name: file.name, data }] }))); }; f.click(); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: 10, border: "1px dashed #D4BE9A", borderRadius: 12, background: "transparent", color: "#8C5A2E", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
+                      <button onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/png,image/jpeg,image/gif,image/webp"; f.capture = "environment" as any; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) { const err = imageFileError(file); if (err) { toast.error(err); return; } fileToBase64(file).then((data) => setInfo((prev) => ({ ...prev, validIds: [...prev.validIds, { name: file.name, data }] }))); } }; f.click(); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: 10, border: "1px dashed #D4BE9A", borderRadius: 12, background: "transparent", color: "#8C5A2E", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
                         <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
                         Take photo with camera
                       </button>
@@ -865,6 +866,12 @@ function CheckoutInner() {
                 </div>
 
                 <UploadField label="Payment receipt *" sub="Screenshot of your GCash / bank confirmation" value={payment.proofName} onChange={(name, data) => setPayment({ ...payment, proofName: name, proofData: data })} invalid={showErrors && fieldErrors.has("receipt")} id="f-receipt" />
+                {payment.proofData ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 10 }}>
+                    <ImageThumb src={payment.proofData} alt="Payment receipt preview" size={52} rounded={11} />
+                    <span style={{ fontSize: 12.5, color: "#8B7458" }}>Tap the image to check your receipt is clear and correct.</span>
+                  </div>
+                ) : null}
 
                 <div style={{ marginTop: 22, padding: "16px 18px", borderRadius: 14, border: "1px solid #E0CEB2", background: "#FAF7F1", display: "flex", gap: 12, alignItems: "flex-start" }}>
                   <span style={{ color: "#8C5A2E", flex: "none", marginTop: 1 }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg></span>

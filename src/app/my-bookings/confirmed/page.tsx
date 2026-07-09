@@ -6,6 +6,7 @@ import Image from "next/image";
 import { useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
 import { imageFileError } from "@/lib/validateImageFile";
+import ImageThumb from "@/components/ImageThumb";
 import SiteHeader from "@/components/SiteHeader";
 import type { StoredBooking } from "@/lib/booking-store";
 
@@ -693,10 +694,11 @@ function ConfirmedInner() {
             {pay.proofUrl ? (
               <div style={{ padding: 28, display: "flex", alignItems: "center", gap: 14 }}>
                 <span style={{ width: 40, height: 40, borderRadius: 10, background: "#22c55e", color: "#fff", display: "grid", placeItems: "center", flexShrink: 0 }}><IcoCheck /></span>
-                <div>
+                <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 15, fontWeight: 700 }}>Payment submitted</div>
                   <div style={{ fontSize: 13, color: "var(--ink-2)", marginTop: 2 }}>We&apos;re verifying your payment — your booking will be confirmed shortly.</div>
                 </div>
+                <ImageThumb src={pay.proofUrl} alt="Your uploaded payment proof" size={56} rounded={12} />
               </div>
             ) : (
               <div style={{ padding: 28 }}>
@@ -718,6 +720,7 @@ function ConfirmedInner() {
                     style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 20px", borderRadius: 999, background: "var(--white)", color: "var(--ink)", border: "1px solid var(--line-2)", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
                     {proofName ? `✓ ${proofName.length > 22 ? proofName.slice(0, 22) + "…" : proofName}` : "Upload payment proof"}
                   </button>
+                  {proofData ? <ImageThumb src={proofData} alt="Selected payment proof" size={48} rounded={12} /> : null}
                   <button type="button" onClick={submitPayment} disabled={!proofData || paying}
                     style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 24px", borderRadius: 999, background: "var(--dlux-accent)", color: "var(--white)", border: "none", fontSize: 14, fontWeight: 700, cursor: (!proofData || paying) ? "not-allowed" : "pointer", opacity: (!proofData || paying) ? 0.6 : 1 }}>
                     {paying ? "Submitting…" : "Submit payment"} <IcoArrowRight />

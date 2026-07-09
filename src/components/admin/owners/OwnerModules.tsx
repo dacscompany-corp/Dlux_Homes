@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import { imageFileError } from "@/lib/validateImageFile";
+import ImageThumb from "@/components/ImageThumb";
 import { BarChart3, Calendar, CalendarOff, Sparkles, CreditCard, Headphones, UsersRound, Handshake, Plus, Trash2, Power, Pencil, X } from "lucide-react";
 import { useGetAnalyticsSummaryQuery, useGetMonthlyRevenueQuery, useGetRevenueByRoomQuery } from "@/redux/api/analyticsApi";
 import { useGetBookingsQuery } from "@/redux/api/bookingsApi";
@@ -531,7 +532,12 @@ export function PaymentMethodsSection() {
             <tr key={String(m.id ?? i)} style={{ borderTop: i > 0 ? "1px solid #F7F0E3" : "none" }}>
               <td className="px-4 py-3.5 text-sm" style={{ color: "#1a1a1a" }}>{String(m.payment_name ?? m.payment_method ?? "—")}</td>
               <td className="px-4 py-3.5 text-sm" style={{ color: "#5a4a3a" }}>{String(m.provider ?? m.payment_method ?? "—")}</td>
-              <td className="px-4 py-3.5 text-sm font-mono" style={{ color: "#5a4a3a" }}>{String(m.account_details ?? "—")}</td>
+              <td className="px-4 py-3.5 text-sm font-mono" style={{ color: "#5a4a3a" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  {m.payment_qr_link ? <ImageThumb src={String(m.payment_qr_link)} alt="Payment QR code" size={38} /> : null}
+                  <span>{String(m.account_details ?? "—")}</span>
+                </div>
+              </td>
               <td className="px-4 py-3.5"><Pill text={m.is_active ? "active" : "inactive"} tone={m.is_active ? "good" : "neutral"} /></td>
               <td className="px-4 py-3.5">
                 <div className="flex items-center gap-1">

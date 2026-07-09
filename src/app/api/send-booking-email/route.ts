@@ -1,55 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
-import { generatePamphletPDF, type RentableItem, type AddOnCategory } from '@/backend/utils/pdfGenerators';
-import pool from '@/backend/config/db';
-
-// Pull the platform Owner's contact phone + email for the pamphlet.
-// Best-effort — returns nulls when no Owner row exists or the fields are
-// empty, in which case the pamphlet shows placeholders instead of breaking
-// the email send. Prefers the earliest-hired Owner who has BOTH fields set;
-// falls back to whoever has at least the phone, then whoever has at least
-// the email, so partial data still wins over the hardcoded default.
-async function fetchOwnerContact(): Promise<{ phone: string | null; email: string | null }> {
-  try {
-    const r = await pool.query(
-      `SELECT phone, email FROM employees
-        WHERE role = 'Owner'
-        ORDER BY
-          ((phone IS NOT NULL AND phone <> '')::int
-           + (email IS NOT NULL AND email <> '')::int) DESC,
-          hire_date ASC NULLS LAST,
-          id ASC
-        LIMIT 1`,
-    );
-    const row = r.rows[0];
-    return {
-      phone: row?.phone && row.phone.trim() ? row.phone.trim() : null,
-      email: row?.email && row.email.trim() ? row.email.trim() : null,
-    };
-  } catch {
-    return { phone: null, email: null };
-  }
-}
 
 export async function POST(request: NextRequest) {
   try {
     const bookingData = await request.json();
-    const rentableItems: RentableItem[] = bookingData.rentableItems || [];
-    const addonCategories: AddOnCategory[] = bookingData.addonCategories || [];
-    const ownerContact = await fetchOwnerContact();
-
-    // Generate pamphlet PDF with the room's add-ons (grouped by category if provided)
-    const pamphletBuffer = await generatePamphletPDF({
-      guestName: `${bookingData.firstName} ${bookingData.lastName || ''}`.trim(),
-      roomName: bookingData.roomName || '',
-      checkInDate: bookingData.checkInDate || '',
-      checkOutDate: bookingData.checkOutDate || '',
-      bookingId: bookingData.bookingId || '',
-      rentableItems,
-      categories: addonCategories,
-      contactPhone: ownerContact.phone ?? undefined,
-      contactEmail: ownerContact.email ?? undefined,
-    });
 
     // Create transporter with your Gmail credentials
     const transporter = nodemailer.createTransport({
@@ -182,12 +136,6 @@ export async function POST(request: NextRequest) {
                   </td>
                   <td valign="top" style="padding-left:10px;padding-bottom:8px;font-size:13px;line-height:1.45;color:#5c4a3c;">Just show up at check-in time with a valid ID.</td>
                 </tr>
-                <tr>
-                  <td width="20" valign="top">
-                    <div style="width:20px;height:20px;border-radius:50%;background:#faf5ec;color:#2b1b12;font-size:11px;font-weight:700;text-align:center;line-height:20px;">3</div>
-                  </td>
-                  <td valign="top" style="padding-left:10px;font-size:13px;line-height:1.45;color:#5c4a3c;">We&rsquo;ve attached a PDF pamphlet &mdash; browse extra items you can request during your stay.</td>
-                </tr>
               </table>
 
               <!-- Good to know -->
@@ -233,13 +181,6 @@ export async function POST(request: NextRequest) {
       to: bookingData.email,
       subject: `Booking Confirmation - ${bookingData.bookingId}`,
       html: emailHtml,
-      attachments: [
-        {
-          filename: `DLux-Pamphlet-${bookingData.bookingId}.pdf`,
-          content: pamphletBuffer,
-          contentType: 'application/pdf',
-        },
-      ],
     };
 
     await transporter.sendMail(mailOptions);

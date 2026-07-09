@@ -1,9 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
+import { generateReceiptPDF } from '@/backend/utils/pdfGenerators';
 
 export async function POST(request: NextRequest) {
   try {
     const bookingData = await request.json();
+
+    // Email clients strip <script> tags and onclick handlers, so a
+    // click-to-generate PDF button (the prior design) never actually works
+    // once the email is delivered — it only appeared to work when the raw
+    // HTML was opened directly in a browser. Generate the receipt PDF
+    // server-side instead and attach it directly to the email.
+    const receiptBuffer = await generateReceiptPDF({
+      bookingId: bookingData.bookingId,
+      firstName: bookingData.firstName,
+      lastName: bookingData.lastName,
+      email: bookingData.email,
+      phone: bookingData.phone,
+      roomName: bookingData.roomName,
+      stayType: bookingData.stayType,
+      checkInDate: bookingData.checkInDate,
+      checkOutDate: bookingData.checkOutDate,
+      checkInTime: bookingData.checkInTime,
+      checkOutTime: bookingData.checkOutTime,
+      guests: bookingData.guests,
+      adults: bookingData.adults,
+      children: bookingData.children,
+      infants: bookingData.infants,
+      numberOfNights: bookingData.numberOfNights,
+      roomRate: bookingData.roomRate,
+      securityDeposit: bookingData.securityDeposit,
+      addOnsTotal: bookingData.addOnsTotal,
+      totalAmount: bookingData.totalAmount,
+      downPayment: bookingData.downPayment,
+      remainingBalance: bookingData.remainingBalance,
+      paymentMethod: bookingData.paymentMethod,
+    });
 
     const transporter = nodemailer.createTransport({
       service: 'gmail',
@@ -13,6 +45,16 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    // Email HTML template for CHECKED-OUT status — from the same Claude
+    // Design project as the other status emails. Table-based layout
+    // throughout (see send-pending-email/route.ts for why: Gmail's
+    // spam-quarantine view doesn't reliably honor margin:0 auto/display:flex).
+    const guestName = bookingData.firstName || 'Guest';
+    const hasBalance = Number(bookingData.remainingBalance) > 0;
+    const totalAmountFormatted = `₱${Number(bookingData.totalAmount).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const remainingBalanceFormatted = hasBalance
+      ? `₱${Number(bookingData.remainingBalance).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      : '';
     const emailHtml = `
       <!DOCTYPE html>
       <html lang="en">
@@ -20,123 +62,114 @@ export async function POST(request: NextRequest) {
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Thank You For Your Stay! - D'Lux Homes</title>
-        <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&display=swap" rel="stylesheet">
-        <style>
-          * { margin: 0; padding: 0; box-sizing: border-box; }
-          body { font-family: Arial, Helvetica, sans-serif; line-height: 1.6; color: #1F160E; background-color: #F6EFE2; padding: 24px 16px; }
-          .email-container { max-width: 640px; margin: 0 auto; background: #FFFCF4; border-radius: 20px; overflow: hidden; border: 1px solid #E0CEB2; }
-          .header { background-color: #1F160E; color: #FFFCF4; padding: 40px 32px; text-align: center; }
-          .logo { font-family: 'Fraunces', Georgia, serif; font-size: 30px; font-weight: 500; letter-spacing: -0.02em; }
-          .tagline { font-size: 13.5px; color: rgba(255,252,244,.65); margin-top: 6px; }
-          .status-badge { display: inline-flex; align-items: center; gap: 8px; margin-top: 20px; background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.2); color: #C9B79E; padding: 7px 18px; border-radius: 999px; font-size: 12.5px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; }
-          .status-dot { width: 6px; height: 6px; border-radius: 50%; background: #C9B79E; display: inline-block; }
-          .content { padding: 40px 36px; }
-          .greeting { font-family: 'Fraunces', Georgia, serif; font-size: 23px; font-weight: 500; color: #1F160E; margin-bottom: 14px; }
-          .intro-text { color: #8B7458; margin-bottom: 28px; line-height: 1.7; font-size: 15px; }
-          .highlight { color: #B07848; font-weight: 600; }
-          .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; color: #B07848; margin: 30px 0 12px; }
-          .info-card { background-color: #F6EFE2; border: 1px solid #E0CEB2; padding: 6px 24px; margin: 0; border-radius: 14px; }
-          .info-row { display: flex; justify-content: space-between; align-items: center; padding: 13px 0; border-bottom: 1px solid #E7D9BE; }
-          .info-row:last-child { border-bottom: none; }
-          .info-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: #9B8B73; }
-          .info-value { color: #1F160E; font-weight: 600; font-size: 14.5px; text-align: right; }
-          .balance-owed { color: #B07848 !important; }
-          .qr-card { background-color: #F6EFE2; border: 1px solid #E0CEB2; padding: 30px; margin: 24px 0 0; border-radius: 16px; text-align: center; }
-          .qr-subtitle { color: #8B7458; font-size: 14px; margin-bottom: 20px; line-height: 1.6; }
-          .qr-code-wrap { background: #FFFCF4; padding: 20px; border-radius: 14px; display: inline-block; border: 1px solid #E0CEB2; }
-          .qr-id { margin-top: 10px; font-family: 'Courier New', monospace; font-size: 13px; font-weight: 700; color: #1F160E; letter-spacing: .04em; }
-          .cta-wrap { text-align: center; margin: 26px 0 8px; }
-          .cta-button { display: inline-block; background-color: #1F160E; color: #FFFCF4; padding: 14px 30px; text-decoration: none; border-radius: 999px; font-weight: 600; font-size: 14px; margin: 6px 8px; border: none; cursor: pointer; font-family: Arial, Helvetica, sans-serif; }
-          .footer { background-color: #1F160E; color: #C9B79E; padding: 30px 32px; text-align: center; }
-          .footer-info { margin: 6px 0; font-size: 13px; }
-          .footer-divider { height: 1px; background-color: rgba(255,255,255,.1); margin: 18px 0; }
-          .footer-copyright { font-size: 12px; color: #8B7458; margin-top: 6px; }
-        </style>
+        <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+        <style>* { margin: 0; padding: 0; box-sizing: border-box; } body { background: #F3EAD9; } a { color: inherit; }</style>
       </head>
-      <body>
-        <div class="email-container">
-          <div class="header">
-            <div class="logo">D&rsquo;Lux Homes</div>
-            <div class="tagline">Thank You For Staying With Us</div>
-            <div class="status-badge"><span class="status-dot"></span>Checked Out</div>
-          </div>
+      <body style="margin:0;padding:0;background:#F3EAD9;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F3EAD9;">
+          <tr>
+            <td align="center" style="padding:24px 16px;font-family:'Inter',Arial,Helvetica,sans-serif;">
+              <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 1px 3px rgba(30,20,10,0.08);">
+                <tr>
+                  <td>
 
-          <div class="content">
-            <div class="greeting">Thank You, ${bookingData.firstName}!</div>
-            <p class="intro-text">
-              You have successfully checked out. We hope you enjoyed your stay at <span class="highlight">D&rsquo;Lux Homes</span>!
-              We would love to hear about your experience and hope to see you again soon.
-            </p>
+                    <!-- Header -->
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#2b1b12;">
+                      <tr>
+                        <td style="padding:28px 32px;">
+                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                              <td valign="middle" align="left">
+                                <div style="font-family:'Fraunces',Georgia,serif;font-size:21px;font-weight:600;color:#f6ede0;letter-spacing:0.3px;">D&rsquo;Lux Homes</div>
+                                <div style="font-size:12px;color:#CBB89C;margin-top:2px;">Thank You For Staying With Us</div>
+                              </td>
+                              <td valign="middle" align="right" style="white-space:nowrap;">
+                                <span style="display:inline-block;background:rgba(246,237,224,0.12);border:1px solid rgba(246,237,224,0.35);border-radius:999px;padding:6px 14px;white-space:nowrap;">
+                                  <span style="width:7px;height:7px;border-radius:50%;background:#d9a25c;display:inline-block;margin-right:6px;"></span>
+                                  <span style="font-size:12px;font-weight:600;color:#f6ede0;">Checked Out</span>
+                                </span>
+                              </td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
 
-            <div class="section-title">Your Stay Summary</div>
-            <div class="info-card">
-              <div class="info-row"><span class="info-label">Booking ID</span><span class="info-value">${bookingData.bookingId}</span></div>
-              <div class="info-row"><span class="info-label">Room</span><span class="info-value">${bookingData.roomName}</span></div>
-              <div class="info-row"><span class="info-label">Check-In</span><span class="info-value">${bookingData.checkInDate}</span></div>
-              <div class="info-row"><span class="info-label">Check-Out</span><span class="info-value">${bookingData.checkOutDate}</span></div>
-              <div class="info-row"><span class="info-label">Total Amount</span><span class="info-value">₱${bookingData.totalAmount}</span></div>
-              ${bookingData.remainingBalance > 0 ? `
-              <div class="info-row"><span class="info-label balance-owed">Remaining Balance</span><span class="info-value balance-owed">₱${bookingData.remainingBalance}</span></div>
-              ` : ''}
+            <!-- Body -->
+            <div style="padding:28px 32px 4px;">
+              <p style="font-size:16px;font-weight:600;color:#2b1b12;margin:0 0 6px;">Thank you, ${guestName}!</p>
+              <p style="font-size:15px;line-height:1.5;color:#3a2a1e;margin:0 0 20px;">
+                You&rsquo;re all checked out. We hope you had a great stay at D&rsquo;Lux Homes and would love to have you back again.
+              </p>
+
+              <!-- Stay summary -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#faf5ec;border-radius:12px;margin-bottom:16px;">
+                <tr>
+                  <td style="padding:18px 20px 12px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:13px;">
+                      <tr>
+                        <td align="left" style="color:#9c8974;">${bookingData.bookingId}</td>
+                        <td align="right" style="font-weight:600;color:#2b1b12;">${bookingData.roomName}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 20px 18px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td width="50%" valign="top">
+                          <div style="font-size:11px;color:#9c8974;">Checked in</div>
+                          <div style="font-size:14px;font-weight:600;color:#2b1b12;">${bookingData.checkInDate}</div>
+                        </td>
+                        <td width="1" style="background:#e9dcc8;font-size:0;line-height:0;">&nbsp;</td>
+                        <td width="50%" valign="top" style="padding-left:14px;">
+                          <div style="font-size:11px;color:#9c8974;">Checked out</div>
+                          <div style="font-size:14px;font-weight:600;color:#2b1b12;">${bookingData.checkOutDate}</div>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Total -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#2b1b12;border-radius:12px;margin-bottom:24px;">
+                <tr>
+                  <td style="padding:16px 20px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td valign="middle" align="left" style="font-size:13px;color:#f6ede0;">${hasBalance ? 'Remaining balance' : 'Total paid'}</td>
+                        <td valign="middle" align="right" style="white-space:nowrap;font-size:22px;font-weight:700;color:#d9a25c;">${hasBalance ? remainingBalanceFormatted : totalAmountFormatted}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Receipt -->
+              <div style="text-align:center;margin-bottom:28px;">
+                <div style="font-size:12px;font-weight:700;color:#9c8974;letter-spacing:0.6px;text-transform:uppercase;margin-bottom:8px;">Your Receipt</div>
+                <div style="font-size:13px;line-height:1.5;color:#5c4a3c;">We&rsquo;ve attached your receipt as a PDF to this email.</div>
+              </div>
             </div>
 
-            <div class="section-title">Your Booking Reference QR Code</div>
-            <div class="qr-card">
-              <p class="qr-subtitle">Show this QR code at the reception for quick check-in on your next visit</p>
-              <div class="qr-code-wrap">
-                <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(bookingData.bookingId)}&color=${encodeURIComponent('1F160E')}&bgcolor=${encodeURIComponent('FFFCF4')}"
-                     alt="Booking QR Code"
-                     style="width: 150px; height: 150px; border-radius: 8px;">
-                <div class="qr-id">${bookingData.bookingId}</div>
-              </div>
-              <div class="cta-wrap">
-                <button class="cta-button" onclick="fetchReceiptPDF()">Download Receipt as PDF</button>
-                <a href="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(bookingData.bookingId)}&color=${encodeURIComponent('1F160E')}&bgcolor=${encodeURIComponent('FFFCF4')}"
-                   class="cta-button"
-                   download="qr-${bookingData.bookingId}.png"
-                   target="_blank">Save QR Code</a>
-              </div>
-            </div>
-          </div>
+            <!-- Footer -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#faf5ec;border-top:1px solid #f0e6d8;">
+              <tr>
+                <td align="center" style="padding:16px 32px;">
+                  <div style="font-size:12px;color:#5c4a3c;">homesdlux@gmail.com &middot; Tower 4, Grass Residences, QC</div>
+                  <div style="font-size:11px;color:#b3a48f;margin-top:6px;">&copy; ${new Date().getFullYear()} D&rsquo;Lux Homes. All rights reserved.</div>
+                </td>
+              </tr>
+            </table>
 
-          <div class="footer">
-            <div class="footer-info">homesdlux@gmail.com</div>
-            <div class="footer-info">Tower 4, Grass Residences, QC</div>
-            <div class="footer-divider"></div>
-            <div class="footer-copyright">&copy; ${new Date().getFullYear()} D&rsquo;Lux Homes. All rights reserved.</div>
-          </div>
-        </div>
-
-        <script>
-          function fetchReceiptPDF() {
-            const bookingData = ${JSON.stringify(bookingData)};
-
-            fetch(window.location.origin + '/api/generate-receipt-pdf', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify(bookingData)
-            })
-            .then(response => response.json())
-            .then(data => {
-              if (data.success) {
-                const link = document.createElement('a');
-                link.href = data.pdfData;
-                link.download = 'receipt-${bookingData.bookingId}.pdf';
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-              } else {
-                alert('Failed to generate PDF receipt');
-              }
-            })
-            .catch(error => {
-              console.error('Error generating PDF:', error);
-              alert('Error generating PDF receipt');
-            });
-          }
-        </script>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
       </body>
       </html>
     `;
@@ -146,6 +179,13 @@ export async function POST(request: NextRequest) {
       to: bookingData.email,
       subject: `Thank You For Your Stay! - ${bookingData.bookingId}`,
       html: emailHtml,
+      attachments: [
+        {
+          filename: `DLux-Receipt-${bookingData.bookingId}.pdf`,
+          content: receiptBuffer,
+          contentType: 'application/pdf',
+        },
+      ],
     };
 
     await transporter.sendMail(mailOptions);

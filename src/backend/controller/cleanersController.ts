@@ -26,6 +26,7 @@ export interface CleaningTask {
   inspected_at: string | null;
   deposit_status: string | null;
   security_deposit: number | null;
+  deposit_proof_url: string | null;
   total_amount: number | null;
   amount_paid: number | null;
   down_payment: number | null;
@@ -120,6 +121,7 @@ export const getAllCleaningTasks = async (
           bc.inspected_at,
           sd.deposit_status,
           sd.amount as security_deposit,
+          sd.payment_proof_url as deposit_proof_url,
           bp.id::text as booking_payment_id,
           bp.total_amount,
           bp.amount_paid,
