@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
 import { getPartnerIdFromSession } from "@/backend/utils/partnerSession";
 import { upload_file } from "@/backend/utils/cloudinary";
+import { validateDocumentDataUrl } from "@/backend/utils/imageGuard";
 
 // GET /api/partners/me/documents
 // Lists the partner's own documents (owner-uploaded ones included).
@@ -52,9 +53,10 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    if (!fileDataUrl || !fileDataUrl.startsWith("data:")) {
+    const docCheck = validateDocumentDataUrl(fileDataUrl);
+    if (!docCheck.ok) {
       return NextResponse.json(
-        { success: false, error: "Valid data URL is required" },
+        { success: false, error: docCheck.reason },
         { status: 400 }
       );
     }

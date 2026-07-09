@@ -34,11 +34,33 @@ export async function sendOtpEmail({ email, otp, type, userName }: SendOtpEmailI
   console.log(`✅ Email sent successfully to ${email}`);
 }
 
+// Escape HTML metacharacters so caller-supplied values can't inject markup into
+// the email body. This endpoint is publicly reachable (see send-email/route.ts),
+// so without escaping an attacker could POST a crafted userName/otp/email
+// containing <a>/<img onerror> and have the app deliver a domain-authenticated,
+// D'Lux-branded phishing message to any recipient.
+function escapeHtml(value: string): string {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 // Matches the D'Lux Homes storefront brand: warm cream palette, Fraunces
 // serif headings, dark-ink header/footer — same tokens as the other
 // transactional emails (see src/app/api/send-pending-email/route.ts).
-export function renderOtpEmailHtml(email: string, otp: string, type: string, userName?: string): string {
+export function renderOtpEmailHtml(
+  rawEmail: string,
+  rawOtp: string,
+  type: string,
+  rawUserName?: string,
+): string {
   const isAccountLock = type === "ACCOUNT_LOCK";
+  const email = escapeHtml(rawEmail);
+  const otp = escapeHtml(rawOtp);
+  const userName = rawUserName ? escapeHtml(rawUserName) : undefined;
 
   return `
     <!DOCTYPE html>

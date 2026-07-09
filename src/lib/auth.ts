@@ -12,6 +12,21 @@ import { sendOtpEmail } from "@/backend/utils/sendOtpEmail";
 // staff/partner login still works; set the key to turn enforcement back on.
 const TURNSTILE_ENABLED = !!process.env.TURNSTILE_SECRET_KEY;
 
+// Fail LOUD, not silent: if this ships to production without a Turnstile key,
+// bot protection on login quietly disappears. Surface that as an explicit
+// startup error so a missing-env misconfig can't hide. Set TURNSTILE_OPTIONAL=1
+// to acknowledge running without it on purpose.
+if (
+  !TURNSTILE_ENABLED &&
+  process.env.NODE_ENV === "production" &&
+  process.env.TURNSTILE_OPTIONAL !== "1"
+) {
+  console.error(
+    "⚠️ SECURITY: TURNSTILE_SECRET_KEY is not set in production — bot protection " +
+      "on login is DISABLED. Set the key, or set TURNSTILE_OPTIONAL=1 to opt out deliberately.",
+  );
+}
+
 // Verify Turnstile token
 const verifyTurnstileToken = async (token: string): Promise<boolean> => {
   if (!TURNSTILE_ENABLED) return true; // no secret configured → skip verification
@@ -573,6 +588,13 @@ export const authOptions: NextAuthOptions = {
         }
         return true;
       } catch (error) {
+        // NOTE: this catch intentionally returns true (fail-open) so a transient
+        // error in the post-auth bookkeeping above (or the OAuth path) doesn't
+        // block a legitimate sign-in. It is NOT a security gate — the real
+        // password/lockout enforcement happens in authorize() BEFORE this
+        // callback runs. The `throw new Error(...)` re-checks above are therefore
+        // effectively dead code; do not add security-critical checks here
+        // expecting them to deny access.
         console.error("❌ Error in signIn callback:", error);
         console.error("❌ Error details:", JSON.stringify(error, null, 2));
         return true;

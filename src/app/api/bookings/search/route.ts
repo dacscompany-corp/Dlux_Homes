@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
+import { requireBookingAccess } from "@/backend/utils/requireAdmin";
 
 const BOOKING_TABLE = (() => {
   const raw = (process.env.BOOKING_TABLE_NAME || "booking").trim();
@@ -19,6 +20,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         { status: 400 }
       );
     }
+
+    // Returns the full booking row (guest PII, payment). Restrict to staff or
+    // the booking's owner — previously any caller could pull any booking by id.
+    const access = await requireBookingAccess(bookingId);
+    if (!access.ok) return access.response;
 
     const query = `
       SELECT * FROM ${BOOKING_TABLE}

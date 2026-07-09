@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
 import { getPartnerIdFromSession } from "@/backend/utils/partnerSession";
 import { upload_file } from "@/backend/utils/cloudinary";
+import { validateDocumentDataUrl } from "@/backend/utils/imageGuard";
 
 interface MediaItem {
   url: string;
@@ -53,6 +54,15 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     // Upload new media to Cloudinary
     for (const item of newMediaBase64) {
       if (!item?.data) continue;
+      // Enforce the document/media validation floor (size cap + type allow-list,
+      // accepts image + video). Previously any data: string was accepted.
+      const mediaCheck = validateDocumentDataUrl(item.data);
+      if (!mediaCheck.ok) {
+        return NextResponse.json(
+          { success: false, error: `Invalid media: ${mediaCheck.reason}` },
+          { status: 400 }
+        );
+      }
       try {
         const folder = `dlux-homes/amenity-verifications/${row.haven_id}`;
         const uploaded = await upload_file(item.data, folder);

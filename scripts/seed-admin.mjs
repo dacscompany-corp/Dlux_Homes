@@ -19,9 +19,11 @@ import bcrypt from 'bcryptjs';
 
 const { Client } = pg;
 
-const email = process.argv[2] || 'owner@dluxhomes.com';
-const password = process.argv[3] || 'Owner@123';
-const requestedRole = process.argv[4] || 'Owner';
+const args = process.argv.slice(2).filter((a) => a !== '--force-prod');
+const forceProd = process.argv.includes('--force-prod');
+const email = args[0] || 'owner@dluxhomes.com';
+const password = args[1] || 'Owner@123';
+const requestedRole = args[2] || 'Owner';
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
@@ -29,6 +31,23 @@ if (!connectionString) {
   process.exit(1);
 }
 const isLocal = connectionString.includes('localhost') || connectionString.includes('127.0.0.1');
+
+// Guard against silently seeding/resetting a live account. Running this with no
+// args points at whatever DATABASE_URL is loaded (often the real Supabase DB)
+// and would upsert owner@dluxhomes.com / Owner@123 — a publicly-known weak
+// credential. Require an explicit --force-prod for any non-local database.
+if (!isLocal && !forceProd) {
+  console.error('✗ Refusing to seed a NON-LOCAL database (DATABASE_URL is not localhost).');
+  console.error('  This prevents accidentally creating/resetting a live admin to a default password.');
+  console.error('  If you really mean to seed production, re-run with --force-prod and explicit');
+  console.error('  credentials, e.g.:');
+  console.error('    node --env-file=.env scripts/seed-admin.mjs you@dluxhomes.com \'StrongPass!\' Owner --force-prod');
+  process.exit(1);
+}
+if (!isLocal && password === 'Owner@123') {
+  console.error('✗ Refusing to seed a production account with the default password. Pass a strong password.');
+  process.exit(1);
+}
 const client = new Client({ connectionString, ssl: isLocal ? false : { rejectUnauthorized: false } });
 
 // Resolve the requested role against the actual enum labels (case-insensitive).

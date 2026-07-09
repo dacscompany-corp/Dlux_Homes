@@ -1,22 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/backend/config/db';
 import { logActivity } from '@/backend/utils/activityLogger';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { requireAdmin } from '@/backend/utils/requireAdmin';
 
+// Toggling a payment method active/inactive controls what guests can pay into —
+// staff only, same rationale as the other payment-methods writes.
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { success: false, message: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+    const guard = await requireAdmin();
+    if (!guard.ok) return guard.response;
+    const session = guard.session;
 
     const client = await pool.connect();
 

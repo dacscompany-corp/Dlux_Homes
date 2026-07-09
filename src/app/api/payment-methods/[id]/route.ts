@@ -2,22 +2,21 @@ import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/backend/config/db';
 import { upload_image_from_form } from '@/backend/utils/fileUpload';
 import { logActivity } from '@/backend/utils/activityLogger';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { requireAdmin } from '@/backend/utils/requireAdmin';
 
+// Payment methods are the bank/GCash/QR accounts guests pay into. Editing them
+// is a financial-fraud vector (redirect real payments), so writes are restricted
+// to staff (Owner/CSR) via requireAdmin — NOT merely "logged in", which any
+// self-registered customer satisfies.
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { success: false, message: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+    const guard = await requireAdmin();
+    if (!guard.ok) return guard.response;
+    const session = guard.session;
 
     const formData = await request.formData();
     
@@ -135,16 +134,12 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { success: false, message: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+    const guard = await requireAdmin();
+    if (!guard.ok) return guard.response;
+    const session = guard.session;
 
     const client = await pool.connect();
-    
+
     // Get payment method details before deletion for logging
     const getQuery = 'SELECT payment_name, provider FROM payment_methods WHERE id = $1';
     const getResult = await client.query(getQuery, [id]);

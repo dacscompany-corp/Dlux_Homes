@@ -1,5 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 import pool from "../config/db";
+
+// Best-effort caller identity for wishlist writes. Logged-in users are pinned to
+// their session id so they can't act as another user; guests keep using their
+// unguessable guest_token (data here is only "liked havens", low sensitivity).
+async function sessionUserId(): Promise<string | null> {
+  const session = await getServerSession(authOptions);
+  return (session?.user as { id?: string } | undefined)?.id ?? null;
+}
 
 type QueryParams = (string | number | null)[];
 
@@ -84,7 +94,12 @@ export const addToWishlist = async (
 ): Promise<NextResponse> => {
   try {
     const body = await req.json();
-    const { user_id, guest_token, haven_id } = body;
+    const { user_id: bodyUserId, guest_token, haven_id } = body;
+
+    // If logged in and not using a guest token, force the user_id to the session
+    // owner — a signed-in user can't add to someone else's wishlist.
+    const sid = await sessionUserId();
+    const user_id = sid && !guest_token ? sid : bodyUserId;
 
     if ((!user_id && !guest_token) || !haven_id) {
       return NextResponse.json(
@@ -196,12 +211,14 @@ export const removeFromWishlist = async (
   const { id } = await params;
 
   try {
-    const deleteQuery = `
-      DELETE FROM wishlist
-      WHERE id = $1
-      RETURNING *
-    `;
-    const result = await pool.query(deleteQuery, [id]);
+    // When logged in, only allow deleting the caller's own rows (or orphan guest
+    // rows), never another signed-in user's item. Guests (no session) delete by
+    // row id as before — the id is an unguessable UUID.
+    const sid = await sessionUserId();
+    const deleteQuery = sid
+      ? `DELETE FROM wishlist WHERE id = $1 AND (user_id = $2 OR user_id IS NULL) RETURNING *`
+      : `DELETE FROM wishlist WHERE id = $1 RETURNING *`;
+    const result = await pool.query(deleteQuery, sid ? [id, sid] : [id]);
 
     if (result.rows.length === 0) {
       return NextResponse.json(

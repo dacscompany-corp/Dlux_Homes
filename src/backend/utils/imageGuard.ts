@@ -50,3 +50,71 @@ export async function validateImageFile(file: File): Promise<ImageCheck> {
   const buf = Buffer.from(await file.arrayBuffer());
   return checkBuffer(buf);
 }
+
+// ---------------------------------------------------------------------------
+// Document / media uploads (contracts, payout evidence, amenity-verification
+// video). These are INTENTIONALLY not image-only, but they must still have a
+// validation floor: previously they only checked the string began with "data:"
+// — no size cap, no type restriction — so an oversized or executable payload
+// (a renamed .html/.svg/.exe) uploaded fine. This enforces a size limit and a
+// MIME allow-list by magic bytes where cheaply possible, without requiring the
+// caller to know the exact format.
+
+export const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024; // 25 MB
+
+// MIME prefixes we accept for document/media slots. Deliberately broad (PDFs,
+// images, common video) but excludes text/html, svg, and application/*script.
+const ALLOWED_DOC_MIME = [
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "video/mp4",
+  "video/quicktime",
+  "video/webm",
+];
+
+type DocCheck = { ok: true; mime: string } | { ok: false; reason: string };
+
+// Validate a base64 data URL destined for a document/media slot: enforce the
+// size cap and that its declared MIME is in the allow-list. (Unlike images we
+// don't have magic-byte sniffers for every format, so we trust the declared
+// MIME for type — but the allow-list still blocks html/svg/script payloads, and
+// the size cap always applies to the decoded bytes.)
+export function validateDocumentDataUrl(dataUrl: string): DocCheck {
+  const m = /^data:([^;,]+)(;base64)?,([\s\S]+)$/.exec(dataUrl.trim());
+  if (!m) return { ok: false, reason: "Not a valid data URL" };
+  const mime = m[1].toLowerCase().trim();
+  const isBase64 = !!m[2];
+
+  if (!ALLOWED_DOC_MIME.includes(mime)) {
+    return { ok: false, reason: `File type "${mime}" is not allowed` };
+  }
+
+  let byteLength: number;
+  if (isBase64) {
+    try {
+      byteLength = Buffer.from(m[3], "base64").length;
+    } catch {
+      return { ok: false, reason: "Invalid base64 data" };
+    }
+  } else {
+    byteLength = Buffer.byteLength(decodeURIComponent(m[3]));
+  }
+
+  if (byteLength === 0) return { ok: false, reason: "Empty file" };
+  if (byteLength > MAX_DOCUMENT_BYTES) {
+    return { ok: false, reason: `File exceeds the ${MAX_DOCUMENT_BYTES / (1024 * 1024)}MB limit` };
+  }
+
+  // If it happens to be an image MIME, verify the bytes really are that image
+  // (defends against an executable renamed with an image MIME). Non-image types
+  // (pdf/video) pass on the allow-list + size check.
+  if (mime.startsWith("image/") && isBase64) {
+    const sniff = sniffImageMime(Buffer.from(m[3], "base64"));
+    if (!sniff) return { ok: false, reason: "File claims to be an image but isn't" };
+  }
+
+  return { ok: true, mime };
+}

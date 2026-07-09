@@ -23,7 +23,13 @@ export default function LoginPage() {
   const [cbResolved, setCbResolved] = useState(false);
   useEffect(() => {
     const cb = new URLSearchParams(window.location.search).get("callbackUrl");
-    if (cb) setCallbackUrl(cb);
+    // Only accept a same-origin relative path. Rejecting absolute URLs (and
+    // protocol-relative "//evil.com" / "/\evil.com") closes an open-redirect
+    // where ?callbackUrl=https://evil.example would bounce a just-authenticated
+    // user to an attacker page after login.
+    if (cb && cb.startsWith("/") && !cb.startsWith("//") && !cb.startsWith("/\\")) {
+      setCallbackUrl(cb);
+    }
     setCbResolved(true);
   }, []);
 

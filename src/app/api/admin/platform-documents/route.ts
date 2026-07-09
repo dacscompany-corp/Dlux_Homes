@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import pool from "@/backend/config/db";
 import { upload_file, delete_file } from "@/backend/utils/cloudinary";
+import { validateDocumentDataUrl } from "@/backend/utils/imageGuard";
 
 const isOwner = async () => {
   const session = await getServerSession(authOptions);
@@ -54,9 +55,10 @@ export async function POST(req: NextRequest) {
     if (!label) {
       return NextResponse.json({ success: false, error: "Label is required" }, { status: 400 });
     }
-    if (!fileDataUrl || !fileDataUrl.startsWith("data:")) {
+    const docCheck = validateDocumentDataUrl(fileDataUrl);
+    if (!docCheck.ok) {
       return NextResponse.json(
-        { success: false, error: "Valid data URL is required" },
+        { success: false, error: docCheck.reason },
         { status: 400 }
       );
     }

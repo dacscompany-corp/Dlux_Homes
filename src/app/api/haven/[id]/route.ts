@@ -1,4 +1,5 @@
 import { getHavenById, updateHaven } from "@/backend/controller/roomController";
+import { requireAdmin } from "@/backend/utils/requireAdmin";
 import pool from "@/backend/config/db";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -8,11 +9,16 @@ interface RouteContext {
   }>
 }
 
+// GET is public — the storefront reads haven details/rates. PUT mutates pricing,
+// description, and images, so it must be staff-only; previously it had no guard
+// at all, letting anyone rewrite the property's rates and content.
 export async function GET(request: NextRequest, { params }: RouteContext): Promise<NextResponse> {
   return getHavenById(request, { params });
 }
 
 export async function PUT(request: NextRequest, { params }: RouteContext): Promise<NextResponse> {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
   try {
     const { id } = await params;
     const body = await request.json();

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
 import { sendOtpEmail } from "@/backend/utils/sendOtpEmail";
+import { rateLimit, clientIp, tooManyRequests } from "@/backend/utils/rateLimit";
 
 // PUBLIC BY DESIGN — called by an UNAUTHENTICATED locked-out user from the
 // OtpVerification UI to request a fresh unlock code. Must NOT call
@@ -16,6 +17,10 @@ export async function POST(request: NextRequest) {
         error: "Email and type are required",
       }, { status: 400 });
     }
+
+    // Throttle OTP-email requests to stop inbox-bombing a victim's address.
+    const rl = rateLimit(`otp-resend:${clientIp(request)}:${email}`, 4, 10 * 60 * 1000);
+    if (!rl.ok) return tooManyRequests(rl.retryAfterSec);
 
     // Get user info for email template — check employees first, then partners.
     let userName = null;

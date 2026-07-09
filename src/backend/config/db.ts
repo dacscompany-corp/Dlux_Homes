@@ -17,17 +17,23 @@ types.setTypeParser(1082, (v) => v);
 //
 //   DATABASE_URL=postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres
 //
-// Supabase always requires SSL; rejectUnauthorized:false accepts its cert chain
-// the same way the original Neon setup did. Local Postgres (Docker) needs no SSL.
+// Supabase always requires SSL. By default rejectUnauthorized:false accepts its
+// cert chain the same way the original Neon setup did (encrypted but not
+// certificate-verified — a known Supabase-pooler workaround). If you can supply
+// the CA / use a verify-full connection string, set DATABASE_SSL_STRICT=1 to
+// turn on full certificate validation and close the theoretical MITM gap. Local
+// Postgres (Docker) needs no SSL.
 const connectionString = process.env.DATABASE_URL;
 
 const isLocal =
   !!connectionString &&
   (connectionString.includes('localhost') || connectionString.includes('127.0.0.1'));
 
+const sslStrict = process.env.DATABASE_SSL_STRICT === '1';
+
 const pool = new Pool({
   connectionString,
-  ssl: isLocal ? false : { rejectUnauthorized: false },
+  ssl: isLocal ? false : { rejectUnauthorized: sslStrict },
 });
 
 // Test the connection

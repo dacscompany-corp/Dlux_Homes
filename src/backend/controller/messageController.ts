@@ -1,5 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 import pool from "../config/db";
+
+// Resolve who is calling a messaging endpoint. Three cases:
+//   - Staff (Owner/CSR/Cleaner): run support, may access any conversation.
+//   - Logged-in customer: identity is pinned to the session id — they can never
+//     act as another user, regardless of what id the request body/query claims.
+//   - Guest (no session): the public chat widget, identified only by a client
+//     UUID. We can't authenticate these, so their identity still comes from the
+//     request; the conversation UUID acts as the shared secret. This is the
+//     residual trust boundary (unchanged from before), but authenticated users
+//     can no longer impersonate or enumerate others, which was the real hole.
+async function resolveCaller(): Promise<{
+  isStaff: boolean;
+  sessionUserId: string | null;
+}> {
+  const session = await getServerSession(authOptions);
+  const role = (session?.user as { role?: string } | undefined)?.role ?? "";
+  const isStaff = role === "Owner" || role === "CSR" || role === "Cleaner";
+  const sessionUserId =
+    (session?.user as { id?: string } | undefined)?.id ?? null;
+  return { isStaff, sessionUserId };
+}
+
+async function isParticipant(
+  conversationId: string,
+  callerId: string,
+): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM conversations WHERE id = $1 AND $2 = ANY(participant_ids) LIMIT 1`,
+    [conversationId, callerId],
+  );
+  return rows.length > 0;
+}
 
 export interface Conversation {
   id: string;
@@ -30,7 +64,14 @@ export const getConversations = async (
 ): Promise<NextResponse> => {
   try {
     const { searchParams } = new URL(req.url);
-    const userId = searchParams.get("userId");
+    const requestedUserId = searchParams.get("userId");
+
+    // A logged-in, non-staff user may only ever list their OWN conversations —
+    // ignore any userId they supply and pin to the session. Staff and guests
+    // keep using the supplied id (staff pass their own; guests pass their UUID).
+    const { isStaff, sessionUserId } = await resolveCaller();
+    const userId =
+      sessionUserId && !isStaff ? sessionUserId : requestedUserId;
 
     if (!userId) {
       return NextResponse.json(
@@ -110,6 +151,21 @@ export const getMessages = async (
       );
     }
 
+    // Authenticated non-staff callers must be a participant of this conversation
+    // — this stops a logged-in customer from reading any thread by its UUID.
+    // Staff may read any thread; unauthenticated guests are gated only by the
+    // conversation UUID they hold (see resolveCaller note).
+    const { isStaff, sessionUserId } = await resolveCaller();
+    if (sessionUserId && !isStaff) {
+      const allowed = await isParticipant(conversationId, sessionUserId);
+      if (!allowed) {
+        return NextResponse.json(
+          { success: false, error: "Forbidden" },
+          { status: 403 },
+        );
+      }
+    }
+
     const result = await pool.query(
       `
       SELECT
@@ -173,6 +229,17 @@ export const sendMessage = async (req: NextRequest): Promise<NextResponse> => {
       );
     }
 
+    // A logged-in non-staff user can only send AS THEMSELVES — reject a spoofed
+    // sender_id. Previously anyone could POST another user's sender_id and
+    // impersonate them. Staff and guests are unaffected.
+    const { isStaff, sessionUserId } = await resolveCaller();
+    if (sessionUserId && !isStaff && String(sender_id) !== String(sessionUserId)) {
+      return NextResponse.json(
+        { success: false, error: "Forbidden" },
+        { status: 403 },
+      );
+    }
+
     const result = await pool.query(
       `
       INSERT INTO messages (
@@ -220,7 +287,13 @@ export const markMessagesAsRead = async (
 ): Promise<NextResponse> => {
   try {
     const body = await req.json();
-    const { conversation_id, user_id } = body;
+    const { conversation_id, user_id: requestedUserId } = body;
+
+    // Pin a logged-in non-staff caller to their own id so they can only mark
+    // their own unread messages as read.
+    const { isStaff, sessionUserId } = await resolveCaller();
+    const user_id =
+      sessionUserId && !isStaff ? sessionUserId : requestedUserId;
 
     if (!conversation_id || !user_id) {
       return NextResponse.json(
