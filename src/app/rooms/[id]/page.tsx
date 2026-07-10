@@ -368,7 +368,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
   const calendarRules = useCalendarRules();
   const isWeekendRate = isWeekendOrHoliday(date, calendarRules);
   const basePrice = stayTotal(selectedWindow.stayType, date, stayNights, room, calendarRules);
-  // Length-of-stay bundle discount (7/14/30+ nights, Overnight only) — null if
+  // Length-of-stay bundle discount (5/12/20+ nights, Overnight only) — null if
   // this stay doesn't qualify or the haven hasn't configured that tier.
   const bundleRate = selectedWindow.stayType === "10" ? undefined : bundleNightlyRate(stayNights, date, room, calendarRules);
   const bundleLabel = bundleRate == null ? null

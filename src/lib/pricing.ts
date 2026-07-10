@@ -56,7 +56,7 @@ export function isWeekendOrHoliday(dateISO: string, rules: CalendarRules = DEFAU
 
 // Length-of-stay bundle discounts for Overnight (21h) stays only — a flat
 // per-night rate that replaces normal per-night pricing once a stay reaches
-// 7/14/30 nights. Owner-editable per haven via System → Property → haven →
+// 5/12/20 nights. Owner-editable per haven via System → Property → haven →
 // Pricing (see 2026-07-07-add-haven-bundle-rates.sql). undefined = that tier
 // isn't configured yet, so the stay falls back to normal per-night pricing.
 type BundleRates = {
@@ -70,10 +70,22 @@ type BundleRates = {
 
 type Rates = { price10hr: number; price10hrWeekend: number; price21hr: number; price21hrWeekend: number } & BundleRates;
 
-// Nights required to qualify for each bundle tier.
-export const BUNDLE_WEEK_NIGHTS = 7;
-export const BUNDLE_TWOWEEK_NIGHTS = 14;
-export const BUNDLE_MONTH_NIGHTS = 30;
+// Minimum nights required to qualify for each bundle tier. The tiers are
+// evaluated highest-first in bundleNightlyRate(), so these floors yield the
+// owner's bands:
+//   1 week   → 5–11 nights
+//   2 weeks  → 12–19 nights
+//   1 month  → 20+ nights (the owner's card says 20–30; longer stays keep the
+//              monthly rate rather than falling back to a pricier tier)
+export const BUNDLE_WEEK_NIGHTS = 5;
+export const BUNDLE_TWOWEEK_NIGHTS = 12;
+export const BUNDLE_MONTH_NIGHTS = 20;
+
+// Human-readable night band per tier, derived from the constants above so the
+// admin UI can never drift out of sync with the pricing logic.
+export const BUNDLE_WEEK_LABEL = `${BUNDLE_WEEK_NIGHTS}–${BUNDLE_TWOWEEK_NIGHTS - 1} nights`;
+export const BUNDLE_TWOWEEK_LABEL = `${BUNDLE_TWOWEEK_NIGHTS}–${BUNDLE_MONTH_NIGHTS - 1} nights`;
+export const BUNDLE_MONTH_LABEL = `${BUNDLE_MONTH_NIGHTS}+ nights`;
 
 // Pick the correct rate for a stay type + check-in date.
 // stayType "10" = Daycation/Nightcation, anything else = Overnight (21h).
@@ -110,8 +122,8 @@ export function addDaysISO(iso: string, n: number): string {
 // Total for a stay. Daycation/Nightcation (10h) is a single session. Overnight
 // (21h) can span multiple nights — each night is normally priced by its OWN
 // date (a weekend night charges the weekend rate even within a mostly-weekday
-// stay), UNLESS the stay qualifies for a length-of-stay bundle discount (7/14/
-// 30+ nights), in which case the whole stay is priced at that flat nightly
+// stay), UNLESS the stay qualifies for a length-of-stay bundle discount (5/12/
+// 20+ nights), in which case the whole stay is priced at that flat nightly
 // rate instead of mixing per-night rates.
 export function stayTotal(stayType: string, checkInISO: string, nights: number, rates: Rates, rules: CalendarRules = DEFAULT_CALENDAR_RULES): number {
   if (stayType === "10" || !checkInISO) return pickRate(stayType, checkInISO, rates, rules);

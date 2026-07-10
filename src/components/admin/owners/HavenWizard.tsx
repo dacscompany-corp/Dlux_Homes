@@ -6,6 +6,10 @@ import {
   Home, PhilippinePeso, Clock, FileText, Star, Package, Image as ImageIcon,
   Images, Video, Check, X, Plus, Trash2,
 } from "lucide-react";
+import {
+  BUNDLE_WEEK_NIGHTS, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS,
+  BUNDLE_WEEK_LABEL, BUNDLE_TWOWEEK_LABEL, BUNDLE_MONTH_LABEL,
+} from "@/lib/pricing";
 
 // ── Static option lists (mirrors the Staycation haven builder) ──
 const STEPS = [
@@ -57,7 +61,7 @@ const empty = {
   // pricing
   six_hour_rate: "", ten_hour_rate: "", weekday_rate: "", weekend_rate: "",
   // Overnight (21h) length-of-stay bundle discounts — flat per-night rate once
-  // a stay reaches 7/14/30 nights. Blank = not configured for that tier.
+  // a stay reaches 5/12/20 nights. Blank = not configured for that tier.
   weekday_week_rate: "", weekday_twoweek_rate: "", weekday_month_rate: "",
   weekend_week_rate: "", weekend_twoweek_rate: "", weekend_month_rate: "",
   // Per-tier activate/deactivate — a deactivated tier keeps its configured rates
@@ -338,12 +342,12 @@ export default function HavenWizard({
               </div>
               <div className="pt-2">
                 <p className="text-xs font-semibold" style={{ color: "#8B6344" }}>Overnight (21h) length-of-stay bundle discounts <span className="font-normal" style={{ color: "#C9B79E" }}>· optional</span></p>
-                <p className="text-xs mt-1" style={{ color: "#C9B79E" }}>Flat nightly rate once a stay reaches 7 / 14 / 30 nights, based on the check-in day (weekday vs weekend/holiday). Toggle a tier off to pause its discount without clearing the rates.</p>
+                <p className="text-xs mt-1" style={{ color: "#C9B79E" }}>Flat nightly rate once a stay reaches {BUNDLE_WEEK_NIGHTS} / {BUNDLE_TWOWEEK_NIGHTS} / {BUNDLE_MONTH_NIGHTS} nights, based on the check-in day (weekday vs weekend/holiday). Toggle a tier off to pause its discount without clearing the rates.</p>
                 <div className="space-y-2 mt-2">
                   {[
-                    { label: "1 week", nights: "7+ nights", activeKey: "week_bundle_active", weekday: "weekday_week_rate", weekend: "weekend_week_rate" },
-                    { label: "2 weeks", nights: "14+ nights", activeKey: "twoweek_bundle_active", weekday: "weekday_twoweek_rate", weekend: "weekend_twoweek_rate" },
-                    { label: "1 month", nights: "30+ nights", activeKey: "month_bundle_active", weekday: "weekday_month_rate", weekend: "weekend_month_rate" },
+                    { label: "1 week", nights: BUNDLE_WEEK_LABEL, activeKey: "week_bundle_active", weekday: "weekday_week_rate", weekend: "weekend_week_rate" },
+                    { label: "2 weeks", nights: BUNDLE_TWOWEEK_LABEL, activeKey: "twoweek_bundle_active", weekday: "weekday_twoweek_rate", weekend: "weekend_twoweek_rate" },
+                    { label: "1 month", nights: BUNDLE_MONTH_LABEL, activeKey: "month_bundle_active", weekday: "weekday_month_rate", weekend: "weekend_month_rate" },
                   ].map((tier) => {
                     const active = form[tier.activeKey as keyof Form] as boolean;
                     return (

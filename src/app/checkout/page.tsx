@@ -76,6 +76,17 @@ const STEPS = ["Your details", "Payment", "Confirm", "Review"];
 // Refundable security deposit collected at check-in (D'Lux house policy).
 const SECURITY_DEPOSIT = 1000;
 
+// Brand marks for the payment options (see public/images). Matched against the
+// method key, provider and display name together, so a method stored as "bank"
+// with provider "BPI" still resolves to the BPI logo. Unknown providers return
+// null and fall back to the coloured initial badge.
+function methodLogo(m: { payment_method?: string | null; provider?: string | null; payment_name?: string | null }): string | null {
+  const key = `${m.payment_method ?? ""} ${m.provider ?? ""} ${m.payment_name ?? ""}`.toLowerCase();
+  if (key.includes("gcash")) return "/images/gcash.svg";
+  if (key.includes("bpi")) return "/images/bpi.svg";
+  return null;
+}
+
 // One uploaded ID photo: original filename + base64 data. Guests may attach several.
 type IdDoc = { name: string; data: string };
 type Info = { firstName: string; lastName: string; age: string; gender: string; email: string; phone: string; facebook: string; notes: string; validIds: IdDoc[] };
@@ -264,7 +275,7 @@ function CheckoutInner() {
   const isWeekendRate = isWeekendOrHoliday(date, calendarRules);
   // Stay price: 10h single session, or 21h × nights (each night priced by its
   // own date) — UNLESS the stay is long enough to qualify for a length-of-stay
-  // bundle discount (7/14/30+ nights), in which case a flat nightly rate applies.
+  // bundle discount (5/12/20+ nights), in which case a flat nightly rate applies.
   const basePrice = stayTotal(stayType, date, nights, room, calendarRules);
   const bundleRate = stayType === "10" ? undefined : bundleNightlyRate(nights, date, room, calendarRules);
   const bundleLabel = bundleRate == null ? null
@@ -781,10 +792,20 @@ function CheckoutInner() {
                         const isG = m.payment_method === "gcash";
                         const badgeBg = isG ? "#0A6FF1" : "#9E1B32";
                         const badgeTxt = isG ? "G" : (m.provider || m.payment_name).slice(0, 3).toUpperCase();
+                        // Real brand marks when we have one; otherwise fall back to the
+                        // coloured initial badge so unknown providers still render.
+                        const logo = methodLogo(m);
                         return (
                           <button key={m.id} onClick={() => setPayment({ ...payment, methodId: m.id, method: m.payment_method })}
                             style={{ width: "100%", display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", cursor: "pointer", borderRadius: 16, background: active ? "rgba(176,120,72,.06)" : "#FFFCF4", border: active ? "1.5px solid #B07848" : "1.5px solid #E0CEB2" }}>
-                            <div style={{ width: 42, height: 42, flex: "none", borderRadius: 11, background: badgeBg, display: "grid", placeItems: "center", color: "#fff", fontWeight: 700, fontSize: isG ? 17 : 12 }}>{badgeTxt}</div>
+                            {logo ? (
+                              <div style={{ width: 42, height: 42, flex: "none", borderRadius: 11, background: "#fff", border: "1px solid #E6D8BC", display: "grid", placeItems: "center", padding: 6 }}>
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={logo} alt={m.payment_name} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+                              </div>
+                            ) : (
+                              <div style={{ width: 42, height: 42, flex: "none", borderRadius: 11, background: badgeBg, display: "grid", placeItems: "center", color: "#fff", fontWeight: 700, fontSize: isG ? 17 : 12 }}>{badgeTxt}</div>
+                            )}
                             <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
                               <div style={{ fontSize: 15, fontWeight: 600, color: "#1F160E" }}>{m.payment_name}</div>
                               <div style={{ fontSize: 12.5, color: "#8B7458", marginTop: 1 }}>{m.account_details}</div>

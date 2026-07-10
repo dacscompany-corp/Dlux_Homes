@@ -67,7 +67,7 @@ export function havenToRoom(h: Record<string, unknown>): Room & RoomExtras {
     price21hr: Number(h.weekday_rate ?? 0),                                    // 21h weekday
     price21hrWeekend: Number(h.weekend_rate ?? h.weekday_rate ?? 0),           // 21h weekend/holiday
     // Length-of-stay bundle discounts for Overnight (21h) — flat per-night
-    // rate once a stay reaches 7/14/30 nights. undefined = not configured for
+    // rate once a stay reaches 5/12/20 nights. undefined = not configured for
     // that tier, so stayTotal() falls back to pricing every night normally.
     // A tier that's DEACTIVATED (week/twoweek/month_bundle_active = false) is
     // treated as undefined too, so its discount doesn't apply even though the

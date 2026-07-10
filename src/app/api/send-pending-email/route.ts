@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
+import { contactBlockHtml } from '@/backend/utils/emailContact';
 
 export async function POST(request: NextRequest) {
   try {
@@ -148,6 +149,9 @@ export async function POST(request: NextRequest) {
                   <td valign="top" style="padding-left:10px;padding-bottom:8px;font-size:13px;line-height:1.45;color:#5c4a3c;">You&rsquo;ll get another email once it&rsquo;s approved, usually within a day.</td>
                 </tr>
               </table>
+
+              <!-- Contact us — email + Facebook, as tappable buttons. -->
+              ${contactBlockHtml("light", `Booking ${bookingData.bookingId}`)}
 
               <!-- CTA -->
               <div style="text-align:center;margin-bottom:24px;">

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
+import { contactBlockHtml } from '@/backend/utils/emailContact';
 
+// CHECK-IN module: sent when an admin marks a booking "Checked In" — it welcomes
+// a guest whose arrival has already been recorded. Not to be confused with the
+// PRE-ARRIVAL self check-in email (backend/utils/selfCheckinEmail.ts), which is
+// scheduled before arrival and carries the key location + house rules.
 export async function POST(request: NextRequest) {
   try {
     const bookingData = await request.json();
@@ -107,15 +112,8 @@ export async function POST(request: NextRequest) {
                 <div style="font-size:13px;line-height:1.5;color:#5c4a3c;">&bull; Any concerns? Just contact us right away &mdash; we&rsquo;ll sort it out.</div>
               </div>
 
-              <!-- Need help -->
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#2b1b12;border-radius:12px;margin-bottom:24px;">
-                <tr>
-                  <td style="padding:16px 20px;">
-                    <div style="font-size:13px;font-weight:600;color:#f6ede0;margin-bottom:4px;">Need a Hand?</div>
-                    <div style="font-size:13px;line-height:1.5;color:#CBB89C;">We&rsquo;re here 24/7 &mdash; just reply to this email or message us on our Facebook page if anything comes up.</div>
-                  </td>
-                </tr>
-              </table>
+              <!-- Contact us — email + Facebook, as tappable buttons. -->
+              ${contactBlockHtml("dark", `Booking ${bookingData.bookingId}`)}
 
               <!-- CTA -->
               <div style="text-align:center;margin-bottom:24px;">

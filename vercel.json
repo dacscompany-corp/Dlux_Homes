@@ -1,0 +1,16 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/send-self-checkin-emails",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/send-checkout-reminders",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/sync-icals",
+      "schedule": "*/15 * * * *"
+    }
+  ]
+}

@@ -13,6 +13,7 @@ import { useGetEmployeesQuery, useCreateEmployeeMutation } from "@/redux/api/emp
 import { useGetReviewsQuery } from "@/redux/api/reviewsApi";
 import { useGetReportsQuery } from "@/redux/api/reportApi";
 import { useGetConversationsQuery } from "@/redux/api/messagesApi";
+import { BUNDLE_WEEK_LABEL, BUNDLE_TWOWEEK_LABEL, BUNDLE_MONTH_LABEL } from "@/lib/pricing";
 import {
   AnalyticsSection, BookingCalendarSection, BlockedDatesSection, CleaningManagementSection,
   PaymentMethodsSection, GuestAssistanceSection, UserManagementSection, PartnerManagementSection,
@@ -455,9 +456,9 @@ export default function OwnerDashboard() {
   // isn't configured yet (see System → Settings → Pricing Calendar below).
   const rnumOrNull = (v: unknown) => (v == null || v === "" ? null : Number(v));
   const overnightBundles = [
-    { label: "1 week (7+ nights)", weekday: rnumOrNull(h0.weekday_week_rate), weekend: rnumOrNull(h0.weekend_week_rate), active: h0.week_bundle_active !== false },
-    { label: "2 weeks (14+ nights)", weekday: rnumOrNull(h0.weekday_twoweek_rate), weekend: rnumOrNull(h0.weekend_twoweek_rate), active: h0.twoweek_bundle_active !== false },
-    { label: "1 month (30+ nights)", weekday: rnumOrNull(h0.weekday_month_rate), weekend: rnumOrNull(h0.weekend_month_rate), active: h0.month_bundle_active !== false },
+    { label: `1 week (${BUNDLE_WEEK_LABEL})`, weekday: rnumOrNull(h0.weekday_week_rate), weekend: rnumOrNull(h0.weekend_week_rate), active: h0.week_bundle_active !== false },
+    { label: `2 weeks (${BUNDLE_TWOWEEK_LABEL})`, weekday: rnumOrNull(h0.weekday_twoweek_rate), weekend: rnumOrNull(h0.weekend_twoweek_rate), active: h0.twoweek_bundle_active !== false },
+    { label: `1 month (${BUNDLE_MONTH_LABEL})`, weekday: rnumOrNull(h0.weekday_month_rate), weekend: rnumOrNull(h0.weekend_month_rate), active: h0.month_bundle_active !== false },
   ];
   const stayRates = [
     { name: "Daycation (10h)",  window: "07:00 – 17:00", weekday: rnum(h0.ten_hour_rate), weekend: rnum(h0.six_hour_rate) },

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
+import { contactBlockHtml } from '@/backend/utils/emailContact';
 
 export async function POST(request: NextRequest) {
   try {
@@ -23,7 +24,22 @@ export async function POST(request: NextRequest) {
     const siteUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
     const guestName = `${bookingData.firstName} ${bookingData.lastName || ''}`.trim();
     const paymentMethodLabel = bookingData.paymentMethod === 'gcash' ? 'GCash' : bookingData.paymentMethod === 'bank_transfer' ? 'Bank Transfer' : bookingData.paymentMethod;
-    const totalAmountFormatted = `₱${Number(bookingData.totalAmount).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    // Money. The guest has paid the DOWN PAYMENT, not the total — labelling the
+    // booking total as "Total paid" (as this template used to) tells them they
+    // owe nothing. Show the full breakdown instead: what they paid, what's left,
+    // and the refundable deposit that is ALSO collected at check-in, so the
+    // "due at check-in" figure is the real amount they need to bring.
+    const SECURITY_DEPOSIT = 1000; // refundable, collected at check-in
+    const peso = (n: number) =>
+      `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+    const totalAmount = Number(bookingData.totalAmount) || 0;
+    // Fall back to the 50% house rule if the caller didn't pass a down payment.
+    const downPayment = Number(bookingData.downPayment ?? 0) || Math.round(totalAmount * 0.5);
+    const remainingBalance = Math.max(0, totalAmount - downPayment);
+    const dueAtCheckIn = remainingBalance + SECURITY_DEPOSIT;
+
+    const totalAmountFormatted = peso(totalAmount);
     const emailHtml = `
       <!DOCTYPE html>
       <html lang="en">
@@ -104,19 +120,56 @@ export async function POST(request: NextRequest) {
                 </tr>
               </table>
 
-              <!-- Payment -->
+              <!-- Payment breakdown -->
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#2b1b12;border-radius:12px;margin-bottom:20px;">
                 <tr>
-                  <td style="padding:16px 20px;">
+                  <td style="padding:18px 20px;">
+
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td style="padding:3px 0;font-size:13px;color:#B8A689;">Booking total</td>
+                        <td align="right" style="padding:3px 0;font-size:13px;font-weight:600;color:#f6ede0;white-space:nowrap;">${totalAmountFormatted}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:3px 0;font-size:13px;color:#B8A689;">Down payment &mdash; paid via ${paymentMethodLabel}</td>
+                        <td align="right" style="padding:3px 0;font-size:13px;font-weight:600;color:#7dd39b;white-space:nowrap;">&minus; ${peso(downPayment)}</td>
+                      </tr>
+                    </table>
+
+                    <div style="height:1px;background:rgba(246,237,224,0.15);margin:12px 0;"></div>
+
                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                       <tr>
                         <td valign="middle" align="left">
-                          <div style="font-size:12px;color:#B8A689;">Paid via ${paymentMethodLabel}</div>
-                          <div style="font-size:13px;color:#f6ede0;margin-top:2px;">Total paid</div>
+                          <div style="font-size:13px;color:#f6ede0;font-weight:600;">Remaining balance</div>
+                          <div style="font-size:11.5px;color:#B8A689;margin-top:2px;">Due at check-in</div>
                         </td>
-                        <td valign="middle" align="right" style="white-space:nowrap;font-size:22px;font-weight:700;color:#d9a25c;">${totalAmountFormatted}</td>
+                        <td valign="middle" align="right" style="white-space:nowrap;font-size:22px;font-weight:700;color:#d9a25c;">${peso(remainingBalance)}</td>
                       </tr>
                     </table>
+
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:rgba(246,237,224,0.07);border-radius:9px;margin-top:14px;">
+                      <tr>
+                        <td style="padding:12px 14px;">
+                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                              <td style="padding:2px 0;font-size:12.5px;color:#B8A689;">Remaining balance</td>
+                              <td align="right" style="padding:2px 0;font-size:12.5px;color:#f6ede0;white-space:nowrap;">${peso(remainingBalance)}</td>
+                            </tr>
+                            <tr>
+                              <td style="padding:2px 0;font-size:12.5px;color:#B8A689;">Security deposit &mdash; refundable</td>
+                              <td align="right" style="padding:2px 0;font-size:12.5px;color:#f6ede0;white-space:nowrap;">${peso(SECURITY_DEPOSIT)}</td>
+                            </tr>
+                            <tr>
+                              <td style="padding:7px 0 0;font-size:12.5px;font-weight:700;color:#f6ede0;border-top:1px solid rgba(246,237,224,0.15);">Total to bring at check-in</td>
+                              <td align="right" style="padding:7px 0 0;font-size:14px;font-weight:700;color:#d9a25c;white-space:nowrap;border-top:1px solid rgba(246,237,224,0.15);">${peso(dueAtCheckIn)}</td>
+                            </tr>
+                          </table>
+                          <div style="font-size:11.5px;line-height:1.5;color:#B8A689;margin-top:9px;">The ${peso(SECURITY_DEPOSIT)} deposit is returned to you on the day of check-out.</div>
+                        </td>
+                      </tr>
+                    </table>
+
                   </td>
                 </tr>
               </table>
@@ -149,6 +202,10 @@ export async function POST(request: NextRequest) {
                   </td>
                 </tr>
               </table>
+
+              <!-- Contact us — email + Facebook, as tappable buttons. Light
+                   theme: the payment breakdown above is already a dark panel. -->
+              ${contactBlockHtml("light", `Booking ${bookingData.bookingId}`)}
 
               <!-- CTA -->
               <div style="text-align:center;margin-bottom:24px;">

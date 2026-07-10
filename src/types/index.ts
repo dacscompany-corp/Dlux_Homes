@@ -19,7 +19,7 @@ export interface Room {
   price21hr: number;
   price21hrWeekend: number;
   // Length-of-stay bundle discounts for Overnight (21h) — flat per-night rate
-  // once a stay reaches 7/14/30 nights. undefined = tier not configured.
+  // once a stay reaches 5/12/20 nights. undefined = tier not configured.
   weekdayWeekRate?: number;
   weekdayTwoWeekRate?: number;
   weekdayMonthRate?: number;
