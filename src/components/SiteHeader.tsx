@@ -160,6 +160,7 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
           .sh-back:hover svg { animation: none; }
         }
         @media (max-width: 720px) { .sh-acct-text, .sh-mybk-text, .sh-back-text { display: none !important; } }
+        @media (max-width: 860px) { .sh-location span:last-child { display: none !important; } }
         @media (max-width: 560px) {
           .sh-bar { padding: 0 14px !important; gap: 8px !important; }
           .sh-book { padding: 11px 13px !important; margin-left: 4px !important; }
@@ -191,6 +192,12 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
 
         {/* RIGHT — bookings + account + book */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
+
+          <Link href="/location" target="_blank" rel="noopener noreferrer" className="sh-tap sh-location" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", textDecoration: "none", color: INK, fontSize: 14 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg>
+            <span>Location</span>
+          </Link>
+          <span style={{ width: 1, height: 20, background: "#e8e1d2", margin: "0 6px" }} />
 
           {/* MY BOOKINGS — only when signed in */}
           {signedIn && (

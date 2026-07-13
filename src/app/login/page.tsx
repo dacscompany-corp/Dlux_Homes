@@ -19,13 +19,13 @@ export default function LoginPage() {
   // React keeps that server state on hydration and never re-reads the real param —
   // which is exactly why booking guests kept landing on My bookings instead of
   // resuming checkout. cbResolved gates the redirect so we never act on the stale default.
-  const [callbackUrl, setCallbackUrl] = useState("/my-bookings");
-  const [cbResolved, setCbResolved] = useState(false);
-  useEffect(() => {
-    const cb = new URLSearchParams(window.location.search).get("callbackUrl");
-    if (cb) setCallbackUrl(cb);
-    setCbResolved(true);
-  }, []);
+  const [callbackUrl] = useState(() => {
+    if (typeof window === "undefined") return "/my-bookings";
+    return new URLSearchParams(window.location.search).get("callbackUrl") || "/my-bookings";
+  });
+  const [cbResolved] = useState(() => typeof window !== "undefined");
+
+
 
   // Back target — the room being booked (never the checkout, which would just
   // redirect back here). Falls back to the listing.
@@ -35,15 +35,14 @@ export default function LoginPage() {
   })();
   const isBooking = callbackUrl.includes("/checkout");
 
-  // Once authenticated, always land on the callbackUrl (e.g. back to checkout).
-  // This covers credentials sign-in, Google OAuth, and the case where the
-  // checkout page bounced us here while its session was still propagating —
-  // without this, an authenticated user could get stranded on the default page.
-  // Wait for cbResolved so we redirect to the real target, not the placeholder.
+  // Once authenticated, always land on the welcome page (rooms), regardless of
+  // callbackUrl. This covers credentials sign-in, Google OAuth, and the case
+  // where the checkout page bounced us here while its session was still
+  // propagating. Wait for cbResolved so we don't act before mount.
   const { status } = useSession();
   useEffect(() => {
-    if (status === "authenticated" && cbResolved) router.replace(callbackUrl);
-  }, [status, cbResolved, callbackUrl, router]);
+    if (status === "authenticated" && cbResolved) router.replace("/rooms");
+  }, [status, cbResolved, router]);
 
   const handleCredentials = async (e?: React.FormEvent): Promise<void> => {
     e?.preventDefault();
@@ -52,7 +51,7 @@ export default function LoginPage() {
     try {
       const res = await signIn("credentials", { email, password, redirect: false });
       if (!res || res.error) { toast.error(res?.error || "Invalid email or password"); setLoading(false); return; }
-      router.push(callbackUrl);
+      router.push("/rooms");
     } catch { toast.error("Something went wrong. Please try again."); setLoading(false); }
   };
 
@@ -279,7 +278,7 @@ export default function LoginPage() {
               <div /><span>OR</span><div />
             </div>
 
-            <button type="button" className="si-google" onClick={() => signIn("google", { callbackUrl })}>
+            <button type="button" className="si-google" onClick={() => signIn("google", { callbackUrl: "/rooms" })}>
               <svg width="16" height="16" viewBox="0 0 24 24">
                 <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
                 <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
