@@ -505,9 +505,8 @@ function CheckoutInner() {
         <div style={{ maxWidth: 1320, margin: "0 auto", height: 72, padding: "0 32px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24 }}>
 
           {/* wordmark */}
-          <Link href="/rooms" style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none", color: "inherit" }}>
-            <div style={{ width: 30, height: 30, flex: "none", background: "#1f1b16", color: "#faf7f1", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 16, fontStyle: "italic", letterSpacing: "-0.04em" }}>D</div>
-            <div style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 18 }}>D&rsquo; Lux Homes</div>
+          <Link href="/rooms" style={{ display: "flex", alignItems: "center", minWidth: 0, textDecoration: "none", color: "inherit" }}>
+            <Image src="/logo-guest.png" alt="D'Lux Homes" width={1056} height={232} style={{ width: "auto", maxWidth: "100%", height: 40, objectFit: "contain", filter: "invert(1)" }} />
           </Link>
 
           {/* step indicator */}

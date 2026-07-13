@@ -453,9 +453,8 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
 
         {/* SITE HEADER */}
         <div style={{ flex: "none", position: "sticky", top: 0, zIndex: 20, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 16px", background: "#FAF7F1", borderBottom: "1px solid #ECE5D4" }}>
-          <Link href="/rooms" style={{ display: "flex", alignItems: "center", gap: 9, textDecoration: "none", color: "inherit" }}>
-            <span style={{ width: 26, height: 26, flex: "none", background: "#1F160E", color: "#FAF7F1", display: "grid", placeItems: "center", fontFamily: "'Fraunces', serif", fontSize: 14, fontStyle: "italic" }}>D</span>
-            <span style={{ fontFamily: "'Fraunces', serif", fontSize: 17, letterSpacing: "-.01em" }}>D&rsquo;Lux Homes</span>
+          <Link href="/rooms" style={{ display: "flex", alignItems: "center", minWidth: 0, textDecoration: "none", color: "inherit" }}>
+            <Image src="/logo-guest.png" alt="D'Lux Homes" width={1056} height={232} style={{ width: "auto", maxWidth: "100%", height: 34, objectFit: "contain", filter: "invert(1)" }} />
           </Link>
           <Link href="/my-bookings" aria-label="My bookings" style={{ width: 34, height: 34, borderRadius: 9, border: "1px solid #E0CEB2", background: "#FFFCF4", display: "grid", placeItems: "center", color: "#3A2E20", textDecoration: "none" }}>
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
@@ -553,6 +552,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                   </div>
                 )}
                 {isOvernight && date && (
+                  <>
                   <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", border: "1px solid #E0CEB2", borderRadius: 14, padding: "12px 16px", background: "#FAF7F1" }}>
                     <div>
                       <div style={{ fontSize: 14, fontWeight: 600 }}>How many nights?</div>
@@ -564,6 +564,8 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                       <button aria-label="More nights" onClick={() => setNights((n) => n + 1)} style={{ width: 34, height: 34, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: "pointer" }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
                     </div>
                   </div>
+                  <button onClick={() => { setCardStep(3); setGuestOpen(true); setDateOpen(false); }} style={{ marginTop: 10, width: "100%", padding: "13px 16px", borderRadius: 14, border: "none", background: "#B07848", color: "#fff", fontFamily: "inherit", fontSize: 14.5, fontWeight: 600, cursor: "pointer" }}>Continue &rarr;</button>
+                  </>
                 )}
               </CardStep>
 
@@ -968,6 +970,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                       </div>
                     )}
                     {isOvernight && date && (
+                      <>
                       <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", border: "1px solid #E0CEB2", borderRadius: 14, padding: "12px 16px", background: "#FAF7F1" }}>
                         <div>
                           <div style={{ fontSize: 14, fontWeight: 600 }}>How many nights?</div>
@@ -979,6 +982,8 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                           <button aria-label="More nights" onClick={() => setNights((n) => n + 1)} style={{ width: 32, height: 32, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: "pointer" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
                         </div>
                       </div>
+                      <button onClick={() => { setCardStep(3); setGuestOpen(true); setDateOpen(false); }} style={{ marginTop: 10, width: "100%", padding: "13px 16px", borderRadius: 14, border: "none", background: "#B07848", color: "#fff", fontFamily: "inherit", fontSize: 14.5, fontWeight: 600, cursor: "pointer" }}>Continue &rarr;</button>
+                      </>
                     )}
                   </CardStep>
 

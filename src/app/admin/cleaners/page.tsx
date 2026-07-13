@@ -258,11 +258,9 @@ export default function CleanerDashboard() {
         className={`fixed inset-y-0 left-0 w-64 z-50 flex flex-col transition-transform duration-300 lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
         style={{ backgroundColor: "#1f1b16", borderRight: "1px solid rgba(250,247,241,0.1)" }}
       >
-        <div className="px-5 py-4 flex items-center justify-between border-b" style={{ borderColor: "rgba(250,247,241,0.1)" }}>
-          <Link href="/rooms">
-            <div className="rounded-lg overflow-hidden" style={{ backgroundColor: "#f9fafb" }}>
-              <Image src="/logo.png" alt="D'Lux Homes" width={80} height={28} className="mix-blend-multiply" style={{ width: "80px", height: "28px", objectFit: "cover" }} />
-            </div>
+        <div className="px-2 py-1 flex items-center justify-between border-b" style={{ borderColor: "rgba(250,247,241,0.1)" }}>
+          <Link href="/rooms" className="flex items-center min-w-0 flex-1">
+            <Image src="/logo.png" alt="D'Lux Homes" width={1056} height={232} style={{ width: "100%", height: "auto", maxHeight: "72px", objectFit: "contain" }} />
           </Link>
           <button onClick={() => setSidebarOpen(false)} aria-label="Close menu" className="lg:hidden cursor-pointer" style={{ color: "#6b5040" }}>
             <X className="w-4 h-4" />
