@@ -255,9 +255,9 @@ export default function BrowsePage() {
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg,rgba(31,22,14,.35) 0%,rgba(31,22,14,.05) 40%,rgba(31,22,14,.75) 100%)", zIndex: 2 }} />
         <div style={{ position: "absolute", inset: 0, zIndex: 3, display: "flex", flexDirection: "column", justifyContent: "space-between", padding: "32px 28px", maxWidth: 1320, margin: "0 auto", left: 0, right: 0 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", color: "var(--white)" }}>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 10, padding: "8px 14px", borderRadius: 999, background: "rgba(255,255,255,.15)", backdropFilter: "blur(10px)", fontSize: 12, fontWeight: 600 }}>
+            <Link href="/location" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 10, padding: "8px 14px", borderRadius: 999, background: "rgba(255,255,255,.15)", backdropFilter: "blur(10px)", fontSize: 12, fontWeight: 600, color: "inherit", textDecoration: "none", cursor: "pointer" }}>
               <IcoMapPin /> {room.location}
-            </div>
+            </Link>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 10, padding: "8px 14px", borderRadius: 999, background: "rgba(255,255,255,.15)", backdropFilter: "blur(10px)", fontSize: 12, fontWeight: 600 }}>
               <IcoStar size={13} /> {room.rating} · {room.reviewCount} reviews
             </div>
@@ -471,13 +471,21 @@ export default function BrowsePage() {
             </div>
             {[
               { h: "Stay", items: ["10-Hour Daycation", "10-Hour Nightcation", "21-Hour Full Stay"] },
-              { h: "Info", items: ["House rules", "Amenities", "Nearby places"] },
+              { h: "Info", items: ["House rules", "Amenities", "Location"] },
               { h: "Contact", items: ["homesdlux@gmail.com", "Tower 4, Grass Residences, QC"] },
             ].map((col, i) => (
               <div key={col.h} className="footer-col" style={{ animationDelay: `${(i + 1) * 110}ms` }}>
                 <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--ink)", marginBottom: 14, fontWeight: 600 }}>{col.h}</div>
                 <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-                  {col.items.map((item) => <li key={item} className="footer-link" style={{ fontSize: 13, color: "var(--ink)" }}>{item}</li>)}
+                  {col.items.map((item) =>
+                    item === "Location" ? (
+                      <li key={item} className="footer-link" style={{ fontSize: 13 }}>
+                        <Link href="/location" target="_blank" rel="noopener noreferrer" style={{ color: "var(--ink)", textDecoration: "none" }}>{item}</Link>
+                      </li>
+                    ) : (
+                      <li key={item} className="footer-link" style={{ fontSize: 13, color: "var(--ink)" }}>{item}</li>
+                    )
+                  )}
                 </ul>
               </div>
             ))}
