@@ -255,7 +255,7 @@ export default function BrowsePage() {
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg,rgba(31,22,14,.35) 0%,rgba(31,22,14,.05) 40%,rgba(31,22,14,.75) 100%)", zIndex: 2 }} />
         <div style={{ position: "absolute", inset: 0, zIndex: 3, display: "flex", flexDirection: "column", justifyContent: "space-between", padding: "32px 28px", maxWidth: 1320, margin: "0 auto", left: 0, right: 0 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", color: "var(--white)" }}>
-            <Link href="/location" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 10, padding: "8px 14px", borderRadius: 999, background: "rgba(255,255,255,.15)", backdropFilter: "blur(10px)", fontSize: 12, fontWeight: 600, color: "inherit", textDecoration: "none", cursor: "pointer" }}>
+            <Link href="/location" style={{ display: "inline-flex", alignItems: "center", gap: 10, padding: "8px 14px", borderRadius: 999, background: "rgba(255,255,255,.15)", backdropFilter: "blur(10px)", fontSize: 12, fontWeight: 600, color: "inherit", textDecoration: "none", cursor: "pointer" }}>
               <IcoMapPin /> {room.location}
             </Link>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 10, padding: "8px 14px", borderRadius: 999, background: "rgba(255,255,255,.15)", backdropFilter: "blur(10px)", fontSize: 12, fontWeight: 600 }}>
@@ -480,7 +480,7 @@ export default function BrowsePage() {
                   {col.items.map((item) =>
                     item === "Location" ? (
                       <li key={item} className="footer-link" style={{ fontSize: 13 }}>
-                        <Link href="/location" target="_blank" rel="noopener noreferrer" style={{ color: "var(--ink)", textDecoration: "none" }}>{item}</Link>
+                        <Link href="/location" style={{ color: "var(--ink)", textDecoration: "none" }}>{item}</Link>
                       </li>
                     ) : (
                       <li key={item} className="footer-link" style={{ fontSize: 13, color: "var(--ink)" }}>{item}</li>
