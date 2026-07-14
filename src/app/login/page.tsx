@@ -13,13 +13,14 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  // Where to land after sign-in (e.g. back to checkout). Defaults to My bookings.
+  // Where to land after sign-in. A checkout sign-in passes ?callbackUrl=/checkout…
+  // and resumes there; a normal sign-in has no param and falls back to the home page.
   // IMPORTANT: read the ?callbackUrl= param on the CLIENT after mount. A useState
   // lazy-initialiser runs during SSR (window undefined) and locks in the default;
   // React keeps that server state on hydration and never re-reads the real param —
-  // which is exactly why booking guests kept landing on My bookings instead of
+  // which is exactly why booking guests kept landing on the default instead of
   // resuming checkout. cbResolved gates the redirect so we never act on the stale default.
-  const [callbackUrl, setCallbackUrl] = useState("/my-bookings");
+  const [callbackUrl, setCallbackUrl] = useState("/");
   const [cbResolved, setCbResolved] = useState(false);
   useEffect(() => {
     const cb = new URLSearchParams(window.location.search).get("callbackUrl");
