@@ -8,7 +8,8 @@ import { mockRooms } from "@/lib/mock-data";
 import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
 import { useGetBlockedDatesQuery } from "@/redux/api/blockedDatesApi";
 import { havenToRoom } from "@/lib/haven-adapter";
-import { stayTotal, isWeekendOrHoliday, extraPaxFee } from "@/lib/pricing";
+import { stayTotal, isWeekendOrHoliday, extraPaxFee, bundleNightlyRate, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS } from "@/lib/pricing";
+import { useCalendarRules } from "@/lib/useCalendarRules";
 import type { Room } from "@/types";
 
 // ── Inline SVG icons ───────────────────────────────────────────
@@ -362,8 +363,18 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
   // a flat per-pax fee (once per booking). Only adults + young adults are
   // chargeable — "Children (7 under)" are exempt from the fee (but still count
   // toward the 4-pax max). No cleaning or service fee.
-  const isWeekendRate = isWeekendOrHoliday(date);
-  const basePrice = stayTotal(selectedWindow.stayType, date, stayNights, room);
+  // Owner-editable weekend/holiday calendar (System → Settings in the admin
+  // portal); falls back to Fri/Sat + built-in PH holidays if unreachable.
+  const calendarRules = useCalendarRules();
+  const isWeekendRate = isWeekendOrHoliday(date, calendarRules);
+  const basePrice = stayTotal(selectedWindow.stayType, date, stayNights, room, calendarRules);
+  // Length-of-stay bundle discount (5/12/20+ nights, Overnight only) — null if
+  // this stay doesn't qualify or the haven hasn't configured that tier.
+  const bundleRate = selectedWindow.stayType === "10" ? undefined : bundleNightlyRate(stayNights, date, room, calendarRules);
+  const bundleLabel = bundleRate == null ? null
+    : stayNights >= BUNDLE_MONTH_NIGHTS ? "Monthly rate"
+    : stayNights >= BUNDLE_TWOWEEK_NIGHTS ? "Two-week rate"
+    : "Weekly rate";
   const feePax = guests.adults + guests.children; // adults + young adults; excludes 7-under
   const extraPaxCount = Math.max(0, feePax - room.basePax);
   const paxFee = extraPaxFee(feePax, room.basePax, room.additionalPaxFee);
@@ -442,9 +453,8 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
 
         {/* SITE HEADER */}
         <div style={{ flex: "none", position: "sticky", top: 0, zIndex: 20, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 16px", background: "#FAF7F1", borderBottom: "1px solid #ECE5D4" }}>
-          <Link href="/rooms" style={{ display: "flex", alignItems: "center", gap: 9, textDecoration: "none", color: "inherit" }}>
-            <span style={{ width: 26, height: 26, flex: "none", background: "#1F160E", color: "#FAF7F1", display: "grid", placeItems: "center", fontFamily: "'Fraunces', serif", fontSize: 14, fontStyle: "italic" }}>D</span>
-            <span style={{ fontFamily: "'Fraunces', serif", fontSize: 17, letterSpacing: "-.01em" }}>D&rsquo;Lux Homes</span>
+          <Link href="/rooms" style={{ display: "flex", alignItems: "center", minWidth: 0, textDecoration: "none", color: "inherit" }}>
+            <Image src="/logo-guest.png" alt="D'Lux Homes" width={1056} height={232} style={{ width: "auto", maxWidth: "100%", height: 34, objectFit: "contain", filter: "invert(1)" }} />
           </Link>
           <Link href="/my-bookings" aria-label="My bookings" style={{ width: 34, height: 34, borderRadius: 9, border: "1px solid #E0CEB2", background: "#FFFCF4", display: "grid", placeItems: "center", color: "#3A2E20", textDecoration: "none" }}>
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
@@ -537,11 +547,12 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                 </button>
                 {dateOpen && (
                   <div style={{ marginTop: 10, border: "1px solid #E0CEB2", borderRadius: 16, background: "#FAF7F1", padding: 14 }}>
-                    <Calendar selected={date} blocked={blockedDates} onSelect={(d) => { setDate(d); setDateOpen(false); setCardStep(3); setGuestOpen(true); }} />
+                    <Calendar selected={date} blocked={blockedDates} onSelect={(d) => { setDate(d); setDateOpen(false); if (isOvernight) { setCardStep(2); } else { setCardStep(3); setGuestOpen(true); } }} />
                     <div style={{ fontSize: 11, color: "#9B8B73", marginTop: 11, display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 9, height: 9, borderRadius: "50%", background: "#1F160E", display: "inline-block" }} /> Crossed-out days are already booked.</div>
                   </div>
                 )}
                 {isOvernight && date && (
+                  <>
                   <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", border: "1px solid #E0CEB2", borderRadius: 14, padding: "12px 16px", background: "#FAF7F1" }}>
                     <div>
                       <div style={{ fontSize: 14, fontWeight: 600 }}>How many nights?</div>
@@ -553,6 +564,8 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                       <button aria-label="More nights" onClick={() => setNights((n) => n + 1)} style={{ width: 34, height: 34, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: "pointer" }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
                     </div>
                   </div>
+                  <button onClick={() => { setCardStep(3); setGuestOpen(true); setDateOpen(false); }} style={{ marginTop: 10, width: "100%", padding: "13px 16px", borderRadius: 14, border: "none", background: "#B07848", color: "#fff", fontFamily: "inherit", fontSize: 14.5, fontWeight: 600, cursor: "pointer" }}>Continue &rarr;</button>
+                  </>
                 )}
               </CardStep>
 
@@ -594,10 +607,10 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
                           <button onClick={() => setGuests({ ...guests, infants: Math.max(0, guests.infants - 1) })} style={stepStyle(guests.infants > 0)}>{minus}</button>
                           <span style={{ minWidth: 16, textAlign: "center", fontWeight: 700 }}>{guests.infants}</span>
-                          <button onClick={() => setGuests({ ...guests, infants: guests.infants + 1 })} style={stepStyle(true)}>{plus}</button>
+                          <button onClick={() => { if (guests.infants < 4) setGuests({ ...guests, infants: guests.infants + 1 }); }} style={stepStyle(guests.infants < 4)}>{plus}</button>
                         </div>
                       </div>
-                      <div style={{ fontSize: 11, color: "#9B8B73", padding: "0 0 12px", lineHeight: 1.5 }}>Rate covers 2 guests. Each extra adult or teen is {peso(room.additionalPaxFee)} (up to 4). Little ones stay free. For 5+, message us on <a href="https://www.facebook.com/messages/t/270893736109969" target="_blank" rel="noopener" style={{ color: "#B07848", fontWeight: 600 }}>Facebook</a>.</div>
+                      <div style={{ fontSize: 11, color: "#9B8B73", padding: "0 0 12px", lineHeight: 1.5 }}>Rate covers 2 guests. Each extra adult or teen is {peso(room.additionalPaxFee)} (up to 4). Little ones stay free, up to 4. For 5+, message us on <a href="https://www.facebook.com/messages/t/270893736109969" target="_blank" rel="noopener" style={{ color: "#B07848", fontWeight: 600 }}>Facebook</a>.</div>
                     </div>
                   );
                 })()}
@@ -606,7 +619,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
               {/* price summary */}
               {date && (
                 <div style={{ borderTop: "1px solid #EFE4CE", paddingTop: 15, display: "flex", flexDirection: "column", gap: 8, fontSize: 13.5 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#4A3A2A" }}><span style={{ whiteSpace: "nowrap" }}>{selectedWindow.label} · {isOvernight ? `${stayNights} night${stayNights > 1 ? "s" : ""}` : (isWeekendRate ? "Weekend/Holiday" : "Weekday")}</span><span>{peso(basePrice)}</span></div>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#4A3A2A" }}><span style={{ whiteSpace: "nowrap" }}>{selectedWindow.label} · {isOvernight ? `${stayNights} night${stayNights > 1 ? "s" : ""}${bundleLabel ? ` · ${bundleLabel}` : ""}` : (isWeekendRate ? "Weekend/Holiday" : "Weekday")}</span><span>{peso(basePrice)}</span></div>
                   {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra guests · {extraPaxCount} × {peso(room.additionalPaxFee)}</span><span>{peso(paxFee)}</span></div>}
                   <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16, paddingTop: 9, borderTop: "1px solid #EFE4CE" }}><span>Total</span><span>{peso(total)}</span></div>
                 </div>
@@ -952,11 +965,12 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                     </button>
                     {dateOpen && (
                       <div style={{ marginTop: 10, border: "1px solid #E0CEB2", borderRadius: 16, background: "#FAF7F1", padding: 16 }}>
-                        <Calendar selected={date} blocked={blockedDates} onSelect={(d) => { setDate(d); setDateOpen(false); setCardStep(3); setGuestOpen(true); }} />
+                        <Calendar selected={date} blocked={blockedDates} onSelect={(d) => { setDate(d); setDateOpen(false); if (isOvernight) { setCardStep(2); } else { setCardStep(3); setGuestOpen(true); } }} />
                         <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: 12, display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 9, height: 9, borderRadius: "50%", background: "#1F160E", display: "inline-block" }} /> Crossed-out days are already booked.</div>
                       </div>
                     )}
                     {isOvernight && date && (
+                      <>
                       <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", border: "1px solid #E0CEB2", borderRadius: 14, padding: "12px 16px", background: "#FAF7F1" }}>
                         <div>
                           <div style={{ fontSize: 14, fontWeight: 600 }}>How many nights?</div>
@@ -968,6 +982,8 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                           <button aria-label="More nights" onClick={() => setNights((n) => n + 1)} style={{ width: 32, height: 32, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: "pointer" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
                         </div>
                       </div>
+                      <button onClick={() => { setCardStep(3); setGuestOpen(true); setDateOpen(false); }} style={{ marginTop: 10, width: "100%", padding: "13px 16px", borderRadius: 14, border: "none", background: "#B07848", color: "#fff", fontFamily: "inherit", fontSize: 14.5, fontWeight: 600, cursor: "pointer" }}>Continue &rarr;</button>
+                      </>
                     )}
                   </CardStep>
 
@@ -1009,10 +1025,10 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                             <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
                               <button onClick={() => setGuests({ ...guests, infants: Math.max(0, guests.infants - 1) })} style={stepStyle(guests.infants > 0)}>{minus}</button>
                               <span style={{ minWidth: 16, textAlign: "center", fontWeight: 700 }}>{guests.infants}</span>
-                              <button onClick={() => setGuests({ ...guests, infants: guests.infants + 1 })} style={stepStyle(true)}>{plus}</button>
+                              <button onClick={() => { if (guests.infants < 4) setGuests({ ...guests, infants: guests.infants + 1 }); }} style={stepStyle(guests.infants < 4)}>{plus}</button>
                             </div>
                           </div>
-                          <div style={{ fontSize: 11.5, color: "#9B8B73", padding: "0 0 12px", lineHeight: 1.5 }}>The rate covers 2 guests. Each extra adult or teen is {peso(room.additionalPaxFee)} (up to 4). Little ones stay free. For 5+ adults/teens, message us on <a href="https://www.facebook.com/messages/t/270893736109969" target="_blank" rel="noopener" style={{ color: "#B07848", fontWeight: 600 }}>Facebook</a>.</div>
+                          <div style={{ fontSize: 11.5, color: "#9B8B73", padding: "0 0 12px", lineHeight: 1.5 }}>The rate covers 2 guests. Each extra adult or teen is {peso(room.additionalPaxFee)} (up to 4). Little ones stay free, up to 4. For 5+ adults/teens, message us on <a href="https://www.facebook.com/messages/t/270893736109969" target="_blank" rel="noopener" style={{ color: "#B07848", fontWeight: 600 }}>Facebook</a>.</div>
                         </div>
                       );
                     })()}
@@ -1021,7 +1037,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
                   {/* price summary */}
                   {date && (
                     <div style={{ borderTop: "1px solid #EFE4CE", paddingTop: 16, display: "flex", flexDirection: "column", gap: 8, fontSize: 13.5 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#4A3A2A" }}><span style={{ whiteSpace: "nowrap" }}>{selectedWindow.label} · {isOvernight ? `${stayNights} night${stayNights > 1 ? "s" : ""}` : (isWeekendRate ? "Weekend/Holiday" : "Weekday")}</span><span>{peso(basePrice)}</span></div>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#4A3A2A" }}><span style={{ whiteSpace: "nowrap" }}>{selectedWindow.label} · {isOvernight ? `${stayNights} night${stayNights > 1 ? "s" : ""}${bundleLabel ? ` · ${bundleLabel}` : ""}` : (isWeekendRate ? "Weekend/Holiday" : "Weekday")}</span><span>{peso(basePrice)}</span></div>
                       {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra guests · {extraPaxCount} × {peso(room.additionalPaxFee)}</span><span>{peso(paxFee)}</span></div>}
                       <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16, paddingTop: 9, borderTop: "1px solid #EFE4CE" }}><span>Total</span><span>{peso(total)}</span></div>
                     </div>

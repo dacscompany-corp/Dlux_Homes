@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { upload_file, delete_file } from "../utils/cloudinary";
+import { validateImageDataUrl } from "../utils/imageGuard";
 import pool from "../config/db";
 import { syncAmenityVerifications } from "../utils/amenityVerifySync";
 
@@ -47,6 +48,18 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
       ten_hour_rate,
       weekday_rate,
       weekend_rate,
+      // Length-of-stay bundle discounts (Overnight/21h only) — see
+      // 2026-07-07-add-haven-bundle-rates.sql. null/undefined = not configured.
+      weekday_week_rate,
+      weekday_twoweek_rate,
+      weekday_month_rate,
+      weekend_week_rate,
+      weekend_twoweek_rate,
+      weekend_month_rate,
+      // Per-tier activate/deactivate for the length-of-stay bundles (default on).
+      week_bundle_active,
+      twoweek_bundle_active,
+      month_bundle_active,
       six_hour_check_in,
       six_hour_check_out,
       ten_hour_check_in,
@@ -138,6 +151,11 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
     if (haven_images && haven_images.length > 0) {
       const uploaded = await Promise.all(
         haven_images.map(async (image: string, index: number) => {
+          const check = validateImageDataUrl(image);
+          if (!check.ok) {
+            console.warn(`[haven] rejected non-image upload: ${check.reason}`);
+            return { image_url: "", public_id: "", display_order: index };
+          }
           const result = await upload_file(image, "dlux-homes/havens");
           return {
             image_url: result.url,
@@ -156,6 +174,11 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
         if (Array.isArray(images) && images.length > 0) {
           const categoryUrls = await Promise.all(
             images.map(async (image: string, index: number) => {
+              const check = validateImageDataUrl(image);
+              if (!check.ok) {
+                console.warn(`[haven] rejected non-image photo-tour upload: ${check.reason}`);
+                return { category, image_url: "", public_id: "", display_order: index };
+              }
               const result = await upload_file(
                 image,
                 `dlux-homes/photo-tours/${category}`
@@ -186,12 +209,17 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
         google_map_address, google_map_lat, google_map_lng, virtual_tour_url,
         bathrooms, property_type, cleaning_fee,
         commission_rate,
+        weekday_week_rate, weekday_twoweek_rate, weekday_month_rate,
+        weekend_week_rate, weekend_twoweek_rate, weekend_month_rate,
+        week_bundle_active, twoweek_bundle_active, month_bundle_active,
         created_at, updated_at
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb,
                 $23, $24, $25, $26, $27, $28, $29, $30, $31, $32,
                 $33, $34, $35,
                 $36,
+                $37, $38, $39, $40, $41, $42,
+                $43, $44, $45,
                 NOW(), NOW())
       RETURNING *
     `;
@@ -237,6 +265,15 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
       effectiveCommissionRate === undefined
         ? null
         : parseFloat(String(effectiveCommissionRate)),
+      weekday_week_rate ? parseFloat(weekday_week_rate) : null,
+      weekday_twoweek_rate ? parseFloat(weekday_twoweek_rate) : null,
+      weekday_month_rate ? parseFloat(weekday_month_rate) : null,
+      weekend_week_rate ? parseFloat(weekend_week_rate) : null,
+      weekend_twoweek_rate ? parseFloat(weekend_twoweek_rate) : null,
+      weekend_month_rate ? parseFloat(weekend_month_rate) : null,
+      week_bundle_active !== false,
+      twoweek_bundle_active !== false,
+      month_bundle_active !== false,
     ];
 
     const havenResult = await pool.query(havenQuery, havenValues);
@@ -630,6 +667,18 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
       ten_hour_rate,
       weekday_rate,
       weekend_rate,
+      // Length-of-stay bundle discounts (Overnight/21h only) — see
+      // 2026-07-07-add-haven-bundle-rates.sql. null/undefined = not configured.
+      weekday_week_rate,
+      weekday_twoweek_rate,
+      weekday_month_rate,
+      weekend_week_rate,
+      weekend_twoweek_rate,
+      weekend_month_rate,
+      // Per-tier activate/deactivate for the length-of-stay bundles (default on).
+      week_bundle_active,
+      twoweek_bundle_active,
+      month_bundle_active,
       six_hour_check_in,
       six_hour_check_out,
       ten_hour_check_in,
@@ -722,6 +771,15 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
           property_type = $34,
           cleaning_fee = $35,
           commission_rate = $36,
+          weekday_week_rate = $37,
+          weekday_twoweek_rate = $38,
+          weekday_month_rate = $39,
+          weekend_week_rate = $40,
+          weekend_twoweek_rate = $41,
+          weekend_month_rate = $42,
+          week_bundle_active = $43,
+          twoweek_bundle_active = $44,
+          month_bundle_active = $45,
           updated_at = NOW()
       WHERE uuid_id = $22
       RETURNING *
@@ -768,6 +826,15 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
       effectiveCommissionRate === undefined
         ? null
         : parseFloat(String(effectiveCommissionRate)),
+      weekday_week_rate ? parseFloat(weekday_week_rate) : null,
+      weekday_twoweek_rate ? parseFloat(weekday_twoweek_rate) : null,
+      weekday_month_rate ? parseFloat(weekday_month_rate) : null,
+      weekend_week_rate ? parseFloat(weekend_week_rate) : null,
+      weekend_twoweek_rate ? parseFloat(weekend_twoweek_rate) : null,
+      weekend_month_rate ? parseFloat(weekend_month_rate) : null,
+      week_bundle_active !== false,
+      twoweek_bundle_active !== false,
+      month_bundle_active !== false,
     ];
 
     const result = await pool.query(query, values);
@@ -821,6 +888,11 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
     if (haven_images && haven_images.length > 0) {
       const havenImageUrls = await Promise.all(
         haven_images.map(async (image: string, index: number) => {
+          const check = validateImageDataUrl(image);
+          if (!check.ok) {
+            console.warn(`[haven] rejected non-image upload: ${check.reason}`);
+            return { image_url: "", public_id: "", display_order: index };
+          }
           const result = await upload_file(image, "dlux-homes/havens");
           return {
             image_url: result.url,
@@ -830,8 +902,8 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
         })
       );
 
-      // Insert new images
-      for (const img of havenImageUrls) {
+      // Insert new images (skip any that were rejected as non-images / failed to upload)
+      for (const img of havenImageUrls.filter((img) => img.image_url)) {
         await pool.query(
           `INSERT INTO haven_images (haven_id, image_url, cloudinary_public_id, display_order, uploaded_at)
            VALUES ($1, $2, $3, $4, NOW())`,
@@ -846,6 +918,11 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
         if (Array.isArray(images) && images.length > 0) {
           const categoryUrls = await Promise.all(
             images.map(async (image: string, index: number) => {
+              const check = validateImageDataUrl(image);
+              if (!check.ok) {
+                console.warn(`[haven] rejected non-image photo-tour upload: ${check.reason}`);
+                return { category, image_url: "", public_id: "", display_order: index };
+              }
               const result = await upload_file(
                 image,
                 `dlux-homes/photo-tours/${category}`
@@ -859,8 +936,8 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
             })
           );
 
-          // Insert new photo tour images
-          for (const img of categoryUrls) {
+          // Insert new photo tour images (skip any rejected as non-images / failed to upload)
+          for (const img of categoryUrls.filter((img) => img.image_url)) {
             await pool.query(
               `INSERT INTO photo_tour_images (haven_id, category, image_url, cloudinary_public_id, display_order, uploaded_at)
                VALUES ($1, $2, $3, $4, $5, NOW())`,

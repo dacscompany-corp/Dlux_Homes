@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/backend/config/db';
 import { upload_image_from_form } from '@/backend/utils/fileUpload';
 import { logActivity } from '@/backend/utils/activityLogger';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { requireAdmin } from '@/backend/utils/requireAdmin';
 
 // GET is PUBLIC BY DESIGN — Components/Checkout.tsx fetches this from the
 // unauthenticated booking flow to list available payment options to the
@@ -44,15 +43,12 @@ export async function GET() {
   }
 }
 
+// POST creates a new payment channel — staff only (see PUT/DELETE rationale).
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { success: false, message: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+    const guard = await requireAdmin();
+    if (!guard.ok) return guard.response;
+    const session = guard.session;
 
     const formData = await request.formData();
     

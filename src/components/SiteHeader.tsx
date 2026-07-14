@@ -7,6 +7,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import { getMyBookingIds } from "@/lib/booking-store";
@@ -181,12 +182,8 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
               <span style={{ width: 1, height: 24, background: "#e8e1d2" }} />
             </>
           )}
-          <Link href="/rooms" style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none", color: "inherit", minWidth: 0 }}>
-            <div style={{ width: backHref ? 30 : 34, height: backHref ? 30 : 34, flex: "none", background: INK, color: "#faf7f1", display: "grid", placeItems: "center", fontFamily: SERIF, fontSize: backHref ? 16 : 18, fontStyle: "italic", letterSpacing: "-0.04em" }}>D</div>
-            <div style={{ lineHeight: 1, minWidth: 0, overflow: "hidden" }}>
-              <div style={{ fontFamily: SERIF, fontSize: backHref ? 18 : 20, letterSpacing: "-0.01em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>D&rsquo; Lux Homes</div>
-              {!backHref && <div style={{ fontSize: 10, letterSpacing: "0.28em", textTransform: "uppercase", color: SUBTLE, marginTop: 4 }}>Staycations &middot; PH</div>}
-            </div>
+          <Link href="/rooms" style={{ display: "flex", alignItems: "center", textDecoration: "none", color: "inherit", minWidth: 0 }}>
+            <Image src="/logo-guest.png" alt="D'Lux Homes" width={1056} height={232} priority style={{ width: "auto", maxWidth: "100%", height: backHref ? 46 : 52, objectFit: "contain", filter: "invert(1)" }} />
           </Link>
         </div>
 

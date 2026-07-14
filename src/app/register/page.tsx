@@ -19,7 +19,9 @@ export default function RegisterPage() {
   const [backHref, setBackHref] = useState("/rooms");
   useEffect(() => {
     const cb = new URLSearchParams(window.location.search).get("callbackUrl");
-    if (cb) {
+    // Same-origin relative paths only — blocks an open redirect via
+    // ?callbackUrl=https://evil.example (see login/page.tsx for detail).
+    if (cb && cb.startsWith("/") && !cb.startsWith("//") && !cb.startsWith("/\\")) {
       setCallbackUrl(cb);
       const rid = new URLSearchParams(cb.split("?")[1] || "").get("roomId");
       if (rid) setBackHref(`/rooms/${rid}`);

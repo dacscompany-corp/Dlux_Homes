@@ -5,7 +5,8 @@ import { requireBookingAccess } from "@/backend/utils/requireAdmin";
 
 export const runtime = "nodejs";
 
-const ACTIVE = ["pending", "approved", "confirmed", "on-going"];
+// Self-service date changes are only offered while the booking is still
+// awaiting host review — once approved/confirmed, the guest must message us.
 const DAY = 24 * 60 * 60 * 1000;
 
 interface RouteContext {
@@ -29,7 +30,7 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
     }
 
     const found = await client.query(
-      `SELECT b.id, b.booking_id, b.status, b.room_name, b.check_in_date, b.date_change_count,
+      `SELECT b.id, b.booking_id, b.status, b.room_name, b.check_in_date, b.date_change_count, b.requested_new_date,
               bg.first_name, bg.last_name
          FROM booking b
          LEFT JOIN booking_guests bg ON bg.booking_id = b.id
@@ -41,8 +42,11 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
       return NextResponse.json({ error: "Booking not found." }, { status: 404 });
     }
     const booking = found.rows[0];
-    if (!ACTIVE.includes(booking.status)) {
-      return NextResponse.json({ error: "This booking can no longer be changed." }, { status: 409 });
+    if (booking.status !== "pending") {
+      return NextResponse.json(
+        { error: "Self-service date changes are only available while your booking is pending. Please message us to reschedule." },
+        { status: 409 }
+      );
     }
     if (Number(booking.date_change_count) >= 1) {
       return NextResponse.json(
@@ -50,9 +54,15 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
         { status: 409 }
       );
     }
+    if (booking.requested_new_date) {
+      return NextResponse.json(
+        { error: "You already have a pending date-change request. Please wait for our team to respond." },
+        { status: 409 }
+      );
+    }
 
     const today = new Date(); today.setHours(0, 0, 0, 0);
-    const original = new Date(booking.check_in_date); original.setHours(0, 0, 0, 0);
+    const original = new Date(booking.check_in_date + "T00:00:00");
     const requested = new Date(newDate + "T00:00:00");
 
     const daysUntilCheckIn = Math.floor((original.getTime() - today.getTime()) / DAY);
@@ -75,16 +85,15 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
 
     const recorded = await client.query(
       `UPDATE booking
-          SET date_change_count = date_change_count + 1,
-              date_change_requested_at = NOW(),
+          SET date_change_requested_at = NOW(),
               requested_new_date = $2
-        WHERE id = $1 AND date_change_count = 0
+        WHERE id = $1 AND date_change_count = 0 AND requested_new_date IS NULL
         RETURNING id`,
       [booking.id, newDate]
     );
     if (recorded.rows.length === 0) {
       return NextResponse.json(
-        { error: "You've already used your one-time date change. Please message us directly to arrange any further changes." },
+        { error: "This request could no longer be submitted. Please refresh and try again." },
         { status: 409 }
       );
     }

@@ -13,9 +13,11 @@ import { useGetEmployeesQuery, useCreateEmployeeMutation } from "@/redux/api/emp
 import { useGetReviewsQuery } from "@/redux/api/reviewsApi";
 import { useGetReportsQuery } from "@/redux/api/reportApi";
 import { useGetConversationsQuery } from "@/redux/api/messagesApi";
+import { BUNDLE_WEEK_LABEL, BUNDLE_TWOWEEK_LABEL, BUNDLE_MONTH_LABEL } from "@/lib/pricing";
 import {
   AnalyticsSection, BookingCalendarSection, BlockedDatesSection, CleaningManagementSection,
   PaymentMethodsSection, GuestAssistanceSection, UserManagementSection, PartnerManagementSection,
+  PricingCalendarSection,
 } from "@/components/admin/owners/OwnerModules";
 import HavenWizard from "@/components/admin/owners/HavenWizard";
 import NewBookingWizard from "@/components/admin/NewBookingWizard";
@@ -450,6 +452,14 @@ export default function OwnerDashboard() {
   // drifting config). Three D'Lux stay types per the rate card.
   const h0 = (havensList[0] as Record<string, unknown>) || {};
   const rnum = (v: unknown) => Number(v ?? 0);
+  // Overnight-only length-of-stay bundle tiers — null entries mean that tier
+  // isn't configured yet (see System → Settings → Pricing Calendar below).
+  const rnumOrNull = (v: unknown) => (v == null || v === "" ? null : Number(v));
+  const overnightBundles = [
+    { label: `1 week (${BUNDLE_WEEK_LABEL})`, weekday: rnumOrNull(h0.weekday_week_rate), weekend: rnumOrNull(h0.weekend_week_rate), active: h0.week_bundle_active !== false },
+    { label: `2 weeks (${BUNDLE_TWOWEEK_LABEL})`, weekday: rnumOrNull(h0.weekday_twoweek_rate), weekend: rnumOrNull(h0.weekend_twoweek_rate), active: h0.twoweek_bundle_active !== false },
+    { label: `1 month (${BUNDLE_MONTH_LABEL})`, weekday: rnumOrNull(h0.weekday_month_rate), weekend: rnumOrNull(h0.weekend_month_rate), active: h0.month_bundle_active !== false },
+  ];
   const stayRates = [
     { name: "Daycation (10h)",  window: "07:00 – 17:00", weekday: rnum(h0.ten_hour_rate), weekend: rnum(h0.six_hour_rate) },
     { name: "Nightcation (10h)", window: "19:00 – 05:00", weekday: rnum(h0.ten_hour_rate), weekend: rnum(h0.six_hour_rate) },
@@ -529,11 +539,9 @@ export default function OwnerDashboard() {
       >
 
         {/* Logo */}
-        <div className="px-5 py-4 flex items-center justify-between border-b" style={{ borderColor: "rgba(250,247,241,0.1)" }}>
-          <Link href="/rooms" className="flex items-center gap-2.5">
-            <div className="rounded-lg overflow-hidden" style={{ backgroundColor: "#f9fafb" }}>
-              <Image src="/logo.png" alt="D'Lux Homes" width={80} height={28} className="mix-blend-multiply" style={{ width: "80px", height: "28px", objectFit: "cover" }} />
-            </div>
+        <div className="px-2 py-1 flex items-center justify-between border-b" style={{ borderColor: "rgba(250,247,241,0.1)" }}>
+          <Link href="/rooms" className="flex items-center min-w-0 flex-1">
+            <Image src="/logo.png" alt="D'Lux Homes" width={1056} height={232} style={{ width: "100%", height: "auto", maxHeight: "72px", objectFit: "contain" }} />
           </Link>
           <button onClick={() => setSidebarOpen(false)} aria-label="Close menu" className="lg:hidden" style={{ color: "#6b5040" }}>
             <X className="w-4 h-4" />
@@ -993,10 +1001,10 @@ export default function OwnerDashboard() {
                                 onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><LogOut className="w-3.5 h-3.5"/></button>
                             )}
                             {booking.requestedNewDate && (<>
-                              <button type="button" onClick={() => decideDateChange(booking.id, "approve")} title="Approve date change" className="p-1.5 rounded-lg transition-colors" style={{ color: "#6b7280" }}
+                              <button type="button" onClick={() => decideDateChange(booking.id, "approve")} title={`Approve date change → ${fmtDate(booking.requestedNewDate)}`} className="p-1.5 rounded-lg transition-colors" style={{ color: "#6b7280" }}
                                 onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#d1fae5";(e.currentTarget as HTMLElement).style.color="#059669";}}
                                 onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><CalendarDays className="w-3.5 h-3.5"/></button>
-                              <button type="button" onClick={() => decideDateChange(booking.id, "reject")} title="Reject date change" className="p-1.5 rounded-lg transition-colors" style={{ color: "#6b7280" }}
+                              <button type="button" onClick={() => decideDateChange(booking.id, "reject")} title={`Reject date change → ${fmtDate(booking.requestedNewDate)}`} className="p-1.5 rounded-lg transition-colors" style={{ color: "#6b7280" }}
                                 onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#fee2e2";(e.currentTarget as HTMLElement).style.color="#dc2626";}}
                                 onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><CalendarOff className="w-3.5 h-3.5"/></button>
                             </>)}
@@ -1360,7 +1368,7 @@ export default function OwnerDashboard() {
                 <div>
                   <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 22, lineHeight: 1, color: "#1f1b16", margin: 0 }}>Booking rates &amp; windows</h2>
                   <p style={{ fontSize: 13, color: "#8a8276", margin: "10px 0 0", lineHeight: 1.55 }}>
-                    The live rates guests are charged. Weekend/holiday pricing applies on Fri, Sat, Sun &amp; PH holidays. Edit via Property → haven → Pricing.
+                    The live rates guests are charged. Weekday vs. weekend/holiday is decided by the calendar below. Edit rate amounts via Property → haven → Pricing.
                   </p>
                 </div>
 
@@ -1380,10 +1388,28 @@ export default function OwnerDashboard() {
                           <span style={{ fontSize: 13, color: "#8a8276" }}>Weekend / Holiday</span>
                           <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 14, color: "#b8754a" }}>{peso(rate.weekend)}</span>
                         </div>
+                        {rate.name === "Overnight (21h)" && (
+                          <div style={{ marginTop: 6, paddingTop: 10, borderTop: "1px dashed #f3eee2", display: "flex", flexDirection: "column", gap: 8 }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".07em", color: "#c2ad88" }}>Length-of-stay bundles</div>
+                            {overnightBundles.map((b) => (
+                              <div key={b.label} className="flex items-center justify-between" style={{ fontSize: 12.5, opacity: b.active ? 1 : 0.55 }}>
+                                <span style={{ color: "#8a8276", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                                  {b.label}
+                                  {!b.active && <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", color: "#a0632f", backgroundColor: "#f6e9d9", padding: "1px 6px", borderRadius: 999 }}>Off</span>}
+                                </span>
+                                <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", color: "#4a4034", textDecoration: b.active ? "none" : "line-through" }}>
+                                  {b.weekday != null ? peso(b.weekday) : "—"} <span style={{ color: "#c2ad88" }}>/</span> {b.weekend != null ? peso(b.weekend) : "—"}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
                 </div>
+
+                <PricingCalendarSection />
               </div>
             )}
 

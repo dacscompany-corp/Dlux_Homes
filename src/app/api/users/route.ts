@@ -26,7 +26,12 @@ export async function GET(req: Request) {
     const userIds = searchParams.get("userIds"); // Batch request for multiple users
 
     if (all === "true") {
-      // Get all users (you might want to add admin check here)
+      // Dumping the entire users table is staff-only. Without this check, any
+      // authenticated customer could enumerate every user's full record.
+      const role = (session.user as { role?: string }).role ?? "";
+      if (role !== "Owner" && role !== "CSR") {
+        return NextResponse.json({ message: "Forbidden" }, { status: 403 });
+      }
       const users = await getAllUsers();
       return NextResponse.json({ users });
     }

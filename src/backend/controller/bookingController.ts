@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "../config/db";
 import { upload_file } from "../utils/cloudinary";
+import { validateImageDataUrl } from "../utils/imageGuard";
 import { createCalendarEvent, createCalendarEventWithResult, CalendarEventData } from "../utils/googleCalendar";
 
 // A guest may attach several ID photos. We persist them in the single
@@ -25,6 +26,13 @@ async function resolveValidIdUrls(
 
   const urls: string[] = [];
   for (const b of base64s) {
+    // Security: only accept real image files. A non-image (or spoofed) upload is
+    // skipped rather than stored.
+    const check = validateImageDataUrl(b);
+    if (!check.ok) {
+      console.warn(`[booking] rejected non-image valid ID upload: ${check.reason}`);
+      continue;
+    }
     const uploadResult = await upload_file(b, "dlux-homes/valid-ids");
     if (uploadResult?.url) urls.push(uploadResult.url);
   }
@@ -196,6 +204,14 @@ export const updateBookingDetails = async (
 
     let paymentProofUrl: string | null = null;
     if (payment_proof) {
+      const proofCheck = validateImageDataUrl(payment_proof);
+      if (!proofCheck.ok) {
+        await client.query("ROLLBACK");
+        return NextResponse.json(
+          { success: false, message: `Payment proof must be an image: ${proofCheck.reason}` },
+          { status: 400 },
+        );
+      }
       const uploadResult = await upload_file(
         payment_proof,
         "dlux-homes/payment-proofs",
@@ -619,6 +635,14 @@ export const createBooking = async (
     // Non-fatal: a failed/misconfigured image upload must not roll back the booking.
     let paymentProofUrl = null;
     if (payment_proof) {
+      const proofCheck = validateImageDataUrl(payment_proof);
+      if (!proofCheck.ok) {
+        await client.query("ROLLBACK");
+        return NextResponse.json(
+          { success: false, message: `Payment proof must be an image: ${proofCheck.reason}` },
+          { status: 400 },
+        );
+      }
       try {
         const uploadResult = await upload_file(
           payment_proof,

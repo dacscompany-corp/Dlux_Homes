@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
 import { upload_file } from "@/backend/utils/cloudinary";
+import { validateImageDataUrl } from "@/backend/utils/imageGuard";
 import { getPartnerIdFromSession } from "@/backend/utils/partnerSession";
 
 // GET /api/partners/me/registration
@@ -105,6 +106,13 @@ export async function PATCH(req: NextRequest) {
     let validIdUrl: string | null = null;
     let validIdPublicId: string | null = null;
     if (body.valid_id_data_url && typeof body.valid_id_data_url === "string") {
+      const idCheck = validateImageDataUrl(body.valid_id_data_url);
+      if (!idCheck.ok) {
+        return NextResponse.json(
+          { success: false, error: `Valid ID must be an image: ${idCheck.reason}` },
+          { status: 400 }
+        );
+      }
       try {
         const uploaded = await upload_file(body.valid_id_data_url, `${folder}/valid-id`);
         validIdUrl = uploaded.url;

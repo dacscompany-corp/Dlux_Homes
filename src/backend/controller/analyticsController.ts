@@ -8,6 +8,18 @@ const BOOKING_TABLE = (() => {
   return "booking";
 })();
 
+// SQL INTERVAL units/literals can't be bound as parameters, so period/months
+// values get interpolated into the query string. This coerces a possibly
+// attacker-supplied value to a bounded, purely-numeric STRING first — closing
+// the SQL-injection hole where `?period=0 days'; DROP ...;--` was spliced in
+// verbatim and run via the simple query protocol (which allows stacked
+// statements). Any non-numeric or out-of-range input collapses to the fallback.
+function safeIntStr(value: unknown, fallback: number, max = 3650): string {
+  const n = parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(n) || n <= 0) return String(fallback);
+  return String(Math.min(n, max));
+}
+
 export interface AnalyticsSummary {
   total_revenue: number;
   total_bookings: number;
@@ -32,6 +44,7 @@ export interface MonthlyRevenue {
 
 // Helper function for direct data fetching (non-API)
 export async function fetchAnalyticsSummary(period: string = '30'): Promise<AnalyticsSummary> {
+  period = safeIntStr(period, 30);
   const currentStatsQuery = `
     SELECT
       COALESCE(SUM(CASE
@@ -149,6 +162,7 @@ export async function fetchAnalyticsSummary(period: string = '30'): Promise<Anal
 }
 
 export async function fetchRevenueByRoom(period: string = '30'): Promise<RevenueByRoom[]> {
+  period = safeIntStr(period, 30);
   const query = `
     SELECT
       b.room_name,
@@ -177,6 +191,7 @@ export async function fetchRevenueByRoom(period: string = '30'): Promise<Revenue
 }
 
 export async function fetchMonthlyRevenue(months: string = '6'): Promise<MonthlyRevenue[]> {
+  months = safeIntStr(months, 6, 120);
   const query = `
     SELECT
       TO_CHAR(b.created_at, 'Mon') as month,
@@ -206,7 +221,7 @@ export async function fetchMonthlyRevenue(months: string = '6'): Promise<Monthly
 export const getAnalyticsSummary = async (req: NextRequest): Promise<NextResponse> => {
   try {
     const { searchParams } = new URL(req.url);
-    const period = searchParams.get('period') || '30'; // days
+    const period = safeIntStr(searchParams.get('period'), 30); // days
 
     // Get current period stats
     const currentStatsQuery = `
@@ -351,7 +366,7 @@ export const getAnalyticsSummary = async (req: NextRequest): Promise<NextRespons
 export const getRevenueByRoom = async (req: NextRequest): Promise<NextResponse> => {
   try {
     const { searchParams } = new URL(req.url);
-    const period = searchParams.get('period') || '30'; // days
+    const period = safeIntStr(searchParams.get('period'), 30); // days
 
     const query = `
       SELECT
@@ -399,7 +414,7 @@ export const getRevenueByRoom = async (req: NextRequest): Promise<NextResponse> 
 export const getMonthlyRevenue = async (req: NextRequest): Promise<NextResponse> => {
   try {
     const { searchParams } = new URL(req.url);
-    const months = searchParams.get('months') || '6'; // number of months
+    const months = safeIntStr(searchParams.get('months'), 6, 120); // number of months
 
     const query = `
       SELECT

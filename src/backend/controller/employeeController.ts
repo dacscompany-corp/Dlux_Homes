@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import pool from '../config/db';
 import bcrypt from 'bcryptjs';
 import { upload_file } from '../utils/cloudinary';
+import { validateImageDataUrl } from '../utils/imageGuard';
 import { sendEmployeeWelcomeEmail } from '../utils/mailer';
 
 export type EmployeeRole = 'Owner' | 'CSR' | 'Cleaner' | 'Partner';
@@ -57,6 +58,13 @@ export const createEmployee = async (req: NextRequest): Promise<NextResponse> =>
 
     let profileImageUrl = null;
     if (profile_image) {
+      const imgCheck = validateImageDataUrl(profile_image);
+      if (!imgCheck.ok) {
+        return NextResponse.json(
+          { success: false, message: `Profile image must be an image: ${imgCheck.reason}` },
+          { status: 400 },
+        );
+      }
       const uploadResult = await upload_file(profile_image, "dlux-homes/profiles");
       profileImageUrl = uploadResult.url;
     }
@@ -104,7 +112,7 @@ export const createEmployee = async (req: NextRequest): Promise<NextResponse> =>
       fullName,
       password,
       role,
-      `${process.env.NEXT_PUBLIC_BASE_URL || 'https://staycationhavenph.com'}/admin/login`
+      `${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/admin/login`
     );
 
     if (!emailSent) {
@@ -201,8 +209,33 @@ export const getAllEmployees = async (req: NextRequest): Promise<NextResponse> =
   }
 };
 
+// Columns any signed-in employee may edit on their own profile. Anything not in
+// one of these allow-lists is IGNORED — this closes the mass-assignment hole
+// where a JSON key was used verbatim as a SQL column name (arbitrary-column
+// write + SET-clause injection). `password` is intentionally absent: it can only
+// be changed through the dedicated change-password flow (which hashes + verifies
+// the old password), never through a generic profile update.
+const SELF_EDITABLE_FIELDS = new Set([
+  'first_name', 'last_name', 'email', 'phone',
+  'street_address', 'city', 'zip_code',
+  'emergency_contact_name', 'emergency_contact_phone', 'emergency_contact_relation',
+]);
+// HR / privilege columns — only Owner/CSR may set these. This is what stops a
+// Cleaner from POSTing {"role":"Owner"} to self-escalate.
+const ADMIN_ONLY_FIELDS = new Set([
+  'role', 'status', 'department', 'monthly_salary', 'employment_id', 'hire_date',
+]);
+
+interface UpdateEmployeeAuth {
+  callerRole?: string;
+  callerId?: string;
+}
+
 // UPDATE Employee
-export const updateEmployee = async (req: NextRequest): Promise<NextResponse> => {
+export const updateEmployee = async (
+  req: NextRequest,
+  auth: UpdateEmployeeAuth = {},
+): Promise<NextResponse> => {
   try {
     const body = await req.json();
     const { id: bodyId, profile_image_url, ...employeeData } = body;
@@ -222,9 +255,27 @@ export const updateEmployee = async (req: NextRequest): Promise<NextResponse> =>
       }, { status: 400 });
     }
 
+    const isAdmin = auth.callerRole === 'Owner' || auth.callerRole === 'CSR';
+
+    // Non-admins (Cleaner) may only edit their OWN record — never another
+    // employee's. Admins (Owner/CSR) may edit anyone.
+    if (!isAdmin && auth.callerId && String(auth.callerId) !== String(id)) {
+      return NextResponse.json({
+        success: false,
+        error: 'You can only edit your own profile',
+      }, { status: 403 });
+    }
+
     // Handle profile image upload to Cloudinary if it's a base64 string
     let profileImageUrl = profile_image_url;
-    if (profile_image_url && profile_image_url.startsWith('data:image')) {
+    if (profile_image_url && profile_image_url.startsWith('data:')) {
+      const imgCheck = validateImageDataUrl(profile_image_url);
+      if (!imgCheck.ok) {
+        return NextResponse.json(
+          { success: false, message: `Profile image must be an image: ${imgCheck.reason}` },
+          { status: 400 },
+        );
+      }
       const uploadResult = await upload_file(profile_image_url, "dlux-homes/profiles");
       profileImageUrl = uploadResult.url;
     }
@@ -241,11 +292,21 @@ export const updateEmployee = async (req: NextRequest): Promise<NextResponse> =>
     }
 
     Object.entries(employeeData).forEach(([key, value]) => {
-      if (value !== undefined && key !== 'id') {
-        fields.push(`${key} = $${paramCount}`);
-        values.push(value);
-        paramCount++;
-      }
+      if (value === undefined) return;
+
+      const isSelfField = SELF_EDITABLE_FIELDS.has(key);
+      const isAdminField = ADMIN_ONLY_FIELDS.has(key);
+
+      // Reject unknown keys outright (kills column-name injection), and silently
+      // drop admin-only fields for non-admin callers (no privilege escalation).
+      if (!isSelfField && !isAdminField) return;
+      if (isAdminField && !isAdmin) return;
+
+      // `key` is now guaranteed to be one of a fixed set of literal column
+      // names, so it's safe to interpolate; the value is still parameterized.
+      fields.push(`${key} = $${paramCount}`);
+      values.push(value);
+      paramCount++;
     });
 
     if (fields.length === 0) {

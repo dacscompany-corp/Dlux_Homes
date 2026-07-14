@@ -65,7 +65,7 @@ const THREAD_DEFAULTS: Record<
   { display_name: string; role_label: string; avatar_initials: string; avatar_color: string; is_online: boolean }
 > = {
   support: {
-    display_name: "Staycation Haven Support",
+    display_name: "D'Lux Homes Support",
     role_label: "Customer service · 24/7",
     avatar_initials: "S",
     avatar_color: "primary",

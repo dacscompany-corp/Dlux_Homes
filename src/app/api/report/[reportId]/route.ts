@@ -2,13 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/backend/config/db';
 import { delete_file } from '@/backend/utils/cloudinary';
 import { upload_image_from_form } from '@/backend/utils/fileUpload';
+import { requireEmployee } from '@/backend/utils/requireAdmin';
 
-// Database connection
+// Editing/deleting maintenance reports is staff-only (Owner/CSR/Cleaner).
+// Both handlers previously had no auth — anyone with a report id could rewrite
+// or delete it (and DELETE cascades a Cloudinary image purge).
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ reportId: string }> }
 ) {
+  const guard = await requireEmployee();
+  if (!guard.ok) return guard.response;
   try {
     const { reportId } = await params;
 
@@ -168,6 +173,8 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ reportId: string }> }
 ) {
+  const guard = await requireEmployee();
+  if (!guard.ok) return guard.response;
   try {
     const { reportId } = await params;
 

@@ -38,8 +38,14 @@ export async function POST(req: Request) {
     );
 
     if (existingUser.rows.length > 0) {
-      return NextResponse.redirect(
-        new URL('/', req.url)
+      // Return a normal JSON conflict (matches the success response shape) so
+      // the client can show a clear message. The previous 302 redirect to "/"
+      // was a side-channel the client couldn't parse — fetch followed it, then
+      // attempted a doomed auto-sign-in. (Registration inherently reveals that
+      // an email is taken; that's an accepted, low-value leak.)
+      return NextResponse.json(
+        { error: "An account with this email already exists." },
+        { status: 409 }
       );
     }
 

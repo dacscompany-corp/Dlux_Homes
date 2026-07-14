@@ -27,6 +27,13 @@ CREATE TABLE booking (
 
   rejection_reason TEXT,
 
+  -- One-time guest-initiated date change (see 2026-06-25-add-date-change-tracking.sql).
+  -- date_change_count only increments when a request is approved, so a rejected
+  -- request doesn't cost the guest their one-time change.
+  date_change_count INTEGER NOT NULL DEFAULT 0,
+  date_change_requested_at TIMESTAMPTZ,
+  requested_new_date DATE,
+
   has_security_deposit BOOLEAN DEFAULT false,
 
   google_event_id VARCHAR(255) DEFAULT NULL,

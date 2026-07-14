@@ -1,55 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
-import { generatePamphletPDF, type RentableItem, type AddOnCategory } from '@/backend/utils/pdfGenerators';
-import pool from '@/backend/config/db';
-
-// Pull the platform Owner's contact phone + email for the pamphlet.
-// Best-effort — returns nulls when no Owner row exists or the fields are
-// empty, in which case the pamphlet shows placeholders instead of breaking
-// the email send. Prefers the earliest-hired Owner who has BOTH fields set;
-// falls back to whoever has at least the phone, then whoever has at least
-// the email, so partial data still wins over the hardcoded default.
-async function fetchOwnerContact(): Promise<{ phone: string | null; email: string | null }> {
-  try {
-    const r = await pool.query(
-      `SELECT phone, email FROM employees
-        WHERE role = 'Owner'
-        ORDER BY
-          ((phone IS NOT NULL AND phone <> '')::int
-           + (email IS NOT NULL AND email <> '')::int) DESC,
-          hire_date ASC NULLS LAST,
-          id ASC
-        LIMIT 1`,
-    );
-    const row = r.rows[0];
-    return {
-      phone: row?.phone && row.phone.trim() ? row.phone.trim() : null,
-      email: row?.email && row.email.trim() ? row.email.trim() : null,
-    };
-  } catch {
-    return { phone: null, email: null };
-  }
-}
+import { contactBlockHtml } from '@/backend/utils/emailContact';
 
 export async function POST(request: NextRequest) {
   try {
     const bookingData = await request.json();
-    const rentableItems: RentableItem[] = bookingData.rentableItems || [];
-    const addonCategories: AddOnCategory[] = bookingData.addonCategories || [];
-    const ownerContact = await fetchOwnerContact();
-
-    // Generate pamphlet PDF with the room's add-ons (grouped by category if provided)
-    const pamphletBuffer = await generatePamphletPDF({
-      guestName: `${bookingData.firstName} ${bookingData.lastName || ''}`.trim(),
-      roomName: bookingData.roomName || '',
-      checkInDate: bookingData.checkInDate || '',
-      checkOutDate: bookingData.checkOutDate || '',
-      bookingId: bookingData.bookingId || '',
-      rentableItems,
-      categories: addonCategories,
-      contactPhone: ownerContact.phone ?? undefined,
-      contactEmail: ownerContact.email ?? undefined,
-    });
 
     // Create transporter with your Gmail credentials
     const transporter = nodemailer.createTransport({
@@ -60,7 +15,31 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Email HTML template
+    // Email HTML template for CONFIRMED status — from the "DLux Homes Booking
+    // Confirmed" Claude Design project (same visual language as the pending
+    // email). Colors are the design's own tokens (oklch() converted to hex
+    // for email-client safety). Layout is table-based throughout — Gmail's
+    // spam-quarantine view doesn't reliably honor margin:0 auto/display:flex
+    // (see send-pending-email/route.ts for the same fix).
+    const siteUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
+    const guestName = `${bookingData.firstName} ${bookingData.lastName || ''}`.trim();
+    const paymentMethodLabel = bookingData.paymentMethod === 'gcash' ? 'GCash' : bookingData.paymentMethod === 'bank_transfer' ? 'Bank Transfer' : bookingData.paymentMethod;
+    // Money. The guest has paid the DOWN PAYMENT, not the total — labelling the
+    // booking total as "Total paid" (as this template used to) tells them they
+    // owe nothing. Show the full breakdown instead: what they paid, what's left,
+    // and the refundable deposit that is ALSO collected at check-in, so the
+    // "due at check-in" figure is the real amount they need to bring.
+    const SECURITY_DEPOSIT = 1000; // refundable, collected at check-in
+    const peso = (n: number) =>
+      `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+    const totalAmount = Number(bookingData.totalAmount) || 0;
+    // Fall back to the 50% house rule if the caller didn't pass a down payment.
+    const downPayment = Number(bookingData.downPayment ?? 0) || Math.round(totalAmount * 0.5);
+    const remainingBalance = Math.max(0, totalAmount - downPayment);
+    const dueAtCheckIn = remainingBalance + SECURITY_DEPOSIT;
+
+    const totalAmountFormatted = peso(totalAmount);
     const emailHtml = `
       <!DOCTYPE html>
       <html lang="en">
@@ -68,465 +47,188 @@ export async function POST(request: NextRequest) {
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Booking Confirmation - D'Lux Homes</title>
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@600;700&display=swap" rel="stylesheet">
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-        <style>
-          * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-          }
-
-          body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            line-height: 1.6;
-            color: #1F2937;
-            background-color: #F9F6F0;
-            padding: 20px;
-            min-height: 100vh;
-          }
-
-          .email-container {
-            max-width: 680px;
-            margin: 0 auto;
-            background: #ffffff;
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 4px 20px rgba(184, 134, 11, 0.1);
-            border: 1px solid rgba(184, 134, 11, 0.1);
-          }
-
-          .header {
-            background-color: #B8860B;
-            color: #ffffff;
-            padding: 40px 30px;
-            text-align: center;
-          }
-
-          .logo {
-            font-family: 'Poppins', 'Inter', sans-serif;
-            font-size: 32px;
-            font-weight: 700;
-            margin-bottom: 8px;
-            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-          }
-
-          .tagline {
-            font-size: 16px;
-            font-weight: 400;
-            opacity: 0.95;
-            margin-bottom: 20px;
-          }
-
-          .status-badge {
-            background-color: rgba(255, 255, 255, 0.2);
-            color: white;
-            padding: 8px 20px;
-            border-radius: 20px;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 14px;
-            font-weight: 600;
-            border: 1px solid rgba(255, 255, 255, 0.3);
-          }
-
-          .content {
-            padding: 40px 35px;
-            background: #ffffff;
-          }
-
-          .greeting {
-            font-size: 24px;
-            color: #1F2937;
-            margin-bottom: 16px;
-            font-weight: 600;
-            font-family: 'Inter', sans-serif;
-          }
-
-          .intro-text {
-            color: #6B7280;
-            margin-bottom: 30px;
-            line-height: 1.7;
-            font-size: 16px;
-          }
-
-          .section-title {
-            font-family: 'Poppins', 'Inter', sans-serif;
-            font-size: 18px;
-            color: #B8860B;
-            font-weight: 600;
-            margin: 30px 0 20px 0;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #F5DEB3;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-          }
-
-          .info-card {
-            background-color: #F9F6F0;
-            border-left: 4px solid #B8860B;
-            padding: 25px 30px;
-            margin: 20px 0;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(184, 134, 11, 0.08);
-            transition: transform 0.2s ease;
-          }
-
-          .info-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(184, 134, 11, 0.12);
-          }
-
-          .info-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px 0;
-            border-bottom: 1px solid rgba(184, 134, 11, 0.1);
-          }
-
-          .info-row:last-child {
-            border-bottom: none;
-          }
-
-          .info-label {
-            font-weight: 600;
-            color: #8B6508;
-            font-size: 14px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-          }
-
-          .info-value {
-            color: #1F2937;
-            font-weight: 500;
-            font-size: 15px;
-            text-align: right;
-          }
-
-          .price-summary {
-            background-color: #B8860B;
-            color: white;
-            padding: 30px 25px;
-            border-radius: 8px;
-            margin: 30px 0;
-            text-align: center;
-            box-shadow: 0 4px 15px rgba(184, 134, 11, 0.2);
-          }
-
-          .price-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin: 12px 0;
-            font-size: 16px;
-          }
-
-          .price-total {
-            margin-top: 20px;
-            padding-top: 20px;
-            border-top: 2px solid rgba(255, 255, 255, 0.3);
-            font-size: 24px;
-            font-weight: 700;
-          }
-
-          .alert-box {
-            background-color: #FEF3C7;
-            border: 1px solid #F59E0B;
-            border-left: 4px solid #F59E0B;
-            padding: 25px 30px;
-            margin: 30px 0;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(245, 158, 11, 0.1);
-          }
-
-          .alert-title {
-            font-weight: 700;
-            color: #92400E;
-            margin-bottom: 15px;
-            font-size: 16px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-          }
-
-          .alert-box ul {
-            margin-left: 20px;
-            color: #78350F;
-          }
-
-          .alert-box li {
-            margin: 10px 0;
-            line-height: 1.6;
-            position: relative;
-            padding-left: 8px;
-          }
-
-          .alert-box li::before {
-            content: '•';
-            position: absolute;
-            left: -8px;
-            color: #F59E0B;
-            font-weight: bold;
-          }
-
-          .cta-button {
-            text-align: center;
-            margin: 40px 0;
-          }
-
-          .cta-button a {
-            display: inline-flex;
-            align-items: center;
-            gap: 10px;
-            background-color: #B8860B;
-            color: white;
-            padding: 14px 35px;
-            text-decoration: none;
-            border-radius: 8px;
-            font-weight: 600;
-            font-size: 16px;
-            box-shadow: 0 4px 12px rgba(184, 134, 11, 0.3);
-            transition: all 0.3s ease;
-          }
-
-          .cta-button a:hover {
-            background-color: #8B6508;
-            transform: translateY(-2px);
-            box-shadow: 0 6px 16px rgba(184, 134, 11, 0.4);
-          }
-
-          .footer {
-            background-color: #1F2937;
-            color: #D1D5DB;
-            padding: 35px 30px;
-            text-align: center;
-          }
-
-          .footer-info {
-            margin: 10px 0;
-            font-size: 14px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-          }
-
-          .footer-divider {
-            height: 1px;
-            background-color: #374151;
-            margin: 20px 0;
-          }
-
-          .footer-copyright {
-            font-size: 13px;
-            color: #9CA3AF;
-            margin-top: 15px;
-          }
-
-          .highlight {
-            color: #B8860B;
-            font-weight: 600;
-          }
-
-          @media only screen and (max-width: 600px) {
-            .email-container {
-              border-radius: 0;
-              margin: 0;
-            }
-
-            .header {
-              padding: 30px 20px;
-            }
-
-            .logo {
-              font-size: 28px;
-            }
-
-            .content {
-              padding: 30px 20px;
-            }
-
-            .info-row {
-              flex-direction: column;
-              align-items: flex-start;
-              gap: 8px;
-            }
-
-            .info-value {
-              text-align: left;
-            }
-
-            .price-row {
-              flex-direction: column;
-              gap: 8px;
-              text-align: left;
-            }
-
-            .footer-info {
-              flex-direction: column;
-              gap: 5px;
-            }
-          }
-        </style>
+        <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+        <style>* { margin: 0; padding: 0; box-sizing: border-box; } body { background: #F3EAD9; } a { color: inherit; }</style>
       </head>
-      <body>
-        <div class="email-container">
-          <!-- Header -->
-          <div class="header">
-            <div class="logo">
-              <i class="fas fa-umbrella-beach"></i> D'Lux Homes
-            </div>
-            <div class="tagline">Your Perfect Getaway Awaits</div>
-            <div class="status-badge">
-              <i class="fas fa-check-circle"></i>
-              <span>Booking Confirmed</span>
-            </div>
-          </div>
+      <body style="margin:0;padding:0;background:#F3EAD9;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F3EAD9;">
+          <tr>
+            <td align="center" style="padding:24px 16px;font-family:'Inter',Arial,Helvetica,sans-serif;">
+              <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 1px 3px rgba(30,20,10,0.08);">
+                <tr>
+                  <td>
 
-          <!-- Content -->
-          <div class="content">
-            <div class="greeting">Dear ${bookingData.firstName} ${bookingData.lastName},</div>
+                    <!-- Header -->
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#2b1b12;">
+                      <tr>
+                        <td style="padding:28px 32px;">
+                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                              <td valign="middle" align="left">
+                                <div style="font-family:'Fraunces',Georgia,serif;font-size:21px;font-weight:600;color:#f6ede0;letter-spacing:0.3px;">D&rsquo;Lux Homes</div>
+                                <div style="font-size:12px;color:#CBB89C;margin-top:2px;">Your Perfect Getaway Awaits</div>
+                              </td>
+                              <td valign="middle" align="right" style="white-space:nowrap;">
+                                <span style="display:inline-block;background:rgba(246,237,224,0.12);border:1px solid rgba(246,237,224,0.35);border-radius:999px;padding:6px 14px;white-space:nowrap;">
+                                  <span style="width:7px;height:7px;border-radius:50%;background:#d9a25c;display:inline-block;margin-right:6px;"></span>
+                                  <span style="font-size:12px;font-weight:600;color:#f6ede0;">Booking Confirmed</span>
+                                </span>
+                              </td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
 
-            <p class="intro-text">
-              Thank you for choosing <span class="highlight">D'Lux Homes</span>! We're absolutely thrilled to confirm your reservation. 
-              Your booking has been successfully approved and we're preparing everything to make your stay unforgettable.
-            </p>
+            <!-- Body -->
+            <div style="padding:28px 32px 4px;">
+              <p style="font-size:15px;line-height:1.5;color:#3a2a1e;margin:0 0 20px;">
+                Hi ${guestName}, good news &mdash; your stay is confirmed! Here&rsquo;s a copy of your booking for your records.
+              </p>
 
-            <!-- Booking Information -->
-            <h2 class="section-title">
-              <i class="fas fa-clipboard-list"></i>
-              <span>Booking Information</span>
-            </h2>
-            <div class="info-card">
-              <div class="info-row">
-                <span class="info-label">Booking ID</span>
-                <span class="info-value">${bookingData.bookingId}</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">Room Type</span>
-                <span class="info-value">${bookingData.roomName}</span>
+              <!-- Stay details -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#faf5ec;border-radius:12px;margin-bottom:16px;">
+                <tr>
+                  <td style="padding:18px 20px 12px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:13px;">
+                      <tr>
+                        <td align="left" style="color:#9c8974;">${bookingData.bookingId}</td>
+                        <td align="right" style="font-weight:600;color:#2b1b12;">${bookingData.roomName}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 20px 12px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td width="50%" valign="top">
+                          <div style="font-size:11px;color:#9c8974;">Check-in</div>
+                          <div style="font-size:14px;font-weight:600;color:#2b1b12;">${bookingData.checkInDate} &middot; ${bookingData.checkInTime}</div>
+                        </td>
+                        <td width="1" style="background:#e9dcc8;font-size:0;line-height:0;">&nbsp;</td>
+                        <td width="50%" valign="top" style="padding-left:14px;">
+                          <div style="font-size:11px;color:#9c8974;">Check-out</div>
+                          <div style="font-size:14px;font-weight:600;color:#2b1b12;">${bookingData.checkOutDate} &middot; ${bookingData.checkOutTime}</div>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:12px 20px 18px;border-top:1px solid #e9dcc8;font-size:13px;color:#5c4a3c;">${bookingData.guests}</td>
+                </tr>
+              </table>
+
+              <!-- Payment breakdown -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#2b1b12;border-radius:12px;margin-bottom:20px;">
+                <tr>
+                  <td style="padding:18px 20px;">
+
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td style="padding:3px 0;font-size:13px;color:#B8A689;">Booking total</td>
+                        <td align="right" style="padding:3px 0;font-size:13px;font-weight:600;color:#f6ede0;white-space:nowrap;">${totalAmountFormatted}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:3px 0;font-size:13px;color:#B8A689;">Down payment &mdash; paid via ${paymentMethodLabel}</td>
+                        <td align="right" style="padding:3px 0;font-size:13px;font-weight:600;color:#7dd39b;white-space:nowrap;">&minus; ${peso(downPayment)}</td>
+                      </tr>
+                    </table>
+
+                    <div style="height:1px;background:rgba(246,237,224,0.15);margin:12px 0;"></div>
+
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td valign="middle" align="left">
+                          <div style="font-size:13px;color:#f6ede0;font-weight:600;">Remaining balance</div>
+                          <div style="font-size:11.5px;color:#B8A689;margin-top:2px;">Due at check-in</div>
+                        </td>
+                        <td valign="middle" align="right" style="white-space:nowrap;font-size:22px;font-weight:700;color:#d9a25c;">${peso(remainingBalance)}</td>
+                      </tr>
+                    </table>
+
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:rgba(246,237,224,0.07);border-radius:9px;margin-top:14px;">
+                      <tr>
+                        <td style="padding:12px 14px;">
+                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                              <td style="padding:2px 0;font-size:12.5px;color:#B8A689;">Remaining balance</td>
+                              <td align="right" style="padding:2px 0;font-size:12.5px;color:#f6ede0;white-space:nowrap;">${peso(remainingBalance)}</td>
+                            </tr>
+                            <tr>
+                              <td style="padding:2px 0;font-size:12.5px;color:#B8A689;">Security deposit &mdash; refundable</td>
+                              <td align="right" style="padding:2px 0;font-size:12.5px;color:#f6ede0;white-space:nowrap;">${peso(SECURITY_DEPOSIT)}</td>
+                            </tr>
+                            <tr>
+                              <td style="padding:7px 0 0;font-size:12.5px;font-weight:700;color:#f6ede0;border-top:1px solid rgba(246,237,224,0.15);">Total to bring at check-in</td>
+                              <td align="right" style="padding:7px 0 0;font-size:14px;font-weight:700;color:#d9a25c;white-space:nowrap;border-top:1px solid rgba(246,237,224,0.15);">${peso(dueAtCheckIn)}</td>
+                            </tr>
+                          </table>
+                          <div style="font-size:11.5px;line-height:1.5;color:#B8A689;margin-top:9px;">The ${peso(SECURITY_DEPOSIT)} deposit is returned to you on the day of check-out.</div>
+                        </td>
+                      </tr>
+                    </table>
+
+                  </td>
+                </tr>
+              </table>
+
+              <!-- What to expect -->
+              <div style="font-size:12px;font-weight:700;color:#9c8974;letter-spacing:0.6px;text-transform:uppercase;margin-bottom:12px;">What to Expect</div>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:20px;">
+                <tr>
+                  <td width="20" valign="top" style="padding-bottom:8px;">
+                    <div style="width:20px;height:20px;border-radius:50%;background:#faf5ec;color:#2b1b12;font-size:11px;font-weight:700;text-align:center;line-height:20px;">1</div>
+                  </td>
+                  <td valign="top" style="padding-left:10px;padding-bottom:8px;font-size:13px;line-height:1.45;color:#5c4a3c;">We&rsquo;ll send you check-in instructions a day before your stay.</td>
+                </tr>
+                <tr>
+                  <td width="20" valign="top" style="padding-bottom:8px;">
+                    <div style="width:20px;height:20px;border-radius:50%;background:#faf5ec;color:#2b1b12;font-size:11px;font-weight:700;text-align:center;line-height:20px;">2</div>
+                  </td>
+                  <td valign="top" style="padding-left:10px;padding-bottom:8px;font-size:13px;line-height:1.45;color:#5c4a3c;">Just show up at check-in time with a valid ID.</td>
+                </tr>
+              </table>
+
+              <!-- Good to know -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#faf5ec;border-radius:12px;margin-bottom:24px;">
+                <tr>
+                  <td style="padding:16px 20px;">
+                    <div style="font-size:12px;font-weight:700;color:#9c8974;letter-spacing:0.6px;text-transform:uppercase;margin-bottom:10px;">Good to Know</div>
+                    <div style="font-size:13px;line-height:1.5;color:#5c4a3c;margin-bottom:6px;">&bull; Please bring a valid government-issued ID during check-in.</div>
+                    <div style="font-size:13px;line-height:1.5;color:#5c4a3c;margin-bottom:6px;">&bull; Early check-in is subject to room availability.</div>
+                    <div style="font-size:13px;line-height:1.5;color:#5c4a3c;">&bull; Need to change your dates? Contact us at least 48 hours ahead.</div>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Contact us — email + Facebook, as tappable buttons. Light
+                   theme: the payment breakdown above is already a dark panel. -->
+              ${contactBlockHtml("light", `Booking ${bookingData.bookingId}`)}
+
+              <!-- CTA -->
+              <div style="text-align:center;margin-bottom:24px;">
+                <a href="${siteUrl}" style="display:inline-block;background:#2b1b12;color:#f6ede0;font-size:14px;font-weight:600;padding:13px 34px;border-radius:10px;text-decoration:none;">Visit Our Website</a>
               </div>
             </div>
 
-            <!-- Stay Details -->
-            <h2 class="section-title">
-              <i class="fas fa-calendar-alt"></i>
-              <span>Stay Details</span>
-            </h2>
-            <div class="info-card">
-              <div class="info-row">
-                <span class="info-label">Check-in Date</span>
-                <span class="info-value">${bookingData.checkInDate}</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">Check-in Time</span>
-                <span class="info-value">${bookingData.checkInTime}</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">Check-out Date</span>
-                <span class="info-value">${bookingData.checkOutDate}</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">Check-out Time</span>
-                <span class="info-value">${bookingData.checkOutTime}</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">Number of Guests</span>
-                <span class="info-value">${bookingData.guests}</span>
-              </div>
-            </div>
+            <!-- Footer -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#faf5ec;border-top:1px solid #f0e6d8;">
+              <tr>
+                <td align="center" style="padding:16px 32px;">
+                  <div style="font-size:12px;color:#5c4a3c;">homesdlux@gmail.com &middot; Tower 4, Grass Residences, QC</div>
+                  <div style="font-size:11px;color:#b3a48f;margin-top:6px;">&copy; ${new Date().getFullYear()} D&rsquo;Lux Homes. All rights reserved.</div>
+                </td>
+              </tr>
+            </table>
 
-            <!-- Payment Summary -->
-            <h2 class="section-title">
-              <i class="fas fa-credit-card"></i>
-              <span>Payment Summary</span>
-            </h2>
-            <div class="price-summary">
-              <div class="price-row">
-                <span>Payment Method:</span>
-                <span>${bookingData.paymentMethod === 'gcash' ? 'GCash' : bookingData.paymentMethod === 'bank_transfer' ? 'Bank Transfer' : bookingData.paymentMethod}</span>
-              </div>
-              <div class="price-row">
-                <span>Down Payment:</span>
-                <span>₱${Number(bookingData.downPayment).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-              </div>
-              <div class="price-total">
-                <div class="price-row">
-                  <span>Total Amount:</span>
-                  <span>₱${Number(bookingData.totalAmount).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Pamphlet notice -->
-            <div class="alert-box">
-              <div class="alert-title">
-                <i class="fas fa-file-pdf"></i>
-                <span>Pamphlet Attached</span>
-              </div>
-              <ul>
-                <li>A rentable items guide for your room is attached to this email</li>
-                <li>Browse optional add-ons you can request during your stay</li>
-                <li>Contact the front desk to arrange any items you'd like</li>
-              </ul>
-            </div>
-
-            <!-- Important Information -->
-            <div class="alert-box" style="background-color:#FFFFFF;border-color:#F2EBD9;border-left-color:#B8860B;">
-              <div class="alert-title" style="color:#8B6508;">
-                <i class="fas fa-exclamation-triangle"></i>
-                <span>Important Reminders</span>
-              </div>
-              <ul style="color:#5D4037;">
-                <li>Please bring a valid government-issued ID during check-in</li>
-                <li>Check-in time starts at ${bookingData.checkInTime}</li>
-                <li>Early check-in is subject to room availability</li>
-                <li>Keep this confirmation email for your records</li>
-                <li>Contact us immediately if you need to modify your booking</li>
-                <li>Cancellation policy applies as per our terms and conditions</li>
-              </ul>
-            </div>
-
-            <p class="intro-text" style="margin-top: 30px;">
-              We're committed to making your stay comfortable and memorable. If you have any special 
-              requests or questions, please don't hesitate to reach out to us. We're here to ensure 
-              your staycation is absolutely perfect!
-            </p>
-
-            <!-- Call to Action -->
-            <div class="cta-button">
-              <a href="http://localhost:3000">
-                <span>Visit Our Website</span>
-                <i class="fas fa-arrow-right"></i>
-              </a>
-            </div>
-          </div>
-
-          <!-- Footer -->
-          <div class="footer">
-            <div class="footer-info">
-              <i class="fas fa-envelope"></i>
-              <span>staycationhaven9@gmail.com</span>
-            </div>
-            <div class="footer-info">
-              <i class="fas fa-phone"></i>
-              <span>+63 123 456 7890</span>
-            </div>
-            <div class="footer-info">
-              <i class="fas fa-map-marker-alt"></i>
-              <span>Your Perfect Destination</span>
-            </div>
-
-            <div class="footer-divider"></div>
-
-            <div class="footer-copyright">
-              &copy; ${new Date().getFullYear()} D'Lux Homes. All rights reserved.
-            </div>
-          </div>
-        </div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
       </body>
       </html>
     `;
@@ -536,20 +238,13 @@ export async function POST(request: NextRequest) {
       to: bookingData.email,
       subject: `Booking Confirmation - ${bookingData.bookingId}`,
       html: emailHtml,
-      attachments: [
-        {
-          filename: `DLux-Pamphlet-${bookingData.bookingId}.pdf`,
-          content: pamphletBuffer,
-          contentType: 'application/pdf',
-        },
-      ],
     };
 
     await transporter.sendMail(mailOptions);
 
-    return NextResponse.json({ 
-      success: true, 
-      message: 'Email sent successfully' 
+    return NextResponse.json({
+      success: true,
+      message: 'Email sent successfully'
     });
 
   } catch (error) {

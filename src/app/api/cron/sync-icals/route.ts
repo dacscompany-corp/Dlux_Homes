@@ -16,9 +16,22 @@ export const dynamic = "force-dynamic";
  * Vercel Cron automatically sends `Authorization: Bearer <CRON_SECRET>`.
  */
 export async function GET(req: NextRequest) {
-  // In production, only Vercel Cron (or anyone with the secret) should hit this.
+  // Only Vercel Cron (or anyone with the secret) should hit this. Fail CLOSED:
+  // previously, if CRON_SECRET was unset the check was skipped and the endpoint
+  // became fully public (anyone could trigger syncs / DB writes). Now a missing
+  // secret in production is treated as a misconfiguration and the route refuses
+  // to run; only local dev is allowed to run it unauthenticated.
   const expectedSecret = process.env.CRON_SECRET;
-  if (expectedSecret) {
+  if (!expectedSecret) {
+    if (process.env.NODE_ENV === "production") {
+      console.error("[cron/sync-icals] CRON_SECRET is not set — refusing to run in production.");
+      return NextResponse.json(
+        { success: false, error: "Cron not configured" },
+        { status: 503 },
+      );
+    }
+    // Non-production: allow unauthenticated local triggering for testing.
+  } else {
     const auth = req.headers.get("authorization") || "";
     if (auth !== `Bearer ${expectedSecret}`) {
       return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });

@@ -11,6 +11,10 @@ export const runtime = "nodejs";
 //
 // Body: { action: "approve" | "reject" }
 const DAY = 24 * 60 * 60 * 1000;
+const ACTIVE = ["pending", "approved", "confirmed", "on-going"];
+// Postgres exclusion-violation code — raised by booking_no_double_book_active
+// when the approved dates collide with another active booking for the room.
+const EXCLUSION_VIOLATION = "23P01";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -33,7 +37,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext): Promise
     await client.query("BEGIN");
 
     const found = await client.query(
-      `SELECT id, booking_id, room_name, check_in_date, check_out_date,
+      `SELECT id, booking_id, status, room_name, check_in_date, check_out_date,
               requested_new_date, user_id
          FROM booking
         WHERE id::text = $1 OR booking_id = $1
@@ -52,6 +56,10 @@ export async function PATCH(req: NextRequest, { params }: RouteContext): Promise
       await client.query("ROLLBACK");
       return NextResponse.json({ error: "This booking has no pending date-change request." }, { status: 409 });
     }
+    if (action === "approve" && !ACTIVE.includes(booking.status)) {
+      await client.query("ROLLBACK");
+      return NextResponse.json({ error: "This booking is no longer active; the date change can't be approved." }, { status: 409 });
+    }
 
     let updated;
     if (action === "approve") {
@@ -67,7 +75,8 @@ export async function PATCH(req: NextRequest, { params }: RouteContext): Promise
         `UPDATE booking
             SET check_in_date = $2,
                 check_out_date = $3,
-                requested_new_date = NULL
+                requested_new_date = NULL,
+                date_change_count = date_change_count + 1
           WHERE id = $1
           RETURNING id, booking_id, check_in_date, check_out_date`,
         [booking.id, booking.requested_new_date, newCheckOutStr]
@@ -105,6 +114,12 @@ export async function PATCH(req: NextRequest, { params }: RouteContext): Promise
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     console.error("admin date-change decision error:", error);
+    if ((error as { code?: string })?.code === EXCLUSION_VIOLATION) {
+      return NextResponse.json(
+        { error: "Those dates are no longer available for this room. Reject the request or confirm different dates with the guest first." },
+        { status: 409 }
+      );
+    }
     return NextResponse.json({ error: "Could not process this request. Please try again." }, { status: 500 });
   } finally {
     client.release();

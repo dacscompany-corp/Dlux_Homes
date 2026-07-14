@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
 import { createNotificationsForRoles } from "@/backend/utils/notificationHelper";
+import { requireBookingAccess } from "@/backend/utils/requireAdmin";
 
 export const runtime = "nodejs";
 
-// Guest-initiated cancellation. Narrow, least-privilege endpoint: it can only
-// move an active booking to 'cancelled' (never any other status), and only
-// while the booking is still cancellable. Owner + CSR are notified.
+// Cancellation. Narrow, least-privilege endpoint: it can only move an active
+// booking to 'cancelled' (never any other status), and only while the booking
+// is still cancellable. Owner + CSR are notified. Access is restricted to the
+// booking's owner or staff — previously anyone who knew a booking id could
+// cancel a stranger's booking (harassment/DoS).
 const CANCELLABLE = ["pending", "approved", "confirmed", "on-going"];
 
 interface RouteContext {
@@ -14,9 +17,13 @@ interface RouteContext {
 }
 
 export async function POST(req: NextRequest, { params }: RouteContext): Promise<NextResponse> {
+  const { id } = await params;
+
+  const access = await requireBookingAccess(id);
+  if (!access.ok) return access.response;
+
   const client = await pool.connect();
   try {
-    const { id } = await params;
     const body = await req.json().catch(() => ({} as Record<string, unknown>));
     const reason = typeof body.reason === "string" ? body.reason.trim() : "";
 

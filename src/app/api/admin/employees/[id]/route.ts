@@ -24,7 +24,10 @@ export async function PUT(request: NextRequest, { params }: RouteContext): Promi
   const guard = await requireEmployee();
   if (!guard.ok) return guard.response;
   await params;
-  return updateEmployee(request);
+  return updateEmployee(request, {
+    callerRole: guard.role,
+    callerId: (guard.session.user as { id?: string }).id,
+  });
 }
 
 export async function DELETE(request: NextRequest, { params }: RouteContext): Promise<NextResponse> {

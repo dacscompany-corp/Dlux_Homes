@@ -66,6 +66,18 @@ export function havenToRoom(h: Record<string, unknown>): Room & RoomExtras {
     price10hrWeekend: Number(h.six_hour_rate ?? h.ten_hour_rate ?? 0),         // 10h weekend/holiday
     price21hr: Number(h.weekday_rate ?? 0),                                    // 21h weekday
     price21hrWeekend: Number(h.weekend_rate ?? h.weekday_rate ?? 0),           // 21h weekend/holiday
+    // Length-of-stay bundle discounts for Overnight (21h) — flat per-night
+    // rate once a stay reaches 5/12/20 nights. undefined = not configured for
+    // that tier, so stayTotal() falls back to pricing every night normally.
+    // A tier that's DEACTIVATED (week/twoweek/month_bundle_active = false) is
+    // treated as undefined too, so its discount doesn't apply even though the
+    // rate is still stored — same fallback to normal nightly pricing.
+    weekdayWeekRate: h.week_bundle_active !== false && h.weekday_week_rate != null ? Number(h.weekday_week_rate) : undefined,
+    weekdayTwoWeekRate: h.twoweek_bundle_active !== false && h.weekday_twoweek_rate != null ? Number(h.weekday_twoweek_rate) : undefined,
+    weekdayMonthRate: h.month_bundle_active !== false && h.weekday_month_rate != null ? Number(h.weekday_month_rate) : undefined,
+    weekendWeekRate: h.week_bundle_active !== false && h.weekend_week_rate != null ? Number(h.weekend_week_rate) : undefined,
+    weekendTwoWeekRate: h.twoweek_bundle_active !== false && h.weekend_twoweek_rate != null ? Number(h.weekend_twoweek_rate) : undefined,
+    weekendMonthRate: h.month_bundle_active !== false && h.weekend_month_rate != null ? Number(h.weekend_month_rate) : undefined,
     additionalPaxFee: Number(h.extra_pax_fee ?? 300),
     basePax: Number(h.base_pax ?? 2),
     maxPax: Number(h.capacity ?? 4),

@@ -5,6 +5,7 @@ import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
 import Image from "next/image";
 import toast from "react-hot-toast";
+import ImageThumb from "@/components/ImageThumb";
 import { useGetBookingsQuery, useUpdateBookingStatusMutation } from "@/redux/api/bookingsApi";
 import { useGetBookingPaymentsQuery, useUpdateBookingPaymentMutation } from "@/redux/api/bookingPaymentsApi";
 import { useGetActivityLogsQuery } from "@/redux/api/activityLogApi";
@@ -425,11 +426,9 @@ export default function CSRDashboard() {
         className={`fixed inset-y-0 left-0 w-64 z-50 flex flex-col transition-transform duration-300 lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
         style={{ backgroundColor: "#1f1b16", borderRight: "1px solid rgba(250,247,241,0.1)" }}
       >
-        <div className="px-5 py-4 flex items-center justify-between border-b" style={{ borderColor: "rgba(250,247,241,0.1)" }}>
-          <Link href="/rooms">
-            <div className="rounded-lg overflow-hidden" style={{ backgroundColor: "#f9fafb" }}>
-              <Image src="/logo.png" alt="D'Lux Homes" width={80} height={28} className="mix-blend-multiply" style={{ width: "80px", height: "28px", objectFit: "cover" }} />
-            </div>
+        <div className="px-2 py-1 flex items-center justify-between border-b" style={{ borderColor: "rgba(250,247,241,0.1)" }}>
+          <Link href="/rooms" className="flex items-center min-w-0 flex-1">
+            <Image src="/logo.png" alt="D'Lux Homes" width={1056} height={232} style={{ width: "100%", height: "auto", maxHeight: "72px", objectFit: "contain" }} />
           </Link>
           <button onClick={() => setSidebarOpen(false)} className="lg:hidden" style={{ color: "#6b5040" }}>
             <X className="w-4 h-4" />
@@ -838,7 +837,7 @@ export default function CSRDashboard() {
                         <td className="px-4 py-3.5"><span className="text-sm" style={{ color: "#1a1a1a" }}>{p.guest}</span></td>
                         <td className="px-4 py-3.5"><span className="font-semibold text-sm" style={{ color: "#1a1a1a" }}>₱{p.amount.toLocaleString()}</span></td>
                         <td className="px-4 py-3.5"><span className="text-sm" style={{ color: "#5a4a3a" }}>{p.method}</span></td>
-                        <td className="px-4 py-3.5">{p.proofUrl ? (<a href={p.proofUrl} target="_blank" rel="noopener noreferrer" className="font-mono text-xs underline" style={{ color: "#B07848" }}>{p.proof}</a>) : (<span className="font-mono text-xs" style={{ color: "#8B6344" }}>{p.proof}</span>)}</td>
+                        <td className="px-4 py-3.5">{p.proofUrl ? (<ImageThumb src={p.proofUrl} alt="Payment proof" size={40} />) : (<span className="font-mono text-xs" style={{ color: "#8B6344" }}>{p.proof}</span>)}</td>
                         <td className="px-4 py-3.5"><span className="text-sm" style={{ color: "#8B6344" }}>{p.date}</span></td>
                         <td className="px-4 py-3.5">
                           <span className="text-xs font-semibold px-2.5 py-1 rounded-full capitalize"

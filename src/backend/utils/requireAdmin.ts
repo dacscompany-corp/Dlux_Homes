@@ -19,6 +19,8 @@
 //   - /api/admin/change-password (authenticates via old password in body)
 //   - /api/admin/haven/[id]/times (called from public Checkout.tsx for guests)
 //   - /api/payment-methods GET   (called from public Checkout.tsx for guests)
+//   - /api/admin/pricing-calendar GET (called from public checkout/rooms pages
+//     to price weekend/holiday stays — PUT/POST/DELETE remain admin-only)
 //
 // Routes with a CONDITIONAL public branch (read the route file for the carve-out):
 //   - /api/admin/employees GET with ?role=CSR → minimal public projection

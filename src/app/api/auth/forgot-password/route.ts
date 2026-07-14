@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
 import { generateResetToken, hashResetToken, RESET_TTL_MS } from "@/backend/utils/resetToken";
 import { sendPasswordResetEmail } from "@/backend/utils/mailer";
+import { rateLimit, clientIp } from "@/backend/utils/rateLimit";
 
 export const runtime = "nodejs";
 
@@ -21,6 +22,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const normalized = String(email || "").trim().toLowerCase();
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) return generic;
+
+    // Throttle reset requests per IP and per target email to prevent inbox
+    // bombing. On trip we still return the SAME generic response (no enumeration
+    // leak) but skip sending another email.
+    const ipOk = rateLimit(`forgot:ip:${clientIp(req)}`, 10, 15 * 60 * 1000).ok;
+    const emailOk = rateLimit(`forgot:email:${normalized}`, 4, 15 * 60 * 1000).ok;
+    if (!ipOk || !emailOk) return generic;
 
     // Look the email up in both the guest (users) and staff (employees) tables.
     const found = await client.query(

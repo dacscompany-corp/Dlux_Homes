@@ -6,11 +6,14 @@ import Image from "next/image";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import toast from "react-hot-toast";
+import { imageFileError } from "@/lib/validateImageFile";
+import ImageThumb from "@/components/ImageThumb";
 import { mockRooms } from "@/lib/mock-data";
 import { generateBookingId, addMyBookingId } from "@/lib/booking-store";
 import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
 import { havenToRoom } from "@/lib/haven-adapter";
-import { stayTotal, isWeekendOrHoliday, addDaysISO, extraPaxFee } from "@/lib/pricing";
+import { stayTotal, isWeekendOrHoliday, addDaysISO, extraPaxFee, bundleNightlyRate, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS } from "@/lib/pricing";
+import { useCalendarRules } from "@/lib/useCalendarRules";
 
 // ── Helpers ────────────────────────────────────────────────────
 function peso(n: number) { return "₱" + n.toLocaleString("en-PH"); }
@@ -73,6 +76,17 @@ const STEPS = ["Your details", "Payment", "Confirm", "Review"];
 // Refundable security deposit collected at check-in (D'Lux house policy).
 const SECURITY_DEPOSIT = 1000;
 
+// Brand marks for the payment options (see public/images). Matched against the
+// method key, provider and display name together, so a method stored as "bank"
+// with provider "BPI" still resolves to the BPI logo. Unknown providers return
+// null and fall back to the coloured initial badge.
+function methodLogo(m: { payment_method?: string | null; provider?: string | null; payment_name?: string | null }): string | null {
+  const key = `${m.payment_method ?? ""} ${m.provider ?? ""} ${m.payment_name ?? ""}`.toLowerCase();
+  if (key.includes("gcash")) return "/images/gcash.svg";
+  if (key.includes("bpi")) return "/images/bpi.svg";
+  return null;
+}
+
 // One uploaded ID photo: original filename + base64 data. Guests may attach several.
 type IdDoc = { name: string; data: string };
 type Info = { firstName: string; lastName: string; age: string; gender: string; email: string; phone: string; facebook: string; notes: string; validIds: IdDoc[] };
@@ -100,7 +114,7 @@ function UploadField({ label, sub, value, onChange, invalid, id }: { label: stri
   return (
     <div id={id}>
       <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "#1F160E", marginBottom: 8 }}>{label}</div>
-      <input ref={ref} type="file" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) fileToBase64(f).then((data) => onChange(f.name, data)); }} />
+      <input ref={ref} type="file" accept="image/png,image/jpeg,image/gif,image/webp" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) { const err = imageFileError(f); if (err) { toast.error(err); e.target.value = ""; return; } fileToBase64(f).then((data) => onChange(f.name, data)); } }} />
       <button onClick={() => ref.current?.click()}
         style={{ width: "100%", padding: 16, borderRadius: 14, border: invalid ? "1px solid #ef4444" : value ? "1px solid #B07848" : "1px dashed #D4BE9A", background: value ? "rgba(176,120,72,.06)" : "#FAF7F1", display: "flex", alignItems: "center", gap: 14, textAlign: "left", cursor: "pointer" }}>
         <div style={{ width: 44, height: 44, borderRadius: 11, background: value ? "#22C55E" : "#EFE4CE", display: "grid", placeItems: "center", color: value ? "#fff" : "#A88E63", flex: "none" }}>
@@ -137,7 +151,7 @@ function GuestIdUpload({ values, onAdd, onRemove, invalid, id, title = "Valid ID
     f.accept = "image/*";
     if (!capture) f.multiple = true; // file picker may select several at once
     if (capture) (f as unknown as { capture: string }).capture = "environment";
-    f.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) Array.from(files).forEach((file) => fileToBase64(file).then((data) => onAdd(file.name, data))); };
+    f.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) Array.from(files).forEach((file) => { const err = imageFileError(file); if (err) { toast.error(err); return; } fileToBase64(file).then((data) => onAdd(file.name, data)); }); };
     f.click();
   };
   const btn: React.CSSProperties = { flex: 1, minWidth: 150, padding: 14, borderRadius: 12, fontSize: 13, fontWeight: 600, background: "#4d4337", color: "#F6EFE2", border: "1px solid #5d5347", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 };
@@ -153,10 +167,10 @@ function GuestIdUpload({ values, onAdd, onRemove, invalid, id, title = "Valid ID
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
           {values.map((doc, idx) => (
             <div key={idx} style={{ background: "#4d4337", borderRadius: 14, padding: 16, display: "flex", alignItems: "center", gap: 14 }}>
-              <div style={{ width: 40, height: 40, borderRadius: 10, background: "#22c55e", display: "grid", placeItems: "center", color: "white", flexShrink: 0 }}><IcoCheckLg /></div>
+              <ImageThumb src={doc.data} alt={doc.name} size={44} rounded={10} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: "#F6EFE2", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.name}</div>
-                <div style={{ fontSize: 12, color: "#B8A68E" }}>ID uploaded successfully</div>
+                <div style={{ fontSize: 12, color: "#B8A68E" }}>Uploaded · tap to view</div>
               </div>
               <button onClick={() => onRemove(idx)} style={{ fontSize: 13, color: "#ef4444", background: "transparent", border: "none", cursor: "pointer", textDecoration: "underline", fontWeight: 500 }}>Remove</button>
             </div>
@@ -254,10 +268,20 @@ function CheckoutInner() {
     return "infant";
   };
 
+  // Owner-editable weekend/holiday calendar (System → Settings in the admin
+  // portal); falls back to Fri/Sat + built-in PH holidays if unreachable.
+  const calendarRules = useCalendarRules();
   // Weekday vs weekend/holiday rate based on the check-in date.
-  const isWeekendRate = isWeekendOrHoliday(date);
-  // Stay price: 10h single session, or 21h × nights (each night priced by its own date).
-  const basePrice = stayTotal(stayType, date, nights, room);
+  const isWeekendRate = isWeekendOrHoliday(date, calendarRules);
+  // Stay price: 10h single session, or 21h × nights (each night priced by its
+  // own date) — UNLESS the stay is long enough to qualify for a length-of-stay
+  // bundle discount (5/12/20+ nights), in which case a flat nightly rate applies.
+  const basePrice = stayTotal(stayType, date, nights, room, calendarRules);
+  const bundleRate = stayType === "10" ? undefined : bundleNightlyRate(nights, date, room, calendarRules);
+  const bundleLabel = bundleRate == null ? null
+    : nights >= BUNDLE_MONTH_NIGHTS ? "Monthly rate"
+    : nights >= BUNDLE_TWOWEEK_NIGHTS ? "Two-week rate"
+    : "Weekly rate";
   // D'Lux pricing: base rate covers 2 pax; each extra adult/young adult adds a
   // flat per-pax fee (once per booking). "Children (7 under)" are exempt from
   // the fee. No cleaning or service fee.
@@ -481,9 +505,8 @@ function CheckoutInner() {
         <div style={{ maxWidth: 1320, margin: "0 auto", height: 72, padding: "0 32px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24 }}>
 
           {/* wordmark */}
-          <Link href="/rooms" style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none", color: "inherit" }}>
-            <div style={{ width: 30, height: 30, flex: "none", background: "#1f1b16", color: "#faf7f1", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 16, fontStyle: "italic", letterSpacing: "-0.04em" }}>D</div>
-            <div style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 18 }}>D&rsquo; Lux Homes</div>
+          <Link href="/rooms" style={{ display: "flex", alignItems: "center", minWidth: 0, textDecoration: "none", color: "inherit" }}>
+            <Image src="/logo-guest.png" alt="D'Lux Homes" width={1056} height={232} style={{ width: "auto", maxWidth: "100%", height: 40, objectFit: "contain", filter: "invert(1)" }} />
           </Link>
 
           {/* step indicator */}
@@ -647,7 +670,7 @@ function CheckoutInner() {
                     </select>
                   </FieldLabel>
                   <FieldLabel label="Email Address *">
-                    <input id="f-email" style={fieldStyle("email")} type="email" value={info.email} onChange={(e) => setInfo({ ...info, email: e.target.value })} placeholder="csr@staycationhavenph.com" />
+                    <input id="f-email" style={fieldStyle("email")} type="email" value={info.email} onChange={(e) => setInfo({ ...info, email: e.target.value })} placeholder="juan@email.com" />
                     <Req k="email" msg="Enter a valid email address" />
                   </FieldLabel>
                   <FieldLabel label="Phone Number *">
@@ -672,8 +695,8 @@ function CheckoutInner() {
                         {info.validIds.map((doc, idx) => (
                           <div key={idx} style={{ display: "flex", alignItems: "center", gap: 14, padding: 12, border: "1px solid #E0CEB2", borderRadius: 14, background: "#FAF7F1" }}>
                             <div style={{ position: "relative", width: 66, height: 66, flex: "none" }}>
-                              <div style={{ width: "100%", height: "100%", borderRadius: 11, background: "repeating-linear-gradient(135deg,#EFE4CE,#EFE4CE 6px,#E6D8BC 6px,#E6D8BC 12px)", display: "grid", placeItems: "center", color: "#A88E63" }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></div>
-                              <div style={{ position: "absolute", right: -5, bottom: -5, width: 22, height: 22, borderRadius: "50%", background: "#22C55E", border: "2px solid #FAF7F1", display: "grid", placeItems: "center", color: "#fff" }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
+                              <ImageThumb src={doc.data} alt={doc.name} size={66} rounded={11} />
+                              <div style={{ position: "absolute", right: -5, bottom: -5, width: 22, height: 22, borderRadius: "50%", background: "#22C55E", border: "2px solid #FAF7F1", display: "grid", placeItems: "center", color: "#fff", pointerEvents: "none" }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
                             </div>
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ fontSize: 13.5, fontWeight: 600, color: "#1F160E", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.name}</div>
@@ -687,14 +710,14 @@ function CheckoutInner() {
                       </div>
                     )}
                     <div>
-                      <div style={{ border: "1px dashed #D4BE9A", borderRadius: 14, padding: 32, textAlign: "center", marginBottom: 12, cursor: "pointer", background: "#FAF7F1" }} onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.multiple = true; f.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) Array.from(files).forEach((file) => fileToBase64(file).then((data) => setInfo((prev) => ({ ...prev, validIds: [...prev.validIds, { name: file.name, data }] })))); }; f.click(); }}>
+                      <div style={{ border: "1px dashed #D4BE9A", borderRadius: 14, padding: 32, textAlign: "center", marginBottom: 12, cursor: "pointer", background: "#FAF7F1" }} onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/png,image/jpeg,image/gif,image/webp"; f.multiple = true; f.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) Array.from(files).forEach((file) => { const err = imageFileError(file); if (err) { toast.error(err); return; } fileToBase64(file).then((data) => setInfo((prev) => ({ ...prev, validIds: [...prev.validIds, { name: file.name, data }] }))); }); }; f.click(); }}>
                         <div style={{ width: 52, height: 52, borderRadius: 12, background: "#EFE4CE", display: "grid", placeItems: "center", margin: "0 auto 14px", color: "#A88E63" }}>
                           <IcoUpload />
                         </div>
                         <div style={{ fontSize: 14, fontWeight: 600, color: "#1F160E", marginBottom: 6 }}>{info.validIds.length > 0 ? "Add another ID photo" : "Click to upload ID photo"}</div>
                         <div style={{ fontSize: 12, color: "#8B7458" }}>PNG, JPG, JPEG up to 5MB · you can add more than one</div>
                       </div>
-                      <button onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.capture = "environment" as any; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) fileToBase64(file).then((data) => setInfo((prev) => ({ ...prev, validIds: [...prev.validIds, { name: file.name, data }] }))); }; f.click(); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: 10, border: "1px dashed #D4BE9A", borderRadius: 12, background: "transparent", color: "#8C5A2E", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
+                      <button onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/png,image/jpeg,image/gif,image/webp"; f.capture = "environment" as any; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) { const err = imageFileError(file); if (err) { toast.error(err); return; } fileToBase64(file).then((data) => setInfo((prev) => ({ ...prev, validIds: [...prev.validIds, { name: file.name, data }] }))); } }; f.click(); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: 10, border: "1px dashed #D4BE9A", borderRadius: 12, background: "transparent", color: "#8C5A2E", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
                         <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
                         Take photo with camera
                       </button>
@@ -768,10 +791,20 @@ function CheckoutInner() {
                         const isG = m.payment_method === "gcash";
                         const badgeBg = isG ? "#0A6FF1" : "#9E1B32";
                         const badgeTxt = isG ? "G" : (m.provider || m.payment_name).slice(0, 3).toUpperCase();
+                        // Real brand marks when we have one; otherwise fall back to the
+                        // coloured initial badge so unknown providers still render.
+                        const logo = methodLogo(m);
                         return (
                           <button key={m.id} onClick={() => setPayment({ ...payment, methodId: m.id, method: m.payment_method })}
                             style={{ width: "100%", display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", cursor: "pointer", borderRadius: 16, background: active ? "rgba(176,120,72,.06)" : "#FFFCF4", border: active ? "1.5px solid #B07848" : "1.5px solid #E0CEB2" }}>
-                            <div style={{ width: 42, height: 42, flex: "none", borderRadius: 11, background: badgeBg, display: "grid", placeItems: "center", color: "#fff", fontWeight: 700, fontSize: isG ? 17 : 12 }}>{badgeTxt}</div>
+                            {logo ? (
+                              <div style={{ width: 42, height: 42, flex: "none", borderRadius: 11, background: "#fff", border: "1px solid #E6D8BC", display: "grid", placeItems: "center", padding: 6 }}>
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={logo} alt={m.payment_name} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+                              </div>
+                            ) : (
+                              <div style={{ width: 42, height: 42, flex: "none", borderRadius: 11, background: badgeBg, display: "grid", placeItems: "center", color: "#fff", fontWeight: 700, fontSize: isG ? 17 : 12 }}>{badgeTxt}</div>
+                            )}
                             <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
                               <div style={{ fontSize: 15, fontWeight: 600, color: "#1F160E" }}>{m.payment_name}</div>
                               <div style={{ fontSize: 12.5, color: "#8B7458", marginTop: 1 }}>{m.account_details}</div>
@@ -853,6 +886,12 @@ function CheckoutInner() {
                 </div>
 
                 <UploadField label="Payment receipt *" sub="Screenshot of your GCash / bank confirmation" value={payment.proofName} onChange={(name, data) => setPayment({ ...payment, proofName: name, proofData: data })} invalid={showErrors && fieldErrors.has("receipt")} id="f-receipt" />
+                {payment.proofData ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 10 }}>
+                    <ImageThumb src={payment.proofData} alt="Payment receipt preview" size={52} rounded={11} />
+                    <span style={{ fontSize: 12.5, color: "#8B7458" }}>Tap the image to check your receipt is clear and correct.</span>
+                  </div>
+                ) : null}
 
                 <div style={{ marginTop: 22, padding: "16px 18px", borderRadius: 14, border: "1px solid #E0CEB2", background: "#FAF7F1", display: "flex", gap: 12, alignItems: "flex-start" }}>
                   <span style={{ color: "#8C5A2E", flex: "none", marginTop: 1 }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg></span>
@@ -939,7 +978,7 @@ function CheckoutInner() {
                   <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#4A3A2A" }}>Guests</span><span style={{ fontWeight: 600 }}>{adults + children + infants}</span></div>
                 </div>
                 <div style={{ padding: "16px 0 0", fontSize: 13, display: "flex", flexDirection: "column", gap: 6 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>{stayType === "10" ? `10-hour stay · ${isWeekendRate ? "Weekend/Holiday" : "Weekday"}` : `Overnight · ${nights} night${nights > 1 ? "s" : ""}`}</span><span>{peso(basePrice)}</span></div>
+                  <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>{stayType === "10" ? `10-hour stay · ${isWeekendRate ? "Weekend/Holiday" : "Weekday"}` : `Overnight · ${nights} night${nights > 1 ? "s" : ""}${bundleLabel ? ` · ${bundleLabel}` : ""}`}</span><span>{peso(basePrice)}</span></div>
                   {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra pax · {extraPaxCount} × {peso(room.additionalPaxFee)}</span><span>{peso(paxFee)}</span></div>}
                   <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16, marginTop: 6, paddingTop: 10, borderTop: "1px solid #E0CEB2" }}><span>Total stay value</span><span>{peso(total)}</span></div>
                 </div>

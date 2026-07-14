@@ -172,10 +172,9 @@ export default function BrowsePage() {
       {/* ═══════════ MOBILE HOME (D'Lux Mobile Guest View) ═══════════ */}
       <div className="rm-mobile" style={{ background: "#F6EFE2" }}>
         <div style={{ position: "sticky", top: 0, zIndex: 20, background: "#FAF7F1", borderBottom: "1px solid #ECE5D4", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 31, height: 31, background: "#1F160E", color: "#FAF7F1", display: "grid", placeItems: "center", fontFamily: "'Fraunces', serif", fontStyle: "italic", fontSize: 17 }}>D</div>
-            <div style={{ fontFamily: "'Fraunces', serif", fontSize: 19 }}>D&rsquo; Lux Homes</div>
-          </div>
+          <Link href="/rooms" style={{ display: "flex", alignItems: "center", minWidth: 0, textDecoration: "none", color: "inherit" }}>
+            <Image src="/logo-guest.png" alt="D'Lux Homes" width={1056} height={232} style={{ width: "auto", maxWidth: "100%", height: 38, objectFit: "contain", filter: "invert(1)" }} />
+          </Link>
           <Link href="/my-bookings" aria-label="My bookings" style={{ width: 40, height: 40, borderRadius: "50%", border: "1px solid #E0CEB2", background: "#FFFCF4", display: "grid", placeItems: "center", color: "#1F160E", textDecoration: "none" }}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
           </Link>
