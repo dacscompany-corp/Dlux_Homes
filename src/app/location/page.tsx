@@ -43,9 +43,7 @@ export default function LocationPage() {
       const L = mod.default;
       if (cancelled || !mapRef.current) return;
 
-      // scrollWheelZoom off so scrolling the page over the map doesn't hijack it;
-      // dragging, the +/- controls, and tapping the pin still zoom.
-      map = L.map(mapRef.current, { scrollWheelZoom: false, maxZoom: 21 }).setView(COORDS, 17);
+      map = L.map(mapRef.current, { scrollWheelZoom: true, maxZoom: 21 }).setView(COORDS, 17);
       L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxNativeZoom: 19,
         maxZoom: 21,
