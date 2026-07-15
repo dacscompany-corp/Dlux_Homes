@@ -3,7 +3,9 @@
 import { useState, useEffect, use, useRef, type CSSProperties, type ReactNode } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { useSession, signOut } from "next-auth/react";
 import SiteHeader from "@/components/SiteHeader";
+import { getMyBookingIds } from "@/lib/booking-store";
 import { mockRooms } from "@/lib/mock-data";
 import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
 import { useGetBlockedDatesQuery } from "@/redux/api/blockedDatesApi";
@@ -316,6 +318,11 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
   const [dateOpen, setDateOpen] = useState(false);
   const [guestOpen, setGuestOpen] = useState(false);
   const [wished, setWished] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [bookingCount, setBookingCount] = useState(0);
+  const { status: authStatus } = useSession();
+  const signedIn = authStatus === "authenticated";
+  useEffect(() => { setBookingCount(getMyBookingIds().length); }, []);
 
   const [selectedWindow, setSelectedWindow] = useState<Window>(windows[2] ?? windows[0]);
 
@@ -449,19 +456,75 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
 
       {/* ═══════════ MOBILE ROOM & BOOKING (D'Lux Mobile Guest View) ═══════════ */}
       <div className="rd-mobile" style={{ background: "#F6EFE2", minHeight: "100vh" }}>
-        <style>{`.bk-opt:active{border-color:#B07848}`}</style>
+        <style>{`.bk-opt:active{border-color:#B07848} @keyframes gOverlay{from{opacity:0;transform:scale(1.03)}to{opacity:1;transform:scale(1)}} .g2c-row:active{background:#F3EEE2}`}</style>
 
-        {/* SITE HEADER */}
-        <div style={{ flex: "none", position: "sticky", top: 0, zIndex: 20, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 16px", background: "#FAF7F1", borderBottom: "1px solid #ECE5D4" }}>
+        {/* SITE HEADER — Guest Header 2c: clean bar, logo + labeled Menu */}
+        <div style={{ flex: "none", position: "sticky", top: 0, zIndex: 20, height: 62, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", background: "#FAF7F1", borderBottom: "1px solid #ECE5D4" }}>
           <Link href="/rooms" style={{ display: "flex", alignItems: "center", minWidth: 0, textDecoration: "none", color: "inherit" }}>
-            <Image src="/logo-guest.png" alt="D'Lux Homes" width={1056} height={232} style={{ width: "auto", maxWidth: "100%", height: 34, objectFit: "contain", filter: "invert(1)" }} />
+            <Image src="/logo-guest.png" alt="D'Lux Homes" width={1056} height={232} style={{ width: "auto", maxWidth: "100%", height: 30, objectFit: "contain", filter: "invert(1)" }} />
           </Link>
-          <Link href="/my-bookings" aria-label="My bookings" style={{ width: 34, height: 34, borderRadius: 9, border: "1px solid #E0CEB2", background: "#FFFCF4", display: "grid", placeItems: "center", color: "#3A2E20", textDecoration: "none" }}>
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
-          </Link>
+          <button onClick={() => setMenuOpen(true)} style={{ display: "inline-flex", alignItems: "center", gap: 9, background: "transparent", border: 0, cursor: "pointer", color: "#1F160E", font: "inherit", fontSize: 14.5, fontWeight: 600 }}>
+            Menu
+            <svg width="22" height="16" viewBox="0 0 22 16" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><line x1="1" y1="2" x2="21" y2="2" /><line x1="1" y1="8" x2="21" y2="8" /><line x1="1" y1="14" x2="21" y2="14" /></svg>
+          </button>
         </div>
 
-        <div style={{ flex: 1 }}>
+        {/* MOBILE MENU — Guest Header 2c: calm full-screen list */}
+        {menuOpen && (
+          <div style={{ position: "fixed", inset: 0, zIndex: 80, background: "#FAF7F1", display: "flex", flexDirection: "column", animation: "gOverlay .28s ease" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 22px 4px" }}>
+              <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 11, letterSpacing: 2, color: "#9A6840" }}>MENU</span>
+              <button onClick={() => setMenuOpen(false)} aria-label="Close menu" style={{ width: 38, height: 38, borderRadius: "50%", border: "1px solid #E1D8C6", background: "transparent", display: "grid", placeItems: "center", cursor: "pointer", color: "#1F160E" }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+              </button>
+            </div>
+
+            <div style={{ flex: 1, padding: "10px 24px", display: "flex", flexDirection: "column", overflowY: "auto" }}>
+              <Link href="/rooms" onClick={() => setMenuOpen(false)} className="g2c-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 0", borderBottom: "1px solid #ECE5D4", color: "#1F160E", fontFamily: "'Instrument Serif', serif", fontSize: 26, textDecoration: "none" }}>
+                Browse homes
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#B8754A" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
+              </Link>
+              <Link href="/location" onClick={() => setMenuOpen(false)} className="g2c-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 0", borderBottom: "1px solid #ECE5D4", color: "#1F160E", fontFamily: "'Instrument Serif', serif", fontSize: 26, textDecoration: "none" }}>
+                Location
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#B8754A" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
+              </Link>
+              <Link href="/my-bookings" onClick={() => setMenuOpen(false)} className="g2c-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 0", borderBottom: "1px solid #ECE5D4", color: "#1F160E", fontFamily: "'Instrument Serif', serif", fontSize: 26, textDecoration: "none" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 12 }}>My bookings
+                  {bookingCount > 0 && <span style={{ minWidth: 24, height: 24, padding: "0 8px", background: "#B8754A", color: "#FAF7F1", fontSize: 13, fontWeight: 600, fontFamily: "'Geist Mono', monospace", display: "grid", placeItems: "center", borderRadius: 12 }}>{bookingCount}</span>}
+                </span>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#B8754A" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
+              </Link>
+              <Link href={signedIn ? "/my-bookings" : "/login"} onClick={() => setMenuOpen(false)} className="g2c-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 0", borderBottom: "1px solid #ECE5D4", color: "#1F160E", fontFamily: "'Instrument Serif', serif", fontSize: 26, textDecoration: "none" }}>
+                {signedIn ? "My account" : "Sign in"}
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#B8754A" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
+              </Link>
+
+              <div style={{ marginTop: "auto", paddingBottom: 22 }}>
+                <a href="mailto:homesdlux@gmail.com" style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: "#6B6358", padding: "16px 0", textDecoration: "none" }}>
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#B8754A" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" /></svg>
+                  Message us · homesdlux@gmail.com
+                </a>
+                {signedIn && (
+                  <button onClick={() => { setMenuOpen(false); signOut({ callbackUrl: "/rooms" }); }} style={{ display: "block", background: "transparent", border: "none", padding: "4px 0 14px", cursor: "pointer", color: "#A8492F", fontSize: 14, fontFamily: "inherit" }}>Sign out</button>
+                )}
+                <button onClick={() => { setMenuOpen(false); document.getElementById("mbook")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, background: "#B8754A", color: "#FAF7F1", border: 0, padding: 16, borderRadius: 14, font: "inherit", fontSize: 16, fontWeight: 600, cursor: "pointer" }}>
+                  Book now
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* BOTTOM BOOK-NOW BAR — Guest Header 2c: primary action always in thumb reach */}
+        <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, background: "#FAF7F1", borderTop: "1px solid #ECE5D4", padding: "14px 18px calc(16px + env(safe-area-inset-bottom))", boxShadow: "0 -12px 30px -18px rgba(20,15,9,.35)" }}>
+          <button onClick={() => document.getElementById("mbook")?.scrollIntoView({ behavior: "smooth", block: "start" })} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, background: "#B8754A", color: "#FAF7F1", border: 0, padding: 16, borderRadius: 14, font: "inherit", fontSize: 16, fontWeight: 600, cursor: "pointer" }}>
+            Book now
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
+          </button>
+        </div>
+
+        <div style={{ flex: 1, paddingBottom: 96 }}>
           <div style={{ padding: "16px 16px 0" }}>
             {/* hero */}
             <div onClick={() => setShowGallery(true)} style={{ position: "relative", height: 204, borderRadius: 20, overflow: "hidden", background: "#111", cursor: "pointer" }}>
@@ -492,7 +555,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
           </div>
 
           {/* BOOKING MODULE CARD */}
-          <div style={{ margin: "18px 16px 0", background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 20, boxShadow: "0 4px 16px rgba(31,22,14,.05)", overflow: "hidden" }}>
+          <div id="mbook" style={{ scrollMarginTop: 72, margin: "18px 16px 0", background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 20, boxShadow: "0 4px 16px rgba(31,22,14,.05)", overflow: "hidden" }}>
             {/* price header */}
             <div style={{ padding: "18px 18px 16px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, borderBottom: "1px solid #EFE4CE" }}>
               <div style={{ minWidth: 0 }}>

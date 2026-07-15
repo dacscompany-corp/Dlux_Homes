@@ -56,6 +56,7 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
   const [hoverMenu, setHoverMenu] = useState(-1);
   const [signHover, setSignHover] = useState(false);
   const [rows, setRows] = useState<Row[]>([]);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   // Pull the guest's bookings (same source as the My Bookings page) for the panel.
   useEffect(() => {
@@ -160,13 +161,14 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
           .sh-back svg, .sh-book svg { transition: none; }
           .sh-back:hover svg { animation: none; }
         }
-        @media (max-width: 720px) { .sh-acct-text, .sh-mybk-text, .sh-back-text { display: none !important; } }
-        @media (max-width: 860px) { .sh-location span:last-child { display: none !important; } }
-        @media (max-width: 560px) {
-          .sh-bar { padding: 0 14px !important; gap: 8px !important; }
-          .sh-book { padding: 11px 13px !important; margin-left: 4px !important; }
-          .sh-book-text { display: none !important; }
+        .sh-menubtn { display: none; }
+        .sh-menu-row:active { background: #F3EEE2; }
+        @keyframes shOverlay { from { opacity: 0; transform: scale(1.03); } to { opacity: 1; transform: scale(1); } }
+        @media (max-width: 860px) {
+          .sh-desknav { display: none !important; }
+          .sh-menubtn { display: inline-flex !important; }
         }
+        @media (max-width: 560px) { .sh-bar { padding: 0 16px !important; } }
       `}</style>
 
       <div className="sh-bar" style={{ maxWidth: 1320, margin: "0 auto", height: 72, padding: "0 32px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24 }}>
@@ -187,8 +189,8 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
           </Link>
         </div>
 
-        {/* RIGHT — bookings + account + book */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
+        {/* RIGHT — bookings + account + book (desktop nav) */}
+        <div className="sh-desknav" style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
 
           <Link href="/location" className="sh-tap sh-location" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", textDecoration: "none", color: INK, fontSize: 14 }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg>
@@ -273,7 +275,60 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
           </button>
         </div>
+
+        {/* MOBILE — Menu button (Guest Header 2c) */}
+        <button className="sh-menubtn" onClick={() => setMenuOpen(true)} style={{ display: "none", alignItems: "center", gap: 9, background: "transparent", border: 0, cursor: "pointer", color: INK, font: "inherit", fontSize: 14.5, fontWeight: 600, flex: "none" }}>
+          Menu
+          <svg width="22" height="16" viewBox="0 0 22 16" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><line x1="1" y1="2" x2="21" y2="2" /><line x1="1" y1="8" x2="21" y2="8" /><line x1="1" y1="14" x2="21" y2="14" /></svg>
+        </button>
       </div>
+
+      {/* MOBILE MENU — Guest Header 2c: calm full-screen list */}
+      {menuOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 80, background: "#FAF7F1", display: "flex", flexDirection: "column", animation: "shOverlay .28s ease" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 22px 4px" }}>
+            <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: "2px", color: "#9A6840" }}>MENU</span>
+            <button onClick={() => setMenuOpen(false)} aria-label="Close menu" style={{ width: 38, height: 38, borderRadius: "50%", border: "1px solid #E1D8C6", background: "transparent", display: "grid", placeItems: "center", cursor: "pointer", color: INK }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+            </button>
+          </div>
+
+          <div style={{ flex: 1, padding: "10px 24px", display: "flex", flexDirection: "column", overflowY: "auto" }}>
+            <Link href="/rooms" onClick={() => setMenuOpen(false)} className="sh-menu-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 0", borderBottom: "1px solid #ECE5D4", color: INK, fontFamily: "'Instrument Serif', serif", fontSize: 26, textDecoration: "none" }}>
+              Browse homes
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={CLAY} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
+            </Link>
+            <Link href="/location" onClick={() => setMenuOpen(false)} className="sh-menu-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 0", borderBottom: "1px solid #ECE5D4", color: INK, fontFamily: "'Instrument Serif', serif", fontSize: 26, textDecoration: "none" }}>
+              Location
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={CLAY} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
+            </Link>
+            <Link href="/my-bookings" onClick={() => setMenuOpen(false)} className="sh-menu-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 0", borderBottom: "1px solid #ECE5D4", color: INK, fontFamily: "'Instrument Serif', serif", fontSize: 26, textDecoration: "none" }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 12 }}>My bookings
+                {rows.length > 0 && <span style={{ minWidth: 24, height: 24, padding: "0 8px", background: CLAY, color: "#FAF7F1", fontSize: 13, fontWeight: 600, fontFamily: MONO, display: "grid", placeItems: "center", borderRadius: 12 }}>{rows.length}</span>}
+              </span>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={CLAY} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
+            </Link>
+            <Link href={signedIn ? "/my-bookings" : "/login"} onClick={() => setMenuOpen(false)} className="sh-menu-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 0", borderBottom: "1px solid #ECE5D4", color: INK, fontFamily: "'Instrument Serif', serif", fontSize: 26, textDecoration: "none" }}>
+              {signedIn ? "My account" : "Sign in"}
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={CLAY} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
+            </Link>
+
+            <div style={{ marginTop: "auto", paddingBottom: 22 }}>
+              <a href="mailto:homesdlux@gmail.com" style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: MUTED, padding: "16px 0", textDecoration: "none" }}>
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={CLAY} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" /></svg>
+                Message us · homesdlux@gmail.com
+              </a>
+              {signedIn && (
+                <button onClick={() => { setMenuOpen(false); signOut({ callbackUrl: "/rooms" }); }} style={{ display: "block", background: "transparent", border: "none", padding: "4px 0 14px", cursor: "pointer", color: "#A8492F", fontSize: 14, fontFamily: "inherit" }}>Sign out</button>
+              )}
+              <button onClick={() => { setMenuOpen(false); goBook(); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, background: CLAY, color: "#FAF7F1", border: 0, padding: 16, borderRadius: 14, font: "inherit", fontSize: 16, fontWeight: 600, cursor: "pointer" }}>
+                {bookLabel}
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </header>
   );
 }

@@ -490,7 +490,6 @@ function CheckoutInner() {
             .co-grid { grid-template-columns: 1fr !important; gap: 22px !important; }
             .co-form-grid { grid-template-columns: 1fr !important; }
             .co-aside-inner { position: static !important; top: auto !important; }
-            .co-mobile-steps { display: flex !important; }
             .co-mobhdr { display: flex !important; }
             .co-mob-stay { display: flex !important; }
             .co-deskhdr { display: none !important; }
@@ -545,12 +544,18 @@ function CheckoutInner() {
         </div>
       </header>
 
-      {/* MOBILE header (back + Checkout) */}
-      <div className="co-mobhdr" style={{ position: "sticky", top: 0, zIndex: 50, background: "#FAF7F1", borderBottom: "1px solid #ECE5D4", padding: "12px 12px", alignItems: "center", gap: 10 }}>
-        <button onClick={() => (step === 0 ? router.back() : setStep(step - 1))} aria-label="Back" style={{ display: "inline-flex", alignItems: "center", padding: 8, border: "none", background: "transparent", color: "#6b6358", cursor: "pointer" }}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>
+      {/* MOBILE header — Guest Header 3b: centered step + progress bars */}
+      <div className="co-mobhdr" style={{ position: "sticky", top: 0, zIndex: 50, background: "#FAF7F1", borderBottom: "1px solid #ECE5D4", padding: "14px 20px 16px", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
+        <button onClick={() => (step === 0 ? router.back() : setStep(step - 1))} aria-label="Back" style={{ position: "absolute", left: 14, top: 12, width: 40, height: 40, borderRadius: "50%", border: "1px solid #E1D8C6", background: "transparent", display: "grid", placeItems: "center", cursor: "pointer", color: "#1F160E" }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>
         </button>
-        <div style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 19, color: "#1F160E" }}>Checkout</div>
+        <div style={{ fontFamily: "'Geist Mono', monospace", fontSize: 10.5, letterSpacing: 2, color: "#B07848", marginBottom: 2 }}>STEP {step + 1} OF {STEPS.length}</div>
+        <div style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 22, color: "#1F160E" }}>{STEPS[step]}</div>
+        <div style={{ display: "flex", gap: 6, marginTop: 14, justifyContent: "center" }}>
+          {STEPS.map((_, i) => (
+            <span key={i} style={{ width: 34, height: 5, borderRadius: 3, background: i < step ? "#1F160E" : i === step ? "#B07848" : "#E6DCCB" }} />
+          ))}
+        </div>
       </div>
 
       <div className="co-wrap" style={{ maxWidth: 1180, margin: "0 auto", padding: "20px 28px 60px" }}>
