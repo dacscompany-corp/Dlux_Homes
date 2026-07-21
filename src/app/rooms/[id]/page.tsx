@@ -1,14 +1,16 @@
 "use client";
 
-import { useState, useEffect, use, useRef, type CSSProperties, type ReactNode } from "react";
+import { useState, useEffect, use, useRef, Suspense, type CSSProperties, type ReactNode } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { useSearchParams } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import SiteHeader from "@/components/SiteHeader";
 import { getMyBookingIds } from "@/lib/booking-store";
 import { mockRooms } from "@/lib/mock-data";
 import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
 import { useGetBlockedDatesQuery } from "@/redux/api/blockedDatesApi";
+import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
 import { havenToRoom } from "@/lib/haven-adapter";
 import { stayTotal, isWeekendOrHoliday, extraPaxFee, bundleNightlyRate, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
@@ -263,8 +265,39 @@ function CardStep({ n, title, active, done, summary, onOpen, children }: {
   );
 }
 
-export default function RoomDetailPage({ params }: { params: Promise<{ id: string }> }) {
+// Promo banner — renders one card per currently active promotion (server has
+// already filtered to active + in-window rows). Renders nothing when empty.
+function PromoBanner({ promotions }: { promotions: { id: string; title: string; description: string | null; image_url: string | null; discount_type: "percentage" | "fixed" | null; discount_value: number | null }[] | undefined }) {
+  if (!promotions || promotions.length === 0) return null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "14px 20px" }}>
+      {promotions.map((p) => (
+        <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 14, background: "#FBF3E7", border: "1px solid #ECE5D4", borderRadius: 14, padding: 12, overflow: "hidden" }}>
+          {p.image_url && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={p.image_url} alt={p.title} style={{ width: 64, height: 64, borderRadius: 10, objectFit: "cover", flex: "none" }} />
+          )}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 17, color: "#1F160E" }}>{p.title}</span>
+              {p.discount_value != null && (
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#8C5A2E", background: "#F3E4CB", borderRadius: 999, padding: "2px 9px", whiteSpace: "nowrap" }}>
+                  Save {p.discount_type === "percentage" ? `${p.discount_value}%` : `₱${p.discount_value}`}
+                </span>
+              )}
+            </div>
+            {p.description && <p style={{ fontSize: 13, color: "#6B6358", margin: "3px 0 0" }}>{p.description}</p>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const sp = useSearchParams();
+  const promoCode = sp.get("promo") || "";
   // Live haven by id; fall back to a matching mock (legacy ids) or the first
   // property so the single-property storefront always renders.
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
@@ -277,6 +310,9 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
   const liveWindows = (room as Room).windows;
   const windows: Window[] = liveWindows?.length ? (liveWindows as Window[]) : FALLBACK_WINDOWS;
 
+
+  // Active promotional banner(s) — server already filters to in-window, active rows.
+  const { data: activePromotions } = useGetActivePromotionsQuery();
 
   // Unavailable days for the date picker: owner-set blocked dates + active bookings.
   const { data: blockedRes } = useGetBlockedDatesQuery({ haven_id: id }, { skip: !isUuid });
@@ -435,6 +471,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
       infants: String(guests.infants),
       nights: String(stayNights),
     });
+    if (promoCode) params.set("promo", promoCode);
     window.location.href = `/checkout?${params.toString()}`;
   };
 
@@ -443,6 +480,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
       {/* HEADER (desktop only — mobile uses its own header inside .rd-mobile) */}
       <div className="rd-deskhdr">
         <SiteHeader bookHref="#book" backHref="/rooms" backLabel="Back" />
+        <PromoBanner promotions={activePromotions} />
       </div>
       <style>{`
         .save-btn{transition:background 0.18s,border-color 0.18s,color 0.18s,transform 0.18s,box-shadow 0.18s}
@@ -468,6 +506,8 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
             <svg width="22" height="16" viewBox="0 0 22 16" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><line x1="1" y1="2" x2="21" y2="2" /><line x1="1" y1="8" x2="21" y2="8" /><line x1="1" y1="14" x2="21" y2="14" /></svg>
           </button>
         </div>
+
+        <PromoBanner promotions={activePromotions} />
 
         {/* MOBILE MENU — Guest Header 2c: calm full-screen list */}
         {menuOpen && (
@@ -516,10 +556,23 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
           </div>
         )}
 
-        {/* BOTTOM BOOK-NOW BAR — Guest Header 2c: primary action always in thumb reach */}
-        <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, background: "#FAF7F1", borderTop: "1px solid #ECE5D4", padding: "14px 18px calc(16px + env(safe-area-inset-bottom))", boxShadow: "0 -12px 30px -18px rgba(20,15,9,.35)" }}>
-          <button onClick={() => document.getElementById("mbook")?.scrollIntoView({ behavior: "smooth", block: "start" })} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, background: "#B8754A", color: "#FAF7F1", border: 0, padding: 16, borderRadius: 14, font: "inherit", fontSize: 16, fontWeight: 600, cursor: "pointer" }}>
-            Book now
+        {/* BOTTOM BOOK-NOW BAR — always in thumb reach; reserves directly once a
+            date is picked, otherwise jumps to the date step instead of the top
+            of the card so guests don't have to scroll past steps they already
+            finished. */}
+        <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, background: "#FAF7F1", borderTop: "1px solid #ECE5D4", padding: "14px 18px calc(16px + env(safe-area-inset-bottom))", boxShadow: "0 -12px 30px -18px rgba(20,15,9,.35)", display: "flex", alignItems: "center", gap: 14 }}>
+          <div style={{ flex: "none" }}>
+            <div style={{ fontSize: 10.5, color: "#8B7458" }}>{canProceed ? "Total" : "From"}</div>
+            <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: "-.01em" }}>{peso(canProceed ? total : (selectedWindow.stayType === "10" ? room.price10hr : room.price21hr))}</div>
+          </div>
+          <button
+            onClick={() => {
+              if (canProceed) { handleReserve(); return; }
+              setCardStep(2); setDateOpen(true); setGuestOpen(false);
+              document.getElementById("mbook")?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+            style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, background: "#B8754A", color: "#FAF7F1", border: 0, padding: 16, borderRadius: 14, font: "inherit", fontSize: 15.5, fontWeight: 600, cursor: "pointer" }}>
+            {canProceed ? "Reserve" : "Pick a date"}
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
           </button>
         </div>
@@ -738,18 +791,6 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
 
           <div style={{ height: 28 }} />
         </div>
-
-        {/* STICKY BOTTOM BAR */}
-        <div style={{ flex: "none", position: "sticky", bottom: 0, background: "#FAF7F1", borderTop: "1px solid #ECE5D4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 14 }}>
-          <div style={{ flex: "none" }}>
-            <div style={{ fontSize: 11, color: "#8B7458" }}>{canProceed ? "Total" : "From"}</div>
-            <div style={{ fontSize: 21, fontWeight: 700, letterSpacing: "-.01em" }}>{peso(canProceed ? total : (selectedWindow.stayType === "10" ? room.price10hr : room.price21hr))}</div>
-          </div>
-          <button onClick={handleReserve} disabled={!canProceed} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: 15, borderRadius: 14, fontSize: 15, fontWeight: 600, border: "none", cursor: canProceed ? "pointer" : "not-allowed", background: canProceed ? "#B07848" : "#E4D7BE", color: canProceed ? "#fff" : "#9B8B73" }}>
-            {canProceed ? "Reserve" : "Pick a date first"}
-            {canProceed && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>}
-          </button>
-        </div>
       </div>
 
       <div className="rd-wrap rd-deskonly" style={{ maxWidth: 1320, margin: "0 auto", padding: "20px 28px 60px" }}>
@@ -785,7 +826,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
           .cs-showbtn:hover { background: rgba(0,0,0,.65) !important; }
           @media (max-width: 900px) {
             .rd-grid { grid-template-columns: 1fr !important; gap: 0 !important; }
-            .rd-book { position: static !important; top: auto !important; margin-top: 28px; }
+            .rd-book { position: static !important; top: auto !important; margin-top: 28px; max-height: none !important; overflow: visible !important; }
             .rd-3col { grid-template-columns: 1fr !important; }
             .rd-2col { grid-template-columns: 1fr !important; }
           }
@@ -968,7 +1009,7 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
           </div>{/* end left column */}
 
           {/* BOOKING CARD — sticky beside the carousel */}
-          <aside id="book" className="rd-book" style={{ position: "sticky", top: 90, height: "fit-content" }}>
+          <aside id="book" className="rd-book" style={{ position: "sticky", top: 90, maxHeight: "calc(100vh - 106px)", overflowY: "auto", overflowX: "hidden" }}>
             <style>{`.bk-opt{transition:border-color .18s ease,background .18s ease}.bk-opt:hover{border-color:#B07848 !important}`}</style>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div style={{ background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 24, boxShadow: "0 4px 16px rgba(31,22,14,.06),0 12px 32px rgba(31,22,14,.08)", overflow: "hidden" }}>
@@ -1139,5 +1180,13 @@ export default function RoomDetailPage({ params }: { params: Promise<{ id: strin
         </div>
       </footer>
     </div>
+  );
+}
+
+export default function RoomDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  return (
+    <Suspense fallback={<div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--bg)", color: "var(--muted)", fontSize: 14 }}>Loading…</div>}>
+      <RoomDetailInner params={params} />
+    </Suspense>
   );
 }

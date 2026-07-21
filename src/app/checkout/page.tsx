@@ -288,7 +288,60 @@ function CheckoutInner() {
   const feePax = adults + children; // adults + young adults; excludes 7-under
   const extraPaxCount = Math.max(0, feePax - room.basePax);
   const paxFee = extraPaxFee(feePax, room.basePax, room.additionalPaxFee);
-  const total = basePrice + paxFee;
+  const subtotal = basePrice + paxFee;
+
+  // Promo code — validated against /api/discounts/validate as the guest types.
+  // ?promo= arrives pre-filled from the home page's promo banner and auto-applies.
+  type AppliedDiscount = { id: string; code: string; name: string; discount_type: "percentage" | "fixed"; discount_value: number; discount_amount: number };
+  const [promoInput, setPromoInput] = useState(sp.get("promo") || "");
+  const [appliedDiscount, setAppliedDiscount] = useState<AppliedDiscount | null>(null);
+  const [promoStatus, setPromoStatus] = useState<"idle" | "checking" | "error">("idle");
+  const [promoError, setPromoError] = useState("");
+  const applyPromo = async (codeOverride?: string) => {
+    const code = (codeOverride ?? promoInput).trim();
+    if (!code) return;
+    setPromoStatus("checking");
+    setPromoError("");
+    try {
+      const res = await fetch("/api/discounts/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, haven_id: isUuid ? roomId : null, amount: subtotal }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        setAppliedDiscount(null);
+        setPromoStatus("error");
+        setPromoError(json.error || "This promo code is invalid or has expired.");
+        return;
+      }
+      setAppliedDiscount(json.data);
+      setPromoStatus("idle");
+      toast.success(`"${json.data.code}" applied.`);
+    } catch {
+      setAppliedDiscount(null);
+      setPromoStatus("error");
+      setPromoError("Network error. Please try again.");
+    }
+  };
+  const removePromo = () => { setAppliedDiscount(null); setPromoInput(""); setPromoStatus("idle"); setPromoError(""); };
+  // Auto-apply a code carried over from the home page banner, once, on load.
+  const autoAppliedRef = useRef(false);
+  useEffect(() => {
+    if (autoAppliedRef.current) return;
+    const promo = sp.get("promo");
+    if (promo) { autoAppliedRef.current = true; applyPromo(promo); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Re-validate whenever the subtotal changes (e.g. guest count changes the
+  // pax fee) so a min-booking-amount code doesn't silently overcharge.
+  useEffect(() => {
+    if (appliedDiscount) applyPromo(appliedDiscount.code);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subtotal]);
+
+  const discountAmount = appliedDiscount?.discount_amount ?? 0;
+  const total = Math.max(0, subtotal - discountAmount);
   const downPayment = Math.round(total * 0.5); // 50% reservation down payment
   const stepCaption = ["Step 1 of 4 — tell us who's staying", "Step 2 of 4 — send your down payment to reserve", "Step 3 of 4 — confirm the payment you sent", "Step 4 of 4 — review and submit your request"][step];
 
@@ -432,6 +485,9 @@ function CheckoutInner() {
       total_amount: total,
       down_payment: downPayment,
       add_ons: [],
+      discount_id: appliedDiscount?.id || undefined,
+      discount_code: appliedDiscount?.code || undefined,
+      discount_amount: discountAmount || undefined,
     };
 
     try {
@@ -985,7 +1041,43 @@ function CheckoutInner() {
                 <div style={{ padding: "16px 0 0", fontSize: 13, display: "flex", flexDirection: "column", gap: 6 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>{stayType === "10" ? `10-hour stay · ${isWeekendRate ? "Weekend/Holiday" : "Weekday"}` : `Overnight · ${nights} night${nights > 1 ? "s" : ""}${bundleLabel ? ` · ${bundleLabel}` : ""}`}</span><span>{peso(basePrice)}</span></div>
                   {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra pax · {extraPaxCount} × {peso(room.additionalPaxFee)}</span><span>{peso(paxFee)}</span></div>}
+                  {appliedDiscount && (
+                    <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span>Promo · {appliedDiscount.code}</span><span>−{peso(discountAmount)}</span></div>
+                  )}
                   <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16, marginTop: 6, paddingTop: 10, borderTop: "1px solid #E0CEB2" }}><span>Total stay value</span><span>{peso(total)}</span></div>
+                </div>
+
+                {/* PROMO CODE */}
+                <div style={{ padding: "16px 0 0", borderTop: "1px solid #E0CEB2", marginTop: 16 }}>
+                  {appliedDiscount ? (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, background: "#EAF7EF", border: "1px solid #BCE7CC", borderRadius: 12, padding: "10px 14px" }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#166534" }}>{appliedDiscount.code} applied</div>
+                        <div style={{ fontSize: 11.5, color: "#3A6B4C" }}>{appliedDiscount.name}</div>
+                      </div>
+                      <button onClick={removePromo} style={{ fontSize: 12, fontWeight: 600, color: "#166534", background: "transparent", border: "none", textDecoration: "underline", cursor: "pointer", flex: "none" }}>Remove</button>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <input
+                          value={promoInput}
+                          onChange={(e) => { setPromoInput(e.target.value); if (promoStatus === "error") { setPromoStatus("idle"); setPromoError(""); } }}
+                          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); applyPromo(); } }}
+                          placeholder="Promo code"
+                          style={{ ...inputStyle, flex: 1, padding: "10px 12px", fontSize: 13, textTransform: "uppercase", borderColor: promoStatus === "error" ? "#ef4444" : inputStyle.borderColor }}
+                        />
+                        <button
+                          onClick={() => applyPromo()}
+                          disabled={!promoInput.trim() || promoStatus === "checking"}
+                          style={{ padding: "10px 16px", borderRadius: 12, background: "#1F160E", color: "#F6EFE2", border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer", flex: "none", opacity: (!promoInput.trim() || promoStatus === "checking") ? 0.5 : 1 }}
+                        >
+                          {promoStatus === "checking" ? "Checking…" : "Apply"}
+                        </button>
+                      </div>
+                      {promoStatus === "error" && <div style={{ fontSize: 11.5, color: "#ef4444", marginTop: 6 }}>{promoError}</div>}
+                    </>
+                  )}
                 </div>
               </div>
 

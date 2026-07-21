@@ -10,6 +10,7 @@ import { getMyBookingIds } from "@/lib/booking-store";
 import { mockRooms, mockReviews } from "@/lib/mock-data";
 import { useGetHavensQuery } from "@/redux/api/roomApi";
 import { havenToRoom } from "@/lib/haven-adapter";
+import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
 
 // Fallback labels + times (mock mode / haven with no configured times). The live
 // haven's actual check-in/out times override these via room.windows — see
@@ -67,6 +68,46 @@ function IcoHeart({ filled }: { filled: boolean }) {
   return <svg width={16} height={16} viewBox="0 0 24 24" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" /></svg>;
 }
 
+function IcoTag() {
+  return <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41 11 3.83A2 2 0 0 0 9.59 3.24L4 3a1 1 0 0 0-1 1l.24 5.59a2 2 0 0 0 .59 1.41l9.58 9.58a2 2 0 0 0 2.83 0l4.35-4.35a2 2 0 0 0 0-2.83Z" /><circle cx="7.5" cy="7.5" r="1.2" fill="currentColor" stroke="none" /></svg>;
+}
+
+// Promo banner — bold, high-contrast so an active promo can't be missed on the
+// guest home page. Server has already filtered to active + in-window rows.
+// Renders nothing when empty.
+function PromoBanner({ promotions, roomId }: { promotions: { id: string; title: string; description: string | null; image_url: string | null; discount_type: "percentage" | "fixed" | null; discount_value: number | null; discount_code?: string | null }[] | undefined; roomId: string }) {
+  if (!promotions || promotions.length === 0) return null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {promotions.map((p) => {
+        const href = p.discount_code ? `/rooms/${roomId}?promo=${encodeURIComponent(p.discount_code)}` : `/rooms/${roomId}`;
+        return (
+          <Link key={p.id} href={href} style={{ display: "flex", alignItems: "center", gap: 16, background: "linear-gradient(100deg, var(--dlux-accent) 0%, #9A6035 100%)", borderRadius: 16, padding: "16px 20px", overflow: "hidden", boxShadow: "0 8px 24px -10px rgba(154,96,53,.55)", textDecoration: "none", cursor: "pointer" }}>
+            {p.image_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={p.image_url} alt={p.title} style={{ width: 56, height: 56, borderRadius: 12, objectFit: "cover", flex: "none", border: "2px solid rgba(255,255,255,.4)" }} />
+            ) : (
+              <span style={{ width: 44, height: 44, borderRadius: 12, background: "rgba(255,255,255,.18)", display: "grid", placeItems: "center", flex: "none", color: "#fff" }}><IcoTag /></span>
+            )}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 19, color: "#fff" }}>{p.title}</span>
+                {p.discount_value != null && (
+                  <span style={{ fontSize: 12.5, fontWeight: 800, color: "#7A4A22", background: "#fff", borderRadius: 999, padding: "3px 11px", whiteSpace: "nowrap", letterSpacing: ".01em" }}>
+                    Save {p.discount_type === "percentage" ? `${p.discount_value}%` : `₱${p.discount_value}`}
+                  </span>
+                )}
+              </div>
+              {p.description && <p style={{ fontSize: 13.5, color: "rgba(255,255,255,.88)", margin: "4px 0 0" }}>{p.description}</p>}
+              {p.discount_code && <p style={{ fontSize: 12, color: "#fff", fontWeight: 600, margin: "6px 0 0" }}>Tap to redeem at checkout →</p>}
+            </div>
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function BrowsePage() {
   const [heroImg, setHeroImg] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -76,6 +117,7 @@ export default function BrowsePage() {
   const signedIn = authStatus === "authenticated";
   useEffect(() => { setBookingCount(getMyBookingIds().length); }, []);
   const [wished, setWished] = useState(false);
+  const { data: activePromotions } = useGetActivePromotionsQuery();
 
   // Reveal the stay-window cards once they scroll into view
   const stayCardsRef = useRef<HTMLDivElement>(null);
@@ -246,6 +288,10 @@ export default function BrowsePage() {
           </button>
         </div>
         <div style={{ padding: "16px 16px 0" }}>
+          <PromoBanner promotions={activePromotions} roomId={room.id} />
+        </div>
+
+        <div style={{ padding: "16px 16px 0" }}>
           <div onClick={() => setHeroImg((i) => (i + 1) % room.images.length)} style={{ position: "relative", height: 356, borderRadius: 22, overflow: "hidden", cursor: "pointer" }}>
             <Image src={room.images[heroImg]} alt="" fill unoptimized style={{ objectFit: "cover" }} />
             <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(31,22,14,.3) 0%, rgba(31,22,14,0) 32%, rgba(31,22,14,.5) 100%)" }} />
@@ -357,6 +403,11 @@ export default function BrowsePage() {
             </div>
           </div>
         </div>
+      </section>
+
+      {/* PROMOTIONS */}
+      <section style={{ maxWidth: 1320, margin: "0 auto", padding: "24px 28px 0" }}>
+        <PromoBanner promotions={activePromotions} roomId={room.id} />
       </section>
 
       {/* SNAPSHOT STRIP */}

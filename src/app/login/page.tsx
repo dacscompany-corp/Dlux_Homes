@@ -15,24 +15,21 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   // Where to land after sign-in. A checkout sign-in passes ?callbackUrl=/checkout…
   // and resumes there; a normal sign-in has no param and falls back to the home page.
-  // IMPORTANT: read the ?callbackUrl= param on the CLIENT after mount. A useState
-  // lazy-initialiser runs during SSR (window undefined) and locks in the default;
-  // React keeps that server state on hydration and never re-reads the real param —
-  // which is exactly why booking guests kept landing on the default instead of
-  // resuming checkout. cbResolved gates the redirect so we never act on the stale default.
-  const [callbackUrl, setCallbackUrl] = useState("/");
-  const [cbResolved, setCbResolved] = useState(false);
-  useEffect(() => {
-    const cb = new URLSearchParams(window.location.search).get("callbackUrl");
+  // Read via a lazy useState initialiser so the real param is captured on the
+  // client's own first render (no extra render pass, no effect needed). SSR has
+  // no window, so the guard below falls back to "/" there — harmless, since the
+  // server-rendered markup doesn't depend on callbackUrl for anything but this
+  // client component's own subsequent client-side render.
+  const [callbackUrl] = useState<string>(() => {
+    if (typeof window === "undefined") return "/";
+    const param = new URLSearchParams(window.location.search).get("callbackUrl");
     // Only accept a same-origin relative path. Rejecting absolute URLs (and
     // protocol-relative "//evil.com" / "/\evil.com") closes an open-redirect
     // where ?callbackUrl=https://evil.example would bounce a just-authenticated
     // user to an attacker page after login.
-    if (cb && cb.startsWith("/") && !cb.startsWith("//") && !cb.startsWith("/\\")) {
-      setCallbackUrl(cb);
-    }
-    setCbResolved(true);
-  }, []);
+    const valid = param && param.startsWith("/") && !param.startsWith("//") && !param.startsWith("/\\");
+    return valid ? param : "/";
+  });
 
   // Back target — the room being booked (never the checkout, which would just
   // redirect back here). Falls back to the listing.
@@ -46,11 +43,10 @@ export default function LoginPage() {
   // This covers credentials sign-in, Google OAuth, and the case where the
   // checkout page bounced us here while its session was still propagating —
   // without this, an authenticated user could get stranded on the default page.
-  // Wait for cbResolved so we redirect to the real target, not the placeholder.
   const { status } = useSession();
   useEffect(() => {
-    if (status === "authenticated" && cbResolved) router.replace(callbackUrl);
-  }, [status, cbResolved, callbackUrl, router]);
+    if (status === "authenticated") router.replace(callbackUrl);
+  }, [status, callbackUrl, router]);
 
   const handleCredentials = async (e?: React.FormEvent): Promise<void> => {
     e?.preventDefault();

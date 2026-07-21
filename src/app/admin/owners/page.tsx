@@ -8,6 +8,12 @@ import toast from "react-hot-toast";
 import { useGetAnalyticsSummaryQuery, useGetMonthlyRevenueQuery, useGetRevenueByRoomQuery } from "@/redux/api/analyticsApi";
 import { useGetBookingsQuery, useUpdateBookingStatusMutation } from "@/redux/api/bookingsApi";
 import { updateDepositStatusByBookingId, approveDownPaymentByBookingId } from "@/app/admin/csr/actions";
+import {
+  getPromotions, createPromotion, updatePromotion, deletePromotion, togglePromotionStatus,
+  type PromotionRecord,
+} from "@/app/admin/csr/actions";
+import ImageThumb from "@/components/ImageThumb";
+import { imageFileError } from "@/lib/validateImageFile";
 import { useGetHavensQuery, useCreateHavenMutation, useUpdateHavenMutation } from "@/redux/api/roomApi";
 import { useGetEmployeesQuery, useCreateEmployeeMutation } from "@/redux/api/employeeApi";
 import { useGetReviewsQuery } from "@/redux/api/reviewsApi";
@@ -62,7 +68,19 @@ import {
   UsersRound,
   LogIn,
   BadgeCheck,
+  Pencil,
+  ImageIcon,
+  Trash2,
+  CheckCircle2,
 } from "lucide-react";
+
+// PromotionRecord types start_date/end_date as string, but server actions return
+// raw pg rows where TIMESTAMP columns are Date objects (no JSON serialization
+// in between) — normalize either shape to a yyyy-mm-dd <input type="date"> value.
+function toDateInputValue(value: string | Date): string {
+  const d = value instanceof Date ? value : new Date(value);
+  return d.toISOString().slice(0, 10);
+}
 
 const navItems = [
   { icon: LayoutDashboard, label: "Overview" },
@@ -103,7 +121,7 @@ export default function OwnerDashboard() {
   const [systemTab, setSystemTab]     = useState<"settings"|"logs">("settings");
   const [overviewTab, setOverviewTab] = useState<"dashboard"|"analytics">("dashboard");
   const [bookingsTab, setBookingsTab] = useState<"list"|"calendar"|"blocked">("list");
-  const [financeTab, setFinanceTab]   = useState<"revenue"|"methods">("revenue");
+  const [financeTab, setFinanceTab]   = useState<"revenue"|"methods"|"promotions">("revenue");
   const [teamTab, setTeamTab]         = useState<"staff"|"users"|"partners">("staff");
 
   // ── Live data from the Supabase-backed API (RTK Query) ──
@@ -118,6 +136,65 @@ export default function OwnerDashboard() {
   const { data: reportsRes }   = useGetReportsQuery({});
   const { data: session }      = useSession();
   const ownerId = (session?.user as { id?: string } | undefined)?.id;
+
+  // Promotions (auto-displayed banners) — same server actions as the CSR
+  // dashboard's Promotions tab; requireAdmin() covers the Owner role too.
+  const [promotions, setPromotions] = useState<PromotionRecord[]>([]);
+  const reloadPromotions = () => getPromotions().then(setPromotions).catch(() => {});
+  useEffect(() => { reloadPromotions(); }, []);
+  const togglePromotion = async (id: string, currentlyActive: boolean) => {
+    try { await togglePromotionStatus(id, !currentlyActive); toast.success(currentlyActive ? "Promotion deactivated" : "Promotion activated"); reloadPromotions(); }
+    catch { toast.error("Could not update promotion"); }
+  };
+  const removePromotion = async (id: string) => {
+    try { await deletePromotion(id); toast.success("Promotion deleted"); reloadPromotions(); }
+    catch { toast.error("Could not delete promotion"); }
+  };
+  const [promotionModal, setPromotionModal] = useState(false);
+  const [promotionSaving, setPromotionSaving] = useState(false);
+  const [editingPromotionId, setEditingPromotionId] = useState<string | null>(null);
+  const emptyPromotion = { title: "", description: "", discount_type: "" as "" | "percentage" | "fixed", discount_value: "", start_date: "", end_date: "" };
+  const [promotionForm, setPromotionForm] = useState(emptyPromotion);
+  const [promotionImage, setPromotionImage] = useState<File | null>(null);
+  const openCreatePromotion = () => { setEditingPromotionId(null); setPromotionForm(emptyPromotion); setPromotionImage(null); setPromotionModal(true); };
+  const openEditPromotion = (p: PromotionRecord) => {
+    setEditingPromotionId(p.id);
+    setPromotionForm({
+      title: p.title, description: p.description || "",
+      discount_type: p.discount_type || "", discount_value: p.discount_value != null ? String(p.discount_value) : "",
+      start_date: toDateInputValue(p.start_date), end_date: toDateInputValue(p.end_date),
+    });
+    setPromotionImage(null);
+    setPromotionModal(true);
+  };
+  const submitPromotion = async () => {
+    if (!promotionForm.title.trim() || !promotionForm.start_date || !promotionForm.end_date) {
+      toast.error("Please fill in the title and the date range."); return;
+    }
+    if (promotionImage) {
+      const err = imageFileError(promotionImage);
+      if (err) { toast.error(err); return; }
+    }
+    setPromotionSaving(true);
+    try {
+      const fd = new FormData();
+      fd.set("title", promotionForm.title.trim());
+      fd.set("description", promotionForm.description.trim());
+      fd.set("discount_type", promotionForm.discount_type);
+      fd.set("discount_value", promotionForm.discount_value);
+      fd.set("start_date", promotionForm.start_date);
+      fd.set("end_date", promotionForm.end_date);
+      if (promotionImage) fd.set("image", promotionImage);
+
+      if (editingPromotionId) await updatePromotion(editingPromotionId, fd);
+      else await createPromotion(fd);
+
+      toast.success(editingPromotionId ? "Promotion updated" : "Promotion created");
+      setPromotionModal(false); setPromotionForm(emptyPromotion); setPromotionImage(null); setEditingPromotionId(null);
+      reloadPromotions();
+    } catch { toast.error("Could not save promotion"); }
+    finally { setPromotionSaving(false); }
+  };
   const { data: conversationsRes } = useGetConversationsQuery(
     { userId: ownerId || "" },
     { skip: !ownerId }
@@ -1022,8 +1099,76 @@ export default function OwnerDashboard() {
 
           {/* ── Finance ── */}
           {activeNav === "Finance" && (<>
-          {tabBar([{ id: "revenue", label: "Revenue Management", icon: PhilippinePeso }, { id: "methods", label: "Payment Methods", icon: CreditCard }], financeTab, (id) => setFinanceTab(id as "revenue" | "methods"))}
+          {tabBar([{ id: "revenue", label: "Revenue Management", icon: PhilippinePeso }, { id: "methods", label: "Payment Methods", icon: CreditCard }, { id: "promotions", label: "Promotions", icon: Sparkles }], financeTab, (id) => setFinanceTab(id as "revenue" | "methods" | "promotions"))}
           {financeTab === "methods" && <PaymentMethodsSection />}
+          {financeTab === "promotions" && (<>
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>Promotions</h2>
+                <p className="text-sm" style={{ color: "#8a8276" }}>{promotions.filter(p=>p.status==="Active").length} active on the site</p>
+              </div>
+              <button onClick={openCreatePromotion} className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white cursor-pointer" style={{ backgroundColor: "#1f1b16" }}>
+                <Plus className="w-4 h-4" /> New Promotion
+              </button>
+            </div>
+            <div style={{ background: "#fff", border: "1px solid #ece5d4" }}>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead><tr style={{ backgroundColor: "#faf7f1", borderBottom: "1px solid #ece5d4" }}>
+                    {["Banner","Title","Discount","Dates","Status","Actions"].map((h) => (
+                      <th key={h} className="px-4 py-3 text-left text-[11px] uppercase tracking-[0.08em]" style={{ color: "#8a8276" }}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {promotions.length === 0 && (
+                      <tr><td colSpan={6} className="px-4 py-6 text-sm text-center" style={{ color: "#8a8276" }}>No promotions yet.</td></tr>
+                    )}
+                    {promotions.map((p, idx) => (
+                      <tr key={p.id} style={{ borderTop: idx > 0 ? "1px solid #f3eee2" : "none" }}>
+                        <td className="px-4 py-3.5">
+                          {p.image_url
+                            ? <ImageThumb src={p.image_url} alt={p.title} />
+                            : <span className="flex items-center justify-center" style={{ width: 44, height: 44, borderRadius: 8, backgroundColor: "#F7F0E3", color: "#B07848" }}><ImageIcon className="w-4 h-4" /></span>}
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <div className="font-semibold text-sm" style={{ color: "#1f1b16" }}>{p.title}</div>
+                          {p.description && <div className="text-xs mt-0.5 max-w-xs truncate" style={{ color: "#8a8276" }}>{p.description}</div>}
+                        </td>
+                        <td className="px-4 py-3.5">
+                          {p.discount_value != null
+                            ? <span className="text-sm font-semibold" style={{ color: "#1f1b16" }}>{p.discount_type === "percentage" ? `${p.discount_value}%` : peso(p.discount_value)}</span>
+                            : <span className="text-sm" style={{ color: "#8a8276" }}>—</span>}
+                        </td>
+                        <td className="px-4 py-3.5"><span className="text-sm" style={{ color: "#8a8276" }}>{new Date(p.start_date).toLocaleDateString()} – {new Date(p.end_date).toLocaleDateString()}</span></td>
+                        <td className="px-4 py-3.5">
+                          <span className="text-xs font-semibold px-2.5 py-1 rounded-full capitalize"
+                            style={{
+                              backgroundColor: p.status === "Active" ? "#d1fae5" : p.status === "Scheduled" ? "#dbeafe" : p.status === "Expired" ? "#f3f4f6" : "#fef3c7",
+                              color: p.status === "Active" ? "#065f46" : p.status === "Scheduled" ? "#1e40af" : p.status === "Expired" ? "#374151" : "#92400e",
+                            }}>
+                            {p.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => openEditPromotion(p)} title="Edit" className="p-1.5 rounded-lg cursor-pointer" style={{ color: "#1f1b16" }}>
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button onClick={() => togglePromotion(p.id, p.active)} title={p.active ? "Deactivate" : "Activate"} className="p-1.5 rounded-lg cursor-pointer" style={{ color: p.active ? "#92400e" : "#065f46" }}>
+                              {p.active ? <XCircle className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                            </button>
+                            <button onClick={() => removePromotion(p.id)} title="Delete" className="p-1.5 rounded-lg cursor-pointer" style={{ color: "#991b1b" }}>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>)}
           {financeTab === "revenue" && (<>
             {/* stat cells */}
             <div className="grid grid-cols-2 lg:grid-cols-4 mb-6" style={{ gap: 1, background: "#ece5d4", border: "1px solid #ece5d4" }}>
@@ -1457,6 +1602,58 @@ export default function OwnerDashboard() {
 
         </main>
       </div>
+
+      {/* ── Create/edit promotion modal ── */}
+      {promotionModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setPromotionModal(false)}>
+          <div className="w-full max-w-md border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 19, lineHeight: 1, color: "#1f1b16" }}>{editingPromotionId ? "Edit Promotion" : "New Promotion"}</h3>
+            <p className="text-sm mt-1 mb-4" style={{ color: "#8a8276" }}>Create a banner that automatically appears on the site while active.</p>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold" style={{ color: "#8a8276" }}>Title</label>
+                <input value={promotionForm.title} onChange={(e) => setPromotionForm((f) => ({ ...f, title: e.target.value }))} placeholder="Summer Sale" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+              </div>
+              <div>
+                <label className="text-xs font-semibold" style={{ color: "#8a8276" }}>Description</label>
+                <textarea value={promotionForm.description} onChange={(e) => setPromotionForm((f) => ({ ...f, description: e.target.value }))} placeholder="Book 3 nights and save 20%" rows={2} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none resize-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+              </div>
+              <div>
+                <label className="text-xs font-semibold" style={{ color: "#8a8276" }}>Banner image (optional)</label>
+                <input aria-label="Banner image" type="file" accept="image/*" onChange={(e) => setPromotionImage(e.target.files?.[0] || null)} className="w-full mt-1 text-sm" style={{ color: "#1a1a1a" }} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold" style={{ color: "#8a8276" }}>Discount type (optional)</label>
+                  <select aria-label="Discount type" value={promotionForm.discount_type} onChange={(e) => setPromotionForm((f) => ({ ...f, discount_type: e.target.value as "" | "percentage" | "fixed" }))} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
+                    <option value="">None</option>
+                    <option value="percentage">Percentage (%)</option>
+                    <option value="fixed">Fixed (₱)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold" style={{ color: "#8a8276" }}>Value</label>
+                  <input type="number" value={promotionForm.discount_value} onChange={(e) => setPromotionForm((f) => ({ ...f, discount_value: e.target.value }))} placeholder={promotionForm.discount_type === "percentage" ? "20" : "500"} disabled={!promotionForm.discount_type} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none disabled:opacity-50" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold" style={{ color: "#8a8276" }}>Start date</label>
+                  <input aria-label="Start date" type="date" value={promotionForm.start_date} onChange={(e) => setPromotionForm((f) => ({ ...f, start_date: e.target.value }))} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold" style={{ color: "#8a8276" }}>End date</label>
+                  <input aria-label="End date" type="date" value={promotionForm.end_date} onChange={(e) => setPromotionForm((f) => ({ ...f, end_date: e.target.value }))} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button type="button" onClick={() => setPromotionModal(false)} className="px-4 py-2 text-sm font-medium border cursor-pointer" style={{ color: "#8a8276", borderColor: "#ece5d4", backgroundColor: "#ffffff" }}>Cancel</button>
+              <button type="button" onClick={submitPromotion} disabled={promotionSaving} className="px-4 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#1f1b16" }}>{promotionSaving ? "Saving…" : editingPromotionId ? "Save Changes" : "Create Promotion"}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Reject Booking modal ── */}
       {rejectModal.open && (
