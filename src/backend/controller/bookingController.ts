@@ -847,13 +847,27 @@ export const createBooking = async (
     await client.query(paymentQuery, paymentValues);
     console.log("✅ [BOOKING] Payment record created");
 
-    // Count this redemption against the code's usage cap (best-effort — a
-    // booking still succeeds even if this update fails for some reason).
+    // Count this redemption against the code's usage cap, and record it
+    // against the account so the same signed-in guest can't reuse this code
+    // on a future booking (enforced by /api/discounts/validate). Best-effort —
+    // the booking still succeeds even if these updates fail for some reason.
     if (discount_id) {
       try {
         await client.query(`UPDATE discounts SET used_count = used_count + 1 WHERE id = $1`, [discount_id]);
       } catch (err) {
         console.error("⚠️ [BOOKING] Failed to increment discount used_count:", err);
+      }
+      if (user_id) {
+        try {
+          await client.query(
+            `INSERT INTO discount_users (discount_id, user_id, used, used_at)
+             VALUES ($1, $2, true, NOW())
+             ON CONFLICT (discount_id, user_id) DO UPDATE SET used = true, used_at = NOW()`,
+            [discount_id, user_id]
+          );
+        } catch (err) {
+          console.error("⚠️ [BOOKING] Failed to record discount redemption:", err);
+        }
       }
     }
 
