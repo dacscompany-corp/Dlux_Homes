@@ -4,6 +4,7 @@ import pool from "@/backend/config/db";
 import { headers } from "next/headers";
 import { createNotificationsForRoles } from "@/backend/utils/notificationHelper";
 import { requireAdmin } from "@/backend/utils/requireAdmin";
+import { upload_image_from_form } from "@/backend/utils/fileUpload";
 
 export interface DepositRecord {
   id: string; // UUID from booking_security_deposits
@@ -2134,6 +2135,265 @@ export async function toggleDiscountStatus(id: string, active: boolean, employee
   } catch (error) {
     console.error("Error toggling discount status:", error);
     throw new Error("Failed to toggle discount status");
+  } finally {
+    client.release();
+  }
+}
+
+// ==================== PROMOTIONS MANAGEMENT ====================
+// Auto-displayed promotional banners (content-managed, no code entry) — a
+// distinct concept from the discount CODES above. See
+// agent_docs/backend-notes.md / the promotions migration for the split.
+
+export interface PromotionRecord {
+  id: string;
+  title: string;
+  description: string | null;
+  image_url: string | null;
+  discount_type: 'percentage' | 'fixed' | null;
+  discount_value: number | null;
+  discount_id: string | null;
+  start_date: string;
+  end_date: string;
+  active: boolean;
+  status: 'Active' | 'Scheduled' | 'Expired' | 'Disabled';
+  created_at: string;
+}
+
+function derivePromotionStatus(row: { start_date: string | Date; end_date: string | Date; active: boolean }): PromotionRecord['status'] {
+  const now = Date.now();
+  const start = new Date(row.start_date).getTime();
+  const end = new Date(row.end_date).getTime();
+  if (end < now) return 'Expired';
+  if (!row.active) return 'Disabled';
+  if (start > now) return 'Scheduled';
+  return 'Active';
+}
+
+export async function getPromotions(): Promise<PromotionRecord[]> {
+  const guard = await requireAdmin();
+  if (!guard.ok) throw new Error("Forbidden: admin access required");
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      `SELECT id, title, description, image_url, discount_type, discount_value,
+              discount_id, start_date, end_date, active, created_at
+       FROM promotions
+       ORDER BY created_at DESC`
+    );
+    return result.rows.map((row) => ({
+      ...row,
+      discount_value: row.discount_value != null ? parseFloat(row.discount_value) : null,
+      status: derivePromotionStatus(row),
+    }));
+  } catch (error) {
+    console.error("Error getting promotions:", error);
+    throw new Error("Failed to get promotions");
+  } finally {
+    client.release();
+  }
+}
+
+export async function createPromotion(formData: FormData): Promise<PromotionRecord> {
+  const guard = await requireAdmin();
+  if (!guard.ok) throw new Error("Forbidden: admin access required");
+  const employeeId = guard.session.user.id;
+
+  const title = (formData.get('title') as string || '').trim();
+  const description = (formData.get('description') as string || '').trim();
+  const discount_type = (formData.get('discount_type') as string || '') as 'percentage' | 'fixed' | '';
+  const discount_value = formData.get('discount_value') as string | null;
+  const discount_id = (formData.get('discount_id') as string || '').trim();
+  const start_date = formData.get('start_date') as string;
+  const end_date = formData.get('end_date') as string;
+  const image = formData.get('image') as File | null;
+
+  if (!title || !start_date || !end_date) {
+    throw new Error("Title, start date, and end date are required");
+  }
+
+  let image_url: string | null = null;
+  if (image && image.size > 0) {
+    const uploadResult = await upload_image_from_form(image, 'dlux/promotions');
+    image_url = uploadResult.url;
+  }
+
+  const client = await pool.connect();
+  try {
+    const requestHeaders = await headers();
+    const ipAddress = requestHeaders.get('x-forwarded-for') || requestHeaders.get('x-real-ip') || 'unknown';
+    const userAgent = requestHeaders.get('user-agent') || 'unknown';
+
+    const result = await client.query(
+      `INSERT INTO promotions (
+         title, description, image_url, discount_type, discount_value,
+         discount_id, start_date, end_date, active, created_by, created_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, $9, NOW() AT TIME ZONE 'Asia/Manila')
+       RETURNING *`,
+      [
+        title,
+        description || null,
+        image_url,
+        discount_type || null,
+        discount_value ? Number(discount_value) : null,
+        discount_id || null,
+        start_date,
+        end_date,
+        employeeId || null,
+      ]
+    );
+
+    const newPromo = result.rows[0];
+
+    if (employeeId) {
+      await client.query(
+        `SELECT log_employee_activity($1, $2, $3, $4, $5, $6, $7)`,
+        [employeeId, 'CREATE_PROMOTION', `Created promotion "${title}"`, 'promotion', newPromo.id, ipAddress, userAgent]
+      );
+    }
+
+    return {
+      ...newPromo,
+      discount_value: newPromo.discount_value != null ? parseFloat(newPromo.discount_value) : null,
+      status: derivePromotionStatus(newPromo),
+    };
+  } catch (error) {
+    console.error("Error creating promotion:", error);
+    throw new Error("Failed to create promotion");
+  } finally {
+    client.release();
+  }
+}
+
+export async function updatePromotion(id: string, formData: FormData): Promise<PromotionRecord> {
+  const guard = await requireAdmin();
+  if (!guard.ok) throw new Error("Forbidden: admin access required");
+  const employeeId = guard.session.user.id;
+
+  if (!id) throw new Error("Promotion ID is required");
+
+  const title = (formData.get('title') as string || '').trim();
+  const description = (formData.get('description') as string || '').trim();
+  const discount_type = (formData.get('discount_type') as string || '') as 'percentage' | 'fixed' | '';
+  const discount_value = formData.get('discount_value') as string | null;
+  const discount_id = (formData.get('discount_id') as string || '').trim();
+  const start_date = formData.get('start_date') as string;
+  const end_date = formData.get('end_date') as string;
+  const image = formData.get('image') as File | null;
+
+  let image_url: string | undefined;
+  if (image && image.size > 0) {
+    const uploadResult = await upload_image_from_form(image, 'dlux/promotions');
+    image_url = uploadResult.url;
+  }
+
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      `UPDATE promotions
+       SET title = COALESCE($2, title),
+           description = COALESCE($3, description),
+           image_url = COALESCE($4, image_url),
+           discount_type = $5,
+           discount_value = $6,
+           discount_id = $7,
+           start_date = COALESCE($8, start_date),
+           end_date = COALESCE($9, end_date),
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [
+        id,
+        title || null,
+        description || null,
+        image_url ?? null,
+        discount_type || null,
+        discount_value ? Number(discount_value) : null,
+        discount_id || null,
+        start_date || null,
+        end_date || null,
+      ]
+    );
+
+    if (result.rows.length === 0) throw new Error("Promotion not found");
+    const updated = result.rows[0];
+
+    if (employeeId) {
+      await client.query(
+        `SELECT log_employee_activity($1, $2, $3, $4, $5, $6, $7)`,
+        [employeeId, 'UPDATE_PROMOTION', `Updated promotion "${updated.title}"`, 'promotion', updated.id, null, null]
+      );
+    }
+
+    return {
+      ...updated,
+      discount_value: updated.discount_value != null ? parseFloat(updated.discount_value) : null,
+      status: derivePromotionStatus(updated),
+    };
+  } catch (error) {
+    console.error("Error updating promotion:", error);
+    throw new Error("Failed to update promotion");
+  } finally {
+    client.release();
+  }
+}
+
+export async function deletePromotion(id: string): Promise<void> {
+  const guard = await requireAdmin();
+  if (!guard.ok) throw new Error("Forbidden: admin access required");
+  const employeeId = guard.session.user.id;
+
+  const client = await pool.connect();
+  try {
+    const existing = await client.query('SELECT title FROM promotions WHERE id = $1', [id]);
+    if (existing.rows.length === 0) throw new Error("Promotion not found");
+
+    await client.query('DELETE FROM promotions WHERE id = $1', [id]);
+
+    if (employeeId) {
+      await client.query(
+        `SELECT log_employee_activity($1, $2, $3, $4, $5, $6, $7)`,
+        [employeeId, 'DELETE_PROMOTION', `Deleted promotion "${existing.rows[0].title}"`, 'promotion', id, null, null]
+      );
+    }
+  } catch (error) {
+    console.error("Error deleting promotion:", error);
+    throw new Error("Failed to delete promotion");
+  } finally {
+    client.release();
+  }
+}
+
+export async function togglePromotionStatus(id: string, active: boolean): Promise<PromotionRecord> {
+  const guard = await requireAdmin();
+  if (!guard.ok) throw new Error("Forbidden: admin access required");
+  const employeeId = guard.session.user.id;
+
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      `UPDATE promotions SET active = $2, updated_at = NOW() WHERE id = $1 RETURNING *`,
+      [id, active]
+    );
+    if (result.rows.length === 0) throw new Error("Promotion not found");
+    const updated = result.rows[0];
+
+    if (employeeId) {
+      await client.query(
+        `SELECT log_employee_activity($1, $2, $3, $4, $5, $6, $7)`,
+        [employeeId, active ? 'ACTIVATE_PROMOTION' : 'DEACTIVATE_PROMOTION', `${active ? 'Activated' : 'Deactivated'} promotion "${updated.title}"`, 'promotion', updated.id, null, null]
+      );
+    }
+
+    return {
+      ...updated,
+      discount_value: updated.discount_value != null ? parseFloat(updated.discount_value) : null,
+      status: derivePromotionStatus(updated),
+    };
+  } catch (error) {
+    console.error("Error toggling promotion status:", error);
+    throw new Error("Failed to toggle promotion status");
   } finally {
     client.release();
   }

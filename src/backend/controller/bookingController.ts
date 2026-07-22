@@ -444,6 +444,11 @@ export const createBooking = async (
       add_ons_total,
       total_amount,
       down_payment,
+      // Promo code redeemed at checkout (validated client-side against
+      // /api/discounts/validate before submit)
+      discount_id,
+      discount_code,
+      discount_amount,
       // Add-ons (frontend sends snake_case `add_ons`)
       add_ons: addOns = {},
     } = body;
@@ -816,9 +821,10 @@ export const createBooking = async (
     const paymentQuery = `
       INSERT INTO booking_payments (
         booking_id, payment_method, payment_proof_url, payment_reference, room_rate,
-        add_ons_total, total_amount, down_payment, amount_paid, remaining_balance
+        add_ons_total, total_amount, down_payment, amount_paid, remaining_balance,
+        discount_id, discount_code, discount_amount
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
     `;
 
     const paymentValues = [
@@ -832,11 +838,24 @@ export const createBooking = async (
       paymentDownPayment,
       paymentAmountPaid,
       Number(paymentTotalAmount) - Number(paymentAmountPaid),
+      discount_id || null,
+      discount_code || null,
+      Number(discount_amount) || 0,
     ];
 
     console.log("📝 [BOOKING] Inserting payment record...");
     await client.query(paymentQuery, paymentValues);
     console.log("✅ [BOOKING] Payment record created");
+
+    // Count this redemption against the code's usage cap (best-effort — a
+    // booking still succeeds even if this update fails for some reason).
+    if (discount_id) {
+      try {
+        await client.query(`UPDATE discounts SET used_count = used_count + 1 WHERE id = $1`, [discount_id]);
+      } catch (err) {
+        console.error("⚠️ [BOOKING] Failed to increment discount used_count:", err);
+      }
+    }
 
     // Step 4.5: Create security deposit record (always create with 0 amount during booking)
     const depositQuery = `
