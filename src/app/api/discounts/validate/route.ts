@@ -2,13 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
 
 // Validates a guest-entered promo code at checkout: active + in-window,
-// applies to this haven (or all havens), under its usage cap, and the
-// booking total meets its minimum. Returns the peso amount to subtract.
+// applies to this haven (or all havens), under its usage cap, not already
+// redeemed by this account, and the booking total meets its minimum.
+// Returns the peso amount to subtract.
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     const body = await req.json();
     const code = (body?.code as string || "").trim();
     const havenId = body?.haven_id as string | undefined;
+    const userId = body?.user_id as string | undefined;
     const amount = Number(body?.amount) || 0;
 
     if (!code) {
@@ -39,6 +41,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 
     const d = result.rows[0];
+
+    // One redemption per account per code — regardless of what happens to
+    // the booking that used it (a cancelled/rejected booking doesn't free it).
+    if (userId) {
+      const already = await pool.query(
+        `SELECT 1 FROM discount_users WHERE discount_id = $1 AND user_id = $2 AND used = true LIMIT 1`,
+        [d.id, userId]
+      );
+      if (already.rows.length > 0) {
+        return NextResponse.json({ success: false, error: "You've already used this promo code." }, { status: 409 });
+      }
+    }
     const minBooking = d.min_booking_amount != null ? parseFloat(d.min_booking_amount) : null;
     if (minBooking != null && amount < minBooking) {
       return NextResponse.json(

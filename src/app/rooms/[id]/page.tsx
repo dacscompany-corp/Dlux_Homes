@@ -270,7 +270,7 @@ function CardStep({ n, title, active, done, summary, onOpen, children }: {
 function PromoBanner({ promotions }: { promotions: { id: string; title: string; description: string | null; image_url: string | null; discount_type: "percentage" | "fixed" | null; discount_value: number | null }[] | undefined }) {
   if (!promotions || promotions.length === 0) return null;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "14px 20px" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {promotions.map((p) => (
         <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 14, background: "#FBF3E7", border: "1px solid #ECE5D4", borderRadius: 14, padding: 12, overflow: "hidden" }}>
           {p.image_url && (
@@ -351,7 +351,9 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
     return () => clearTimeout(t);
   }, [galleryIdx, carouselPaused, showGallery]);
 
-  const [dateOpen, setDateOpen] = useState(false);
+  // Starts open — the card opens straight to step 2 (date), so the calendar
+  // should already be visible instead of requiring an extra click to reveal it.
+  const [dateOpen, setDateOpen] = useState(true);
   const [guestOpen, setGuestOpen] = useState(false);
   const [wished, setWished] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -382,8 +384,11 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
     winApplied.current = true;
   }, [winRead, desiredWinIdx, windows]);
 
-  // Desktop booking-card guided step (1 stay → 2 date → 3 guests).
-  const [cardStep, setCardStep] = useState(1);
+  // Desktop booking-card guided step (1 stay → 2 date → 3 guests). Starts on
+  // step 2 (collapsed step 1) since a stay type is always pre-selected — this
+  // way the card opens straight to what the guest actually needs to fill in
+  // (the date) instead of showing all 3 stay options every time.
+  const [cardStep, setCardStep] = useState(2);
 
   // Keep the selection valid when live windows arrive (mock → backend swap),
   // preferring the originally requested window over the Full-stay default.
@@ -480,7 +485,6 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
       {/* HEADER (desktop only — mobile uses its own header inside .rd-mobile) */}
       <div className="rd-deskhdr">
         <SiteHeader bookHref="#book" backHref="/rooms" backLabel="Back" />
-        <PromoBanner promotions={activePromotions} />
       </div>
       <style>{`
         .save-btn{transition:background 0.18s,border-color 0.18s,color 0.18s,transform 0.18s,box-shadow 0.18s}
@@ -506,8 +510,6 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
             <svg width="22" height="16" viewBox="0 0 22 16" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><line x1="1" y1="2" x2="21" y2="2" /><line x1="1" y1="8" x2="21" y2="8" /><line x1="1" y1="14" x2="21" y2="14" /></svg>
           </button>
         </div>
-
-        <PromoBanner promotions={activePromotions} />
 
         {/* MOBILE MENU — Guest Header 2c: calm full-screen list */}
         {menuOpen && (
@@ -591,6 +593,10 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
               <div style={{ position: "absolute", bottom: 11, right: 11, display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 11px", borderRadius: 999, background: "rgba(31,22,14,.5)", backdropFilter: "blur(8px)", color: "#fff", fontSize: 11.5, fontWeight: 600 }}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18" /><path d="M9 3v18" /></svg> {room.images.length} photos
               </div>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <PromoBanner promotions={activePromotions} />
             </div>
 
             {/* title */}
@@ -826,7 +832,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
           .cs-showbtn:hover { background: rgba(0,0,0,.65) !important; }
           @media (max-width: 900px) {
             .rd-grid { grid-template-columns: 1fr !important; gap: 0 !important; }
-            .rd-book { position: static !important; top: auto !important; margin-top: 28px; max-height: none !important; overflow: visible !important; }
+            .rd-book { position: static !important; top: auto !important; margin-top: 28px; }
             .rd-3col { grid-template-columns: 1fr !important; }
             .rd-2col { grid-template-columns: 1fr !important; }
           }
@@ -869,8 +875,12 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
             </button>
           </div>{/* end carousel */}
 
+          <div style={{ marginTop: 20 }}>
+            <PromoBanner promotions={activePromotions} />
+          </div>
+
           {/* All scrollable content below carousel */}
-          <div style={{ marginTop: 40 }}>
+          <div style={{ marginTop: 20 }}>
             <section style={{ padding: "28px 0", borderBottom: "1px solid var(--line)" }}>
               <p style={{ fontSize: 16, lineHeight: 1.7, color: "var(--ink-2)", margin: 0 }}>{room.description}</p>
             </section>
@@ -1009,7 +1019,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
           </div>{/* end left column */}
 
           {/* BOOKING CARD — sticky beside the carousel */}
-          <aside id="book" className="rd-book" style={{ position: "sticky", top: 90, maxHeight: "calc(100vh - 106px)", overflowY: "auto", overflowX: "hidden" }}>
+          <aside id="book" className="rd-book" style={{ position: "sticky", top: 90 }}>
             <style>{`.bk-opt{transition:border-color .18s ease,background .18s ease}.bk-opt:hover{border-color:#B07848 !important}`}</style>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div style={{ background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 24, boxShadow: "0 4px 16px rgba(31,22,14,.06),0 12px 32px rgba(31,22,14,.08)", overflow: "hidden" }}>

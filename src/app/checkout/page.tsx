@@ -306,7 +306,7 @@ function CheckoutInner() {
       const res = await fetch("/api/discounts/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, haven_id: isUuid ? roomId : null, amount: subtotal }),
+        body: JSON.stringify({ code, haven_id: isUuid ? roomId : null, amount: subtotal, user_id: session?.user?.id ?? null }),
       });
       const json = await res.json();
       if (!res.ok || !json.success) {

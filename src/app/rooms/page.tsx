@@ -288,10 +288,6 @@ export default function BrowsePage() {
           </button>
         </div>
         <div style={{ padding: "16px 16px 0" }}>
-          <PromoBanner promotions={activePromotions} roomId={room.id} />
-        </div>
-
-        <div style={{ padding: "16px 16px 0" }}>
           <div onClick={() => setHeroImg((i) => (i + 1) % room.images.length)} style={{ position: "relative", height: 356, borderRadius: 22, overflow: "hidden", cursor: "pointer" }}>
             <Image src={room.images[heroImg]} alt="" fill unoptimized style={{ objectFit: "cover" }} />
             <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(31,22,14,.3) 0%, rgba(31,22,14,0) 32%, rgba(31,22,14,.5) 100%)" }} />
@@ -327,6 +323,10 @@ export default function BrowsePage() {
               </Link>
             ))}
           </div>
+        </div>
+
+        <div style={{ padding: "22px 24px 0" }}>
+          <PromoBanner promotions={activePromotions} roomId={room.id} />
         </div>
 
         <div style={{ padding: "30px 24px 0" }}>
@@ -403,11 +403,6 @@ export default function BrowsePage() {
             </div>
           </div>
         </div>
-      </section>
-
-      {/* PROMOTIONS */}
-      <section style={{ maxWidth: 1320, margin: "0 auto", padding: "24px 28px 0" }}>
-        <PromoBanner promotions={activePromotions} roomId={room.id} />
       </section>
 
       {/* SNAPSHOT STRIP */}
@@ -505,6 +500,11 @@ export default function BrowsePage() {
             ))}
           </div>
         </div>
+      </section>
+
+      {/* PROMOTIONS */}
+      <section style={{ maxWidth: 1320, margin: "0 auto", padding: "48px 28px 0" }}>
+        <PromoBanner promotions={activePromotions} roomId={room.id} />
       </section>
 
       {/* AMENITIES */}
