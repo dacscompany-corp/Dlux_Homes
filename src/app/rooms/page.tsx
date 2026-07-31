@@ -306,7 +306,7 @@ export default function BrowsePage() {
         <div style={{ padding: "26px 24px 0" }}>
           <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".2em", color: "#8C5A2E" }}>A staycation in the sky</div>
           <h1 style={{ fontFamily: "'Fraunces', serif", fontWeight: 400, fontSize: 42, lineHeight: 0.98, letterSpacing: "-.03em", margin: "14px 0 0" }}>The city, <em style={{ color: "#8C5A2E" }}>on pause.</em></h1>
-          <p style={{ fontSize: 14.5, lineHeight: 1.55, color: "#4A3A2A", margin: "14px 0 0" }}>One quiet home on the 14th floor of Grass Residences. Book by the hour, check in within minutes, leave rested.</p>
+          <p style={{ fontSize: 14.5, lineHeight: 1.55, color: "#4A3A2A", margin: "14px 0 0" }}>One quiet home on the 12th floor of Grass Residences. Book by the hour, check in within minutes, leave rested.</p>
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 20, fontSize: 12.5, color: "#4A3A2A", fontWeight: 500 }}><span>28 sqm</span><span style={{ width: 3, height: 3, borderRadius: "50%", background: "#C4B69C" }} /><span>Up to 4 guests</span><span style={{ width: 3, height: 3, borderRadius: "50%", background: "#C4B69C" }} /><span>10 / 21 hrs</span></div>
         </div>
 
@@ -380,7 +380,7 @@ export default function BrowsePage() {
               The city, <em style={{ color: "var(--gold)" }}>on pause.</em>
             </h1>
             <p style={{ fontSize: 17, lineHeight: 1.55, marginTop: 22, maxWidth: 540, opacity: 0.92 }}>
-              One quiet home on the 14th floor of Grass Residences. Book by the hour. Check in in minutes. Leave rested.
+              One quiet home on the 12th floor of Grass Residences. Book by the hour. Check in in minutes. Leave rested.
             </p>
             <div style={{ marginTop: 28, display: "flex", gap: 10, flexWrap: "wrap" }}>
               <button onClick={() => document.getElementById("book-section")?.scrollIntoView({ behavior: "smooth" })}
