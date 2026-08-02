@@ -1,5 +1,7 @@
 "use client";
 
+import { needsTranscode } from "./validateImageFile";
+
 // Client-side image downscaling for every guest-facing photo upload (valid IDs,
 // payment proofs).
 //
@@ -17,7 +19,14 @@
 // Longest edge kept after downscaling. Plenty of detail to read an ID card.
 const MAX_DIMENSION = 1600;
 // Per-image ceiling. Below this we stop re-encoding at lower quality.
-const MAX_BYTES = 600 * 1024;
+//
+// Sized from the WORST-CASE booking, not a typical one. Online bookings cap at
+// 4 counted pax and IDs are required for guests 10+, so a full booking can carry
+// 4 guests × 2 photos (front + back) + 1 payment proof = 9 images in ONE request.
+// Base64 inflates each by a third, so the usable ~3.8 MB budget divides to
+// ~420 KB encoded / ~320 KB decoded per photo. At 1600px this is still a clean,
+// fully legible ID — the text is what matters, not the megapixels.
+const MAX_BYTES = 320 * 1024;
 // Small files are passed through untouched — re-encoding a 200 KB GCash receipt
 // screenshot to JPEG would only make it blurrier.
 const PASSTHROUGH_BYTES = 350 * 1024;
@@ -27,6 +36,8 @@ const PASSTHROUGH_BYTES = 350 * 1024;
 export const GALLERY_PRESET = { maxDimension: 2200, maxBytes: 1_000_000 };
 
 export type CompressOptions = { maxDimension?: number; maxBytes?: number };
+
+export { needsTranscode };
 
 // Approximate decoded byte size of a data URL (base64 is 4 chars per 3 bytes).
 export function dataUrlBytes(dataUrl: string): number {
@@ -86,13 +97,23 @@ async function decode(file: File): Promise<{ src: CanvasImageSource; width: numb
 export async function fileToCompressedDataUrl(file: File, opts: CompressOptions = {}): Promise<string> {
   const maxDimension = opts.maxDimension ?? MAX_DIMENSION;
   const maxBytes = opts.maxBytes ?? MAX_BYTES;
-  if (file.size <= Math.min(PASSTHROUGH_BYTES, maxBytes)) return readAsDataUrl(file);
+
+  // HEIC/HEIF must be re-encoded no matter how small it is: the server sniffs
+  // magic bytes and has no HEIC branch, so raw HEIC would be silently dropped
+  // (the booking saves with NO ID photo attached and the guest still sees
+  // "submitted"). Better to fail loudly here than lose the document.
+  const mustTranscode = needsTranscode(file);
+
+  if (!mustTranscode && file.size <= Math.min(PASSTHROUGH_BYTES, maxBytes)) return readAsDataUrl(file);
 
   let handle: Awaited<ReturnType<typeof decode>> | null = null;
   try {
     handle = await decode(file);
     const { src, width, height } = handle;
-    if (!width || !height) return readAsDataUrl(file);
+    if (!width || !height) {
+      if (mustTranscode) throw new Error("unreadable");
+      return readAsDataUrl(file);
+    }
 
     const scale = Math.min(1, maxDimension / Math.max(width, height));
     let w = Math.max(1, Math.round(width * scale));
@@ -100,7 +121,10 @@ export async function fileToCompressedDataUrl(file: File, opts: CompressOptions 
 
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
-    if (!ctx) return readAsDataUrl(file);
+    if (!ctx) {
+      if (mustTranscode) throw new Error("no canvas");
+      return readAsDataUrl(file);
+    }
 
     const render = (quality: number): string => {
       canvas.width = w;
@@ -125,10 +149,23 @@ export async function fileToCompressedDataUrl(file: File, opts: CompressOptions 
       out = render(0.6);
     }
 
+    // iOS Safari returns a stub "data:," when a canvas exceeds its memory budget
+    // instead of throwing — silently producing an unusable upload. Verify we got
+    // real JPEG output before trusting it.
+    if (!out.startsWith("data:image/jpeg")) {
+      if (mustTranscode) throw new Error("encode failed");
+      return readAsDataUrl(file);
+    }
+
     // Some already-optimised uploads compress worse as JPEG — keep the smaller.
+    // Never for HEIC: the original bytes are unusable server-side.
+    if (mustTranscode) return out;
     const original = await readAsDataUrl(file);
     return dataUrlBytes(out) < dataUrlBytes(original) ? out : original;
-  } catch {
+  } catch (err) {
+    // A HEIC we cannot convert must surface as an error — returning the raw file
+    // would mean a booking submitted with a missing ID and nobody the wiser.
+    if (mustTranscode) throw err instanceof Error ? err : new Error("transcode failed");
     return readAsDataUrl(file);
   } finally {
     handle?.done();

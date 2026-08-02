@@ -21,7 +21,8 @@ function formatDate(iso: string) {
 // request-body limit once encoded. See src/lib/compressImage.ts.
 function fileToBase64(file: File): Promise<string> {
   return fileToCompressedDataUrl(file).catch(() => {
-    toast.error("Could not read that photo. Please try another one.");
+    // Almost always an iPhone HEIC this browser can't decode.
+    toast.error("We couldn't read that photo. On iPhone: Settings → Camera → Formats → “Most Compatible”, then retake it — or pick a different photo.");
     return "";
   });
 }

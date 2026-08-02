@@ -42,9 +42,23 @@ function addDays(iso: string, n: number): string {
 // request-body limit once base64-encoded. See src/lib/compressImage.ts.
 function fileToBase64(file: File): Promise<string> {
   return fileToCompressedDataUrl(file).catch(() => {
-    toast.error("Could not read that photo. Please try another one.");
+    // Almost always an iPhone HEIC this browser can't decode.
+    toast.error("We couldn't read that photo. On iPhone: Settings → Camera → Formats → “Most Compatible”, then retake it — or pick a different photo.");
     return "";
   });
+}
+
+// Decode photos ONE AT A TIME. Guests are ~99% on phones, and a mid-range
+// Android webview can exhaust its memory decoding several 12-megapixel images
+// at once — the tab reloads and the half-filled form is lost. Sequential is
+// slightly slower but survives cheap hardware.
+async function addFilesSequentially(files: FileList, onEach: (name: string, data: string) => void) {
+  for (const file of Array.from(files)) {
+    const err = imageFileError(file);
+    if (err) { toast.error(err); continue; }
+    const data = await fileToBase64(file); // resolves "" and toasts on failure
+    if (data) onEach(file.name, data);
+  }
 }
 
 function formatDate(iso: string) {
@@ -152,7 +166,7 @@ function GuestIdUpload({ values, onAdd, onRemove, invalid, id, title = "Valid ID
     f.accept = "image/*";
     if (!capture) f.multiple = true; // file picker may select several at once
     if (capture) (f as unknown as { capture: string }).capture = "environment";
-    f.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) Array.from(files).forEach((file) => { const err = imageFileError(file); if (err) { toast.error(err); return; } fileToBase64(file).then((data) => { if (data) onAdd(file.name, data); }); }); };
+    f.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) addFilesSequentially(files, onAdd); };
     f.click();
   };
   const btn: React.CSSProperties = { flex: 1, minWidth: 150, padding: 14, borderRadius: 12, fontSize: 13, fontWeight: 600, background: "#4d4337", color: "#F6EFE2", border: "1px solid #5d5347", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 };
@@ -808,7 +822,7 @@ function CheckoutInner() {
                       </div>
                     )}
                     <div>
-                      <div style={{ border: "1px dashed #D4BE9A", borderRadius: 14, padding: 32, textAlign: "center", marginBottom: 12, cursor: "pointer", background: "#FAF7F1" }} onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/png,image/jpeg,image/gif,image/webp"; f.multiple = true; f.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) Array.from(files).forEach((file) => { const err = imageFileError(file); if (err) { toast.error(err); return; } fileToBase64(file).then((data) => { if (data) setInfo((prev) => ({ ...prev, validIds: [...prev.validIds, { name: file.name, data }] })); }); }); }; f.click(); }}>
+                      <div style={{ border: "1px dashed #D4BE9A", borderRadius: 14, padding: 32, textAlign: "center", marginBottom: 12, cursor: "pointer", background: "#FAF7F1" }} onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/png,image/jpeg,image/gif,image/webp"; f.multiple = true; f.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) addFilesSequentially(files, (name, data) => setInfo((prev) => ({ ...prev, validIds: [...prev.validIds, { name, data }] }))); }; f.click(); }}>
                         <div style={{ width: 52, height: 52, borderRadius: 12, background: "#EFE4CE", display: "grid", placeItems: "center", margin: "0 auto 14px", color: "#A88E63" }}>
                           <IcoUpload />
                         </div>
