@@ -16,6 +16,21 @@ export const parsePrivateKey = (raw: string): string => {
     } catch { }
   }
 
+  // PASTE-PROOF FORM: the whole PEM, base64-encoded.
+  //
+  // Every other accepted form carries backslashes, newlines or quotes, and each
+  // of those can be silently eaten between a clipboard, a shell and a hosting
+  // dashboard. When the `\n` escapes are lost, the bare "n" characters merge
+  // into the base64 body and the key is unrecoverable — OpenSSL reports only
+  // "DECODER routines::unsupported", which says nothing about the cause.
+  // A single base64 blob has no such characters, so it cannot be mangled.
+  if (!key.includes("-----BEGIN")) {
+    try {
+      const decoded = Buffer.from(key, "base64").toString("utf8");
+      if (decoded.includes("-----BEGIN")) return decoded;
+    } catch { /* not base64 — fall through to the plain-text handling */ }
+  }
+
   // Replace literal \n text sequences with actual newlines
   key = key.replace(/\\n/g, "\n");
 
@@ -207,8 +222,36 @@ const buildAndInsertCalendarEvent = async (bookingData: CalendarEventData): Prom
   return { id: response.data.id, htmlLink: response.data.htmlLink ?? null, calendarId };
 };
 
+// Describes the SHAPE of the configured private key without ever revealing it.
+// A decoder failure is otherwise undiagnosable from logs: the key is a secret,
+// so it can't be printed, and OpenSSL's message names no cause. These few facts
+// distinguish "backslashes were stripped" from "the paste was truncated" from
+// "the variable never reached this environment".
+const describeKeyShape = (): string => {
+  const raw = process.env.GOOGLE_PRIVATE_KEY_CALENDAR;
+  if (!raw) return "GOOGLE_PRIVATE_KEY_CALENDAR is NOT SET in this environment";
+  const parts = [
+    `${raw.length} chars`,
+    raw.includes("-----BEGIN") ? "has BEGIN header" : "NO BEGIN header",
+    raw.includes("-----END") ? "has END footer" : "NO END footer",
+    raw.includes("\\n") ? String.raw`contains literal \n` : String.raw`no literal \n`,
+    raw.includes("\n") ? "contains real newlines" : "no real newlines",
+  ];
+  // A healthy 2048-bit PKCS#8 key is ~1,700 chars with escapes.
+  if (raw.length < 1500) parts.push("SUSPICIOUSLY SHORT — likely truncated");
+  if (!raw.includes("\\n") && !raw.includes("\n") && raw.includes("-----BEGIN")) {
+    parts.push("NO line separators at all — backslashes were probably stripped");
+  }
+  return parts.join(", ");
+};
+
 /** Classifies a raw Google/network error into a human-readable message. */
 const classifyCalendarError = (error: any): string => {
+  // OpenSSL rejected the key before any network call happened.
+  if (String(error?.message || "").includes("DECODER routines")) {
+    return `Private key could not be parsed. Key shape: [${describeKeyShape()}]. ` +
+      `Fix: set GOOGLE_PRIVATE_KEY_CALENDAR to the base64 of the whole PEM (no quotes, no newlines).`;
+  }
   if (error.code === "ENOTFOUND" || error.code === "ECONNREFUSED") {
     return `Network error (${error.code}): Cannot reach Google APIs — ${error.message}`;
   }
