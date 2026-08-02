@@ -689,6 +689,15 @@ export const createBooking = async (
       adults,
       children,
       infants,
+      remaining_balance: Math.max(0, (Number(total_amount) || 0) - (Number(down_payment) || 0)),
+      security_deposit: Number(security_deposit) || undefined,
+      additional_guest_names: Array.isArray(additional_guests)
+        ? additional_guests
+            .map((g: { firstName?: string; lastName?: string }) =>
+              `${g?.firstName ?? ""} ${g?.lastName ?? ""}`.trim(),
+            )
+            .filter((n: string) => n.length > 0)
+        : undefined,
     };
     // NOTE: the calendar event is NOT created here any more — it is scheduled
     // after the response (see the `after()` block below) and written back with an
@@ -2091,7 +2100,22 @@ export const syncCalendarBookings = async (
         bp.payment_method,
         bp.payment_proof_url,
         bp.total_amount,
-        bp.down_payment
+        bp.down_payment,
+        bp.remaining_balance,
+        -- Subqueries rather than JOINs: a booking can have more than one deposit
+        -- or guest row, and a JOIN would multiply the booking into duplicates.
+        (SELECT amount FROM booking_security_deposits
+          WHERE booking_id = b.id ORDER BY id LIMIT 1) AS security_deposit,
+        -- Everyone except the main guest. NOTE: booking_guests.id is a UUID, so
+        -- MIN(id) is not available (no min aggregate for uuid) — this repeats the
+        -- exact "ORDER BY id LIMIT 1" expression the main-guest JOIN below uses,
+        -- so the row excluded here is guaranteed to be the row selected there.
+        (SELECT json_agg(TRIM(g.first_name || ' ' || g.last_name) ORDER BY g.id)
+           FROM booking_guests g
+          WHERE g.booking_id = b.id
+            AND g.id <> (SELECT id FROM booking_guests
+                          WHERE booking_id = b.id ORDER BY id LIMIT 1)
+        ) AS additional_guest_names
       FROM booking b
       LEFT JOIN booking_guests bg ON b.id = bg.booking_id
         AND bg.id = (SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY id LIMIT 1)
@@ -2166,6 +2190,9 @@ export const syncCalendarBookings = async (
         adults: booking.adults,
         children: booking.children,
         infants: booking.infants,
+        remaining_balance: booking.remaining_balance,
+        security_deposit: booking.security_deposit ?? undefined,
+        additional_guest_names: booking.additional_guest_names ?? undefined,
       };
 
       const { id: googleEventId, htmlLink, calendarId: usedCalendarId, error: calendarError } = await createCalendarEventWithResult(calendarEventData);

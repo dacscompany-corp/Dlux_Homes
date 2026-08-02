@@ -2,6 +2,10 @@ import { google } from "googleapis";
 
 const SCOPES = ["https://www.googleapis.com/auth/calendar.events"];
 
+// Refundable security deposit collected at check-in (D'Lux house policy).
+// Used only when a caller doesn't supply the booking's own recorded amount.
+const SECURITY_DEPOSIT_DEFAULT = 1000;
+
 /**
  * Robustly parses GOOGLE_PRIVATE_KEY from .env regardless of how it was stored.
  * Handles: escaped \\n, JSON-quoted strings, literal newlines, missing headers.
@@ -90,6 +94,12 @@ export interface CalendarEventData {
   adults?: number;
   children?: number;
   infants?: number;
+  /** Still owed at check-in. Falls back to total − down payment when absent. */
+  remaining_balance?: number;
+  /** Refundable security deposit collected at check-in (D'Lux house policy). */
+  security_deposit?: number;
+  /** Names of the non-main guests, so the host knows who else is arriving. */
+  additional_guest_names?: string[];
 }
 
 /** Builds the Google Calendar event object from booking data (throws on error). */
@@ -122,6 +132,9 @@ const buildAndInsertCalendarEvent = async (bookingData: CalendarEventData): Prom
     adults,
     children,
     infants,
+    remaining_balance,
+    security_deposit,
+    additional_guest_names,
   } = bookingData;
 
   // Postgres TIME columns return "HH:MM:SS" — slice to "HH:MM"
@@ -165,6 +178,26 @@ const buildAndInsertCalendarEvent = async (bookingData: CalendarEventData): Prom
 
   console.log(`📅 [CALENDAR] Booking ${booking_id} → start: ${startDateTimeStr}, end: ${endDateTimeStr}`);
 
+  // Balance still owed on arrival. Prefer the stored value; fall back to the
+  // arithmetic when a caller hasn't supplied it.
+  const balanceDue =
+    remaining_balance != null
+      ? Number(remaining_balance)
+      : total_amount != null && down_payment != null
+      ? Number(total_amount) - Number(down_payment)
+      : null;
+  // A stored 0 means the deposit hasn't been collected/recorded yet — NOT that
+  // none is owed. Reading it literally would print "collect ₱0.00" when house
+  // policy is ₱1,000, so only a positive recorded amount overrides the default.
+  const depositDue =
+    security_deposit != null && Number(security_deposit) > 0
+      ? Number(security_deposit)
+      : SECURITY_DEPOSIT_DEFAULT;
+
+  // Everyone beyond the main guest. The event previously showed only a count,
+  // so a host checking IDs at the door had no names to check them against.
+  const extraGuests = (additional_guest_names ?? []).filter((n) => n && n.trim());
+
   const descriptionLines = [
     "===== BOOKING INFORMATION =====",
     `Booking ID: ${booking_id}`,
@@ -175,6 +208,9 @@ const buildAndInsertCalendarEvent = async (bookingData: CalendarEventData): Prom
     `Email: ${guest_email}`,
     `Phone: ${guest_phone}`,
     `Guests: ${adults || 0} Adult(s), ${children || 0} Young Adult(s), ${infants || 0} Child(ren)`,
+    ...(extraGuests.length
+      ? ["Also staying:", ...extraGuests.map((n, i) => `  ${i + 2}. ${n}`)]
+      : []),
     "",
     "===== ACCOMMODATION =====",
     `Room: ${room_name}`,
@@ -184,7 +220,13 @@ const buildAndInsertCalendarEvent = async (bookingData: CalendarEventData): Prom
     "",
     "===== PAYMENT INFORMATION =====",
     `Total Amount: ₱${total_amount != null ? Number(total_amount).toFixed(2) : "N/A"}`,
-    `Down Payment: ₱${down_payment != null ? Number(down_payment).toFixed(2) : "N/A"}`,
+    `Down Payment (paid): ₱${down_payment != null ? Number(down_payment).toFixed(2) : "N/A"}`,
+    // The two amounts the host has to collect in person. Previously absent, which
+    // left them doing arithmetic at the door — and the deposit is the easiest
+    // thing in the whole booking to forget.
+    `BALANCE DUE AT CHECK-IN: ₱${balanceDue != null ? balanceDue.toFixed(2) : "N/A"}`,
+    `SECURITY DEPOSIT AT CHECK-IN: ₱${depositDue.toFixed(2)} (refundable)`,
+    `→ Collect on arrival: ₱${balanceDue != null ? (balanceDue + depositDue).toFixed(2) : "N/A"}`,
     `Payment Method: ${payment_method || "Not specified"}`,
     payment_proof_url ? `Payment Proof: ${payment_proof_url}` : "Payment Proof: Pending",
   ];
