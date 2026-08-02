@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import pool from "../config/db";
 import { upload_file } from "../utils/cloudinary";
 import { validateImageDataUrl } from "../utils/imageGuard";
@@ -24,18 +24,24 @@ async function resolveValidIdUrls(
     base64s.push(single);
   }
 
-  const urls: string[] = [];
-  for (const b of base64s) {
-    // Security: only accept real image files. A non-image (or spoofed) upload is
-    // skipped rather than stored.
-    const check = validateImageDataUrl(b);
-    if (!check.ok) {
-      console.warn(`[booking] rejected non-image valid ID upload: ${check.reason}`);
-      continue;
-    }
-    const uploadResult = await upload_file(b, "dlux-homes/valid-ids");
-    if (uploadResult?.url) urls.push(uploadResult.url);
-  }
+  // Upload IN PARALLEL. These were sequential, so a booking with several ID
+  // photos paid one full Cloudinary round trip per image while the guest sat on
+  // a spinner — and all of it inside an open DB transaction. Order is preserved
+  // because Promise.all resolves positionally.
+  const settled = await Promise.all(
+    base64s.map(async (b) => {
+      // Security: only accept real image files. A non-image (or spoofed) upload
+      // is skipped rather than stored.
+      const check = validateImageDataUrl(b);
+      if (!check.ok) {
+        console.warn(`[booking] rejected non-image valid ID upload: ${check.reason}`);
+        return null;
+      }
+      const uploadResult = await upload_file(b, "dlux-homes/valid-ids");
+      return uploadResult?.url || null;
+    }),
+  );
+  const urls = settled.filter((u): u is string => !!u);
 
   if (urls.length === 0 && typeof existingUrl === "string" && existingUrl.trim()) {
     return existingUrl; // keep previously-stored URL(s) when no new uploads
@@ -773,8 +779,18 @@ export const createBooking = async (
 
     // Step 3: Create additional guests records
     if (additional_guests && additional_guests.length > 0) {
-      for (const guest of additional_guests) {
-        const guestIdUrl = await resolveValidIdUrls(guest.validIds, guest.validId);
+      // Resolve EVERY additional guest's photos up front, in parallel. Doing it
+      // inside the insert loop meant guest 4's uploads didn't start until guest
+      // 3's finished — the slowest possible ordering, and the main reason a
+      // family booking took so much longer to submit than a solo one.
+      const guestIdUrls = await Promise.all(
+        additional_guests.map((g: { validIds?: unknown; validId?: unknown }) =>
+          resolveValidIdUrls(g.validIds, g.validId),
+        ),
+      );
+
+      for (const [gi, guest] of additional_guests.entries()) {
+        const guestIdUrl = guestIdUrls[gi];
 
         const additionalGuestQuery = `
           INSERT INTO booking_guests (
@@ -979,7 +995,14 @@ export const createBooking = async (
     console.log("📋 [BOOKING] Google Event ID:", createdBooking.google_event_id);
     console.log("📋 [BOOKING] Status:", createdBooking.status);
 
-    // Send pending approval email to guest
+    // Send pending approval email to guest — AFTER the response is sent.
+    //
+    // This block used to be awaited on the critical path: two more DB queries to
+    // build the pamphlet, then an HTTP round trip in which the server calls its
+    // OWN public URL, which pays a second serverless invocation plus a Gmail SMTP
+    // handshake. The guest stared at a spinner for all of it, for an email they
+    // read minutes later. `after()` runs it once the response has been flushed.
+    after(async () => {
     try {
       const booking = completeResult.rows[0];
 
@@ -1089,6 +1112,7 @@ export const createBooking = async (
       console.error("❌ Email sending error:", emailError);
       // Don't fail the whole request if email fails
     }
+    });
 
     // The transaction was already committed above (before the email). Everything
     // from the COMMIT onward is post-commit, best-effort work — it must never
