@@ -8,6 +8,11 @@ import {
 import { notifyAdminOfBooking } from "@/backend/utils/messengerNotify";
 import { requireAdmin } from "@/backend/utils/requireAdmin";
 
+// A booking POST uploads every guest ID photo + the payment proof to Cloudinary
+// one after another before committing, so it needs more than the default
+// serverless budget on a slow mobile connection. 60s is the Hobby-plan maximum.
+export const maxDuration = 60;
+
 // GET /api/bookings — admin-only list of ALL bookings (Owner/CSR).
 // Guests read their own via /api/bookings/user/[id] and /api/bookings/[id].
 export async function GET(req: NextRequest) {

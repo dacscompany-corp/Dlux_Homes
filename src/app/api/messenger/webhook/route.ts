@@ -71,14 +71,22 @@ async function handleMessage(senderId: string, text: string): Promise<void> {
     return;
   }
   const match = text.match(/DL-BK\d{6,}/i);
-  if (!match) {
-    await send(senderId, "Hi! 👋 To check a booking, send your Booking ID (e.g. DL-BK1762050261). You'll find it in your D'Lux Homes confirmation.");
+  if (match) {
+    await send(senderId, await lookupReply(match[0].toUpperCase()));
     return;
   }
-  const bookingId = match[0].toUpperCase();
-  const reply = await lookupReply(bookingId);
-  await send(senderId, reply);
+  // Asking about a booking but no ID given — prompt for it.
+  if (ASKS_ABOUT_BOOKING.test(text)) {
+    await send(senderId, "Sure! 👋 Please send your Booking ID and I'll check it for you — it looks like DL-BK1762050261 and is in your D'Lux Homes confirmation email.");
+    return;
+  }
+  // Everything else (rates, availability, general inquiries) is left to the
+  // page inbox — staff answer those, and a bot reply would talk over them.
 }
+
+// "check my booking status", "pa-check po ng reservation", etc.
+const ASKS_ABOUT_BOOKING =
+  /\b(booking|reservation|reserbasyon)\b[\s\S]{0,30}\b(status|check|tsek)\b|\b(status|check|tsek)\b[\s\S]{0,30}\b(booking|reservation|reserbasyon)\b/i;
 
 async function lookupReply(bookingId: string): Promise<string> {
   try {
@@ -128,11 +136,18 @@ async function lookupReply(bookingId: string): Promise<string> {
 
 async function send(recipientId: string, text: string): Promise<void> {
   if (!PAGE_TOKEN) { console.error("[messenger] MESSENGER_PAGE_TOKEN not set"); return; }
-  await fetch(`${GRAPH}?access_token=${encodeURIComponent(PAGE_TOKEN)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ recipient: { id: recipientId }, messaging_type: "RESPONSE", message: { text } }),
-  }).catch((e) => console.error("[messenger] send error", e));
+  try {
+    const res = await fetch(`${GRAPH}?access_token=${encodeURIComponent(PAGE_TOKEN)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ recipient: { id: recipientId }, messaging_type: "RESPONSE", message: { text } }),
+    });
+    // Graph returns 400 (not a thrown error) when the token is bad or the app
+    // lacks Advanced Access for pages_messaging — log it or setup is undebuggable.
+    if (!res.ok) console.error("[messenger] send failed", res.status, await res.text().catch(() => ""));
+  } catch (e) {
+    console.error("[messenger] send error", e);
+  }
 }
 
 // Date column may arrive as a UTC timestamp — format from local parts.

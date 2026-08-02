@@ -6,6 +6,7 @@ import Image from "next/image";
 import { useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
 import { imageFileError } from "@/lib/validateImageFile";
+import { fileToCompressedDataUrl } from "@/lib/compressImage";
 import ImageThumb from "@/components/ImageThumb";
 import SiteHeader from "@/components/SiteHeader";
 import type { StoredBooking } from "@/lib/booking-store";
@@ -16,12 +17,12 @@ function formatDate(iso: string) {
   const d = new Date(iso + "T00:00:00");
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
+// Downscaled before base64 — a raw phone photo exceeds the platform's 4.5 MB
+// request-body limit once encoded. See src/lib/compressImage.ts.
 function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
+  return fileToCompressedDataUrl(file).catch(() => {
+    toast.error("Could not read that photo. Please try another one.");
+    return "";
   });
 }
 // Down-payment account details by method.
@@ -716,7 +717,7 @@ function ConfirmedInner() {
                   </div>
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
-                  <button type="button" onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/png,image/jpeg,image/gif,image/webp"; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) { const err = imageFileError(file); if (err) { toast.error(err); return; } fileToBase64(file).then((data) => { setProofName(file.name); setProofData(data); }); } }; f.click(); }}
+                  <button type="button" onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/png,image/jpeg,image/gif,image/webp"; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) { const err = imageFileError(file); if (err) { toast.error(err); return; } fileToBase64(file).then((data) => { if (data) { setProofName(file.name); setProofData(data); } }); } }; f.click(); }}
                     style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 20px", borderRadius: 999, background: "var(--white)", color: "var(--ink)", border: "1px solid var(--line-2)", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
                     {proofName ? `✓ ${proofName.length > 22 ? proofName.slice(0, 22) + "…" : proofName}` : "Upload payment proof"}
                   </button>

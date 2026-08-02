@@ -6,6 +6,7 @@ import {
   Home, PhilippinePeso, Clock, FileText, Star, Package, Image as ImageIcon,
   Images, Video, Check, X, Plus, Trash2,
 } from "lucide-react";
+import { fileToCompressedDataUrl, GALLERY_PRESET } from "@/lib/compressImage";
 import {
   BUNDLE_WEEK_NIGHTS, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS,
   BUNDLE_WEEK_LABEL, BUNDLE_TWOWEEK_LABEL, BUNDLE_MONTH_LABEL,
@@ -93,19 +94,14 @@ const fieldStyle = { borderColor: "#EDE3D2", backgroundColor: "#FAFAFA", color: 
 const labelCls = "text-xs font-semibold";
 const labelStyle = { color: "#8B6344" } as const;
 
+// Photos are downscaled before base64 — a batch of raw camera shots exceeds the
+// platform's 4.5 MB request-body limit once encoded, and the resulting 413 is
+// not JSON (see src/lib/compressImage.ts).
 function readFiles(files: FileList | null, cb: (urls: string[]) => void) {
   if (!files?.length) return;
   const imgs = Array.from(files).filter((f) => f.type.startsWith("image/"));
-  Promise.all(
-    imgs.map(
-      (f) =>
-        new Promise<string>((resolve) => {
-          const r = new FileReader();
-          r.onload = () => resolve(String(r.result || ""));
-          r.readAsDataURL(f);
-        }),
-    ),
-  ).then((urls) => cb(urls.filter(Boolean)));
+  Promise.all(imgs.map((f) => fileToCompressedDataUrl(f, GALLERY_PRESET).catch(() => "")))
+    .then((urls) => cb(urls.filter(Boolean)));
 }
 
 type ImgRef = { image_url: string; category?: string };

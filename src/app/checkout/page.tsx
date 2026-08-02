@@ -7,6 +7,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import toast from "react-hot-toast";
 import { imageFileError } from "@/lib/validateImageFile";
+import { fileToCompressedDataUrl } from "@/lib/compressImage";
 import ImageThumb from "@/components/ImageThumb";
 import { mockRooms } from "@/lib/mock-data";
 import { generateBookingId, addMyBookingId } from "@/lib/booking-store";
@@ -35,14 +36,14 @@ function addDays(iso: string, n: number): string {
   // Build from LOCAL parts — toISOString() shifts the date a day in +UTC zones (PH).
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
-// Read a File as a base64 data URL — sent to the booking API, which uploads it
-// to Cloudinary when configured (otherwise it's skipped gracefully).
+// Read a File as a DOWNSCALED base64 data URL — sent to the booking API, which
+// uploads it to Cloudinary when configured (otherwise it's skipped gracefully).
+// Compression is not cosmetic: raw phone photos blow past Vercel's 4.5 MB
+// request-body limit once base64-encoded. See src/lib/compressImage.ts.
 function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
+  return fileToCompressedDataUrl(file).catch(() => {
+    toast.error("Could not read that photo. Please try another one.");
+    return "";
   });
 }
 
@@ -114,7 +115,7 @@ function UploadField({ label, sub, value, onChange, invalid, id }: { label: stri
   return (
     <div id={id}>
       <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "#1F160E", marginBottom: 8 }}>{label}</div>
-      <input ref={ref} type="file" accept="image/png,image/jpeg,image/gif,image/webp" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) { const err = imageFileError(f); if (err) { toast.error(err); e.target.value = ""; return; } fileToBase64(f).then((data) => onChange(f.name, data)); } }} />
+      <input ref={ref} type="file" accept="image/png,image/jpeg,image/gif,image/webp" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) { const err = imageFileError(f); if (err) { toast.error(err); e.target.value = ""; return; } fileToBase64(f).then((data) => { if (data) onChange(f.name, data); }); } }} />
       <button onClick={() => ref.current?.click()}
         style={{ width: "100%", padding: 16, borderRadius: 14, border: invalid ? "1px solid #ef4444" : value ? "1px solid #B07848" : "1px dashed #D4BE9A", background: value ? "rgba(176,120,72,.06)" : "#FAF7F1", display: "flex", alignItems: "center", gap: 14, textAlign: "left", cursor: "pointer" }}>
         <div style={{ width: 44, height: 44, borderRadius: 11, background: value ? "#22C55E" : "#EFE4CE", display: "grid", placeItems: "center", color: value ? "#fff" : "#A88E63", flex: "none" }}>
@@ -151,7 +152,7 @@ function GuestIdUpload({ values, onAdd, onRemove, invalid, id, title = "Valid ID
     f.accept = "image/*";
     if (!capture) f.multiple = true; // file picker may select several at once
     if (capture) (f as unknown as { capture: string }).capture = "environment";
-    f.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) Array.from(files).forEach((file) => { const err = imageFileError(file); if (err) { toast.error(err); return; } fileToBase64(file).then((data) => onAdd(file.name, data)); }); };
+    f.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) Array.from(files).forEach((file) => { const err = imageFileError(file); if (err) { toast.error(err); return; } fileToBase64(file).then((data) => { if (data) onAdd(file.name, data); }); }); };
     f.click();
   };
   const btn: React.CSSProperties = { flex: 1, minWidth: 150, padding: 14, borderRadius: 12, fontSize: 13, fontWeight: 600, background: "#4d4337", color: "#F6EFE2", border: "1px solid #5d5347", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 };
@@ -490,24 +491,60 @@ function CheckoutInner() {
       discount_amount: discountAmount || undefined,
     };
 
+    const body = JSON.stringify(payload);
+
+    // Vercel rejects serverless request bodies over 4.5 MB before our code ever
+    // runs, and its 413 is not JSON. Catch it here so the guest gets an
+    // actionable message instead of a failure they can't diagnose. Photos are
+    // already downscaled on upload, so this should be unreachable in practice.
+    if (body.length > 4_000_000) {
+      const photos = payload.valid_ids.length + payload.additional_guests.reduce((n, g) => n + g.validIds.length, 0) + (payload.payment_proof ? 1 : 0);
+      toast.error(`Your ${photos} uploaded photos are too large to send together. Please remove a few, or re-upload smaller/clearer shots.`);
+      setSubmitting(false);
+      return;
+    }
+
     try {
       const res = await fetch("/api/bookings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body,
       });
-      const json = await res.json();
+
+      // Error responses from the platform (413 too large, 502/504 timeout) are
+      // HTML or plain text — parsing them as JSON used to throw and land in the
+      // catch below, which wrongly blamed the guest's internet connection.
+      const raw = await res.text();
+      let json: { success?: boolean; error?: string; data?: { booking_id?: string } } = {};
+      try { json = raw ? JSON.parse(raw) : {}; } catch { /* non-JSON error page */ }
+
       if (!res.ok || json.success === false) {
-        toast.error(json.error || "Could not complete your booking. Please try again.");
+        const message =
+          json.error ||
+          (res.status === 413
+            ? "Your uploaded photos are too large. Please remove a few or upload smaller ones."
+            : res.status === 504 || res.status === 502
+            ? "The booking took too long to process. Please check My Bookings before trying again — it may have gone through."
+            : res.status === 401 || res.status === 403
+            ? "Your session expired. Please sign in again and resubmit."
+            : `Could not complete your booking (error ${res.status}). Please try again.`);
+        toast.error(message);
         setSubmitting(false);
         return;
       }
+
       const confirmedId = json.data?.booking_id || bookingId;
       addMyBookingId(confirmedId);
       toast.success("Booking request submitted! The host will review your documents.");
       router.push(`/my-bookings/confirmed?id=${confirmedId}`);
     } catch {
-      toast.error("Network error. Please check your connection and try again.");
+      // Only a genuinely failed request (dropped connection, DNS, offline)
+      // reaches here now.
+      toast.error(
+        typeof navigator !== "undefined" && navigator.onLine === false
+          ? "You appear to be offline. Reconnect and try again — your details are still filled in."
+          : "Couldn't reach the server. Please try again in a moment — your details are still filled in.",
+      );
       setSubmitting(false);
     }
   };
@@ -771,14 +808,14 @@ function CheckoutInner() {
                       </div>
                     )}
                     <div>
-                      <div style={{ border: "1px dashed #D4BE9A", borderRadius: 14, padding: 32, textAlign: "center", marginBottom: 12, cursor: "pointer", background: "#FAF7F1" }} onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/png,image/jpeg,image/gif,image/webp"; f.multiple = true; f.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) Array.from(files).forEach((file) => { const err = imageFileError(file); if (err) { toast.error(err); return; } fileToBase64(file).then((data) => setInfo((prev) => ({ ...prev, validIds: [...prev.validIds, { name: file.name, data }] }))); }); }; f.click(); }}>
+                      <div style={{ border: "1px dashed #D4BE9A", borderRadius: 14, padding: 32, textAlign: "center", marginBottom: 12, cursor: "pointer", background: "#FAF7F1" }} onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/png,image/jpeg,image/gif,image/webp"; f.multiple = true; f.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) Array.from(files).forEach((file) => { const err = imageFileError(file); if (err) { toast.error(err); return; } fileToBase64(file).then((data) => { if (data) setInfo((prev) => ({ ...prev, validIds: [...prev.validIds, { name: file.name, data }] })); }); }); }; f.click(); }}>
                         <div style={{ width: 52, height: 52, borderRadius: 12, background: "#EFE4CE", display: "grid", placeItems: "center", margin: "0 auto 14px", color: "#A88E63" }}>
                           <IcoUpload />
                         </div>
                         <div style={{ fontSize: 14, fontWeight: 600, color: "#1F160E", marginBottom: 6 }}>{info.validIds.length > 0 ? "Add another ID photo" : "Click to upload ID photo"}</div>
                         <div style={{ fontSize: 12, color: "#8B7458" }}>PNG, JPG, JPEG up to 5MB · you can add more than one</div>
                       </div>
-                      <button onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/png,image/jpeg,image/gif,image/webp"; f.capture = "environment" as any; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) { const err = imageFileError(file); if (err) { toast.error(err); return; } fileToBase64(file).then((data) => setInfo((prev) => ({ ...prev, validIds: [...prev.validIds, { name: file.name, data }] }))); } }; f.click(); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: 10, border: "1px dashed #D4BE9A", borderRadius: 12, background: "transparent", color: "#8C5A2E", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
+                      <button onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/png,image/jpeg,image/gif,image/webp"; f.capture = "environment" as any; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) { const err = imageFileError(file); if (err) { toast.error(err); return; } fileToBase64(file).then((data) => { if (data) setInfo((prev) => ({ ...prev, validIds: [...prev.validIds, { name: file.name, data }] })); }); } }; f.click(); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: 10, border: "1px dashed #D4BE9A", borderRadius: 12, background: "transparent", color: "#8C5A2E", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
                         <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
                         Take photo with camera
                       </button>

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import { generateBookingId } from "@/lib/booking-store";
+import { fileToCompressedDataUrl } from "@/lib/compressImage";
 import { stayTotal, pickRate, isWeekendOrHoliday, addDaysISO } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import { havenToRoom } from "@/lib/haven-adapter";
@@ -77,13 +78,10 @@ function nightsBetween(ci: string, co: string): number {
   const b = new Date(co + "T00:00:00").getTime();
   return Math.max(1, Math.round((b - a) / 86400000));
 }
+// Downscaled before base64 — walk-in bookings POST guest IDs to the same
+// /api/bookings endpoint, which sits behind a 4.5 MB request-body limit.
 function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result));
-    r.onerror = () => reject(new Error("read failed"));
-    r.readAsDataURL(file);
-  });
+  return fileToCompressedDataUrl(file);
 }
 const phoneValid = (p: string) => /^\d{11}$/.test(p);
 const emailValid = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
