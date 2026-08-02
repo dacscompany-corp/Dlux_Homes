@@ -690,13 +690,16 @@ export const createBooking = async (
       children,
       infants,
     };
-    console.log(`📅 [BOOKING] Creating calendar event for booking: ${booking_id}`);
-    const googleEventId = await createCalendarEvent(calendarEventData);
-    if (googleEventId) {
-      console.log(`✅ [BOOKING] Calendar event created successfully. Event ID: ${googleEventId}`);
-    } else {
-      console.warn(`⚠️ [BOOKING] Calendar event creation returned null. Booking will proceed without calendar sync.`);
-    }
+    // NOTE: the calendar event is NOT created here any more — it is scheduled
+    // after the response (see the `after()` block below) and written back with an
+    // UPDATE. Google's API was a blocking round trip on the guest's spinner for
+    // something no guest ever sees.
+    //
+    // Safe to defer: a booking with a NULL google_event_id was ALREADY a normal
+    // state (this call returned null on any API failure and the booking carried
+    // on), and /api/bookings/sync-calendar exists precisely to back-fill rows
+    // WHERE google_event_id IS NULL.
+    const googleEventId = null;
 
     // Step 1: Create main booking record
     const bookingQuery = `
@@ -992,8 +995,33 @@ export const createBooking = async (
     const createdBooking = completeResult.rows[0];
     console.log("✅ [BOOKING] Booking created and retrieved successfully");
     console.log("📋 [BOOKING] Booking ID in DB:", createdBooking.id);
-    console.log("📋 [BOOKING] Google Event ID:", createdBooking.google_event_id);
     console.log("📋 [BOOKING] Status:", createdBooking.status);
+
+    // Create the Google Calendar event AFTER the response is flushed, then write
+    // the event id back. Runs in its own `after()` so a calendar failure and an
+    // email failure can't affect each other, and both run concurrently.
+    //
+    // Uses `pool`, NOT `client`: the transaction's client is released when this
+    // handler returns, which happens before this callback runs.
+    after(async () => {
+      try {
+        console.log(`📅 [BOOKING] Creating calendar event for booking: ${booking_id}`);
+        const eventId = await createCalendarEvent(calendarEventData);
+        if (!eventId) {
+          console.warn(`⚠️ [BOOKING] Calendar event returned null for ${booking_id} — /api/bookings/sync-calendar can back-fill it.`);
+          return;
+        }
+        await pool.query(
+          `UPDATE booking SET google_event_id = $1, updated_at = NOW() WHERE id = $2`,
+          [eventId, bookingId],
+        );
+        console.log(`✅ [BOOKING] Calendar event ${eventId} linked to booking ${booking_id}`);
+      } catch (calErr) {
+        // Never throw out of after(): the booking is already committed and the
+        // guest already has their confirmation.
+        console.error(`❌ [BOOKING] Deferred calendar sync failed for ${booking_id}:`, calErr);
+      }
+    });
 
     // Send pending approval email to guest — AFTER the response is sent.
     //
