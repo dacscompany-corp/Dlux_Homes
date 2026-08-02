@@ -55,10 +55,26 @@ function readAsDataUrl(file: Blob): Promise<string> {
   });
 }
 
+// Convert a HEIC/HEIF photo to a JPEG blob the browser can actually draw.
+//
+// Safari decodes HEIC natively, but Chrome — which is what Android guests and
+// the Messenger in-app browser use — cannot, at all. Without this, picking a
+// normal photo out of the gallery on a Samsung or Pixel (both shoot HEIF when
+// "high efficiency" is on) just fails, and the guest is asked to go screenshot
+// their own photo. That is not an acceptable thing to ask mid-checkout.
+//
+// The decoder is ~1.3 MB, so it is imported ON DEMAND: guests uploading ordinary
+// JPEGs never download a byte of it, and it is fetched once for those who need it.
+async function heicToJpegBlob(file: File): Promise<Blob> {
+  const { default: heic2any } = await import("heic2any");
+  const out = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.9 });
+  return Array.isArray(out) ? out[0] : out;
+}
+
 // Decode to a drawable bitmap. `createImageBitmap` honours EXIF orientation
 // (phones store portrait shots rotated), so prefer it; fall back to <img> for
 // older in-app browsers such as the Messenger webview on legacy Android.
-async function decode(file: File): Promise<{ src: CanvasImageSource; width: number; height: number; done: () => void }> {
+async function decode(file: Blob): Promise<{ src: CanvasImageSource; width: number; height: number; done: () => void }> {
   if (typeof createImageBitmap === "function") {
     try {
       const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
@@ -108,7 +124,14 @@ export async function fileToCompressedDataUrl(file: File, opts: CompressOptions 
 
   let handle: Awaited<ReturnType<typeof decode>> | null = null;
   try {
-    handle = await decode(file);
+    try {
+      // Native decode first — Safari handles HEIC itself, so iPhone guests never
+      // pay for the decoder download.
+      handle = await decode(file);
+    } catch (nativeErr) {
+      if (!mustTranscode) throw nativeErr;
+      handle = await decode(await heicToJpegBlob(file));
+    }
     const { src, width, height } = handle;
     if (!width || !height) {
       if (mustTranscode) throw new Error("unreadable");
@@ -163,6 +186,9 @@ export async function fileToCompressedDataUrl(file: File, opts: CompressOptions 
     const original = await readAsDataUrl(file);
     return dataUrlBytes(out) < dataUrlBytes(original) ? out : original;
   } catch (err) {
+    // Leave a breadcrumb — guests are on phones we can't attach a debugger to,
+    // so this is the only way to learn WHY a real upload failed.
+    console.warn(`[compressImage] failed for "${file.name}" (type="${file.type}", ${file.size} bytes):`, err);
     // A HEIC we cannot convert must surface as an error — returning the raw file
     // would mean a booking submitted with a missing ID and nobody the wiser.
     if (mustTranscode) throw err instanceof Error ? err : new Error("transcode failed");

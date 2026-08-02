@@ -6,7 +6,7 @@ import Image from "next/image";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import toast from "react-hot-toast";
-import { imageFileError } from "@/lib/validateImageFile";
+import { imageFileError, PHOTO_READ_ERROR } from "@/lib/validateImageFile";
 import { fileToCompressedDataUrl } from "@/lib/compressImage";
 import ImageThumb from "@/components/ImageThumb";
 import { mockRooms } from "@/lib/mock-data";
@@ -41,11 +41,20 @@ function addDays(iso: string, n: number): string {
 // Compression is not cosmetic: raw phone photos blow past Vercel's 4.5 MB
 // request-body limit once base64-encoded. See src/lib/compressImage.ts.
 function fileToBase64(file: File): Promise<string> {
-  return fileToCompressedDataUrl(file).catch(() => {
-    // Almost always an iPhone HEIC this browser can't decode.
-    toast.error("We couldn't read that photo. On iPhone: Settings → Camera → Formats → “Most Compatible”, then retake it — or pick a different photo.");
-    return "";
-  });
+  // Converting a HEIC (or shrinking a 12MP shot on a slow phone) takes a beat.
+  // Without feedback the guest thinks the tap did nothing and adds the photo
+  // twice. Only shown if it's actually slow, so quick uploads don't flicker.
+  let loadingId: string | undefined;
+  const timer = setTimeout(() => { loadingId = toast.loading("Preparing photo…"); }, 500);
+  return fileToCompressedDataUrl(file)
+    .catch(() => {
+      toast.error(PHOTO_READ_ERROR, { duration: 6000 });
+      return "";
+    })
+    .finally(() => {
+      clearTimeout(timer);
+      if (loadingId) toast.dismiss(loadingId);
+    });
 }
 
 // Decode photos ONE AT A TIME. Guests are ~99% on phones, and a mid-range

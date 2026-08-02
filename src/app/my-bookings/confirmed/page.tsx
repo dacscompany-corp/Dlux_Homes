@@ -5,7 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
-import { imageFileError } from "@/lib/validateImageFile";
+import { imageFileError, PHOTO_READ_ERROR } from "@/lib/validateImageFile";
 import { fileToCompressedDataUrl } from "@/lib/compressImage";
 import ImageThumb from "@/components/ImageThumb";
 import SiteHeader from "@/components/SiteHeader";
@@ -20,11 +20,18 @@ function formatDate(iso: string) {
 // Downscaled before base64 — a raw phone photo exceeds the platform's 4.5 MB
 // request-body limit once encoded. See src/lib/compressImage.ts.
 function fileToBase64(file: File): Promise<string> {
-  return fileToCompressedDataUrl(file).catch(() => {
-    // Almost always an iPhone HEIC this browser can't decode.
-    toast.error("We couldn't read that photo. On iPhone: Settings → Camera → Formats → “Most Compatible”, then retake it — or pick a different photo.");
-    return "";
-  });
+  // Feedback while a HEIC converts / a large photo shrinks — see checkout page.
+  let loadingId: string | undefined;
+  const timer = setTimeout(() => { loadingId = toast.loading("Preparing photo…"); }, 500);
+  return fileToCompressedDataUrl(file)
+    .catch(() => {
+      toast.error(PHOTO_READ_ERROR, { duration: 6000 });
+      return "";
+    })
+    .finally(() => {
+      clearTimeout(timer);
+      if (loadingId) toast.dismiss(loadingId);
+    });
 }
 // Down-payment account details by method.
 const PAY_ACCOUNTS: Record<string, { label: string; number: string }> = {

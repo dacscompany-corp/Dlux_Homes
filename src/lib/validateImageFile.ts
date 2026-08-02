@@ -21,6 +21,17 @@ export function needsTranscode(file: File): boolean {
   return CONVERTIBLE_TYPES.includes(file.type.toLowerCase()) || CONVERTIBLE_EXT.test(file.name);
 }
 
+// Message shown when a picked photo cannot be decoded for upload.
+//
+// Deliberately short, device-neutral, and free of instructions. Earlier versions
+// named a phone brand (which is wrong half the time — an Android guest was told
+// to change iPhone camera settings) and asked the guest to go screenshot their
+// own photo. Handing someone a chore in the middle of checkout, after they have
+// already sent payment, is not an acceptable answer. HEIC now converts
+// automatically, so this only fires for a genuinely unreadable file — and the
+// only useful thing to say then is "use a different one".
+export const PHOTO_READ_ERROR = "We couldn't open that photo. Please pick a different one, or retake it with your camera.";
+
 // Returns a human-readable error message if the file is not an acceptable image,
 // or null if it passes.
 export function imageFileError(file: File): string | null {
