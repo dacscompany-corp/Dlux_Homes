@@ -2344,6 +2344,12 @@ export const getRoomBookings = async (
         booking_id,
         check_in_date,
         check_out_date,
+        -- Times are essential, not decoration: createBooking's availability
+        -- check is time-aware (a 7am–5pm daycation and a 7pm–5am nightcation
+        -- coexist on one date), so a calendar that sees only dates greys out
+        -- slots the server would happily accept.
+        check_in_time,
+        check_out_time,
         status,
         room_name
       FROM booking

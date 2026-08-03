@@ -316,7 +316,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
 
   // Unavailable days for the date picker: owner-set blocked dates + active bookings.
   const { data: blockedRes } = useGetBlockedDatesQuery({ haven_id: id }, { skip: !isUuid });
-  const [bookedRanges, setBookedRanges] = useState<{ ci: string; co: string }[]>([]);
+  const [bookedRanges, setBookedRanges] = useState<{ ci: string; co: string; ciT: string; coT: string }[]>([]);
   useEffect(() => {
     if (!isUuid || !id) return;
     let active = true;
@@ -325,7 +325,12 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
       .then((j) => {
         if (!active) return;
         const rows = Array.isArray(j?.data) ? j.data : [];
-        setBookedRanges(rows.map((b: Record<string, unknown>) => ({ ci: String(b.check_in_date ?? ""), co: String(b.check_out_date ?? "") })));
+        setBookedRanges(rows.map((b: Record<string, unknown>) => ({
+          ci: String(b.check_in_date ?? ""),
+          co: String(b.check_out_date ?? ""),
+          ciT: String(b.check_in_time ?? "").slice(0, 5),
+          coT: String(b.check_out_time ?? "").slice(0, 5),
+        })));
       });
     return () => { active = false; };
   }, [isUuid, id]);
@@ -394,7 +399,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   // rooms list, a shared link), so that counts as chosen — only a *defaulted*
   // window should leave step 1 unanswered. Derived rather than another setState
   // inside the effect above.
-  const stayChosen = stayPicked || (desiredWinIdx != null && !!windows[desiredWinIdx]);
+  const stayIndicated = stayPicked || (desiredWinIdx != null && !!windows[desiredWinIdx]);
 
   // Desktop booking-card guided step (1 stay → 2 date → 3 guests). Starts on
   // step 2 (collapsed step 1) since a stay type is always pre-selected — this
@@ -450,35 +455,122 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
     if (isNaN(d.getTime())) return String(v).slice(0, 10);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   };
-  const blockedDates = (() => {
+  // ── Availability ─────────────────────────────────────────────────────────
+  // Mirrors createBooking's time-aware check. Bookings occupy TIME, not whole
+  // days: a 7am–5pm daycation and a 7pm–5am nightcation share one date. Two
+  // stays clash only once each one's cleaning turnover is added — 3 hours after
+  // a stay of 20h or more, 2 hours otherwise.
+  const isoOf = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const HOUR = 3600_000;
+  const bufferMs = (startMs: number, endMs: number) =>
+    (endMs - startMs >= 20 * HOUR ? 3 : 2) * HOUR;
+  // "7:00 PM" / "19:00" → minutes since midnight.
+  const minutesOf = (t: string): number | null => {
+    const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i.exec((t || "").trim());
+    if (!m) return null;
+    let h = parseInt(m[1], 10);
+    const ap = m[3]?.toUpperCase();
+    if (ap === "PM" && h !== 12) h += 12;
+    if (ap === "AM" && h === 12) h = 0;
+    return h * 60 + parseInt(m[2], 10);
+  };
+  const atMs = (iso: string, mins: number, addDays = 0) => {
+    const d = new Date(iso + "T00:00:00");
+    d.setDate(d.getDate() + addDays);
+    return d.getTime() + mins * 60_000;
+  };
+
+  // Owner-blocked ranges (inclusive) genuinely take the whole day.
+  const ownerBlocked = (() => {
     const set = new Set<string>();
-    const pushRange = (fromISO: string, toISO: string) => {
+    (blockedRes?.data || []).forEach((b) => {
+      const fromISO = toLocalISO(b.from_date);
       if (!fromISO) return;
       const d = new Date(fromISO + "T00:00:00");
-      const end = new Date((toISO || fromISO) + "T00:00:00");
-      for (let g = 0; d <= end && g < 400; g++) {
-        set.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
-        d.setDate(d.getDate() + 1);
-      }
-    };
-    // Owner-blocked ranges (inclusive).
-    (blockedRes?.data || []).forEach((b) => pushRange(toLocalISO(b.from_date), toLocalISO(b.to_date)));
-    // Booked nights: check-in up to (but not including) check-out; same-day = that day.
-    bookedRanges.forEach(({ ci, co }) => {
-      const from = toLocalISO(ci);
-      if (!from) return;
-      const coISO = toLocalISO(co);
-      const end = new Date((coISO || from) + "T00:00:00");
-      const start = new Date(from + "T00:00:00");
-      if (end <= start) { pushRange(from, from); return; }
-      end.setDate(end.getDate() - 1); // last occupied night
-      pushRange(from, `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}`);
+      const end = new Date((toLocalISO(b.to_date) || fromISO) + "T00:00:00");
+      for (let g = 0; d <= end && g < 400; g++) { set.add(isoOf(d)); d.setDate(d.getDate() + 1); }
     });
+    return set;
+  })();
+
+  // Existing stays as real timestamps. A '00:00' checkout means end-of-day.
+  const busyIntervals = bookedRanges.flatMap(({ ci, co, ciT, coT }) => {
+    const from = toLocalISO(ci);
+    const to = toLocalISO(co) || from;
+    const s = minutesOf(ciT), e = minutesOf(coT);
+    if (!from || s == null || e == null) return [];
+    const start = atMs(from, s);
+    const end = e === 0 ? atMs(to, 0, 1) : atMs(to, e);
+    return end > start ? [{ start, end }] : [];
+  });
+
+  // Can this specific window be booked starting on this date?
+  const isWindowFreeOn = (iso: string, w: Window) => {
+    if (ownerBlocked.has(iso)) return false;
+    const ci = minutesOf(w.checkIn), co = minutesOf(w.checkOut);
+    if (ci == null || co == null) return true;
+    const overnight = w.stayType !== "10";
+    const span = overnight ? Math.max(1, stayNights) : 1;
+    const ns = atMs(iso, ci);
+    // A 10-hour session ending earlier than it starts rolls into the next day
+    // (nightcation); an overnight stay runs for `stayNights` nights.
+    const ne = overnight ? atMs(iso, co, span) : atMs(iso, co, co <= ci ? 1 : 0);
+    return !busyIntervals.some(
+      ({ start, end }) => start < ne + bufferMs(ns, ne) && end + bufferMs(start, end) > ns,
+    );
+  };
+
+  // The rates actually bookable on a given date — this drives step 2.
+  const availableWindowsOn = (iso: string) => (iso ? windows.filter((w) => isWindowFreeOn(iso, w)) : []);
+
+  // What the calendar greys out depends on whether a rate is already in play.
+  //
+  //  • Rate known (arrived on ?win=, or picked one) → show THAT rate's nights.
+  //    Someone who clicked "Nightcation" wants the nights a nightcation can
+  //    actually run; leaving a date open because the daycation happens to be
+  //    free would send them to a day that can't give them what they came for.
+  //  • No rate yet → close a date only when EVERY rate is taken, so the guest
+  //    can pick a day first and then see what it offers.
+  const calendarWindow = stayIndicated ? selectedWindow : null;
+  const isDateClosed = (iso: string) =>
+    calendarWindow ? !isWindowFreeOn(iso, calendarWindow) : availableWindowsOn(iso).length === 0;
+
+  const blockedDates = (() => {
+    const set = new Set<string>(ownerBlocked);
+    if (busyIntervals.length > 0) {
+      // A candidate check-in can only clash with a stay it reaches, so test the
+      // days around each booking — back by the stay length for multi-night.
+      const reach = Math.max(1, stayNights) + 1;
+      busyIntervals.forEach(({ start, end }) => {
+        const first = new Date(start); first.setDate(first.getDate() - reach);
+        const last = new Date(end); last.setDate(last.getDate() + 1);
+        for (const d = new Date(first); d <= last; d.setDate(d.getDate() + 1)) {
+          const iso = isoOf(d);
+          if (!set.has(iso) && isDateClosed(iso)) set.add(iso);
+        }
+      });
+    }
     return Array.from(set);
   })();
+
+  // Rates offered for the chosen date, and whether the current pick survives a
+  // date change (a window free on Aug 4 may be taken on Aug 5).
+  const availableWindows = availableWindowsOn(date);
+  const pickedStillFree = !date || availableWindows.some(
+    (w) => w.checkIn === selectedWindow.checkIn && w.checkOut === selectedWindow.checkOut,
+  );
+
+  // A rate only counts as chosen if it is ALSO still bookable on the chosen
+  // date. Arriving on ?win=1 (Nightcation) and landing on a date where only the
+  // daycation is free otherwise left the header, the totals and the CTA all
+  // asserting "Nightcation" while step 2 refused to offer it.
+  const stayChosen = stayIndicated && pickedStillFree;
   // A stay type is now an explicit choice, so it gates Reserve alongside the
   // date — otherwise a guest could reserve having never opened step 1 and get
   // whatever the default happened to be.
+  // `pickedStillFree` guards the case where the rate was chosen and then the
+  // night count changed, making that window overlap an existing booking.
   const canProceed = stayChosen && date && guests.adults >= 1;
   // Shown before a stay type is picked — advertising one option's rate as "the"
   // price would be the same silent default we just removed.
@@ -591,14 +683,14 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
           <button
             onClick={() => {
               if (canProceed) { handleReserve(); return; }
-              // Send them to the step that's actually outstanding, not always
-              // the date — the stay type now comes first and may be unanswered.
-              if (!stayChosen) { setCardStep(1); setDateOpen(false); setGuestOpen(false); }
-              else { setCardStep(2); setDateOpen(true); setGuestOpen(false); }
+              // Jump to whichever step is actually outstanding: the date comes
+              // first now, and the rate list is only meaningful once it's set.
+              if (!date) { setCardStep(1); setDateOpen(true); setGuestOpen(false); }
+              else { setCardStep(2); setDateOpen(false); setGuestOpen(false); }
               document.getElementById("mbook")?.scrollIntoView({ behavior: "smooth", block: "start" });
             }}
             style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, background: "#B8754A", color: "#FAF7F1", border: 0, padding: 16, borderRadius: 14, font: "inherit", fontSize: 15.5, fontWeight: 600, cursor: "pointer" }}>
-            {canProceed ? "Reserve" : !stayChosen ? "Choose your stay" : "Pick a date"}
+            {canProceed ? "Reserve" : !date ? "Pick a date" : "Choose your rate"}
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
           </button>
         </div>
@@ -655,19 +747,56 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
             </div>
 
             <div style={{ padding: 18, display: "flex", flexDirection: "column", gap: 20 }}>
-              {/* 1. STAY */}
-              <CardStep n={1} title="How do you want to stay?" active={cardStep === 1} done={stayChosen && cardStep > 1} summary={stayChosen ? `${selectedWindow.label} · ${peso(selectedWindow.stayType === "10" ? room.price10hr : room.price21hr)}` : undefined} onOpen={() => { setCardStep(1); setDateOpen(false); setGuestOpen(false); }}>
+              {/* 1. DATE — chosen first: availability is per date. */}
+              <CardStep n={1} title="When are you coming?" active={cardStep === 1} done={!!date && cardStep > 1} summary={date ? formatDateLong(date) : undefined} onOpen={() => { setCardStep(1); setDateOpen(true); setGuestOpen(false); }}>
+                <button onClick={() => { setDateOpen(!dateOpen); setGuestOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 15px", borderRadius: 14, background: "#FFFCF4", border: dateOpen ? "1.5px solid #B07848" : "1.5px solid #E0CEB2", cursor: "pointer", fontFamily: "inherit" }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8C5A2E" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
+                    <span style={{ fontSize: 14.5, fontWeight: 600, color: date ? "#1F160E" : "#8B7458", whiteSpace: "nowrap" }}>{date ? formatDateLong(date) : "Choose your date"}</span>
+                  </span>
+                  <span style={{ display: "inline-flex", transition: "transform .25s", transform: dateOpen ? "rotate(180deg)" : "none" }}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#8B7458" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9" /></svg></span>
+                </button>
+                {dateOpen && (
+                  <div style={{ marginTop: 10, border: "1px solid #E0CEB2", borderRadius: 16, background: "#FAF7F1", padding: 14 }}>
+                    <Calendar selected={date} blocked={blockedDates} onSelect={(d) => { setDate(d); setDateOpen(false); setStayPicked(false); setCardStep(2); }} />
+                    <div style={{ fontSize: 11, color: "#9B8B73", marginTop: 11, display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 9, height: 9, borderRadius: "50%", background: "#1F160E", display: "inline-block" }} />{calendarWindow ? `Crossed-out days can't take a ${calendarWindow.label.toLowerCase()}.` : "Crossed-out days are fully booked."}</div>
+                  </div>
+                )}
+              </CardStep>
+
+              {/* 2. RATE — only what is bookable on that date. */}
+              <CardStep n={2} title="Choose your rate" active={cardStep === 2} done={stayChosen && cardStep > 2} summary={stayChosen ? `${selectedWindow.label} · ${peso(selectedWindow.stayType === "10" ? room.price10hr : room.price21hr)}` : undefined} onOpen={() => { setCardStep(2); setDateOpen(false); setGuestOpen(false); }}>
+                {!date ? (
+                  <div style={{ fontSize: 13, color: "#8B7458", padding: "10px 2px" }}>
+                    Pick a date first — the rates open on that day will appear here.
+                  </div>
+                ) : availableWindows.length === 0 ? (
+                  <div style={{ fontSize: 13, color: "#A8492F", padding: "10px 2px" }}>
+                    Fully booked on {formatDateLong(date)}. Please choose another date.
+                  </div>
+                ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                  {windows.map((w, i) => {
+                  <div style={{ fontSize: 11.5, color: "#8B7458", marginBottom: 1 }}>
+                    Available on <strong style={{ color: "#1F160E", fontWeight: 600 }}>{formatDateLong(date)}</strong>
+                    {availableWindows.length < windows.length ? " — the rest are taken" : ""}
+                  </div>
+                  {availableWindows.map((w) => {
                     const active = stayChosen && selectedWindow.checkIn === w.checkIn && selectedWindow.checkOut === w.checkOut;
                     const price = w.stayType === "10" ? room.price10hr : room.price21hr;
+                    const i = windows.indexOf(w); // icon follows the original order
                     const ic = i === 0
                       ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
                       : i === 1
                       ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>
                       : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M2 9v11M2 13h18a2 2 0 0 1 2 2v5M2 16h20" /><path d="M5 9V7a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2" /></svg>;
                     return (
-                      <button key={i} onClick={() => { setSelectedWindow(w); setStayPicked(true); setCardStep(2); setDateOpen(true); setGuestOpen(false); }} className="bk-opt" style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 13px", cursor: "pointer", borderRadius: 14, width: "100%", fontFamily: "inherit", background: active ? "#FBF4E6" : "#FFFCF4", border: active ? "1.5px solid #B07848" : "1.5px solid #E0CEB2" }}>
+                      <button key={i} onClick={() => {
+                        // Only rates that are free on the chosen date are listed,
+                        // so anything picked here is bookable. A 10-hour session
+                        // needs no night count, so it skips ahead to the guests.
+                        setSelectedWindow(w); setStayPicked(true); setDateOpen(false);
+                        if (w.stayType === "10") { setCardStep(3); setGuestOpen(true); }
+                      }} className="bk-opt" style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 13px", cursor: "pointer", borderRadius: 14, width: "100%", fontFamily: "inherit", background: active ? "#FBF4E6" : "#FFFCF4", border: active ? "1.5px solid #B07848" : "1.5px solid #E0CEB2" }}>
                         <span style={{ width: 38, height: 38, flex: "none", borderRadius: 11, display: "grid", placeItems: "center", color: active ? "#fff" : "#8C5A2E", background: active ? "#B07848" : "#EFE4CE" }}>{ic}</span>
                         <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
                           <span style={{ display: "block", fontSize: 14.5, fontWeight: 600, color: "#1F160E" }}>{w.label}</span>
@@ -681,24 +810,10 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                     );
                   })}
                 </div>
-              </CardStep>
-
-              {/* 2. DATE */}
-              <CardStep n={2} title="When are you coming?" active={cardStep === 2} done={cardStep > 2} summary={date ? `${formatDateLong(date)}${isOvernight ? ` · ${stayNights} night${stayNights > 1 ? "s" : ""}` : ""}` : undefined} onOpen={() => { setCardStep(2); setDateOpen(true); setGuestOpen(false); }}>
-                <button onClick={() => { setDateOpen(!dateOpen); setGuestOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 15px", borderRadius: 14, background: "#FFFCF4", border: dateOpen ? "1.5px solid #B07848" : "1.5px solid #E0CEB2", cursor: "pointer", fontFamily: "inherit" }}>
-                  <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8C5A2E" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
-                    <span style={{ fontSize: 14.5, fontWeight: 600, color: date ? "#1F160E" : "#8B7458", whiteSpace: "nowrap" }}>{date ? formatDateLong(date) : "Choose your date"}</span>
-                  </span>
-                  <span style={{ display: "inline-flex", transition: "transform .25s", transform: dateOpen ? "rotate(180deg)" : "none" }}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#8B7458" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9" /></svg></span>
-                </button>
-                {dateOpen && (
-                  <div style={{ marginTop: 10, border: "1px solid #E0CEB2", borderRadius: 16, background: "#FAF7F1", padding: 14 }}>
-                    <Calendar selected={date} blocked={blockedDates} onSelect={(d) => { setDate(d); setDateOpen(false); if (isOvernight) { setCardStep(2); } else { setCardStep(3); setGuestOpen(true); } }} />
-                    <div style={{ fontSize: 11, color: "#9B8B73", marginTop: 11, display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 9, height: 9, borderRadius: "50%", background: "#1F160E", display: "inline-block" }} /> Crossed-out days are already booked.</div>
-                  </div>
                 )}
-                {isOvernight && date && (
+                {/* Nights belong to the overnight rate, so they live here rather
+                    than in the date step. */}
+                {stayChosen && isOvernight && date && (
                   <>
                   <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", border: "1px solid #E0CEB2", borderRadius: 14, padding: "12px 16px", background: "#FAF7F1" }}>
                     <div>
@@ -763,8 +878,9 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                 })()}
               </CardStep>
 
-              {/* price summary */}
-              {date && (
+              {/* price summary — needs a rate, not just a date, or it quotes a
+                  total for a stay type the guest hasn't picked (or can't have). */}
+              {date && stayChosen && (
                 <div style={{ borderTop: "1px solid #EFE4CE", paddingTop: 15, display: "flex", flexDirection: "column", gap: 8, fontSize: 13.5 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#4A3A2A" }}><span style={{ whiteSpace: "nowrap" }}>{selectedWindow.label} · {isOvernight ? `${stayNights} night${stayNights > 1 ? "s" : ""}${bundleLabel ? ` · ${bundleLabel}` : ""}` : (isWeekendRate ? "Weekend/Holiday" : "Weekday")}</span><span>{peso(basePrice)}</span></div>
                   {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra guests · {extraPaxCount} × {peso(room.additionalPaxFee)}</span><span>{peso(paxFee)}</span></div>}
@@ -1066,19 +1182,56 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
 
                 <div style={{ padding: "20px 24px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
 
-                  {/* 1. STAY TYPE */}
-                  <CardStep n={1} title="How do you want to stay?" active={cardStep === 1} done={stayChosen && cardStep > 1} summary={stayChosen ? `${selectedWindow.label} · ${peso(selectedWindow.stayType === "10" ? room.price10hr : room.price21hr)}` : undefined} onOpen={() => { setCardStep(1); setDateOpen(false); setGuestOpen(false); }}>
+                  {/* 1. DATE — chosen first: availability is per date. */}
+                  <CardStep n={1} title="When are you coming?" active={cardStep === 1} done={!!date && cardStep > 1} summary={date ? formatDateLong(date) : undefined} onOpen={() => { setCardStep(1); setDateOpen(true); setGuestOpen(false); }}>
+                    <button onClick={() => { setDateOpen(!dateOpen); setGuestOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 15px", borderRadius: 14, background: "#FFFCF4", border: dateOpen ? "1.5px solid #B07848" : "1.5px solid #E0CEB2", cursor: "pointer", fontFamily: "inherit" }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: 11 }}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8C5A2E" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
+                        <span style={{ fontSize: 14.5, fontWeight: 600, color: date ? "#1F160E" : "#8B7458", whiteSpace: "nowrap" }}>{date ? formatDateLong(date) : "Choose your date"}</span>
+                      </span>
+                      <span style={{ display: "inline-flex", transition: "transform .25s", transform: dateOpen ? "rotate(180deg)" : "none" }}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#8B7458" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9" /></svg></span>
+                    </button>
+                    {dateOpen && (
+                      <div style={{ marginTop: 10, border: "1px solid #E0CEB2", borderRadius: 16, background: "#FAF7F1", padding: 16 }}>
+                        <Calendar selected={date} blocked={blockedDates} onSelect={(d) => { setDate(d); setDateOpen(false); setStayPicked(false); setCardStep(2); }} />
+                        <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: 12, display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 9, height: 9, borderRadius: "50%", background: "#1F160E", display: "inline-block" }} />{calendarWindow ? `Crossed-out days can't take a ${calendarWindow.label.toLowerCase()}.` : "Crossed-out days are fully booked."}</div>
+                      </div>
+                    )}
+                  </CardStep>
+
+                  {/* 2. RATE — only what is bookable on that date. */}
+                  <CardStep n={2} title="Choose your rate" active={cardStep === 2} done={stayChosen && cardStep > 2} summary={stayChosen ? `${selectedWindow.label} · ${peso(selectedWindow.stayType === "10" ? room.price10hr : room.price21hr)}` : undefined} onOpen={() => { setCardStep(2); setDateOpen(false); setGuestOpen(false); }}>
+                    {!date ? (
+                      <div style={{ fontSize: 13.5, color: "#8B7458", padding: "10px 2px" }}>
+                        Pick a date first — the rates open on that day will appear here.
+                      </div>
+                    ) : availableWindows.length === 0 ? (
+                      <div style={{ fontSize: 13.5, color: "#A8492F", padding: "10px 2px" }}>
+                        Fully booked on {formatDateLong(date)}. Please choose another date.
+                      </div>
+                    ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                      {windows.map((w, i) => {
+                      <div style={{ fontSize: 12, color: "#8B7458", marginBottom: 1 }}>
+                        Available on <strong style={{ color: "#1F160E", fontWeight: 600 }}>{formatDateLong(date)}</strong>
+                        {availableWindows.length < windows.length ? " — the rest are taken" : ""}
+                      </div>
+                      {availableWindows.map((w) => {
                         const active = stayChosen && selectedWindow.checkIn === w.checkIn && selectedWindow.checkOut === w.checkOut;
                         const price = w.stayType === "10" ? room.price10hr : room.price21hr;
-                        const ic = i === 0
+                        const i = windows.indexOf(w); // icon follows the original order
+                    const ic = i === 0
                           ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
                           : i === 1
                           ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>
                           : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M2 9v11M2 13h18a2 2 0 0 1 2 2v5M2 16h20" /><path d="M5 9V7a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2" /></svg>;
                         return (
-                          <button key={i} onClick={() => { setSelectedWindow(w); setStayPicked(true); setCardStep(2); setDateOpen(true); setGuestOpen(false); }} className="bk-opt" style={{ display: "flex", alignItems: "center", gap: 13, padding: "12px 14px", cursor: "pointer", borderRadius: 15, width: "100%", fontFamily: "inherit", background: active ? "#FBF4E6" : "#FFFCF4", border: active ? "1.5px solid #B07848" : "1.5px solid #E0CEB2" }}>
+                          <button key={i} onClick={() => {
+                        // Only rates that are free on the chosen date are listed,
+                        // so anything picked here is bookable. A 10-hour session
+                        // needs no night count, so it skips ahead to the guests.
+                        setSelectedWindow(w); setStayPicked(true); setDateOpen(false);
+                        if (w.stayType === "10") { setCardStep(3); setGuestOpen(true); }
+                      }} className="bk-opt" style={{ display: "flex", alignItems: "center", gap: 13, padding: "12px 14px", cursor: "pointer", borderRadius: 15, width: "100%", fontFamily: "inherit", background: active ? "#FBF4E6" : "#FFFCF4", border: active ? "1.5px solid #B07848" : "1.5px solid #E0CEB2" }}>
                             <span style={{ width: 38, height: 38, flex: "none", borderRadius: 11, display: "grid", placeItems: "center", color: active ? "#fff" : "#8C5A2E", background: active ? "#B07848" : "#EFE4CE" }}>{ic}</span>
                             <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
                               <span style={{ display: "block", fontSize: 14.5, fontWeight: 600, color: "#1F160E" }}>{w.label}</span>
@@ -1092,24 +1245,9 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                         );
                       })}
                     </div>
-                  </CardStep>
-
-                  {/* 2. DATE */}
-                  <CardStep n={2} title="When are you coming?" active={cardStep === 2} done={cardStep > 2} summary={date ? `${formatDateLong(date)}${isOvernight ? ` · ${stayNights} night${stayNights > 1 ? "s" : ""}` : ""}` : undefined} onOpen={() => { setCardStep(2); setDateOpen(true); setGuestOpen(false); }}>
-                    <button onClick={() => { setDateOpen(!dateOpen); setGuestOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 15px", borderRadius: 14, background: "#FFFCF4", border: dateOpen ? "1.5px solid #B07848" : "1.5px solid #E0CEB2", cursor: "pointer", fontFamily: "inherit" }}>
-                      <span style={{ display: "flex", alignItems: "center", gap: 11 }}>
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8C5A2E" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
-                        <span style={{ fontSize: 14.5, fontWeight: 600, color: date ? "#1F160E" : "#8B7458", whiteSpace: "nowrap" }}>{date ? formatDateLong(date) : "Choose your date"}</span>
-                      </span>
-                      <span style={{ display: "inline-flex", transition: "transform .25s", transform: dateOpen ? "rotate(180deg)" : "none" }}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#8B7458" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9" /></svg></span>
-                    </button>
-                    {dateOpen && (
-                      <div style={{ marginTop: 10, border: "1px solid #E0CEB2", borderRadius: 16, background: "#FAF7F1", padding: 16 }}>
-                        <Calendar selected={date} blocked={blockedDates} onSelect={(d) => { setDate(d); setDateOpen(false); if (isOvernight) { setCardStep(2); } else { setCardStep(3); setGuestOpen(true); } }} />
-                        <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: 12, display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 9, height: 9, borderRadius: "50%", background: "#1F160E", display: "inline-block" }} /> Crossed-out days are already booked.</div>
-                      </div>
                     )}
-                    {isOvernight && date && (
+                    {/* Nights belong to the overnight rate — see desktop copy. */}
+                    {stayChosen && isOvernight && date && (
                       <>
                       <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", border: "1px solid #E0CEB2", borderRadius: 14, padding: "12px 16px", background: "#FAF7F1" }}>
                         <div>
@@ -1174,8 +1312,8 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                     })()}
                   </CardStep>
 
-                  {/* price summary */}
-                  {date && (
+                  {/* price summary — see desktop copy: needs a chosen rate too. */}
+                  {date && stayChosen && (
                     <div style={{ borderTop: "1px solid #EFE4CE", paddingTop: 16, display: "flex", flexDirection: "column", gap: 8, fontSize: 13.5 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#4A3A2A" }}><span style={{ whiteSpace: "nowrap" }}>{selectedWindow.label} · {isOvernight ? `${stayNights} night${stayNights > 1 ? "s" : ""}${bundleLabel ? ` · ${bundleLabel}` : ""}` : (isWeekendRate ? "Weekend/Holiday" : "Weekday")}</span><span>{peso(basePrice)}</span></div>
                       {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra guests · {extraPaxCount} × {peso(room.additionalPaxFee)}</span><span>{peso(paxFee)}</span></div>}
@@ -1186,7 +1324,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                   {/* reserve */}
                   <div>
                     <button onClick={handleReserve} disabled={!canProceed} style={{ display: "flex", width: "100%", alignItems: "center", justifyContent: "center", gap: 8, padding: "15px 24px", borderRadius: 999, fontSize: 15, fontWeight: 600, fontFamily: "inherit", border: "none", cursor: canProceed ? "pointer" : "not-allowed", background: canProceed ? "#B07848" : "#E4D7BE", color: canProceed ? "#fff" : "#9B8B73", boxShadow: canProceed ? "0 4px 14px rgba(176,120,72,.28)" : "none" }}>
-                      {canProceed ? "Reserve your stay" : "Pick a date to continue"}
+                      {canProceed ? "Reserve your stay" : !date ? "Pick a date to continue" : "Choose your rate to continue"}
                       {canProceed && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>}
                     </button>
                     <div style={{ textAlign: "center", fontSize: 12, color: "#8B7458", marginTop: 11, lineHeight: 1.5 }}>You won&rsquo;t be charged now. Pay the 50% deposit only when you confirm at checkout.</div>
