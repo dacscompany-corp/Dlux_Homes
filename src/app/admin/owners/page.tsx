@@ -226,8 +226,52 @@ export default function OwnerDashboard() {
     validIdUrl: string; paymentProofUrl: string; paymentReference: string;
     checkInRaw: string; checkOutRaw: string; checkInTime: string; checkOutTime: string;
     requestedNewDate: string;
+    // Everyone on the booking beyond the main guest, each with their own ID.
+    additionalGuests: { name: string; age: string; gender: string; validIdUrl: string }[];
   };
   const [bookingModal, setBookingModal] = useState<AdminBookingRow | null>(null);
+
+  // Guest-record PDF download. Fetched as a blob rather than navigated to, so a
+  // 401/500 surfaces as a toast instead of the browser replacing the dashboard
+  // with a raw error page — and so the button can show progress while the
+  // server pulls each ID photo from Cloudinary.
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const downloadGuestRecord = async (displayId: string) => {
+    if (pdfBusy) return;
+    setPdfBusy(true);
+    try {
+      const res = await fetch(`/api/bookings/${encodeURIComponent(displayId)}/guest-record`);
+      if (!res.ok) {
+        let msg = `Could not build the PDF (error ${res.status}).`;
+        try { msg = (await res.json())?.error || msg; } catch { /* non-JSON error page */ }
+        toast.error(msg);
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `guest-record-${displayId}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error("Couldn't reach the server. Please try again.");
+    } finally {
+      setPdfBusy(false);
+    }
+  };
+
+  // Freeze the page behind the booking board. Without this the dashboard keeps
+  // its own scrollbar and scrolls under the overlay — the wheel moves the page
+  // instead of the board, which reads as the modal being broken. Restores the
+  // previous value rather than assuming "visible", so it nests safely with any
+  // other component that locks scrolling.
+  useEffect(() => {
+    if (!bookingModal) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previous; };
+  }, [bookingModal]);
   const [refCopied, setRefCopied] = useState(false);
   const copyRef = (ref: string) => { try { navigator.clipboard?.writeText(ref); } catch { /* ignore */ } setRefCopied(true); setTimeout(() => setRefCopied(false), 1500); };
   type AdminHaven = {
@@ -416,6 +460,15 @@ export default function OwnerDashboard() {
     checkInTime: String(b.check_in_time ?? ""),
     checkOutTime: String(b.check_out_time ?? ""),
     requestedNewDate: b.requested_new_date ? String(b.requested_new_date) : "",
+    additionalGuests: (Array.isArray(b.additional_guests) ? b.additional_guests : []).map((g) => {
+      const x = (g ?? {}) as Record<string, unknown>;
+      return {
+        name: `${x.first_name ?? ""} ${x.last_name ?? ""}`.trim(),
+        age: x.age == null ? "" : String(x.age),
+        gender: String(x.gender ?? ""),
+        validIdUrl: String(x.valid_id_url ?? ""),
+      };
+    }),
   }));
 
   // ── Helpers for the redesigned booking detail modal ──
@@ -1842,190 +1895,270 @@ export default function OwnerDashboard() {
         const pct = total > 0 ? Math.min(100, Math.max(0, Math.round((paid / total) * 100))) : 0;
         const serif = "var(--font-fraunces), Georgia, serif";
         const mono = "var(--font-geist-mono), ui-monospace, monospace";
-        const docCard = (name: string, url: string) => {
-          // A document field may hold several newline-separated URLs (e.g. front
-          // & back of an ID, or multiple IDs). Render one card per image.
-          const urls = (url || "").split("\n").map((u) => u.trim()).filter(Boolean);
-          return urls.length > 0 ? (
-            <>
-              {urls.map((u, idx) => (
-                <a key={idx} href={u} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none", border: "1px solid #f1ead9", borderRadius: 12, overflow: "hidden", background: "#faf7f1", display: "block" }}>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={u} alt={urls.length > 1 ? `${name} ${idx + 1}` : name} style={{ height: 92, width: "100%", objectFit: "cover", display: "block" }} />
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 11px" }}>
-                    <span style={{ fontSize: 12, color: "#1f1b16" }}>{urls.length > 1 ? `${name} ${idx + 1}` : name}</span>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "#2f7d55" }}>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>Uploaded
-                    </span>
-                  </div>
-                </a>
-              ))}
-            </>
-          ) : (
-            <div style={{ border: "1px dashed #e0d2b8", borderRadius: 12, overflow: "hidden", background: "#fcfaf5" }}>
-              <div style={{ height: 92, display: "grid", placeItems: "center" }}>
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#c9b58f" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 16V4M7 9l5-5 5 5" /><path d="M5 16v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" /></svg>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 11px" }}>
-                <span style={{ fontSize: 12, color: "#1f1b16" }}>{name}</span>
-                <span style={{ fontSize: 11, color: "#b0a187" }}>Not uploaded</span>
-              </div>
-            </div>
-          );
+
+        // "Booking Board" layout (imported from the Claude Design project). The
+        // old modal was one long 480px scroll; this puts the three things the
+        // owner actually acts on — the stay, the money, and who is arriving with
+        // which IDs — side by side, so nothing needs scrolling past.
+        //
+        // Everyone on the booking, booker first. guest_index 0 is the booker.
+        const boardGuests = [
+          { name: bk.guest, sub: "Main guest · booked", validIdUrl: bk.validIdUrl, main: true },
+          ...bk.additionalGuests.map((g) => ({
+            name: g.name,
+            sub: [g.age && `${g.age}`, g.gender].filter(Boolean).join(" · ") || "Guest",
+            validIdUrl: g.validIdUrl,
+            main: false,
+          })),
+        ];
+        // Under-10s don't need an ID (house rule), so they aren't "missing" one.
+        const needsId = (g: { sub: string; main: boolean }) => {
+          const age = parseInt(g.sub, 10);
+          return g.main || isNaN(age) || age >= 10;
         };
+        const missingIds = boardGuests.filter((g) => needsId(g) && !g.validIdUrl).length;
+        const attention = missingIds + (bk.paymentProofUrl ? 0 : 1);
+        const canCheckIn = ["approved", "confirmed"].includes((bk.status || "").toLowerCase());
 
         return (
-          <div onClick={() => setBookingModal(null)} style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", background: "rgba(31,27,22,0.45)" }}>
-            <style>{`@keyframes vb-pop{from{opacity:0;transform:translateY(12px) scale(.985);}to{opacity:1;transform:none;}}`}</style>
-            <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 24, boxShadow: "0 24px 64px rgba(31,22,14,.16)", overflow: "hidden", display: "flex", flexDirection: "column", maxHeight: "100%", animation: "vb-pop .45s cubic-bezier(.2,.7,.3,1) both" }}>
+          <div onClick={() => setBookingModal(null)} style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: "rgba(31,27,22,0.45)", overflow: "auto" }}>
+            <style>{`
+              @keyframes vb-pop{from{opacity:0;transform:translateY(12px) scale(.985);}to{opacity:1;transform:none;}}
+              .bb-cols{display:grid;grid-template-columns:1fr 1fr 1fr;min-height:0;flex:1}
+              .bb-col{padding:20px 22px;border-right:1px solid #F1E7D4;display:flex;flex-direction:column;gap:14px;overflow-y:auto}
+              .bb-col:last-child{border-right:none}
+              /* The design is a fixed 1040x640 board. Below that it has to become
+                 a single scrolling column, or it is unusable on the phone the
+                 owner actually carries. */
+              @media (max-width:1100px){
+                .bb-card{width:100% !important;height:auto !important;max-height:92vh}
+                .bb-cols{grid-template-columns:1fr;overflow-y:auto}
+                .bb-col{border-right:none;border-bottom:1px solid #F1E7D4;overflow:visible}
+                .bb-head{flex-wrap:wrap}
+                .bb-actions{margin-left:0 !important;width:100%}
+              }
+            `}</style>
+            {/* The design specifies a fixed 640px board. Held literally it runs
+                past the bottom of a laptop window, so the whole modal scrolls —
+                grow into the viewport instead and never exceed it. */}
+            <div className="bb-card" onClick={(e) => e.stopPropagation()} style={{ width: 1040, height: "min(700px, calc(100vh - 48px))", maxWidth: "100%", flex: "none", background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 24, boxShadow: "0 24px 64px rgba(31,22,14,.28)", overflow: "hidden", display: "flex", flexDirection: "column", animation: "vb-pop .45s cubic-bezier(.2,.7,.3,1) both", margin: "auto" }}>
 
-              {/* Header band */}
-              <div style={{ position: "relative", padding: "24px 26px 22px", background: "#FFFCF4", borderBottom: "1px solid #E0CEB2", flexShrink: 0 }}>
-                <button type="button" onClick={() => setBookingModal(null)} title="Close"
-                  onMouseEnter={(e) => { const t = e.currentTarget; t.style.background = "#fff"; t.style.color = "#1f1b16"; t.style.borderColor = "#d8c8a8"; }}
-                  onMouseLeave={(e) => { const t = e.currentTarget; t.style.background = "rgba(255,255,255,.6)"; t.style.color = "#8a6f4d"; t.style.borderColor = "#e7dcc5"; }}
-                  style={{ position: "absolute", top: 16, right: 16, width: 32, height: 32, display: "grid", placeItems: "center", border: "1px solid #e7dcc5", borderRadius: 9, background: "rgba(255,255,255,.6)", color: "#8a6f4d", cursor: "pointer", transition: "all .15s" }}>
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-                </button>
-
-                <div style={{ display: "flex", alignItems: "center", gap: 14, paddingRight: 90 }}>
-                  <div style={{ width: 52, height: 52, flex: "none", borderRadius: 14, background: "#b8754a", color: "#faf7f1", display: "grid", placeItems: "center", fontFamily: serif, fontSize: 23, boxShadow: "inset 0 0 0 1px rgba(255,255,255,.18), 0 6px 14px -6px rgba(184,117,74,.6)" }}>{initials(bk.guest)}</div>
-                  <div style={{ minWidth: 0 }}>
-                    <h3 style={{ margin: 0, fontFamily: serif, fontWeight: 400, fontSize: 27, lineHeight: 1, letterSpacing: "-.01em", color: "#1f1b16" }}>{bk.guest}</h3>
-                    <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 8 }}>
-                      <span style={{ fontFamily: mono, fontSize: 11, letterSpacing: ".02em", color: "#9b8870" }}>{bk.displayId}</span>
-                    </div>
-                  </div>
+              {/* ── Header ─────────────────────────────────────────── */}
+              <div className="bb-head" style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 16, padding: "20px 24px", borderBottom: "1px solid #E9DCC4", background: "#FBF5E9" }}>
+                <div style={{ width: 48, height: 48, flex: "none", borderRadius: 13, background: "#b8754a", color: "#faf7f1", display: "grid", placeItems: "center", fontFamily: serif, fontSize: 21 }}>{initials(bk.guest)}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontFamily: serif, fontSize: 24, lineHeight: 1.1, color: "#1f1b16" }}>{bk.guest}</div>
+                  <div style={{ fontFamily: mono, fontSize: 11, color: "#9b8870", marginTop: 5 }}>{bk.displayId}</div>
                 </div>
-
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 16 }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 11px 5px 9px", borderRadius: 999, background: sp.bg, color: sp.color, fontSize: 12, fontWeight: 600, textTransform: "capitalize" }}>
-                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: sp.dot }} />{sp.label}
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 11px 5px 9px", borderRadius: 999, background: sp.bg, color: sp.color, fontSize: 12, fontWeight: 600, textTransform: "capitalize", whiteSpace: "nowrap" }}>
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: sp.dot }} />{sp.label}
+                </span>
+                {attention > 0 && (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 11px", borderRadius: 999, background: "#FFF8E8", border: "1px solid #F0DFB8", color: "#8C5A2E", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>
+                    {attention} item{attention > 1 ? "s" : ""} need{attention > 1 ? "" : "s"} you
                   </span>
-                  {nights > 0 && (
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 11px", borderRadius: 999, background: "#fff", border: "1px solid #ece5d4", color: "#6f5c44", fontSize: 12, fontWeight: 500 }}>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 9h18M8 3v4M16 3v4" /></svg>
-                      {nights} night{nights > 1 ? "s" : ""}
-                    </span>
+                )}
+                <div className="bb-actions" style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+                  {canCheckIn && (
+                    <button type="button"
+                      onClick={() => { setBookingModal(null); openCheckIn({ id: bk.id, displayId: bk.displayId, guest: bk.guest, remaining: bk.balance }); }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = "#9C6739"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "#B07848"; }}
+                      style={{ padding: "11px 18px", borderRadius: 11, border: "none", background: "#B07848", color: "#FFFCF4", fontFamily: "inherit", fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap", cursor: "pointer", transition: "background .15s" }}>
+                      Check guest in
+                    </button>
                   )}
-                  <span style={{ marginLeft: "auto", fontFamily: serif, fontSize: 22, color: "#1f1b16" }}>{peso(total)}</span>
+                  <a href={bk.email ? `mailto:${bk.email}` : undefined}
+                    style={{ padding: "11px 18px", borderRadius: 11, border: "1px solid #D4BE9A", background: "#FFFCF4", color: "#5A4632", fontFamily: "inherit", fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap", cursor: bk.email ? "pointer" : "not-allowed", textDecoration: "none", opacity: bk.email ? 1 : .5 }}>
+                    Message
+                  </a>
+                  {/* The PDF is built server-side (the ID photos live on
+                      Cloudinary and the route is admin-guarded), so this is a
+                      plain download rather than a client-side render. */}
+                  <button type="button" disabled={pdfBusy}
+                    onClick={() => downloadGuestRecord(bk.displayId)}
+                    title="Download booking + one page per guest with their valid ID"
+                    style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "11px 18px", borderRadius: 11, border: "1px solid #D4BE9A", background: "#FFFCF4", color: "#5A4632", fontFamily: "inherit", fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap", cursor: pdfBusy ? "wait" : "pointer", opacity: pdfBusy ? .6 : 1 }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12" /><path d="M7 12l5 5 5-5" /><path d="M5 21h14" /></svg>
+                    {pdfBusy ? "Preparing…" : "PDF"}
+                  </button>
+                  <button type="button" onClick={() => setBookingModal(null)} title="Close"
+                    style={{ width: 32, height: 32, flex: "none", display: "grid", placeItems: "center", border: "1px solid #e7dcc5", borderRadius: 9, background: "rgba(255,255,255,.6)", color: "#8a6f4d", cursor: "pointer" }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                  </button>
                 </div>
               </div>
 
-              {/* Scroll body */}
-              <div style={{ padding: "20px 22px 24px", flex: 1, minHeight: 0, overflowY: "auto" }}>
+              <div className="bb-cols">
 
-                {/* Contact */}
-                <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: ".12em", textTransform: "uppercase", color: "#b8754a", marginBottom: 10 }}>Contact</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 22 }}>
-                  <div style={{ padding: "12px 13px", background: "#faf7f1", border: "1px solid #f1ead9", borderRadius: 12 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#a08a6c", fontSize: 11, marginBottom: 5 }}>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></svg>Email
+                {/* ── Column 1 · the stay ──────────────────────────── */}
+                <div className="bb-col">
+                  <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: ".12em", textTransform: "uppercase", color: "#b8754a" }}>The stay</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <div style={{ padding: "12px 14px", background: "#faf7f1", border: "1px solid #E9DCC4", borderRadius: "14px 14px 4px 4px" }}>
+                      <div style={{ fontSize: 11, color: "#a08a6c" }}>Arrives</div>
+                      <div style={{ fontFamily: serif, fontSize: 19, marginTop: 3, color: "#1f1b16" }}>{fmtDate(bk.checkInRaw)}</div>
+                      <div style={{ fontSize: 12, color: "#8a7556", marginTop: 3 }}>{fmtTime(bk.checkInTime) || "—"}</div>
                     </div>
-                    <div style={{ fontSize: 13, color: "#1f1b16", wordBreak: "break-all" }}>{dash(bk.email)}</div>
-                  </div>
-                  <div style={{ padding: "12px 13px", background: "#faf7f1", border: "1px solid #f1ead9", borderRadius: 12 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#a08a6c", fontSize: 11, marginBottom: 5 }}>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L20 13l-1 4a2 2 0 0 1-2 2A14 14 0 0 1 3 6a2 2 0 0 1 2-2z" /></svg>Phone
+                    <div style={{ padding: "12px 14px", background: "#faf7f1", border: "1px solid #E9DCC4", borderRadius: "4px 4px 14px 14px" }}>
+                      <div style={{ fontSize: 11, color: "#a08a6c" }}>Leaves</div>
+                      <div style={{ fontFamily: serif, fontSize: 19, marginTop: 3, color: "#1f1b16" }}>{fmtDate(bk.checkOutRaw)}</div>
+                      <div style={{ fontSize: 12, color: "#8a7556", marginTop: 3 }}>
+                        {fmtTime(bk.checkOutTime) || "—"}{nights > 0 ? ` · ${nights} night${nights > 1 ? "s" : ""}` : ""}
+                      </div>
                     </div>
-                    <div style={{ fontSize: 13, color: "#1f1b16" }}>{dash(bk.phone)}</div>
                   </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 13, color: "#1f1b16" }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#b8754a" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21V9l9-6 9 6v12" /><path d="M9 21v-6h6v6" /></svg>
+                    <span style={{ fontWeight: 500 }}>{dash(bk.room)}</span>
+                  </div>
+
+                  {bk.requestedNewDate && (
+                    <div style={{ padding: "10px 13px", border: "1px solid #F0DFB8", background: "#FFF8E8", borderRadius: 12, fontSize: 12, color: "#8C5A2E" }}>
+                      Date-change requested → <strong>{fmtDate(bk.requestedNewDate)}</strong>
+                    </div>
+                  )}
+
+                  <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: ".12em", textTransform: "uppercase", color: "#b8754a", marginTop: 4 }}>Reach the guest</div>
+                  <a href={bk.email ? `mailto:${bk.email}` : undefined}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = "#faf7f1"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 13px", border: "1px solid #E9DCC4", borderRadius: 12, textDecoration: "none", color: "#1f1b16", background: "transparent", transition: "background .15s" }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#a08a6c" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></svg>
+                    <span style={{ fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dash(bk.email)}</span>
+                  </a>
+                  <a href={bk.phone ? `tel:${bk.phone}` : undefined}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = "#faf7f1"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 13px", border: "1px solid #E9DCC4", borderRadius: 12, textDecoration: "none", color: "#1f1b16", background: "transparent", transition: "background .15s" }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#a08a6c" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L20 13l-1 4a2 2 0 0 1-2 2A14 14 0 0 1 3 6a2 2 0 0 1 2-2z" /></svg>
+                    <span style={{ fontSize: 12.5 }}>{dash(bk.phone)}</span>
+                  </a>
                 </div>
 
-                {/* Stay */}
-                <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: ".12em", textTransform: "uppercase", color: "#b8754a", marginBottom: 10 }}>Stay</div>
-                <div style={{ border: "1px solid #f1ead9", borderRadius: 14, overflow: "hidden", marginBottom: 22 }}>
-                  <div style={{ display: "flex", alignItems: "stretch" }}>
-                    <div style={{ flex: 1, padding: "14px 16px" }}>
-                      <div style={{ fontSize: 11, color: "#a08a6c", marginBottom: 4 }}>Check-in</div>
-                      <div style={{ fontFamily: serif, fontSize: 20, color: "#1f1b16", lineHeight: 1 }}>{fmtDate(bk.checkInRaw)}</div>
-                      {bk.checkInTime && <div style={{ fontSize: 12, color: "#8a7556", marginTop: 5 }}>{fmtTime(bk.checkInTime)}</div>}
+                {/* ── Column 2 · money ─────────────────────────────── */}
+                <div className="bb-col" style={{ gap: 11 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: ".12em", textTransform: "uppercase", color: "#b8754a" }}>Money</div>
+                  <div>
+                    <div style={{ fontSize: 11.5, color: "#8B7458" }}>Total for this stay</div>
+                    <div style={{ fontFamily: serif, fontSize: 29, lineHeight: 1.1, marginTop: 2, color: "#1f1b16" }}>{peso(total)}</div>
+                    <div style={{ height: 8, borderRadius: 999, background: "#EFE4CE", overflow: "hidden", marginTop: 10 }}>
+                      <div style={{ width: `${pct}%`, height: "100%", borderRadius: 999, background: "#B07848" }} />
                     </div>
-                    <div style={{ display: "grid", placeItems: "center", padding: "0 4px", color: "#c9b58f" }}>
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
-                    </div>
-                    <div style={{ flex: 1, padding: "14px 16px", textAlign: "right" }}>
-                      <div style={{ fontSize: 11, color: "#a08a6c", marginBottom: 4 }}>Check-out</div>
-                      <div style={{ fontFamily: serif, fontSize: 20, color: "#1f1b16", lineHeight: 1 }}>{fmtDate(bk.checkOutRaw)}</div>
-                      {bk.checkOutTime && <div style={{ fontSize: 12, color: "#8a7556", marginTop: 5 }}>{fmtTime(bk.checkOutTime)}</div>}
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 7, fontSize: 12 }}>
+                      <span style={{ color: "#3F7A4F", fontWeight: 600 }}>{peso(paid)} paid</span>
+                      <span style={{ color: "#8C5A2E", fontWeight: 600 }}>{peso(bk.balance)} left</span>
                     </div>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 16px", background: "#faf7f1", borderTop: "1px solid #f1ead9", color: "#6f5c44", fontSize: 12.5 }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#b8754a" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21V9l9-6 9 6v12" /><path d="M9 21v-6h6v6" /></svg>
-                    <span style={{ color: "#1f1b16", fontWeight: 500 }}>{bk.room}</span>
-                  </div>
-                </div>
 
-                {/* Payment */}
-                <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: ".12em", textTransform: "uppercase", color: "#b8754a", marginBottom: 14 }}>Payment</div>
-
-                {/* reference no. (copy) */}
-                {bk.paymentReference && (
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "#F6EFE2", border: "1.5px dashed #B07848", borderRadius: 14, padding: "13px 16px", marginBottom: 16 }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".1em", color: "#8C5A2E" }}>{((bk.paymentMethod || "Payment").charAt(0).toUpperCase() + (bk.paymentMethod || "Payment").slice(1))} reference no.</div>
-                      <div style={{ fontFamily: mono, fontSize: 24, fontWeight: 500, letterSpacing: ".08em", marginTop: 3, color: "#1f1b16", wordBreak: "break-all" }}>{bk.paymentReference}</div>
+                  {bk.paymentReference && (
+                    <div style={{ background: "#F6EFE2", border: "1.5px dashed #B07848", borderRadius: 14, padding: "11px 14px" }}>
+                      <div style={{ fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".1em", color: "#8C5A2E" }}>{dash(bk.paymentMethod)} ref.</div>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 4 }}>
+                        <div style={{ fontFamily: mono, fontSize: 17, fontWeight: 500, letterSpacing: ".04em", color: "#1f1b16", overflow: "hidden", textOverflow: "ellipsis" }}>{bk.paymentReference}</div>
+                        <button type="button" onClick={() => copyRef(bk.paymentReference)}
+                          style={{ flex: "none", padding: "7px 12px", borderRadius: 9, border: "1px solid #D4BE9A", background: "#FFFCF4", color: "#8C5A2E", fontFamily: "inherit", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                          {refCopied ? "Copied" : "Copy"}
+                        </button>
+                      </div>
                     </div>
-                    <button type="button" onClick={() => copyRef(bk.paymentReference)} style={{ flex: "none", display: "inline-flex", alignItems: "center", gap: 7, padding: "10px 16px", borderRadius: 10, border: "1px solid #D4BE9A", background: "#FFFCF4", color: "#8C5A2E", fontSize: 13, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
-                      {refCopied ? "Copied" : "Copy"}
-                    </button>
-                  </div>
-                )}
+                  )}
 
-                {/* totals */}
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5, color: "#4A3A2A", padding: "5px 0" }}><span>Room rate{nights > 0 ? ` · ${nights} night${nights > 1 ? "s" : ""}` : ""}</span><span>{peso(bk.roomRate || total)}</span></div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5, color: "#4A3A2A", padding: "5px 0" }}><span>Add-ons</span><span style={{ color: "#8B7458" }}>{peso(bk.addOns)}</span></div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0 14px", borderTop: "1px solid #EFE4CE", marginTop: 8 }}>
-                  <span style={{ fontSize: 14, fontWeight: 600 }}>Total</span>
-                  <span style={{ fontFamily: serif, fontSize: 22, fontWeight: 500 }}>{peso(total)}</span>
-                </div>
+                  {bk.paymentProofUrl ? (
+                    <a href={bk.paymentProofUrl} target="_blank" rel="noopener noreferrer"
+                      onMouseEnter={(e) => { e.currentTarget.style.background = "#fff"; e.currentTarget.style.borderColor = "#D4BE9A"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "#faf7f1"; e.currentTarget.style.borderColor = "#E9DCC4"; }}
+                      style={{ display: "flex", alignItems: "center", gap: 11, border: "1px solid #E9DCC4", borderRadius: 13, padding: "9px 11px", background: "#faf7f1", textDecoration: "none", color: "#1f1b16", transition: "all .15s" }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={bk.paymentProofUrl} alt="Payment proof" style={{ width: 44, height: 38, flex: "none", borderRadius: 8, objectFit: "cover" }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 600 }}>Payment proof</div>
+                        <div style={{ fontSize: 11, color: "#2f7d55", marginTop: 2 }}>Uploaded · tap to view</div>
+                      </div>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#a08a6c" strokeWidth="1.9" strokeLinecap="round"><path d="M9 6l6 6-6 6" /></svg>
+                    </a>
+                  ) : (
+                    <div style={{ display: "flex", alignItems: "center", gap: 11, border: "1px dashed #e0d2b8", borderRadius: 13, padding: "9px 11px", background: "#fcfaf5" }}>
+                      <div style={{ width: 44, height: 38, flex: "none", borderRadius: 8, display: "grid", placeItems: "center", background: "#f6efe2" }}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#c9b58f" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 16V4M7 9l5-5 5 5" /><path d="M5 16v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" /></svg>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 600 }}>Payment proof</div>
+                        <div style={{ fontSize: 11, color: "#B4453C", marginTop: 2 }}>Not uploaded</div>
+                      </div>
+                    </div>
+                  )}
 
-                {/* progress */}
-                <div style={{ height: 8, borderRadius: 999, background: "#EFE4CE", overflow: "hidden" }}><div style={{ width: `${pct}%`, height: "100%", borderRadius: 999, background: "#B07848" }} /></div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: "#8B7458", marginTop: 7 }}><span>{peso(paid)} paid</span><span>{pct}%</span></div>
-
-                {/* down / balance */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 16 }}>
-                  <div style={{ background: "rgba(91,158,107,.09)", border: "1px solid rgba(91,158,107,.28)", borderRadius: 14, padding: "14px 16px" }}>
-                    <div style={{ fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".1em", color: "#3F7A4F" }}>Down payment</div>
-                    <div style={{ fontFamily: serif, fontSize: 21, fontWeight: 500, color: "#3F7A4F", marginTop: 4 }}>{peso(bk.downPayment)}</div>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 7, padding: "3px 10px", borderRadius: 999, background: "rgba(91,158,107,.18)", color: "#3F7A4F", fontSize: 11, fontWeight: 600 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "#5B9E6B" }} />{(bk.paymentStatus || "").startsWith("approved") ? "Paid & approved" : "Paid"}</span>
-                  </div>
-                  <div style={{ background: "rgba(176,120,72,.08)", border: "1px solid rgba(176,120,72,.28)", borderRadius: 14, padding: "14px 16px" }}>
-                    <div style={{ fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".1em", color: "#8C5A2E" }}>Balance due</div>
-                    <div style={{ fontFamily: serif, fontSize: 21, fontWeight: 500, color: "#8C5A2E", marginTop: 4 }}>{peso(bk.balance)}</div>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 7, padding: "3px 10px", borderRadius: 999, background: "rgba(176,120,72,.16)", color: "#8C5A2E", fontSize: 11, fontWeight: 600 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "#B07848" }} />{bk.balance > 0 ? "Due at check-in" : "Settled"}</span>
-                  </div>
-                </div>
-
-                {/* method / deposit */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12, marginBottom: 22 }}>
-                  <div style={{ padding: "13px 15px", border: "1px solid #E0CEB2", borderRadius: 14 }}>
-                    <div style={{ fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".1em", color: "#8B7458" }}>Method</div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 6, fontSize: 14, fontWeight: 500, textTransform: "capitalize" }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#0A7CFF" }} />{dash(bk.paymentMethod)}</div>
-                    {bk.paymentStatus ? (
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 8, padding: "3px 10px", borderRadius: 999, background: pp.bg, color: pp.color, fontSize: 11, fontWeight: 600 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: pp.dot }} />{pp.label}</span>
-                    ) : (
-                      <div style={{ fontSize: 11.5, color: "#8B7458", marginTop: 5 }}>e-wallet transfer</div>
+                  <div style={{ border: "1px solid #EFE4CE", borderRadius: 14, padding: "2px 14px 8px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#4A3A2A", padding: "7px 0" }}>
+                      <span>Room{nights > 0 ? ` · ${nights} night${nights > 1 ? "s" : ""}` : ""}</span><span>{peso(bk.roomRate || total)}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#4A3A2A", padding: "7px 0", borderTop: "1px solid #F4EBD9" }}>
+                      <span>Add-ons</span><span style={{ color: "#8B7458" }}>{peso(bk.addOns)}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#4A3A2A", padding: "7px 0", borderTop: "1px solid #F4EBD9" }}>
+                      <span>Security deposit</span>
+                      <span style={{ color: "#8B7458" }}>{peso(bk.deposit)}{bk.depositStatus ? ` · ${dp.label.toLowerCase()}` : " · pending"}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#4A3A2A", padding: "7px 0", borderTop: "1px solid #F4EBD9" }}>
+                      <span>Paid by</span>
+                      <span style={{ fontWeight: 600, textTransform: "capitalize" }}>{dash(bk.paymentMethod)}</span>
+                    </div>
+                    {bk.paymentStatus && (
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, color: "#4A3A2A", padding: "7px 0", borderTop: "1px solid #F4EBD9" }}>
+                        <span>Payment</span>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 999, background: pp.bg, color: pp.color, fontSize: 11, fontWeight: 600 }}>
+                          <span style={{ width: 6, height: 6, borderRadius: "50%", background: pp.dot }} />{pp.label}
+                        </span>
+                      </div>
                     )}
                   </div>
-                  <div style={{ padding: "13px 15px", border: "1px solid #E0CEB2", borderRadius: 14 }}>
-                    <div style={{ fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".1em", color: "#8B7458" }}>Security deposit</div>
-                    <div style={{ fontSize: 14, fontWeight: 500, marginTop: 6 }}>{peso(bk.deposit)} <span style={{ fontWeight: 400, color: "#8B7458", fontSize: 12.5 }}>refundable</span></div>
-                    {bk.depositStatus ? (
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 8, padding: "3px 10px", borderRadius: 999, background: dp.bg, color: dp.color, fontSize: 11, fontWeight: 600 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: dp.dot }} />{dp.label}</span>
-                    ) : (
-                      <div style={{ fontSize: 11.5, color: "#8C5A2E", marginTop: 5 }}>Collected at check-in</div>
-                    )}
-                  </div>
                 </div>
 
-                {/* Documents */}
-                <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: ".12em", textTransform: "uppercase", color: "#b8754a", marginBottom: 10 }}>Documents</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  {docCard("Valid ID", bk.validIdUrl)}
-                  {docCard("Payment proof", bk.paymentProofUrl)}
+                {/* ── Column 3 · guests & IDs ──────────────────────── */}
+                <div className="bb-col" style={{ gap: 12 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: ".12em", textTransform: "uppercase", color: "#b8754a" }}>
+                    Guests &amp; IDs · {boardGuests.length}
+                  </div>
+                  {boardGuests.map((g, i) => {
+                    const idUrls = (g.validIdUrl || "").split("\n").map((u) => u.trim()).filter(Boolean);
+                    const required = needsId(g);
+                    return (
+                      <div key={i} style={{ border: "1px solid #E9DCC4", borderRadius: 16, overflow: "hidden", flex: "none", background: g.main ? "#FBF5E9" : "transparent" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 13px" }}>
+                          <span style={{ width: 34, height: 34, flex: "none", borderRadius: 10, background: g.main ? "#b8754a" : "#C9A87C", color: "#fff", display: "grid", placeItems: "center", fontFamily: serif, fontSize: 14 }}>{initials(g.name)}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#1f1b16" }}>{g.name || "—"}</div>
+                            <div style={{ fontSize: 11, color: "#8B7458", marginTop: 2 }}>{g.sub}</div>
+                          </div>
+                          {idUrls.length > 0 ? (
+                            <span style={{ padding: "4px 9px", borderRadius: 999, background: "#E6F4EA", color: "#2f7d55", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap" }}>ID ok</span>
+                          ) : required ? (
+                            <span style={{ padding: "4px 9px", borderRadius: 999, background: "#FDECEA", color: "#B4453C", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap" }}>No ID</span>
+                          ) : (
+                            // Under 10 — an ID was never required, so this is not a gap.
+                            <span style={{ padding: "4px 9px", borderRadius: 999, background: "#F1EAD9", color: "#8B7458", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap" }}>No ID needed</span>
+                          )}
+                        </div>
+                        {/* Thumbnails only when there ARE IDs, and with no caption
+                            underneath — the pill above already says "ID ok" / "No
+                            ID". The caption plus an empty-state block cost ~90px a
+                            guest, which is what pushed three guests into a scroll. */}
+                        {idUrls.length > 0 && (
+                          <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(idUrls.length, 3)}, 1fr)`, gap: 8, padding: "0 11px 11px" }}>
+                            {idUrls.map((u, k) => (
+                              <a key={k} href={u} target="_blank" rel="noopener noreferrer"
+                                title={idUrls.length > 1 ? `Valid ID ${k + 1} — open full size` : "Valid ID — open full size"}
+                                style={{ border: "1px solid #f1ead9", borderRadius: 10, overflow: "hidden", background: "#FFFCF4", textDecoration: "none", display: "block" }}>
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={u} alt={idUrls.length > 1 ? `Valid ID ${k + 1}` : "Valid ID"} style={{ height: 58, width: "100%", objectFit: "cover", display: "block" }} />
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
 
               </div>
@@ -2033,6 +2166,7 @@ export default function OwnerDashboard() {
           </div>
         );
       })()}
+
 
       {/* Redesigned haven (Property) detail modal */}
       {havenModal && (() => {

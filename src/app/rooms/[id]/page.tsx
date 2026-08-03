@@ -362,7 +362,13 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   const signedIn = authStatus === "authenticated";
   useEffect(() => { setBookingCount(getMyBookingIds().length); }, []);
 
+  // `selectedWindow` always holds a real window so every price, label and total
+  // below stays defined. `stayChosen` is what tracks whether the GUEST actually
+  // picked one — until they do, no option is marked selected, no price is
+  // presented as theirs, and Reserve stays blocked. Keeping these separate
+  // avoids threading a nullable window through ~20 pricing call sites.
   const [selectedWindow, setSelectedWindow] = useState<Window>(windows[2] ?? windows[0]);
+  const [stayPicked, setStayPicked] = useState(false);
 
   // Which stay window the listing sent us to (?win=0 Daycation, 1 Nightcation,
   // 2 Full stay). Read on the CLIENT after mount — a lazy useState initialiser
@@ -384,11 +390,20 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
     winApplied.current = true;
   }, [winRead, desiredWinIdx, windows]);
 
+  // A ?win= deep link means the guest already picked a stay type upstream (the
+  // rooms list, a shared link), so that counts as chosen — only a *defaulted*
+  // window should leave step 1 unanswered. Derived rather than another setState
+  // inside the effect above.
+  const stayChosen = stayPicked || (desiredWinIdx != null && !!windows[desiredWinIdx]);
+
   // Desktop booking-card guided step (1 stay → 2 date → 3 guests). Starts on
   // step 2 (collapsed step 1) since a stay type is always pre-selected — this
   // way the card opens straight to what the guest actually needs to fill in
   // (the date) instead of showing all 3 stay options every time.
-  const [cardStep, setCardStep] = useState(2);
+  // Start on step 1, not 2. Opening on "When are you coming?" marked step 1 as
+  // already answered and silently committed the guest to Overnight — they never
+  // saw that a 10-hour stay existed, or that a choice had been made for them.
+  const [cardStep, setCardStep] = useState(1);
 
   // Keep the selection valid when live windows arrive (mock → backend swap),
   // preferring the originally requested window over the Full-stay default.
@@ -461,7 +476,13 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
     });
     return Array.from(set);
   })();
-  const canProceed = date && guests.adults >= 1;
+  // A stay type is now an explicit choice, so it gates Reserve alongside the
+  // date — otherwise a guest could reserve having never opened step 1 and get
+  // whatever the default happened to be.
+  const canProceed = stayChosen && date && guests.adults >= 1;
+  // Shown before a stay type is picked — advertising one option's rate as "the"
+  // price would be the same silent default we just removed.
+  const fromPrice = Math.min(room.price10hr, room.price21hr);
 
   const handleReserve = () => {
     const params = new URLSearchParams({
@@ -565,16 +586,19 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
         <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, background: "#FAF7F1", borderTop: "1px solid #ECE5D4", padding: "14px 18px calc(16px + env(safe-area-inset-bottom))", boxShadow: "0 -12px 30px -18px rgba(20,15,9,.35)", display: "flex", alignItems: "center", gap: 14 }}>
           <div style={{ flex: "none" }}>
             <div style={{ fontSize: 10.5, color: "#8B7458" }}>{canProceed ? "Total" : "From"}</div>
-            <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: "-.01em" }}>{peso(canProceed ? total : (selectedWindow.stayType === "10" ? room.price10hr : room.price21hr))}</div>
+            <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: "-.01em" }}>{peso(canProceed ? total : stayChosen ? (selectedWindow.stayType === "10" ? room.price10hr : room.price21hr) : fromPrice)}</div>
           </div>
           <button
             onClick={() => {
               if (canProceed) { handleReserve(); return; }
-              setCardStep(2); setDateOpen(true); setGuestOpen(false);
+              // Send them to the step that's actually outstanding, not always
+              // the date — the stay type now comes first and may be unanswered.
+              if (!stayChosen) { setCardStep(1); setDateOpen(false); setGuestOpen(false); }
+              else { setCardStep(2); setDateOpen(true); setGuestOpen(false); }
               document.getElementById("mbook")?.scrollIntoView({ behavior: "smooth", block: "start" });
             }}
             style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, background: "#B8754A", color: "#FAF7F1", border: 0, padding: 16, borderRadius: 14, font: "inherit", fontSize: 15.5, fontWeight: 600, cursor: "pointer" }}>
-            {canProceed ? "Reserve" : "Pick a date"}
+            {canProceed ? "Reserve" : !stayChosen ? "Choose your stay" : "Pick a date"}
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
           </button>
         </div>
@@ -619,10 +643,11 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
             <div style={{ padding: "18px 18px 16px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, borderBottom: "1px solid #EFE4CE" }}>
               <div style={{ minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-                  <span style={{ fontFamily: "'Fraunces', serif", fontSize: 28, fontWeight: 500, letterSpacing: "-.02em" }}>{peso(selectedWindow.stayType === "10" ? room.price10hr : room.price21hr)}</span>
-                  <span style={{ fontSize: 13, color: "#8B7458", whiteSpace: "nowrap" }}>{isOvernight ? "/ night" : "/ session"}</span>
+                  {!stayChosen && <span style={{ fontSize: 13, color: "#8B7458" }}>From</span>}
+                  <span style={{ fontFamily: "'Fraunces', serif", fontSize: 28, fontWeight: 500, letterSpacing: "-.02em" }}>{peso(stayChosen ? (selectedWindow.stayType === "10" ? room.price10hr : room.price21hr) : fromPrice)}</span>
+                  <span style={{ fontSize: 13, color: "#8B7458", whiteSpace: "nowrap" }}>{stayChosen ? (isOvernight ? "/ night" : "/ session") : ""}</span>
                 </div>
-                <div style={{ fontSize: 12, color: "#8B7458", marginTop: 3 }}>{isOvernight ? "Overnight · 7 PM – 4 PM next day" : `${selectedWindow.label} · 10 hours`}</div>
+                <div style={{ fontSize: 12, color: "#8B7458", marginTop: 3 }}>{!stayChosen ? "Choose how you'd like to stay" : isOvernight ? "Overnight · 7 PM – 4 PM next day" : `${selectedWindow.label} · 10 hours`}</div>
               </div>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#E4F3E4", color: "#15803D", fontSize: 11, fontWeight: 600, padding: "5px 10px", borderRadius: 999, whiteSpace: "nowrap", flex: "none" }}>
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg> No charge today
@@ -631,10 +656,10 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
 
             <div style={{ padding: 18, display: "flex", flexDirection: "column", gap: 20 }}>
               {/* 1. STAY */}
-              <CardStep n={1} title="How do you want to stay?" active={cardStep === 1} done={cardStep > 1} summary={`${selectedWindow.label} · ${peso(selectedWindow.stayType === "10" ? room.price10hr : room.price21hr)}`} onOpen={() => { setCardStep(1); setDateOpen(false); setGuestOpen(false); }}>
+              <CardStep n={1} title="How do you want to stay?" active={cardStep === 1} done={stayChosen && cardStep > 1} summary={stayChosen ? `${selectedWindow.label} · ${peso(selectedWindow.stayType === "10" ? room.price10hr : room.price21hr)}` : undefined} onOpen={() => { setCardStep(1); setDateOpen(false); setGuestOpen(false); }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
                   {windows.map((w, i) => {
-                    const active = selectedWindow.checkIn === w.checkIn && selectedWindow.checkOut === w.checkOut;
+                    const active = stayChosen && selectedWindow.checkIn === w.checkIn && selectedWindow.checkOut === w.checkOut;
                     const price = w.stayType === "10" ? room.price10hr : room.price21hr;
                     const ic = i === 0
                       ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
@@ -642,7 +667,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                       ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>
                       : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M2 9v11M2 13h18a2 2 0 0 1 2 2v5M2 16h20" /><path d="M5 9V7a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2" /></svg>;
                     return (
-                      <button key={i} onClick={() => { setSelectedWindow(w); setCardStep(2); setDateOpen(true); setGuestOpen(false); }} className="bk-opt" style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 13px", cursor: "pointer", borderRadius: 14, width: "100%", fontFamily: "inherit", background: active ? "#FBF4E6" : "#FFFCF4", border: active ? "1.5px solid #B07848" : "1.5px solid #E0CEB2" }}>
+                      <button key={i} onClick={() => { setSelectedWindow(w); setStayPicked(true); setCardStep(2); setDateOpen(true); setGuestOpen(false); }} className="bk-opt" style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 13px", cursor: "pointer", borderRadius: 14, width: "100%", fontFamily: "inherit", background: active ? "#FBF4E6" : "#FFFCF4", border: active ? "1.5px solid #B07848" : "1.5px solid #E0CEB2" }}>
                         <span style={{ width: 38, height: 38, flex: "none", borderRadius: 11, display: "grid", placeItems: "center", color: active ? "#fff" : "#8C5A2E", background: active ? "#B07848" : "#EFE4CE" }}>{ic}</span>
                         <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
                           <span style={{ display: "block", fontSize: 14.5, fontWeight: 600, color: "#1F160E" }}>{w.label}</span>
@@ -1028,10 +1053,11 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                 <div style={{ padding: "22px 24px 18px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, borderBottom: "1px solid #EFE4CE" }}>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ display: "flex", alignItems: "baseline", gap: 7 }}>
-                      <span style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 32, fontWeight: 500, letterSpacing: "-.02em" }}>{peso(selectedWindow.stayType === "10" ? room.price10hr : room.price21hr)}</span>
-                      <span style={{ fontSize: 13.5, color: "#8B7458", whiteSpace: "nowrap" }}>{isOvernight ? "/ night" : "/ session"}</span>
+                      {!stayChosen && <span style={{ fontSize: 13.5, color: "#8B7458" }}>From</span>}
+                      <span style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 32, fontWeight: 500, letterSpacing: "-.02em" }}>{peso(stayChosen ? (selectedWindow.stayType === "10" ? room.price10hr : room.price21hr) : fromPrice)}</span>
+                      <span style={{ fontSize: 13.5, color: "#8B7458", whiteSpace: "nowrap" }}>{stayChosen ? (isOvernight ? "/ night" : "/ session") : ""}</span>
                     </div>
-                    <div style={{ fontSize: 12.5, color: "#8B7458", marginTop: 3 }}>{isOvernight ? "Overnight · 7 PM – 4 PM next day" : `${selectedWindow.label} · 10 hours`}</div>
+                    <div style={{ fontSize: 12.5, color: "#8B7458", marginTop: 3 }}>{!stayChosen ? "Choose how you'd like to stay" : isOvernight ? "Overnight · 7 PM – 4 PM next day" : `${selectedWindow.label} · 10 hours`}</div>
                   </div>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#E4F3E4", color: "#15803D", fontSize: 11.5, fontWeight: 600, padding: "6px 11px", borderRadius: 999, whiteSpace: "nowrap" }}>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg> No charge today
@@ -1041,10 +1067,10 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                 <div style={{ padding: "20px 24px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
 
                   {/* 1. STAY TYPE */}
-                  <CardStep n={1} title="How do you want to stay?" active={cardStep === 1} done={cardStep > 1} summary={`${selectedWindow.label} · ${peso(selectedWindow.stayType === "10" ? room.price10hr : room.price21hr)}`} onOpen={() => { setCardStep(1); setDateOpen(false); setGuestOpen(false); }}>
+                  <CardStep n={1} title="How do you want to stay?" active={cardStep === 1} done={stayChosen && cardStep > 1} summary={stayChosen ? `${selectedWindow.label} · ${peso(selectedWindow.stayType === "10" ? room.price10hr : room.price21hr)}` : undefined} onOpen={() => { setCardStep(1); setDateOpen(false); setGuestOpen(false); }}>
                     <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
                       {windows.map((w, i) => {
-                        const active = selectedWindow.checkIn === w.checkIn && selectedWindow.checkOut === w.checkOut;
+                        const active = stayChosen && selectedWindow.checkIn === w.checkIn && selectedWindow.checkOut === w.checkOut;
                         const price = w.stayType === "10" ? room.price10hr : room.price21hr;
                         const ic = i === 0
                           ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
@@ -1052,7 +1078,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                           ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>
                           : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M2 9v11M2 13h18a2 2 0 0 1 2 2v5M2 16h20" /><path d="M5 9V7a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2" /></svg>;
                         return (
-                          <button key={i} onClick={() => { setSelectedWindow(w); setCardStep(2); setDateOpen(true); setGuestOpen(false); }} className="bk-opt" style={{ display: "flex", alignItems: "center", gap: 13, padding: "12px 14px", cursor: "pointer", borderRadius: 15, width: "100%", fontFamily: "inherit", background: active ? "#FBF4E6" : "#FFFCF4", border: active ? "1.5px solid #B07848" : "1.5px solid #E0CEB2" }}>
+                          <button key={i} onClick={() => { setSelectedWindow(w); setStayPicked(true); setCardStep(2); setDateOpen(true); setGuestOpen(false); }} className="bk-opt" style={{ display: "flex", alignItems: "center", gap: 13, padding: "12px 14px", cursor: "pointer", borderRadius: 15, width: "100%", fontFamily: "inherit", background: active ? "#FBF4E6" : "#FFFCF4", border: active ? "1.5px solid #B07848" : "1.5px solid #E0CEB2" }}>
                             <span style={{ width: 38, height: 38, flex: "none", borderRadius: 11, display: "grid", placeItems: "center", color: active ? "#fff" : "#8C5A2E", background: active ? "#B07848" : "#EFE4CE" }}>{ic}</span>
                             <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
                               <span style={{ display: "block", fontSize: 14.5, fontWeight: 600, color: "#1F160E" }}>{w.label}</span>

@@ -186,13 +186,15 @@ export const updateBookingDetails = async (
     await client.query(`DELETE FROM booking_guests WHERE booking_id = $1`, [
       id,
     ]);
-    for (const g of allGuests) {
+    // allGuests[0] is the main guest — persist that position. Without it the
+    // booker is unrecoverable, because the primary key is a random UUID.
+    for (const [gi, g] of allGuests.entries()) {
       await client.query(
         `
           INSERT INTO booking_guests (
-            booking_id, first_name, last_name, age, gender, email, phone, facebook_link, valid_id_url
+            booking_id, first_name, last_name, age, gender, email, phone, facebook_link, valid_id_url, guest_index
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         `,
         [
           id,
@@ -204,6 +206,7 @@ export const updateBookingDetails = async (
           g.phone,
           g.facebook_link,
           g.valid_id_url,
+          gi,
         ],
       );
     }
@@ -332,7 +335,7 @@ export const updateBookingDetails = async (
         LEFT JOIN booking_guests bg ON b.id = bg.booking_id
         LEFT JOIN booking_payments bp ON b.id = bp.booking_id
         WHERE b.id = $1 AND bg.id = (
-          SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY id LIMIT 1
+          SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY guest_index, id LIMIT 1
         )
         LIMIT 1
       `,
@@ -743,6 +746,17 @@ export const createBooking = async (
     console.log("✅ [BOOKING] Booking record created with ID:", bookingId);
 
     // Step 2: Create main guest record
+    //
+    // Log what actually arrived BEFORE resolving. A booking was once saved with
+    // the main guest's ID missing while both additional guests' IDs uploaded
+    // fine, and nothing in the logs could distinguish "the client sent nothing"
+    // from "the image was rejected by the magic-byte guard" — both end as a
+    // silent NULL. These two lines make the next occurrence self-explaining.
+    const mainIdCount = Array.isArray(valid_ids)
+      ? valid_ids.filter((v: unknown) => typeof v === "string" && v.trim()).length
+      : (typeof valid_id === "string" && valid_id.trim() ? 1 : 0);
+    console.log(`🪪 [BOOKING] Main guest ID photos received from client: ${mainIdCount}`);
+
     let validIdUrl: string | null = null;
     try {
       validIdUrl = await resolveValidIdUrls(valid_ids, valid_id);
@@ -766,11 +780,31 @@ export const createBooking = async (
       );
     }
 
+    // The client sent photos but NONE survived validation/upload. Deliberately
+    // not fatal — the guest has already paid the down payment by this point, and
+    // blocking them over an image the sniffer disliked is worse for the business
+    // than a missing document the host can chase. But it must be loud: the host
+    // otherwise finds out only by opening the booking and seeing "Not uploaded".
+    if (mainIdCount > 0 && !validIdUrl) {
+      console.error(
+        `❌ [BOOKING] ${booking_id}: ${mainIdCount} main-guest ID photo(s) were sent but NONE were stored ` +
+          `— every one was rejected by the image guard or failed to upload. Booking saved WITHOUT an ID.`,
+      );
+    } else if (mainIdCount === 0) {
+      console.warn(
+        `⚠️ [BOOKING] ${booking_id}: client sent NO main-guest ID photo. ` +
+          `Checkout requires one for guests aged 10+, so this points at a client-side bug or a bypassed step.`,
+      );
+    }
+
+    // guest_index 0 marks the booker. The primary key is a random UUID, so
+    // without this column there is no way to tell afterwards who booked — which
+    // once put a 3-year-old at the top of the admin booking detail.
     const mainGuestQuery = `
       INSERT INTO booking_guests (
-        booking_id, first_name, last_name, age, gender, email, phone, facebook_link, valid_id_url
+        booking_id, first_name, last_name, age, gender, email, phone, facebook_link, valid_id_url, guest_index
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0)
     `;
 
     const mainGuestValues = [
@@ -806,9 +840,9 @@ export const createBooking = async (
 
         const additionalGuestQuery = `
           INSERT INTO booking_guests (
-            booking_id, first_name, last_name, age, gender, email, phone, facebook_link, valid_id_url
+            booking_id, first_name, last_name, age, gender, email, phone, facebook_link, valid_id_url, guest_index
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         `;
 
         const additionalGuestValues = [
@@ -821,6 +855,7 @@ export const createBooking = async (
           guest.phone || guest_phone,
           null,
           guestIdUrl,
+          gi + 1, // 0 is the main guest, so additional guests start at 1
         ];
 
         await client.query(additionalGuestQuery, additionalGuestValues);
@@ -1304,14 +1339,32 @@ export const getAllBookings = async (
         bd.payment_method as security_deposit_payment_method,
         bd.payment_proof_url as security_deposit_payment_proof_url,
         bd.notes as security_deposit_notes,
-        bc.cleaning_status
+        bc.cleaning_status,
+        -- Everyone beyond the main guest. The WHERE clause below pins this query
+        -- to a single guest row, so without this the admin UI could only ever
+        -- show guest 1 — a 3-pax booking looked identical to a solo one, and the
+        -- other guests' uploaded IDs were unreachable from the portal.
+        -- (booking_guests.id is a UUID, so the main guest is identified by the
+        -- same ORDER BY guest_index, id expression used in the WHERE below.)
+        COALESCE((
+          SELECT json_agg(json_build_object(
+            'first_name',   g.first_name,
+            'last_name',    g.last_name,
+            'age',          g.age,
+            'gender',       g.gender,
+            'valid_id_url', g.valid_id_url
+          ) ORDER BY g.guest_index, g.id)
+          FROM booking_guests g
+          WHERE g.booking_id = b.id
+            AND g.id <> (SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY guest_index, id LIMIT 1)
+        ), '[]'::json) AS additional_guests
       FROM booking b
       LEFT JOIN booking_guests bg ON b.id = bg.booking_id
       LEFT JOIN booking_payments bp ON b.id = bp.booking_id
       LEFT JOIN booking_security_deposits bd ON b.id = bd.booking_id
       LEFT JOIN booking_cleaning bc ON b.id = bc.booking_id
       WHERE bg.id = (
-        SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY id LIMIT 1
+        SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY guest_index, id LIMIT 1
       )
     `;
     const values: string[] = [];
@@ -1395,7 +1448,7 @@ export const getBookingById = async (
                 'phone', g.phone,
                 'facebook_link', g.facebook_link,
                 'valid_id_url', g.valid_id_url
-              ) ORDER BY g.id
+              ) ORDER BY g.guest_index, g.id
             ),
             '[]'
           )
@@ -1426,7 +1479,7 @@ export const getBookingById = async (
       LEFT JOIN haven_images hi ON h.uuid_id = hi.haven_id
       LEFT JOIN booking_payments bp ON b.id = bp.booking_id
       LEFT JOIN booking_guests bg ON bg.id = (
-        SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY id ASC LIMIT 1
+        SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY guest_index, id ASC LIMIT 1
       )
       LEFT JOIN booking_security_deposits bd ON b.id = bd.booking_id
       WHERE (b.id::text = $1 OR b.booking_id = $1)
@@ -1604,7 +1657,7 @@ export const updateBookingStatus = async (
       JOIN booking_guests bg ON b.id = bg.booking_id
       JOIN booking_payments bp ON b.id = bp.booking_id
       WHERE b.id = $1 AND bg.id = (
-        SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY id LIMIT 1
+        SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY guest_index, id LIMIT 1
       )
       LIMIT 1
     `;
@@ -2045,7 +2098,7 @@ export const updateCleaningStatus = async (
       JOIN booking_payments bp ON b.id = bp.booking_id
       JOIN booking_cleaning bc ON b.id = bc.booking_id
       WHERE b.id = $1 AND bg.id = (
-        SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY id LIMIT 1
+        SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY guest_index, id LIMIT 1
       )
       LIMIT 1
     `;
@@ -2108,17 +2161,17 @@ export const syncCalendarBookings = async (
           WHERE booking_id = b.id ORDER BY id LIMIT 1) AS security_deposit,
         -- Everyone except the main guest. NOTE: booking_guests.id is a UUID, so
         -- MIN(id) is not available (no min aggregate for uuid) — this repeats the
-        -- exact "ORDER BY id LIMIT 1" expression the main-guest JOIN below uses,
+        -- exact "ORDER BY guest_index, id" expression the main-guest JOIN uses,
         -- so the row excluded here is guaranteed to be the row selected there.
-        (SELECT json_agg(TRIM(g.first_name || ' ' || g.last_name) ORDER BY g.id)
+        (SELECT json_agg(TRIM(g.first_name || ' ' || g.last_name) ORDER BY g.guest_index, g.id)
            FROM booking_guests g
           WHERE g.booking_id = b.id
             AND g.id <> (SELECT id FROM booking_guests
-                          WHERE booking_id = b.id ORDER BY id LIMIT 1)
+                          WHERE booking_id = b.id ORDER BY guest_index, id LIMIT 1)
         ) AS additional_guest_names
       FROM booking b
       LEFT JOIN booking_guests bg ON b.id = bg.booking_id
-        AND bg.id = (SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY id LIMIT 1)
+        AND bg.id = (SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY guest_index, id LIMIT 1)
       LEFT JOIN booking_payments bp ON b.id = bp.booking_id
       WHERE b.google_event_id IS NULL
       ORDER BY b.created_at ASC

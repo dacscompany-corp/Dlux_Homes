@@ -241,3 +241,220 @@ export async function generateReceiptPDF(data: ReceiptData): Promise<Buffer> {
 
   return Buffer.from(pdf.output("arraybuffer"));
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// Guest record — the check-in dossier for one booking.
+//
+// Page 1 is the booking itself (stay, money, contact). After that there is ONE
+// PAGE PER GUEST, each showing that guest's details and their valid ID printed
+// large enough to actually read. A guest per page means a sheet can be printed,
+// filed or handed over on its own without exposing the other guests.
+// ───────────────────────────────────────────────────────────────────────────
+
+export interface GuestRecordGuest {
+  name: string;
+  /** "Booked by" for the main guest, "Guest 2" … for the rest. */
+  role: string;
+  age: string;
+  gender: string;
+  /** Base64 data URLs, already fetched by the caller. */
+  idImages: string[];
+  /** False for under-10s, who are not required to present an ID. */
+  idRequired: boolean;
+}
+
+export interface GuestRecordData {
+  bookingId: string;
+  status: string;
+  roomName: string;
+  checkInDate: string;
+  checkOutDate: string;
+  checkInTime?: string;
+  checkOutTime?: string;
+  nights?: number;
+  contactEmail?: string;
+  contactPhone?: string;
+  totalAmount?: number;
+  downPayment?: number;
+  remainingBalance?: number;
+  securityDeposit?: number;
+  paymentMethod?: string;
+  paymentReference?: string;
+  guests: GuestRecordGuest[];
+}
+
+export async function generateGuestRecordPDF(data: GuestRecordData): Promise<Buffer> {
+  const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const margin = 20;
+  const cw = pageWidth - margin * 2;
+
+  // Helvetica has no glyph for the peso sign — it renders as "±". Same "PHP"
+  // prefix the receipt generator above uses.
+  const fmt = (n?: number) =>
+    `PHP ${(n ?? 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`;
+  const dash = (s?: string) => (s && s.trim() ? s : "—");
+
+  // Brand band repeated on every page, so a single detached sheet is still
+  // identifiable as belonging to this booking.
+  const header = (subtitle: string) => {
+    pdf.setFillColor(...PRIMARY);
+    pdf.rect(0, 0, pageWidth, 34, "F");
+    pdf.setTextColor(...WHITE);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(17);
+    pdf.text("D'Lux Homes", margin, 16);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8.5);
+    pdf.setTextColor(...MUTED_GOLD);
+    pdf.text(subtitle, margin, 23.5);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(8.5);
+    pdf.setTextColor(...ACCENT_GOLD);
+    pdf.text(`Booking ${data.bookingId}`, pageWidth - margin, 16, { align: "right" });
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8);
+    pdf.setTextColor(...MUTED_GOLD);
+    pdf.text((data.status || "").toUpperCase(), pageWidth - margin, 23.5, { align: "right" });
+    return 48;
+  };
+
+  const sectionTitle = (label: string, yy: number) => {
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(8.5);
+    pdf.setTextColor(...ACCENT_GOLD);
+    pdf.text(label.toUpperCase(), margin, yy);
+    pdf.setDrawColor(...LIGHT_BORDER);
+    pdf.setLineWidth(0.4);
+    pdf.line(margin, yy + 2.5, margin + cw, yy + 2.5);
+    return yy + 10;
+  };
+
+  const row = (label: string, value: string, yy: number, bold = false) => {
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(9.5);
+    pdf.setTextColor(...LABEL_MUTED);
+    pdf.text(label, margin, yy);
+    pdf.setFont("helvetica", bold ? "bold" : "normal");
+    pdf.setTextColor(...(bold ? PRIMARY_DARK : BODY_TEXT));
+    pdf.text(value, margin + cw, yy, { align: "right" });
+    return yy + 7;
+  };
+
+  // ── Page 1 · the booking ─────────────────────────────────────────────────
+  let y = header("Guest record & valid IDs");
+
+  y = sectionTitle("The stay", y);
+  y = row("Property", dash(data.roomName), y);
+  y = row("Check-in", `${dash(data.checkInDate)}${data.checkInTime ? `  ·  ${data.checkInTime}` : ""}`, y, true);
+  y = row("Check-out", `${dash(data.checkOutDate)}${data.checkOutTime ? `  ·  ${data.checkOutTime}` : ""}`, y, true);
+  if (data.nights) y = row("Nights", String(data.nights), y);
+  y = row("Guests on this booking", String(data.guests.length), y);
+
+  y += 6;
+  y = sectionTitle("Reach the guest", y);
+  y = row("Email", dash(data.contactEmail), y);
+  y = row("Phone", dash(data.contactPhone), y);
+
+  y += 6;
+  y = sectionTitle("Money", y);
+  y = row("Total for this stay", fmt(data.totalAmount), y, true);
+  y = row("Down payment (paid)", fmt(data.downPayment), y);
+  y = row("Balance due at check-in", fmt(data.remainingBalance), y, true);
+  y = row("Security deposit (refundable)", fmt(data.securityDeposit), y);
+  y = row("Payment method", dash(data.paymentMethod), y);
+  if (data.paymentReference) y = row("Reference no.", data.paymentReference, y);
+
+  // The one number the host actually collects at the door.
+  const collect = (data.remainingBalance ?? 0) + (data.securityDeposit ?? 0);
+  y += 3;
+  pdf.setFillColor(...PRIMARY_SOFT);
+  pdf.roundedRect(margin, y, cw, 15, 3, 3, "F");
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(10);
+  pdf.setTextColor(...PRIMARY);
+  pdf.text("Collect on arrival", margin + 6, y + 9.5);
+  pdf.setFontSize(12);
+  pdf.text(fmt(collect), margin + cw - 6, y + 9.5, { align: "right" });
+
+  // ── One page per guest ───────────────────────────────────────────────────
+  data.guests.forEach((g, i) => {
+    pdf.addPage();
+    let gy = header(`Guest ${i + 1} of ${data.guests.length}`);
+
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(18);
+    pdf.setTextColor(...PRIMARY);
+    pdf.text(dash(g.name), margin, gy);
+    gy += 7;
+
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(9.5);
+    pdf.setTextColor(...LABEL_MUTED);
+    pdf.text([g.role, g.age ? `${g.age} yrs` : "", g.gender].filter(Boolean).join("  ·  "), margin, gy);
+    gy += 12;
+
+    gy = sectionTitle("Valid ID", gy);
+
+    if (g.idImages.length === 0) {
+      pdf.setFillColor(...PRIMARY_SOFT);
+      pdf.roundedRect(margin, gy, cw, 22, 3, 3, "F");
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(10);
+      pdf.setTextColor(...(g.idRequired ? PRIMARY : LABEL_MUTED));
+      pdf.text(
+        g.idRequired ? "No valid ID on file — collect one at check-in" : "No ID required (under 10)",
+        margin + 6,
+        gy + 13,
+      );
+      return;
+    }
+
+    g.idImages.forEach((img, k) => {
+      let props: { width: number; height: number };
+      try {
+        props = pdf.getImageProperties(img);
+      } catch {
+        return; // unreadable image — skip it rather than abort the whole PDF
+      }
+      let avail = pageHeight - margin - 8 - gy;
+      // Too little room left for a legible ID — give it a fresh page.
+      if (avail < 45) {
+        pdf.addPage();
+        gy = header(`${dash(g.name)} — valid ID ${k + 1}`);
+        avail = pageHeight - margin - 8 - gy;
+      }
+      // Fit the column width, then cap by whatever height remains.
+      let w = cw;
+      let h = (props.height / props.width) * w;
+      if (h > avail) {
+        h = avail;
+        w = (props.width / props.height) * h;
+      }
+      const x = margin + (cw - w) / 2;
+      pdf.addImage(img, x, gy, w, h, undefined, "FAST");
+      pdf.setDrawColor(...LIGHT_BORDER);
+      pdf.setLineWidth(0.4);
+      pdf.rect(x, gy, w, h);
+      gy += h + 6;
+    });
+  });
+
+  // ── Footer on every page ─────────────────────────────────────────────────
+  const pages = pdf.getNumberOfPages();
+  for (let p = 1; p <= pages; p++) {
+    pdf.setPage(p);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(7.5);
+    pdf.setTextColor(...GRAY);
+    pdf.text(
+      `D'Lux Homes · Booking ${data.bookingId} · Confidential — contains guest identity documents`,
+      margin,
+      pageHeight - 10,
+    );
+    pdf.text(`${p} / ${pages}`, pageWidth - margin, pageHeight - 10, { align: "right" });
+  }
+
+  return Buffer.from(pdf.output("arraybuffer"));
+}

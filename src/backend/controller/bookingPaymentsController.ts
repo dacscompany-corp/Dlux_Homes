@@ -147,7 +147,7 @@ export const getAllBookingPayments = async (
       LEFT JOIN booking_security_deposits bd ON b.id = bd.booking_id
       LEFT JOIN booking_guests bg ON bg.booking_id = b.id
         AND bg.id = (
-          SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY id LIMIT 1
+          SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY guest_index, id LIMIT 1
         )
       WHERE 1=1
     `;
@@ -227,7 +227,7 @@ export const getBookingPaymentById = async (
       LEFT JOIN booking_security_deposits bd ON b.id = bd.booking_id
       LEFT JOIN booking_guests bg ON bg.booking_id = b.id
         AND bg.id = (
-          SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY id LIMIT 1
+          SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY guest_index, id LIMIT 1
         )
       WHERE bp.id = $1
       LIMIT 1
@@ -706,7 +706,7 @@ export const updateBookingPayment = async (
           JOIN booking_guests bg ON b.id = bg.booking_id
           JOIN booking_payments bp ON b.id = bp.booking_id
           WHERE bp.id = $1 AND bg.id = (
-            SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY id LIMIT 1
+            SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY guest_index, id LIMIT 1
           )
           LIMIT 1
         `;
@@ -839,7 +839,7 @@ export const updateBookingPayment = async (
       LEFT JOIN booking b ON bp.booking_id = b.id
       LEFT JOIN booking_guests bg ON bg.booking_id = b.id
         AND bg.id = (
-          SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY id LIMIT 1
+          SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY guest_index, id LIMIT 1
         )
       WHERE bp.id = $1
       LIMIT 1

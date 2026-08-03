@@ -244,6 +244,13 @@ function CheckoutInner() {
   const room = liveHaven ? havenToRoom(liveHaven) : (mockRooms.find((r) => r.id === roomId) || mockRooms[0]);
 
   const [step, setStep] = useState(0);
+  // ALWAYS update this with the functional form — setInfo((prev) => ...) — never
+  // setInfo({ ...info, ... }). Photo uploads write into `info.validIds` from an
+  // async callback, and compressing a 12MP phone photo takes 1–3 seconds. A
+  // handler that closes over a stale `info` and fires during that window
+  // overwrites the finished upload with the older snapshot, silently emptying
+  // validIds — the guest sees their ID thumbnail, submits, and the booking is
+  // stored with no ID attached.
   const [info, setInfo] = useState<Info>({ firstName: "", lastName: "", age: "", gender: "Male", email: "", phone: "", facebook: "", notes: "", validIds: [] });
   const [payment, setPayment] = useState<Payment>({ methodId: "", method: "", reference: "", proofName: null, proofData: null, idName: null, idData: null });
   // Active payment methods (with QR + account details) configured by the owner.
@@ -772,34 +779,34 @@ function CheckoutInner() {
                 <p style={{ color: "#8B7458", fontSize: 14, margin: "0 0 22px" }}>Adult 1 · Main guest</p>
                 <div className="co-form-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                   <FieldLabel label="First Name *">
-                    <input id="f-firstName" style={fieldStyle("firstName")} value={info.firstName} onChange={(e) => setInfo({ ...info, firstName: e.target.value })} placeholder="John" />
+                    <input id="f-firstName" style={fieldStyle("firstName")} value={info.firstName} onChange={(e) => setInfo((prev) => ({ ...prev, firstName: e.target.value }))} placeholder="John" />
                     <Req k="firstName" msg="Enter the first name" />
                   </FieldLabel>
                   <FieldLabel label="Last Name *">
-                    <input id="f-lastName" style={fieldStyle("lastName")} value={info.lastName} onChange={(e) => setInfo({ ...info, lastName: e.target.value })} placeholder="Doe" />
+                    <input id="f-lastName" style={fieldStyle("lastName")} value={info.lastName} onChange={(e) => setInfo((prev) => ({ ...prev, lastName: e.target.value }))} placeholder="Doe" />
                     <Req k="lastName" msg="Enter the last name" />
                   </FieldLabel>
                   <FieldLabel label="Age * (18+)">
-                    <input id="f-age" style={ageStyle(info.age, "adult", "age")} type="number" min="18" max="120" value={info.age} onChange={(e) => setInfo({ ...info, age: e.target.value.replace(/\D/g, "").slice(0, 3) })} placeholder="18" />
+                    <input id="f-age" style={ageStyle(info.age, "adult", "age")} type="number" min="18" max="120" value={info.age} onChange={(e) => setInfo((prev) => ({ ...prev, age: e.target.value.replace(/\D/g, "").slice(0, 3) }))} placeholder="18" />
                     <AgeNote value={info.age} t="adult" k="age" />
                   </FieldLabel>
                   <FieldLabel label="Gender *">
-                    <select style={inputStyle} value={info.gender} onChange={(e) => setInfo({ ...info, gender: e.target.value })}>
+                    <select style={inputStyle} value={info.gender} onChange={(e) => setInfo((prev) => ({ ...prev, gender: e.target.value }))}>
                       <option value="Male">Male</option>
                       <option value="Female">Female</option>
                       <option value="Other">Other</option>
                     </select>
                   </FieldLabel>
                   <FieldLabel label="Email Address *">
-                    <input id="f-email" style={fieldStyle("email")} type="email" value={info.email} onChange={(e) => setInfo({ ...info, email: e.target.value })} placeholder="juan@email.com" />
+                    <input id="f-email" style={fieldStyle("email")} type="email" value={info.email} onChange={(e) => setInfo((prev) => ({ ...prev, email: e.target.value }))} placeholder="juan@email.com" />
                     <Req k="email" msg="Enter a valid email address" />
                   </FieldLabel>
                   <FieldLabel label="Phone Number *">
-                    <input id="f-phone" style={fieldStyle("phone")} type="tel" inputMode="numeric" maxLength={11} value={info.phone} onChange={(e) => setInfo({ ...info, phone: e.target.value.replace(/\D/g, "").slice(0, 11) })} placeholder="09991484954" />
+                    <input id="f-phone" style={fieldStyle("phone")} type="tel" inputMode="numeric" maxLength={11} value={info.phone} onChange={(e) => setInfo((prev) => ({ ...prev, phone: e.target.value.replace(/\D/g, "").slice(0, 11) }))} placeholder="09991484954" />
                     <Req k="phone" msg="Enter an 11-digit phone number" />
                   </FieldLabel>
                   <FieldLabel label="Facebook Name or Link" span>
-                    <input style={inputStyle} value={info.facebook} onChange={(e) => setInfo({ ...info, facebook: e.target.value })} placeholder="e.g. Juan Dela Cruz or facebook.com/juandelacruz" />
+                    <input style={inputStyle} value={info.facebook} onChange={(e) => setInfo((prev) => ({ ...prev, facebook: e.target.value }))} placeholder="e.g. Juan Dela Cruz or facebook.com/juandelacruz" />
                     <div style={{ fontSize: 11, color: "#8B7458", marginTop: 6 }}>Alternative contact in case email is incorrect.</div>
                   </FieldLabel>
                 </div>
@@ -825,7 +832,7 @@ function CheckoutInner() {
                                 <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "#15803D", background: "#DCFCE7", padding: "3px 9px", borderRadius: 999 }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Uploaded</span>
                               </div>
                             </div>
-                            <button onClick={() => setInfo({ ...info, validIds: info.validIds.filter((_, j) => j !== idx) })} style={{ fontSize: 12.5, fontWeight: 600, color: "#B4453C", background: "transparent", border: "none", cursor: "pointer", padding: "7px 8px" }}>Remove</button>
+                            <button onClick={() => setInfo((prev) => ({ ...prev, validIds: prev.validIds.filter((_, j) => j !== idx) }))} style={{ fontSize: 12.5, fontWeight: 600, color: "#B4453C", background: "transparent", border: "none", cursor: "pointer", padding: "7px 8px" }}>Remove</button>
                           </div>
                         ))}
                       </div>
