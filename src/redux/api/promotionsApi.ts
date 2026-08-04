@@ -4,6 +4,10 @@ import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 // Nightcation, 'overnight' Full stay. null/[] means unscoped.
 export type PromoStayType = 'day' | 'night' | 'overnight';
 
+// How the discount reaches the guest. 'voucher' → a `discounts` code applied at
+// checkout; 'automatic' → applied directly, nothing to type.
+export type PromotionRedemption = 'automatic' | 'voucher';
+
 export interface ActivePromotion {
   id: string;
   title: string;
@@ -16,6 +20,7 @@ export interface ActivePromotion {
   start_date: string;
   end_date: string;
   applies_to: PromoStayType[] | null;
+  redemption: PromotionRedemption;
 }
 
 export interface ActivePromotionsResponse {

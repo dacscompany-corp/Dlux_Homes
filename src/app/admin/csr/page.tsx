@@ -13,8 +13,7 @@ import { useGetActivityLogsQuery } from "@/redux/api/activityLogApi";
 import { useGetCleaningTasksQuery } from "@/redux/api/cleanersApi";
 import { useGetNotificationsQuery } from "@/redux/api/notificationsApi";
 import { useGetConversationsQuery } from "@/redux/api/messagesApi";
-import { PROMO_STAY_TYPE_OPTIONS } from "@/lib/promo-offer";
-import type { PromoStayType } from "@/redux/api/promotionsApi";
+import PromotionModal, { type PromotionFormState } from "@/components/admin/PromotionModal";
 import {
   getDeposits, getDeliverables, getDiscounts,
   updateDepositStatus, markBookingDeliverablesDelivered,
@@ -407,14 +406,9 @@ export default function CSRDashboard() {
   const [promotionModal, setPromotionModal] = useState(false);
   const [promotionSaving, setPromotionSaving] = useState(false);
   const [editingPromotionId, setEditingPromotionId] = useState<string | null>(null);
-  const emptyPromotion = { title: "", description: "", discount_type: "" as "" | "percentage" | "fixed", discount_value: "", start_date: "", end_date: "", applies_to: [] as PromoStayType[] };
-  const [promotionForm, setPromotionForm] = useState(emptyPromotion);
+  const emptyPromotion: PromotionFormState = { title: "", description: "", discount_type: "", discount_value: "", start_date: "", end_date: "", applies_to: [], redemption: "automatic", discount_code: "" };
+  const [promotionForm, setPromotionForm] = useState<PromotionFormState>(emptyPromotion);
   const [promotionImage, setPromotionImage] = useState<File | null>(null);
-  const togglePromoStayType = (t: PromoStayType) =>
-    setPromotionForm((f) => ({
-      ...f,
-      applies_to: f.applies_to.includes(t) ? f.applies_to.filter((x) => x !== t) : [...f.applies_to, t],
-    }));
   const openCreatePromotion = () => { setEditingPromotionId(null); setPromotionForm(emptyPromotion); setPromotionImage(null); setPromotionModal(true); };
   const openEditPromotion = (p: PromotionRecord) => {
     setEditingPromotionId(p.id);
@@ -423,6 +417,8 @@ export default function CSRDashboard() {
       discount_type: p.discount_type || "", discount_value: p.discount_value != null ? String(p.discount_value) : "",
       start_date: toDateInputValue(p.start_date), end_date: toDateInputValue(p.end_date),
       applies_to: p.applies_to ?? [],
+      redemption: p.redemption ?? "automatic",
+      discount_code: p.discount_code ?? "",
     });
     setPromotionImage(null);
     setPromotionModal(true);
@@ -446,6 +442,8 @@ export default function CSRDashboard() {
       fd.set("end_date", promotionForm.end_date);
       // Repeated entries — the server reads these with formData.getAll().
       promotionForm.applies_to.forEach((t) => fd.append("applies_to", t));
+      fd.set("redemption", promotionForm.redemption);
+      fd.set("discount_code", promotionForm.discount_code);
       if (promotionImage) fd.set("image", promotionImage);
 
       if (editingPromotionId) await updatePromotion(editingPromotionId, fd);
@@ -454,7 +452,11 @@ export default function CSRDashboard() {
       toast.success(editingPromotionId ? "Promotion updated" : "Promotion created");
       setPromotionModal(false); setPromotionForm(emptyPromotion); setPromotionImage(null); setEditingPromotionId(null);
       reloadPromotions();
-    } catch { toast.error("Could not save promotion"); }
+    } catch (err) {
+      // Surface the real reason — a bare "Could not save promotion" hid a
+      // framework-level body-size rejection here for a long time.
+      toast.error(err instanceof Error && err.message ? err.message : "Could not save promotion");
+    }
     finally { setPromotionSaving(false); }
   };
 
@@ -1567,79 +1569,17 @@ export default function CSRDashboard() {
       )}
 
       {/* Create/edit promotion modal */}
-      {promotionModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setPromotionModal(false)}>
-          <div className="w-full max-w-md border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 19, lineHeight: 1, color: "#1f1b16" }}>{editingPromotionId ? "Edit Promotion" : "New Promotion"}</h3>
-            <p className="text-sm mt-1 mb-4" style={{ color: "#8B6344" }}>Create a banner that automatically appears on the site while active.</p>
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Title</label>
-                <input value={promotionForm.title} onChange={(e) => setPromotionForm((f) => ({ ...f, title: e.target.value }))} placeholder="Summer Sale" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
-              </div>
-              <div>
-                <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Description</label>
-                <textarea value={promotionForm.description} onChange={(e) => setPromotionForm((f) => ({ ...f, description: e.target.value }))} placeholder="Book 3 nights and save 20%" rows={2} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none resize-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
-              </div>
-              <div>
-                <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Banner image (optional)</label>
-                <input aria-label="Banner image" type="file" accept="image/*" onChange={(e) => setPromotionImage(e.target.files?.[0] || null)} className="w-full mt-1 text-sm" style={{ color: "#1a1a1a" }} />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Discount type (optional)</label>
-                  <select aria-label="Discount type" value={promotionForm.discount_type} onChange={(e) => setPromotionForm((f) => ({ ...f, discount_type: e.target.value as "" | "percentage" | "fixed" }))} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
-                    <option value="">None</option>
-                    <option value="percentage">Percentage (%)</option>
-                    <option value="fixed">Fixed (₱)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Value</label>
-                  <input type="number" value={promotionForm.discount_value} onChange={(e) => setPromotionForm((f) => ({ ...f, discount_value: e.target.value }))} placeholder={promotionForm.discount_type === "percentage" ? "20" : "500"} disabled={!promotionForm.discount_type} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none disabled:opacity-50" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Start date</label>
-                  <input aria-label="Start date" type="date" value={promotionForm.start_date} onChange={(e) => setPromotionForm((f) => ({ ...f, start_date: e.target.value }))} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>End date</label>
-                  <input aria-label="End date" type="date" value={promotionForm.end_date} onChange={(e) => setPromotionForm((f) => ({ ...f, end_date: e.target.value }))} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
-                </div>
-              </div>
-              {/* Stay-type scope — drives the "Works on" chips on the guest
-                  offer card. Leaving all three unticked means "no scope set",
-                  and the card simply omits the chip row. */}
-              <div>
-                <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Works on</label>
-                <div className="flex flex-wrap gap-2 mt-1.5">
-                  {PROMO_STAY_TYPE_OPTIONS.map(({ value, label }) => {
-                    const on = promotionForm.applies_to.includes(value);
-                    return (
-                      <button key={value} type="button" onClick={() => togglePromoStayType(value)} aria-pressed={on}
-                        className="px-3.5 py-2 text-sm rounded-xl border cursor-pointer transition-colors"
-                        style={{ borderColor: on ? "#B07848" : "#ece5d4", backgroundColor: on ? "#B07848" : "#FAFAFA", color: on ? "#fff" : "#5a4a3a", fontWeight: on ? 600 : 400 }}>
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="text-xs mt-1.5" style={{ color: "#b0a187" }}>
-                  {promotionForm.applies_to.length === 0
-                    ? "None selected — the offer card won't show stay-type chips."
-                    : "Guests see these as chips on the offer card."}
-                </p>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 mt-5">
-              <button type="button" onClick={() => setPromotionModal(false)} className="px-4 py-2 text-sm font-medium border cursor-pointer" style={{ color: "#8B6344", borderColor: "#ece5d4", backgroundColor: "#ffffff" }}>Cancel</button>
-              <button type="button" onClick={submitPromotion} disabled={promotionSaving} className="px-4 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#1f1b16" }}>{promotionSaving ? "Saving…" : editingPromotionId ? "Save Changes" : "Create Promotion"}</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <PromotionModal
+        open={promotionModal}
+        editing={!!editingPromotionId}
+        form={promotionForm}
+        setForm={setPromotionForm}
+        image={promotionImage}
+        setImage={setPromotionImage}
+        saving={promotionSaving}
+        onCancel={() => setPromotionModal(false)}
+        onSubmit={submitPromotion}
+      />
 
       {/* Add inventory item modal */}
       {invModal && (

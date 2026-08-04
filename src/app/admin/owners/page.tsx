@@ -20,8 +20,8 @@ import { useGetReviewsQuery } from "@/redux/api/reviewsApi";
 import { useGetReportsQuery } from "@/redux/api/reportApi";
 import { useGetConversationsQuery } from "@/redux/api/messagesApi";
 import { BUNDLE_WEEK_LABEL, BUNDLE_TWOWEEK_LABEL, BUNDLE_MONTH_LABEL } from "@/lib/pricing";
-import { PROMO_STAY_TYPE_OPTIONS } from "@/lib/promo-offer";
-import type { PromoStayType } from "@/redux/api/promotionsApi";
+import PromotionModal, { type PromotionFormState } from "@/components/admin/PromotionModal";
+import { checkInOpensLabel, isCheckInOpen } from "@/lib/checkin-window";
 import {
   AnalyticsSection, BookingCalendarSection, BlockedDatesSection, CleaningManagementSection,
   PaymentMethodsSection, GuestAssistanceSection, UserManagementSection, PartnerManagementSection,
@@ -47,6 +47,7 @@ import {
   Menu,
   X,
   LogOut,
+  Wallet,
   BarChart3,
   ArrowUpRight,
   Eye,
@@ -155,14 +156,9 @@ export default function OwnerDashboard() {
   const [promotionModal, setPromotionModal] = useState(false);
   const [promotionSaving, setPromotionSaving] = useState(false);
   const [editingPromotionId, setEditingPromotionId] = useState<string | null>(null);
-  const emptyPromotion = { title: "", description: "", discount_type: "" as "" | "percentage" | "fixed", discount_value: "", start_date: "", end_date: "", applies_to: [] as PromoStayType[] };
-  const [promotionForm, setPromotionForm] = useState(emptyPromotion);
+  const emptyPromotion: PromotionFormState = { title: "", description: "", discount_type: "", discount_value: "", start_date: "", end_date: "", applies_to: [], redemption: "automatic", discount_code: "" };
+  const [promotionForm, setPromotionForm] = useState<PromotionFormState>(emptyPromotion);
   const [promotionImage, setPromotionImage] = useState<File | null>(null);
-  const togglePromoStayType = (t: PromoStayType) =>
-    setPromotionForm((f) => ({
-      ...f,
-      applies_to: f.applies_to.includes(t) ? f.applies_to.filter((x) => x !== t) : [...f.applies_to, t],
-    }));
   const openCreatePromotion = () => { setEditingPromotionId(null); setPromotionForm(emptyPromotion); setPromotionImage(null); setPromotionModal(true); };
   const openEditPromotion = (p: PromotionRecord) => {
     setEditingPromotionId(p.id);
@@ -171,6 +167,8 @@ export default function OwnerDashboard() {
       discount_type: p.discount_type || "", discount_value: p.discount_value != null ? String(p.discount_value) : "",
       start_date: toDateInputValue(p.start_date), end_date: toDateInputValue(p.end_date),
       applies_to: p.applies_to ?? [],
+      redemption: p.redemption ?? "automatic",
+      discount_code: p.discount_code ?? "",
     });
     setPromotionImage(null);
     setPromotionModal(true);
@@ -194,6 +192,8 @@ export default function OwnerDashboard() {
       fd.set("end_date", promotionForm.end_date);
       // Repeated entries — the server reads these with formData.getAll().
       promotionForm.applies_to.forEach((t) => fd.append("applies_to", t));
+      fd.set("redemption", promotionForm.redemption);
+      fd.set("discount_code", promotionForm.discount_code);
       if (promotionImage) fd.set("image", promotionImage);
 
       if (editingPromotionId) await updatePromotion(editingPromotionId, fd);
@@ -202,7 +202,11 @@ export default function OwnerDashboard() {
       toast.success(editingPromotionId ? "Promotion updated" : "Promotion created");
       setPromotionModal(false); setPromotionForm(emptyPromotion); setPromotionImage(null); setEditingPromotionId(null);
       reloadPromotions();
-    } catch { toast.error("Could not save promotion"); }
+    } catch (err) {
+      // Surface the real reason — a bare "Could not save promotion" hid a
+      // framework-level body-size rejection here for a long time.
+      toast.error(err instanceof Error && err.message ? err.message : "Could not save promotion");
+    }
     finally { setPromotionSaving(false); }
   };
   const { data: conversationsRes } = useGetConversationsQuery(
@@ -341,17 +345,47 @@ export default function OwnerDashboard() {
   );
   const openCheckIn = (b: { id: string; displayId: string; guest: string; remaining: number }) =>
     setCheckIn({ open: true, id: b.id, displayId: b.displayId, guest: b.guest, remaining: Math.max(0, b.remaining), method: "Cash", busy: false });
-  const confirmCheckIn = async () => {
+  // Check in — arrival only, no money. Collecting the balance is a separate
+  // step (see confirmCollect) so a guest can be marked arrived the moment the
+  // check-in window opens, without waiting on payment.
+  const handleCheckInOnly = async (id: string) => {
+    try {
+      await updateBookingStatus({ id, status: "checked-in" }).unwrap();
+      // Send the self check-in instructions (key location + how to get in).
+      // House rules are deliberately excluded — they go out with Collect. The
+      // cron that normally sends these ~2h before arrival has no schedule
+      // attached, so checking the guest in is what actually gets them out.
+      // The route re-stamps self_checkin_email_sent_at, so if the cron is ever
+      // enabled it won't send a duplicate. Best-effort: the guest is already
+      // marked arrived, and a mail failure mustn't read as a failed check-in.
+      fetch("/api/send-self-checkin-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ booking_id: id, include_house_rules: false }),
+      }).catch(() => {});
+      toast.success("Guest checked in — check-in instructions sent");
+      refetchBookings();
+    } catch {
+      toast.error("Could not check the guest in");
+    }
+  };
+
+  // Collect the remaining balance + refundable deposit in one handover, then
+  // send the house-rules email.
+  const confirmCollect = async () => {
     setCheckIn((c) => ({ ...c, busy: true }));
     try {
       const collected = checkIn.remaining + SECURITY_DEPOSIT;
       await updateDepositStatusByBookingId(checkIn.id, "Paid", undefined, undefined, collected, checkIn.method, "owner");
-      await updateBookingStatus({ id: checkIn.id, status: "checked-in" }).unwrap();
-      toast.success("Checked in — balance & deposit collected");
+      // Best-effort: the money is already recorded, so a mail failure must not
+      // look like the collection failed.
+      fetch(`/api/send-checkin-email/for-booking/${encodeURIComponent(checkIn.id)}`, { method: "POST" })
+        .catch(() => {});
+      toast.success("Balance & deposit collected — house rules sent");
       setCheckIn({ open: false, id: "", displayId: "", guest: "", remaining: 0, method: "Cash", busy: false });
       refetchBookings();
     } catch {
-      toast.error("Could not complete check-in");
+      toast.error("Could not record the payment");
       setCheckIn((c) => ({ ...c, busy: false }));
     }
   };
@@ -1065,14 +1099,42 @@ export default function OwnerDashboard() {
           {bookingsTab === "blocked" && <BlockedDatesSection />}
           {bookingsTab === "list" && (<>
           <div className="p-5 mb-5 rounded-xl" style={{ backgroundColor: "#1f1b16" }}>
-            <h3 className="font-bold text-white mb-4">Booking Status Guide</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5">
+            <h3 className="font-bold text-white mb-1">Booking Actions</h3>
+            <p className="text-xs mb-4" style={{ color: "#a8a29e" }}>
+              Each icon appears only at the stage it applies to, so a row shows just what you can do next.
+            </p>
+
+            {/* Row 1 — the normal path a booking walks, left to right. */}
+            <div className="text-[11px] uppercase tracking-[0.08em] mb-2.5" style={{ color: "#8B6344" }}>Main flow</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 mb-5">
               {[
-                { label: "View", icon: Eye, iconBg: "#8B6344", desc: "View full booking details" },
-                { label: "Pending", icon: Check, iconBg: "#f59e0b", desc: "Booking awaiting approval or payment confirmation" },
-                { label: "Approved", icon: CheckCircle2, iconBg: "#10b981", desc: "Booking confirmed and approved by management" },
-                { label: "Checked-In", icon: LogIn, iconBg: "#3b82f6", desc: "Guest has arrived and checked in to the haven" },
-                { label: "Checked-Out", icon: LogOut, iconBg: "#ef4444", desc: "Guest has completed their stay" },
+                { label: "Approve", icon: Check, iconBg: "#10b981", desc: "Accept a pending request" },
+                { label: "Confirm payment", icon: CheckCircle2, iconBg: "#059669", desc: "Down payment received → Confirmed" },
+                { label: "Check in", icon: LogIn, iconBg: "#3b82f6", desc: "Mark arrived + send check-in instructions" },
+                { label: "Collect", icon: Wallet, iconBg: "#b45309", desc: "Take balance + deposit, send house rules" },
+                { label: "Check out", icon: LogOut, iconBg: "#ef4444", desc: "Complete the stay" },
+              ].map((s) => (
+                <div key={s.label} className="flex gap-2.5">
+                  <span className="flex items-center justify-center rounded-full" style={{ width: 22, height: 22, background: s.iconBg, flex: "none" }}>
+                    <s.icon className="w-3 h-3 text-white" />
+                  </span>
+                  <div>
+                    <p className="text-sm font-semibold text-white">{s.label}</p>
+                    <p className="text-xs mt-0.5" style={{ color: "#a8a29e" }}>{s.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Row 2 — exceptions. These sit outside the flow and can show up
+                alongside whichever main-flow action is current. */}
+            <div className="text-[11px] uppercase tracking-[0.08em] mb-2.5 pt-4" style={{ color: "#8B6344", borderTop: "1px solid rgba(255,255,255,.08)" }}>Other actions</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {[
+                { label: "View", icon: Eye, iconBg: "#8B6344", desc: "Full booking details — shown at every stage" },
+                { label: "Reject", icon: XCircle, iconBg: "#dc2626", desc: "Decline a pending request with a reason" },
+                { label: "Approve date change", icon: CalendarDays, iconBg: "#059669", desc: "Move the stay to the guest's requested date" },
+                { label: "Reject date change", icon: CalendarOff, iconBg: "#b91c1c", desc: "Keep the original date" },
               ].map((s) => (
                 <div key={s.label} className="flex gap-2.5">
                   <span className="flex items-center justify-center rounded-full" style={{ width: 22, height: 22, background: s.iconBg, flex: "none" }}>
@@ -1154,10 +1216,23 @@ export default function OwnerDashboard() {
                                 onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#d1fae5";(e.currentTarget as HTMLElement).style.color="#059669";}}
                                 onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><CheckCircle2 className="w-3.5 h-3.5"/></button>
                             )}
-                            {(booking.status === "confirmed" || booking.status === "down-paid") && (
-                              <button type="button" onClick={() => openCheckIn({ id: booking.id, displayId: booking.displayId, guest: booking.guest, remaining: booking.balance })} disabled={bookingUpdating} title="Check in (collect balance + deposit)" className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#6b7280" }}
-                                onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#d1fae5";(e.currentTarget as HTMLElement).style.color="#059669";}}
-                                onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><LogIn className="w-3.5 h-3.5"/></button>
+                            {(booking.status === "confirmed" || booking.status === "down-paid") && (() => {
+                              const open = isCheckInOpen(booking.checkInRaw, booking.checkInTime);
+                              const opensAt = checkInOpensLabel(booking.checkInRaw, booking.checkInTime);
+                              return (
+                                <button type="button" onClick={() => handleCheckInOnly(booking.id)} disabled={bookingUpdating || !open}
+                                  title={open ? "Check in (sends the check-in instructions)" : `Check-in opens ${opensAt}`}
+                                  className="p-1.5 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed" style={{ color: "#6b7280" }}
+                                  onMouseEnter={(e)=>{ if (open) { (e.currentTarget as HTMLElement).style.backgroundColor="#d1fae5";(e.currentTarget as HTMLElement).style.color="#059669"; } }}
+                                  onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><LogIn className="w-3.5 h-3.5"/></button>
+                              );
+                            })()}
+                            {booking.status === "checked-in" && booking.balance > 0 && (
+                              <button type="button" onClick={() => openCheckIn({ id: booking.id, displayId: booking.displayId, guest: booking.guest, remaining: booking.balance })} disabled={bookingUpdating}
+                                title="Collect remaining balance + deposit (sends the house rules)"
+                                className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#6b7280" }}
+                                onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#fef3c7";(e.currentTarget as HTMLElement).style.color="#b45309";}}
+                                onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><Wallet className="w-3.5 h-3.5"/></button>
                             )}
                             {booking.status === "checked-in" && (
                               <button type="button" onClick={() => handleCheckOut(booking.id)} disabled={bookingUpdating} title="Check out (complete booking)" className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#6b7280" }}
@@ -1691,79 +1766,17 @@ export default function OwnerDashboard() {
       </div>
 
       {/* ── Create/edit promotion modal ── */}
-      {promotionModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setPromotionModal(false)}>
-          <div className="w-full max-w-md border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 19, lineHeight: 1, color: "#1f1b16" }}>{editingPromotionId ? "Edit Promotion" : "New Promotion"}</h3>
-            <p className="text-sm mt-1 mb-4" style={{ color: "#8a8276" }}>Create a banner that automatically appears on the site while active.</p>
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-semibold" style={{ color: "#8a8276" }}>Title</label>
-                <input value={promotionForm.title} onChange={(e) => setPromotionForm((f) => ({ ...f, title: e.target.value }))} placeholder="Summer Sale" className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
-              </div>
-              <div>
-                <label className="text-xs font-semibold" style={{ color: "#8a8276" }}>Description</label>
-                <textarea value={promotionForm.description} onChange={(e) => setPromotionForm((f) => ({ ...f, description: e.target.value }))} placeholder="Book 3 nights and save 20%" rows={2} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none resize-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
-              </div>
-              <div>
-                <label className="text-xs font-semibold" style={{ color: "#8a8276" }}>Banner image (optional)</label>
-                <input aria-label="Banner image" type="file" accept="image/*" onChange={(e) => setPromotionImage(e.target.files?.[0] || null)} className="w-full mt-1 text-sm" style={{ color: "#1a1a1a" }} />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold" style={{ color: "#8a8276" }}>Discount type (optional)</label>
-                  <select aria-label="Discount type" value={promotionForm.discount_type} onChange={(e) => setPromotionForm((f) => ({ ...f, discount_type: e.target.value as "" | "percentage" | "fixed" }))} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
-                    <option value="">None</option>
-                    <option value="percentage">Percentage (%)</option>
-                    <option value="fixed">Fixed (₱)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-semibold" style={{ color: "#8a8276" }}>Value</label>
-                  <input type="number" value={promotionForm.discount_value} onChange={(e) => setPromotionForm((f) => ({ ...f, discount_value: e.target.value }))} placeholder={promotionForm.discount_type === "percentage" ? "20" : "500"} disabled={!promotionForm.discount_type} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none disabled:opacity-50" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold" style={{ color: "#8a8276" }}>Start date</label>
-                  <input aria-label="Start date" type="date" value={promotionForm.start_date} onChange={(e) => setPromotionForm((f) => ({ ...f, start_date: e.target.value }))} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold" style={{ color: "#8a8276" }}>End date</label>
-                  <input aria-label="End date" type="date" value={promotionForm.end_date} onChange={(e) => setPromotionForm((f) => ({ ...f, end_date: e.target.value }))} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
-                </div>
-              </div>
-              {/* Stay-type scope — drives the "Works on" chips on the guest
-                  offer card. Leaving all three unticked means "no scope set",
-                  and the card simply omits the chip row. */}
-              <div>
-                <label className="text-xs font-semibold" style={{ color: "#8a8276" }}>Works on</label>
-                <div className="flex flex-wrap gap-2 mt-1.5">
-                  {PROMO_STAY_TYPE_OPTIONS.map(({ value, label }) => {
-                    const on = promotionForm.applies_to.includes(value);
-                    return (
-                      <button key={value} type="button" onClick={() => togglePromoStayType(value)} aria-pressed={on}
-                        className="px-3.5 py-2 text-sm rounded-xl border cursor-pointer transition-colors"
-                        style={{ borderColor: on ? "#B07848" : "#ece5d4", backgroundColor: on ? "#B07848" : "#FAFAFA", color: on ? "#fff" : "#5a4a3a", fontWeight: on ? 600 : 400 }}>
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="text-xs mt-1.5" style={{ color: "#b0a187" }}>
-                  {promotionForm.applies_to.length === 0
-                    ? "None selected — the offer card won't show stay-type chips."
-                    : "Guests see these as chips on the offer card."}
-                </p>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 mt-5">
-              <button type="button" onClick={() => setPromotionModal(false)} className="px-4 py-2 text-sm font-medium border cursor-pointer" style={{ color: "#8a8276", borderColor: "#ece5d4", backgroundColor: "#ffffff" }}>Cancel</button>
-              <button type="button" onClick={submitPromotion} disabled={promotionSaving} className="px-4 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#1f1b16" }}>{promotionSaving ? "Saving…" : editingPromotionId ? "Save Changes" : "Create Promotion"}</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <PromotionModal
+        open={promotionModal}
+        editing={!!editingPromotionId}
+        form={promotionForm}
+        setForm={setPromotionForm}
+        image={promotionImage}
+        setImage={setPromotionImage}
+        saving={promotionSaving}
+        onCancel={() => setPromotionModal(false)}
+        onSubmit={submitPromotion}
+      />
 
       {/* ── Reject Booking modal ── */}
       {rejectModal.open && (
@@ -1791,8 +1804,8 @@ export default function OwnerDashboard() {
       {checkIn.open && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => !checkIn.busy && setCheckIn((c) => ({ ...c, open: false }))}>
           <div className="w-full max-w-md border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 19, lineHeight: 1, color: "#1f1b16" }}>Check In Guest</h3>
-            <p className="text-sm mt-0.5" style={{ color: "#8B6344" }}>Collect the remaining balance and refundable deposit.</p>
+            <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 19, lineHeight: 1, color: "#1f1b16" }}>Collect Payment</h3>
+            <p className="text-sm mt-0.5" style={{ color: "#8B6344" }}>Collect the remaining balance and refundable deposit. This also emails the guest the house rules.</p>
 
             <div className="border p-4 mt-4 mb-4" style={{ backgroundColor: "#FAFAF7", borderColor: "#ece5d4" }}>
               <div className="flex items-center justify-between text-sm"><span style={{ color: "#8B6344" }}>Booking</span><span className="font-mono text-xs" style={{ color: "#1a1a1a" }}>{checkIn.displayId}</span></div>
@@ -1813,7 +1826,7 @@ export default function OwnerDashboard() {
 
             <div className="flex justify-between gap-2 mt-5">
               <button type="button" onClick={() => setCheckIn((c) => ({ ...c, open: false }))} disabled={checkIn.busy} className="px-4 py-2 text-sm font-medium border cursor-pointer disabled:opacity-60" style={{ color: "#8B6344", borderColor: "#ece5d4", backgroundColor: "#ffffff" }}>Cancel</button>
-              <button type="button" onClick={confirmCheckIn} disabled={checkIn.busy} className="px-5 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#B07848" }}>{checkIn.busy ? "Checking in…" : `Collect ₱${(checkIn.remaining + SECURITY_DEPOSIT).toLocaleString()} & Check In`}</button>
+              <button type="button" onClick={confirmCollect} disabled={checkIn.busy} className="px-5 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#B07848" }}>{checkIn.busy ? "Recording…" : `Collect ₱${(checkIn.remaining + SECURITY_DEPOSIT).toLocaleString()}`}</button>
             </div>
           </div>
         </div>

@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
   if (!guard.ok) return guard.response;
 
   try {
-    const { booking_id: bookingRef } = await request.json();
+    const { booking_id: bookingRef, include_house_rules: includeHouseRules } = await request.json();
     if (!bookingRef) {
       return NextResponse.json({ success: false, error: "booking_id is required" }, { status: 400 });
     }
@@ -73,6 +73,10 @@ export async function POST(request: NextRequest) {
       checkOutDate: b.check_out_date,
       checkOutTime: b.check_out_time,
       guests,
+      // Staff check-in sends instructions only — the house rules ride with the
+      // Collect step instead. Defaults to true so the pre-arrival cron send,
+      // where nobody meets the guest, still carries them.
+      includeHouseRules: includeHouseRules !== false,
     });
 
     await pool.query(`UPDATE booking SET self_checkin_email_sent_at = NOW() WHERE id = $1`, [b.id]);

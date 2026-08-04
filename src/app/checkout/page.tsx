@@ -15,6 +15,8 @@ import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
 import { havenToRoom } from "@/lib/haven-adapter";
 import { stayTotal, isWeekendOrHoliday, addDaysISO, extraPaxFee, bundleNightlyRate, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
+import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
+import { autoDiscountAmount, pickAutoPromo } from "@/lib/promo-offer";
 
 // ── Helpers ────────────────────────────────────────────────────
 function peso(n: number) { return "₱" + n.toLocaleString("en-PH"); }
@@ -320,6 +322,7 @@ function CheckoutInner() {
   const extraPaxCount = Math.max(0, feePax - room.basePax);
   const paxFee = extraPaxFee(feePax, room.basePax, room.additionalPaxFee);
   const subtotal = basePrice + paxFee;
+  const { data: activePromotions } = useGetActivePromotionsQuery();
 
   // Promo code — validated against /api/discounts/validate as the guest types.
   // ?promo= arrives pre-filled from the home page's promo banner and auto-applies.
@@ -371,7 +374,15 @@ function CheckoutInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subtotal]);
 
-  const discountAmount = appliedDiscount?.discount_amount ?? 0;
+  // Automatic promotion — no code to type. Resolved from the server's active
+  // list rather than a URL param, so it can't be forged by editing the link,
+  // and only applied when it covers the stay type being booked.
+  const autoPromo = pickAutoPromo(activePromotions, stayType === "10" ? "10" : "21");
+  // Never stack: a code the guest entered wins over the automatic offer, since
+  // they took a deliberate action to use it.
+  const autoDiscount = appliedDiscount || !autoPromo ? 0 : autoDiscountAmount(autoPromo, subtotal);
+
+  const discountAmount = (appliedDiscount?.discount_amount ?? 0) + autoDiscount;
   const total = Math.max(0, subtotal - discountAmount);
   const downPayment = Math.round(total * 0.5); // 50% reservation down payment
   const stepCaption = ["Step 1 of 4 — tell us who's staying", "Step 2 of 4 — send your down payment to reserve", "Step 3 of 4 — confirm the payment you sent", "Step 4 of 4 — review and submit your request"][step];
@@ -519,6 +530,9 @@ function CheckoutInner() {
       discount_id: appliedDiscount?.id || undefined,
       discount_code: appliedDiscount?.code || undefined,
       discount_amount: discountAmount || undefined,
+      // Only when an automatic promotion actually reduced this booking — the
+      // server records it against the account so it can't be used a second time.
+      promotion_id: autoDiscount > 0 ? autoPromo?.id : undefined,
     };
 
     const body = JSON.stringify(payload);
@@ -1109,7 +1123,10 @@ function CheckoutInner() {
                   <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>{stayType === "10" ? `10-hour stay · ${isWeekendRate ? "Weekend/Holiday" : "Weekday"}` : `Overnight · ${nights} night${nights > 1 ? "s" : ""}${bundleLabel ? ` · ${bundleLabel}` : ""}`}</span><span>{peso(basePrice)}</span></div>
                   {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra pax · {extraPaxCount} × {peso(room.additionalPaxFee)}</span><span>{peso(paxFee)}</span></div>}
                   {appliedDiscount && (
-                    <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span>Promo · {appliedDiscount.code}</span><span>−{peso(discountAmount)}</span></div>
+                    <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span>Promo · {appliedDiscount.code}</span><span>−{peso(appliedDiscount.discount_amount)}</span></div>
+                  )}
+                  {autoDiscount > 0 && autoPromo && (
+                    <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span>{autoPromo.title}</span><span>−{peso(autoDiscount)}</span></div>
                   )}
                   <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16, marginTop: 6, paddingTop: 10, borderTop: "1px solid #E0CEB2" }}><span>Total stay value</span><span>{peso(total)}</span></div>
                 </div>

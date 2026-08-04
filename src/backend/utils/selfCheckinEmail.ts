@@ -46,6 +46,13 @@ export interface SelfCheckinEmailInput {
   checkOutDate: string;
   checkOutTime: string;
   guests: string;
+  /**
+   * Include the House Rules block. The pre-arrival cron send keeps them — that
+   * guest lets themselves in with no staff contact, so the rules must travel
+   * with the instructions. The staff "Check in" action omits them: the rules
+   * go out with the Collect step, when the guest is handed the keys in person.
+   */
+  includeHouseRules?: boolean;
 }
 
 function escapeHtml(v: string): string {
@@ -60,7 +67,7 @@ function escapeHtml(v: string): string {
 // House rules, transcribed from the owner's printed sheet in the unit. The
 // "maintain the unit's cleanliness and order" line is the section's lead-in
 // rather than a bullet, and quiet time / the pool notice get their own callout.
-const HOUSE_RULES = [
+export const HOUSE_RULES = [
   "Throw your own garbage.",
   "In the living area and bedroom, no food or drink is permitted.",
   "Instead of throwing used tissue paper down the toilet, please use the provided toilet trash can.",
@@ -91,6 +98,36 @@ export function renderSelfCheckinEmailHtml(d: SelfCheckinEmailInput): string {
         <td valign="top" style="padding:0 0 8px;font-size:13px;line-height:1.55;color:#4a3a2e;">${r}</td>
       </tr>`,
   ).join("");
+
+  // Omitted for the staff check-in send — see includeHouseRules.
+  const houseRulesBlock = d.includeHouseRules === false ? "" : `
+                    <!-- House rules — highlighted: cream fill + gold accent bar,
+                         so the rules read as the emphasised part of the email. -->
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#fdf7ea;border:1px solid #e9dcc8;border-left:4px solid #d9a25c;border-radius:12px;margin-bottom:20px;">
+                      <tr>
+                        <td style="padding:18px 20px;">
+                          <div style="font-size:12px;font-weight:700;color:#8c5a2e;letter-spacing:0.6px;text-transform:uppercase;margin-bottom:8px;">House Rules &amp; Info</div>
+                          <p style="font-size:13px;line-height:1.55;color:#3a2a1e;margin:0 0 14px;font-weight:600;">
+                            It is your duty to maintain the unit&rsquo;s cleanliness and order. Please read and follow all the house rules placed inside the unit.
+                          </p>
+
+                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                            ${rules}
+                          </table>
+
+                          <!-- The two rules the owner emphasised on the printed sheet. -->
+                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;border:1px solid #e9dcc8;border-radius:10px;margin-top:14px;">
+                            <tr>
+                              <td style="padding:12px 14px;">
+                                <div style="font-size:13px;font-weight:700;color:#2b1b12;margin-bottom:5px;">&#128564;&nbsp; Quiet time is between 10:00 PM and 7:00 AM.</div>
+                                <div style="font-size:12.5px;line-height:1.5;color:#5c4a3c;">The Olympic-sized pool in Tower 1 is private to owners only, so guests are not permitted to use it.</div>
+                              </td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
+`;
 
   return `
     <!DOCTYPE html>
@@ -183,36 +220,9 @@ export function renderSelfCheckinEmailHtml(d: SelfCheckinEmailInput): string {
                               <td width="50%" valign="top" style="padding-left:14px;">
                                 <div style="font-size:11px;color:#9c8974;">Check-out by</div>
                                 <div style="font-size:14px;font-weight:600;color:#2b1b12;">${escapeHtml(d.checkOutDate)} &middot; ${escapeHtml(d.checkOutTime)}</div>
-                              </td>
-                            </tr>
-                          </table>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td style="padding:12px 20px 18px;border-top:1px solid #e9dcc8;font-size:13px;color:#5c4a3c;">${escapeHtml(d.guests)}</td>
-                      </tr>
-                    </table>
+                             ${houseRulesBlock}
 
-                    <!-- House rules — highlighted: cream fill + gold accent bar,
-                         so the rules read as the emphasised part of the email. -->
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#fdf7ea;border:1px solid #e9dcc8;border-left:4px solid #d9a25c;border-radius:12px;margin-bottom:20px;">
-                      <tr>
-                        <td style="padding:18px 20px;">
-                          <div style="font-size:12px;font-weight:700;color:#8c5a2e;letter-spacing:0.6px;text-transform:uppercase;margin-bottom:8px;">House Rules &amp; Info</div>
-                          <p style="font-size:13px;line-height:1.55;color:#3a2a1e;margin:0 0 14px;font-weight:600;">
-                            It is your duty to maintain the unit&rsquo;s cleanliness and order. Please read and follow all the house rules placed inside the unit.
-                          </p>
-
-                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                            ${rules}
-                          </table>
-
-                          <!-- The two rules the owner emphasised on the printed sheet. -->
-                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;border:1px solid #e9dcc8;border-radius:10px;margin-top:14px;">
-                            <tr>
-                              <td style="padding:12px 14px;">
-                                <div style="font-size:13px;font-weight:700;color:#2b1b12;margin-bottom:5px;">&#128564;&nbsp; Quiet time is between 10:00 PM and 7:00 AM.</div>
-                                <div style="font-size:12.5px;line-height:1.5;color:#5c4a3c;">The Olympic-sized pool in Tower 1 is private to owners only, so guests are not permitted to use it.</div>
+      <div style="font-size:12.5px;line-height:1.5;color:#5c4a3c;">The Olympic-sized pool in Tower 1 is private to owners only, so guests are not permitted to use it.</div>
                               </td>
                             </tr>
                           </table>

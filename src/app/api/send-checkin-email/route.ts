@@ -1,14 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
+import { HOUSE_RULES } from '@/backend/utils/selfCheckinEmail';
 import { contactBlockHtml } from '@/backend/utils/emailContact';
 
 // CHECK-IN module: sent when an admin marks a booking "Checked In" — it welcomes
 // a guest whose arrival has already been recorded. Not to be confused with the
 // PRE-ARRIVAL self check-in email (backend/utils/selfCheckinEmail.ts), which is
-// scheduled before arrival and carries the key location + house rules.
+// scheduled before arrival and carries the key location.
+//
+// This is the send that carries the HOUSE RULES: it goes out from the Collect
+// step, when the guest has paid and is being handed the keys in person. The
+// rules list is imported rather than duplicated so the two emails that can
+// carry it never drift.
 export async function POST(request: NextRequest) {
   try {
     const bookingData = await request.json();
+
+    const houseRulesHtml = HOUSE_RULES.map(
+      (r) => `<div style="font-size:13px;line-height:1.55;color:#4a3a2e;margin-bottom:8px;">&bull;&nbsp; ${r}</div>`,
+    ).join('');
 
     const transporter = nodemailer.createTransport({
       service: 'gmail',
@@ -111,6 +121,28 @@ export async function POST(request: NextRequest) {
                 <div style="font-size:13px;line-height:1.5;color:#5c4a3c;margin-bottom:6px;">&bull; Please take care of the property and its amenities.</div>
                 <div style="font-size:13px;line-height:1.5;color:#5c4a3c;">&bull; Any concerns? Just contact us right away &mdash; we&rsquo;ll sort it out.</div>
               </div>
+
+              <!-- House rules — the emphasised part of this email: the guest
+                   has just been handed the keys. -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#fdf7ea;border:1px solid #e9dcc8;border-left:4px solid #d9a25c;border-radius:12px;margin-bottom:20px;">
+                <tr>
+                  <td style="padding:18px 20px;">
+                    <div style="font-size:12px;font-weight:700;color:#8c5a2e;letter-spacing:0.6px;text-transform:uppercase;margin-bottom:8px;">House Rules &amp; Info</div>
+                    <p style="font-size:13px;line-height:1.55;color:#3a2a1e;margin:0 0 14px;font-weight:600;">
+                      It is your duty to maintain the unit&rsquo;s cleanliness and order. Please read and follow all the house rules placed inside the unit.
+                    </p>
+                    ${houseRulesHtml}
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;border:1px solid #e9dcc8;border-radius:10px;margin-top:14px;">
+                      <tr>
+                        <td style="padding:12px 14px;">
+                          <div style="font-size:13px;font-weight:700;color:#2b1b12;margin-bottom:5px;">&#128564;&nbsp; Quiet time is between 10:00 PM and 7:00 AM.</div>
+                          <div style="font-size:12.5px;line-height:1.5;color:#5c4a3c;">The Olympic-sized pool in Tower 1 is private to owners only, so guests are not permitted to use it.</div>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
 
               <!-- Contact us — email + Facebook, as tappable buttons. -->
               ${contactBlockHtml("dark", `Booking ${bookingData.bookingId}`)}

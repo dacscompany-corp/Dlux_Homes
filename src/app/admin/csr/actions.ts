@@ -2146,6 +2146,8 @@ export async function toggleDiscountStatus(id: string, active: boolean, employee
 // distinct concept from the discount CODES above. See
 // agent_docs/backend-notes.md / the promotions migration for the split.
 
+export type PromotionRedemption = 'automatic' | 'voucher';
+
 export interface PromotionRecord {
   id: string;
   title: string;
@@ -2159,8 +2161,88 @@ export interface PromotionRecord {
   active: boolean;
   // null / [] = unscoped; the guest card then renders no "Works on" chips.
   applies_to: PromoStayType[] | null;
+  // 'voucher' → backed by a `discounts` code applied at checkout.
+  // 'automatic' → the discount is applied directly, no code to enter.
+  redemption: PromotionRedemption;
+  discount_code: string | null;
   status: 'Active' | 'Scheduled' | 'Expired' | 'Disabled';
   created_at: string;
+}
+
+// Codes are shown to guests and typed by hand, so keep them unambiguous:
+// upper-case, alphanumeric, no separators.
+function normalizeCode(raw: string): string {
+  return raw.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 24);
+}
+
+/**
+ * Derive a code from the promotion's own title when the owner didn't type one,
+ * e.g. "Summer Sale" + 20% → SUMMERSALE20. Falls back to a random suffix if the
+ * title carries no usable characters.
+ */
+function suggestCode(title: string, value: string | null): string {
+  const base = normalizeCode(title).slice(0, 16);
+  const suffix = value ? normalizeCode(String(Math.round(Number(value)))) : '';
+  const code = `${base}${suffix}`;
+  return code.length >= 3 ? code : `PROMO${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+}
+
+/**
+ * Create or update the `discounts` row backing a voucher promotion, and return
+ * its id. The promotion is the source of truth for value and window, so the two
+ * can't drift after an edit.
+ *
+ * Returns null when the promotion isn't a voucher or carries no real discount —
+ * the caller then stores discount_id = NULL.
+ */
+async function syncVoucherDiscount(
+  client: import('pg').PoolClient,
+  opts: {
+    existingDiscountId: string | null;
+    redemption: PromotionRedemption;
+    title: string;
+    description: string | null;
+    code: string;
+    discount_type: 'percentage' | 'fixed' | '';
+    discount_value: string | null;
+    start_date: string;
+    end_date: string;
+  },
+): Promise<{ id: string; code: string } | null> {
+  const { redemption, discount_type, discount_value } = opts;
+  const value = discount_value ? Number(discount_value) : 0;
+  if (redemption !== 'voucher' || !discount_type || !(value > 0)) return null;
+
+  const code = normalizeCode(opts.code) || suggestCode(opts.title, opts.discount_value);
+
+  // A code is globally unique across the discounts table, so an edit that keeps
+  // the same code must update that row rather than insert a duplicate.
+  const existing = await client.query(
+    `SELECT id FROM discounts WHERE UPPER(code) = UPPER($1) LIMIT 1`,
+    [code],
+  );
+  const targetId: string | null = existing.rows[0]?.id ?? opts.existingDiscountId ?? null;
+
+  if (targetId) {
+    await client.query(
+      `UPDATE discounts
+         SET name = $2, code = $3, description = $4, discount_type = $5,
+             discount_value = $6, start_date = $7, end_date = $8,
+             active = true, updated_at = NOW()
+       WHERE id = $1`,
+      [targetId, opts.title, code, opts.description, discount_type, value, opts.start_date, opts.end_date],
+    );
+    return { id: targetId, code };
+  }
+
+  const inserted = await client.query(
+    `INSERT INTO discounts (name, code, description, discount_type, discount_value,
+                            start_date, end_date, active, used_count, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, true, 0, NOW())
+     RETURNING id`,
+    [opts.title, code, opts.description, discount_type, value, opts.start_date, opts.end_date],
+  );
+  return { id: inserted.rows[0].id, code };
 }
 
 // Stay types a promotion can be scoped to. Mirrors the
@@ -2195,10 +2277,12 @@ export async function getPromotions(): Promise<PromotionRecord[]> {
   const client = await pool.connect();
   try {
     const result = await client.query(
-      `SELECT id, title, description, image_url, discount_type, discount_value,
-              discount_id, start_date, end_date, active, applies_to, created_at
-       FROM promotions
-       ORDER BY created_at DESC`
+      `SELECT p.id, p.title, p.description, p.image_url, p.discount_type, p.discount_value,
+              p.discount_id, p.start_date, p.end_date, p.active, p.applies_to,
+              p.redemption, d.code AS discount_code, p.created_at
+       FROM promotions p
+       LEFT JOIN discounts d ON d.id = p.discount_id
+       ORDER BY p.created_at DESC`
     );
     return result.rows.map((row) => ({
       ...row,
@@ -2226,10 +2310,16 @@ export async function createPromotion(formData: FormData): Promise<PromotionReco
   const start_date = formData.get('start_date') as string;
   const end_date = formData.get('end_date') as string;
   const applies_to = readAppliesTo(formData);
+  const redemption: PromotionRedemption =
+    (formData.get('redemption') as string) === 'voucher' ? 'voucher' : 'automatic';
+  const codeInput = (formData.get('discount_code') as string || '').trim();
   const image = formData.get('image') as File | null;
 
   if (!title || !start_date || !end_date) {
     throw new Error("Title, start date, and end date are required");
+  }
+  if (redemption === 'voucher' && (!discount_type || !(Number(discount_value) > 0))) {
+    throw new Error("A voucher needs a discount — pick percent or peso off, and an amount above zero.");
   }
 
   let image_url: string | null = null;
@@ -2244,12 +2334,20 @@ export async function createPromotion(formData: FormData): Promise<PromotionReco
     const ipAddress = requestHeaders.get('x-forwarded-for') || requestHeaders.get('x-real-ip') || 'unknown';
     const userAgent = requestHeaders.get('user-agent') || 'unknown';
 
+    // A voucher promotion needs its `discounts` row to exist first — that row
+    // is what checkout actually validates against.
+    const voucherId = await syncVoucherDiscount(client, {
+      existingDiscountId: discount_id || null,
+      redemption, title, description: description || null, code: codeInput,
+      discount_type, discount_value, start_date, end_date,
+    });
+
     const result = await client.query(
       `INSERT INTO promotions (
          title, description, image_url, discount_type, discount_value,
-         discount_id, start_date, end_date, applies_to, active, created_by, created_at
+         discount_id, start_date, end_date, applies_to, redemption, active, created_by, created_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, $10, NOW() AT TIME ZONE 'Asia/Manila')
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, $11, NOW() AT TIME ZONE 'Asia/Manila')
        RETURNING *`,
       [
         title,
@@ -2257,10 +2355,11 @@ export async function createPromotion(formData: FormData): Promise<PromotionReco
         image_url,
         discount_type || null,
         discount_value ? Number(discount_value) : null,
-        discount_id || null,
+        voucherId?.id ?? (discount_id || null),
         start_date,
         end_date,
         applies_to,
+        redemption,
         employeeId || null,
       ]
     );
@@ -2277,6 +2376,7 @@ export async function createPromotion(formData: FormData): Promise<PromotionReco
     return {
       ...newPromo,
       discount_value: newPromo.discount_value != null ? parseFloat(newPromo.discount_value) : null,
+      discount_code: voucherId?.code ?? null,
       status: derivePromotionStatus(newPromo),
     };
   } catch (error) {
@@ -2304,7 +2404,14 @@ export async function updatePromotion(id: string, formData: FormData): Promise<P
   // Unlike the other fields this is NOT COALESCEd — clearing every checkbox is
   // a deliberate "unscope this promotion", so null must overwrite.
   const applies_to = readAppliesTo(formData);
+  const redemption: PromotionRedemption =
+    (formData.get('redemption') as string) === 'voucher' ? 'voucher' : 'automatic';
+  const codeInput = (formData.get('discount_code') as string || '').trim();
   const image = formData.get('image') as File | null;
+
+  if (redemption === 'voucher' && (!discount_type || !(Number(discount_value) > 0))) {
+    throw new Error("A voucher needs a discount — pick percent or peso off, and an amount above zero.");
+  }
 
   let image_url: string | undefined;
   if (image && image.size > 0) {
@@ -2314,6 +2421,26 @@ export async function updatePromotion(id: string, formData: FormData): Promise<P
 
   const client = await pool.connect();
   try {
+    // The promotion is the source of truth for the voucher's value and window,
+    // so re-sync the backing `discounts` row before writing the promotion —
+    // otherwise an edited promo and its code drift apart.
+    const prior = await client.query(
+      `SELECT discount_id, title, start_date, end_date FROM promotions WHERE id = $1`,
+      [id],
+    );
+    if (prior.rows.length === 0) throw new Error("Promotion not found");
+    const voucher = await syncVoucherDiscount(client, {
+      existingDiscountId: prior.rows[0].discount_id ?? null,
+      redemption,
+      title: title || prior.rows[0].title,
+      description: description || null,
+      code: codeInput,
+      discount_type,
+      discount_value,
+      start_date: start_date || prior.rows[0].start_date,
+      end_date: end_date || prior.rows[0].end_date,
+    });
+
     const result = await client.query(
       `UPDATE promotions
        SET title = COALESCE($2, title),
@@ -2325,6 +2452,7 @@ export async function updatePromotion(id: string, formData: FormData): Promise<P
            start_date = COALESCE($8, start_date),
            end_date = COALESCE($9, end_date),
            applies_to = $10,
+           redemption = $11,
            updated_at = NOW()
        WHERE id = $1
        RETURNING *`,
@@ -2335,10 +2463,13 @@ export async function updatePromotion(id: string, formData: FormData): Promise<P
         image_url ?? null,
         discount_type || null,
         discount_value ? Number(discount_value) : null,
-        discount_id || null,
+        // Switching a voucher back to automatic detaches the code (the
+        // `discounts` row survives so past redemptions stay auditable).
+        voucher?.id ?? null,
         start_date || null,
         end_date || null,
         applies_to,
+        redemption,
       ]
     );
 
@@ -2355,6 +2486,7 @@ export async function updatePromotion(id: string, formData: FormData): Promise<P
     return {
       ...updated,
       discount_value: updated.discount_value != null ? parseFloat(updated.discount_value) : null,
+      discount_code: voucher?.code ?? null,
       status: derivePromotionStatus(updated),
     };
   } catch (error) {
