@@ -11,6 +11,11 @@ import { mockRooms, mockReviews } from "@/lib/mock-data";
 import { useGetHavensQuery } from "@/redux/api/roomApi";
 import { havenToRoom } from "@/lib/haven-adapter";
 import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
+import type { ActivePromotion, PromoStayType } from "@/redux/api/promotionsApi";
+import {
+  ALL_STAY_TYPES, STAY_TYPE_LABELS, baseRateFor, expiryNote, isEnforceable,
+  offerPriceFor, pesoAmount, scopedStayTypes,
+} from "@/lib/promo-offer";
 
 // Fallback labels + times (mock mode / haven with no configured times). The live
 // haven's actual check-in/out times override these via room.windows — see
@@ -68,43 +73,312 @@ function IcoHeart({ filled }: { filled: boolean }) {
   return <svg width={16} height={16} viewBox="0 0 24 24" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" /></svg>;
 }
 
-function IcoTag() {
-  return <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41 11 3.83A2 2 0 0 0 9.59 3.24L4 3a1 1 0 0 0-1 1l.24 5.59a2 2 0 0 0 .59 1.41l9.58 9.58a2 2 0 0 0 2.83 0l4.35-4.35a2 2 0 0 0 0-2.83Z" /><circle cx="7.5" cy="7.5" r="1.2" fill="currentColor" stroke="none" /></svg>;
+// ── Offer-card icons ───────────────────────────────────────────
+// Hand-written inline SVG, matching the rest of the guest pages (no icon
+// library on the storefront). Sizes/strokes come from the design spec.
+function IcoTagSm({ size = 12 }: { size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41 11 3.83A2 2 0 0 0 9.59 3.24L4 3a1 1 0 0 0-1 1l.24 5.59a2 2 0 0 0 .59 1.41l9.58 9.58a2 2 0 0 0 2.83 0l4.35-4.35a2 2 0 0 0 0-2.83Z" /><circle cx="7.5" cy="7.5" r="1.1" fill="currentColor" stroke="none" /></svg>;
+}
+function IcoCheckBold({ size = 12, stroke = 2.6 }: { size?: number; stroke?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>;
+}
+function IcoCross({ size = 12 }: { size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>;
+}
+function IcoInfo({ size = 16 }: { size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" /></svg>;
+}
+function IcoCopy({ size = 13 }: { size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>;
+}
+function IcoChevronRight({ size = 18, stroke = 1.8 }: { size?: number; stroke?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>;
 }
 
-// Promo banner — bold, high-contrast so an active promo can't be missed on the
-// guest home page. Server has already filtered to active + in-window rows.
-// Renders nothing when empty.
-function PromoBanner({ promotions, roomId }: { promotions: { id: string; title: string; description: string | null; image_url: string | null; discount_type: "percentage" | "fixed" | null; discount_value: number | null; discount_code?: string | null }[] | undefined; roomId: string }) {
-  if (!promotions || promotions.length === 0) return null;
+// Small shared pieces of the offer card, so the mobile and desktop variants
+// can't drift apart.
+function OfferLabelPill({ padding = "5px 11px" }: { padding?: string }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {promotions.map((p) => {
-        const href = p.discount_code ? `/rooms/${roomId}?promo=${encodeURIComponent(p.discount_code)}` : `/rooms/${roomId}`;
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 7, background: "#F3E4CB", color: "#8C5A2E", borderRadius: 999, padding, fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 10.5, letterSpacing: ".14em", whiteSpace: "nowrap" }}>
+      <IcoTagSm /> SPECIAL OFFER
+    </span>
+  );
+}
+function SavingsPill({ amount, fontSize = 12, padding = "6px 11px" }: { amount: number; fontSize?: number; padding?: string }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#E4F3E4", color: "#15803D", borderRadius: 999, padding, fontSize, fontWeight: 600, whiteSpace: "nowrap" }}>
+      <IcoCheckBold size={11} stroke={2.4} /> You save {pesoAmount(amount)}
+    </span>
+  );
+}
+// "Works on" chips. Included chips are solid-bordered; the stay types the offer
+// does NOT cover are shown dashed rather than hidden — the guest's question is
+// "does this work for me?", which needs the no as much as the yes.
+function StayTypeChips({ scope, fontSize = 12.5, padding = "6px 12px" }: { scope: PromoStayType[]; fontSize?: number; padding?: string }) {
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+      {ALL_STAY_TYPES.map((t) => {
+        const on = scope.includes(t);
         return (
-          <Link key={p.id} href={href} style={{ display: "flex", alignItems: "center", gap: 16, background: "linear-gradient(100deg, var(--dlux-accent) 0%, #9A6035 100%)", borderRadius: 16, padding: "16px 20px", overflow: "hidden", boxShadow: "0 8px 24px -10px rgba(154,96,53,.55)", textDecoration: "none", cursor: "pointer" }}>
-            {p.image_url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={p.image_url} alt={p.title} style={{ width: 56, height: 56, borderRadius: 12, objectFit: "cover", flex: "none", border: "2px solid rgba(255,255,255,.4)" }} />
-            ) : (
-              <span style={{ width: 44, height: 44, borderRadius: 12, background: "rgba(255,255,255,.18)", display: "grid", placeItems: "center", flex: "none", color: "#fff" }}><IcoTag /></span>
-            )}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <span style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 19, color: "#fff" }}>{p.title}</span>
-                {p.discount_value != null && (
-                  <span style={{ fontSize: 12.5, fontWeight: 800, color: "#7A4A22", background: "#fff", borderRadius: 999, padding: "3px 11px", whiteSpace: "nowrap", letterSpacing: ".01em" }}>
-                    Save {p.discount_type === "percentage" ? `${p.discount_value}%` : `₱${p.discount_value}`}
-                  </span>
-                )}
-              </div>
-              {p.description && <p style={{ fontSize: 13.5, color: "rgba(255,255,255,.88)", margin: "4px 0 0" }}>{p.description}</p>}
-              {p.discount_code && <p style={{ fontSize: 12, color: "#fff", fontWeight: 600, margin: "6px 0 0" }}>Tap to redeem at checkout →</p>}
-            </div>
-          </Link>
+          <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: on ? "1px solid #E0CEB2" : "1px dashed #D4BE9A", background: on ? "#FFFCF4" : "transparent", borderRadius: 999, padding, fontSize, fontWeight: on ? 500 : 400, color: on ? "#1F160E" : "#8B7458", whiteSpace: "nowrap" }}>
+            <span style={{ color: on ? "#15803D" : "#B8A88E", display: "inline-flex" }}>{on ? <IcoCheckBold /> : <IcoCross />}</span>
+            {STAY_TYPE_LABELS[t]}
+          </span>
         );
       })}
     </div>
+  );
+}
+
+type OfferRates = { price10hr: number; price21hr: number };
+
+// Guest offer card. Replaces the old gradient promo banner, which showed only
+// "Save 20%" — guests couldn't tell what they'd actually pay, whether the offer
+// covered their stay type, or how to claim it. Reading order is fixed:
+// what it is → what it costs → where it works → what to do.
+function PromoBanner({ promotions, roomId, rates, variant }: {
+  promotions: ActivePromotion[] | undefined;
+  roomId: string;
+  rates: OfferRates;
+  variant: "mobile" | "desktop";
+}) {
+  // First promo expanded, the rest collapsed (design 2b / 3a).
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  useEffect(() => {
+    if (!copiedCode) return;
+    const t = setTimeout(() => setCopiedCode(null), 2000);
+    return () => clearTimeout(t);
+  }, [copiedCode]);
+
+  if (!promotions || promotions.length === 0) return null;
+
+  const expanded = promotions.find((p) => p.id === expandedId) || promotions[0];
+  // Cap the quiet list at 3, per the spec — no carousel.
+  const collapsed = promotions.filter((p) => p.id !== expanded.id).slice(0, 3);
+
+  const hrefFor = (p: ActivePromotion) =>
+    p.discount_code ? `/rooms/${roomId}?promo=${encodeURIComponent(p.discount_code)}` : `/rooms/${roomId}`;
+
+  const copyCode = async (code: string) => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopiedCode(code);
+    } catch {
+      // Clipboard can be blocked (insecure origin, permissions). The code is
+      // on screen and the ?promo= deep link still applies it, so stay quiet.
+    }
+  };
+
+  // `discounted` gates every price claim on the card. A codeless promo has no
+  // mechanism that reduces the charge (see isEnforceable), so it renders as an
+  // announcement — title, description, chips, expiry — with no offer price.
+  const offerOf = (p: ActivePromotion) => {
+    const { base, unitLabel } = baseRateFor(p, rates);
+    const price = offerPriceFor(base, p);
+    return { base, unitLabel, price, savings: Math.max(0, base - price), discounted: isEnforceable(p) && price < base };
+  };
+
+  // Render helpers, not components — declaring components inside a render
+  // remounts them (and drops their state) on every parent render.
+  const renderCollapsedRow = (p: ActivePromotion) => {
+    const { savings, discounted } = offerOf(p);
+    const scope = scopedStayTypes(p);
+    const sub = discounted
+      ? `Save ${pesoAmount(savings)}${scope ? ` on ${scope.map((t) => STAY_TYPE_LABELS[t]).join(" · ")}` : ""}`
+      : p.description || "";
+    return (
+      <button key={p.id} type="button" onClick={() => setExpandedId(p.id)}
+        style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", textAlign: "left", background: "#FBF3E7", border: "1px solid #ECE5D4", borderRadius: 16, padding: 13, cursor: "pointer", font: "inherit" }}>
+        {p.image_url && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={p.image_url} alt="" style={{ width: 46, height: 46, borderRadius: 10, objectFit: "cover", flex: "none" }} />
+        )}
+        <span style={{ minWidth: 0 }}>
+          <span style={{ display: "block", fontFamily: "'Fraunces', serif", fontSize: 16, lineHeight: 1.15, color: "#1F160E" }}>{p.title}</span>
+          {sub && <span style={{ display: "block", fontSize: 12, color: "#6B6358", marginTop: 2 }}>{sub}</span>}
+        </span>
+        <span style={{ marginLeft: "auto", flex: "none", color: "#B07848", display: "inline-flex" }}><IcoChevronRight /></span>
+      </button>
+    );
+  };
+
+  const { base, unitLabel, price, savings, discounted } = offerOf(expanded);
+  const scope = scopedStayTypes(expanded);
+  const note = expiryNote(expanded.end_date);
+  const code = expanded.discount_code;
+  const counter = promotions.length > 1 ? `1 of ${promotions.length}` : null;
+
+  // Claim block: a code promo needs the code + Copy; an automatic one just
+  // needs to be told there's nothing to type.
+  const renderClaimBlock = () => (
+    <div style={{ background: "#F6EFE2", borderRadius: 12, padding: "13px 14px", display: "flex", flexDirection: "column", gap: 9 }}>
+      {code ? (
+        <>
+          <p style={{ fontSize: 12.5, lineHeight: 1.55, color: "#4A3A2A", margin: 0 }}>
+            This one needs a code. Tap <strong style={{ fontWeight: 600 }}>Copy</strong>, then paste it in the <strong style={{ fontWeight: 600 }}>Promo code</strong> box on the payment page.
+          </p>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ flex: 1, fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 15, letterSpacing: ".1em", color: "#1F160E", background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 10, padding: "10px 12px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{code}</span>
+            <button type="button" onClick={() => copyCode(code)}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#1F160E", color: "#FFFCF4", border: "none", borderRadius: 10, padding: "11px 14px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", font: "inherit" }}>
+              <IcoCopy />{copiedCode === code ? "Copied" : "Copy"}
+            </button>
+          </div>
+        </>
+      ) : (
+        <div style={{ display: "flex", gap: 10 }}>
+          <span style={{ color: "#8C5A2E", flex: "none", marginTop: 1, display: "inline-flex" }}><IcoInfo /></span>
+          <p style={{ fontSize: 12.5, lineHeight: 1.55, color: "#4A3A2A", margin: 0 }}>
+            Tap the button to see this home and pick your dates. Message us to have this offer applied to your booking.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+
+  if (variant === "mobile") {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 18, padding: 16, boxShadow: "0 4px 16px rgba(31,22,14,.05)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+            <OfferLabelPill />
+            {counter
+              ? <span style={{ fontSize: 11.5, color: "#8B7458", whiteSpace: "nowrap" }}>{counter}</span>
+              : note && <span style={{ fontSize: 11.5, fontWeight: 600, color: "#8C5A2E", whiteSpace: "nowrap" }}>{note}</span>}
+          </div>
+
+          <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
+            {expanded.image_url && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={expanded.image_url} alt="" style={{ width: 76, height: 76, borderRadius: 12, objectFit: "cover", flex: "none" }} />
+            )}
+            <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>
+              <h3 className="serif" style={{ fontSize: 20, lineHeight: 1.15, letterSpacing: "-.01em", color: "#1F160E", margin: 0, fontWeight: 500 }}>{expanded.title}</h3>
+              {expanded.description && <p style={{ fontSize: 13, lineHeight: 1.5, color: "#4A3A2A", margin: 0 }}>{expanded.description}</p>}
+            </div>
+          </div>
+
+          {discounted && (
+            <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, paddingTop: 14, borderTop: "1px solid #EFE4CE" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                <span style={{ fontSize: 12, color: "#8B7458", whiteSpace: "nowrap" }}>Usual price <span style={{ textDecoration: "line-through" }}>{pesoAmount(base)}</span></span>
+                <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                  <span className="serif" style={{ fontSize: 32, fontWeight: 500, letterSpacing: "-.02em", color: "#1F160E" }}>{pesoAmount(price)}</span>
+                  <span style={{ fontSize: 12.5, color: "#8B7458", whiteSpace: "nowrap" }}>{unitLabel}</span>
+                </span>
+              </div>
+              <SavingsPill amount={savings} />
+            </div>
+          )}
+
+          {scope && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <span style={{ fontSize: 11.5, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", color: "#8B7458" }}>Works on</span>
+              <StayTypeChips scope={scope} />
+            </div>
+          )}
+
+          {renderClaimBlock()}
+
+          <Link href={hrefFor(expanded)} className="promo-cta"
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, width: "100%", background: "#B07848", color: "#FFFCF4", borderRadius: 14, padding: 15, fontSize: 15, fontWeight: 600, textDecoration: "none" }}>
+            Use this offer <IcoArrowRight size={16} />
+          </Link>
+        </div>
+
+        {collapsed.map((p) => renderCollapsedRow(p))}
+      </div>
+    );
+  }
+
+  // ── Desktop (design 3a) ──
+  return (
+    <>
+      <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: "#8C5A2E", marginBottom: 16 }}>Offers running now</div>
+      <div className="promo-head" style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 40, marginBottom: 30 }}>
+        <h2 className="serif" style={{ fontSize: 52, fontWeight: 400, letterSpacing: "-.025em", lineHeight: 1, maxWidth: "16ch", color: "#1F160E", margin: 0 }}>Pay less for the <em>same home.</em></h2>
+        <p style={{ fontSize: 15.5, lineHeight: 1.6, color: "#4A3A2A", maxWidth: "46ch", margin: 0 }}>
+          The same unit, the same welcome pack — just a lower rate while the offer runs. No membership, no bidding.
+        </p>
+      </div>
+
+      <div className="promo-card" style={{ display: "grid", gridTemplateColumns: "340px minmax(0, 1fr) auto", gap: 36, alignItems: "center", background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 22, padding: 22, boxShadow: "0 4px 16px rgba(31,22,14,.05)" }}>
+        {expanded.image_url && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img className="promo-card__photo" src={expanded.image_url} alt="" style={{ width: "100%", height: 224, borderRadius: 16, objectFit: "cover" }} />
+        )}
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <OfferLabelPill padding="6px 12px" />
+            {note && <span style={{ fontSize: 12.5, fontWeight: 600, color: "#8C5A2E", whiteSpace: "nowrap" }}>{note}</span>}
+          </div>
+          <h3 className="serif" style={{ fontSize: 34, lineHeight: 1.02, letterSpacing: "-.025em", color: "#1F160E", margin: 0, fontWeight: 500 }}>{expanded.title}</h3>
+          {expanded.description && <p style={{ fontSize: 15, lineHeight: 1.6, color: "#4A3A2A", maxWidth: "52ch", margin: 0 }}>{expanded.description}</p>}
+          {scope && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", color: "#8B7458" }}>Works on</span>
+              <StayTypeChips scope={scope} fontSize={13} padding="7px 13px" />
+            </div>
+          )}
+          <div style={{ background: "#F6EFE2", borderRadius: 12, padding: "12px 14px", maxWidth: "52ch", display: "flex", gap: 10 }}>
+            <span style={{ color: "#8C5A2E", flex: "none", marginTop: 1, display: "inline-flex" }}><IcoInfo /></span>
+            <p style={{ fontSize: 13, lineHeight: 1.5, color: "#4A3A2A", margin: 0 }}>
+              {code
+                ? <>Use code <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", letterSpacing: ".06em", color: "#1F160E" }}>{code}</span> at checkout — or just follow the button and it&rsquo;s applied for you.</>
+                : <>Follow the button to see this home and pick your dates. Message us to have this offer applied to your booking.</>}
+            </p>
+          </div>
+        </div>
+        <div className="promo-card__price" style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 14, paddingLeft: 36, borderLeft: "1px solid #EFE4CE" }}>
+          {discounted && (
+            <>
+              <span style={{ fontSize: 13, color: "#8B7458", whiteSpace: "nowrap" }}>Usual price <span style={{ textDecoration: "line-through" }}>{pesoAmount(base)}</span></span>
+              <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                <span className="serif" style={{ fontSize: 46, fontWeight: 500, letterSpacing: "-.025em", lineHeight: 1, color: "#1F160E" }}>{pesoAmount(price)}</span>
+                <span style={{ fontSize: 13, color: "#8B7458", whiteSpace: "nowrap" }}>{unitLabel}</span>
+              </span>
+              <SavingsPill amount={savings} fontSize={13} padding="7px 12px" />
+            </>
+          )}
+          <Link href={hrefFor(expanded)} className="promo-cta"
+            style={{ display: "inline-flex", alignItems: "center", gap: 9, background: "#B07848", color: "#FFFCF4", borderRadius: 999, padding: "15px 26px", fontSize: 15, fontWeight: 600, textDecoration: "none", marginTop: 6, whiteSpace: "nowrap" }}>
+            Use this offer <IcoArrowRight size={17} />
+          </Link>
+        </div>
+      </div>
+
+      {collapsed.map((p) => {
+        const o = offerOf(p);
+        return (
+          <div key={p.id} className="promo-row" style={{ display: "grid", gridTemplateColumns: "104px minmax(0, 1fr) auto", gap: 24, alignItems: "center", background: "#FBF3E7", border: "1px solid #ECE5D4", borderRadius: 18, padding: 16, marginTop: 14 }}>
+            {p.image_url && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={p.image_url} alt="" style={{ width: 104, height: 76, borderRadius: 12, objectFit: "cover" }} />
+            )}
+            <div style={{ minWidth: 0 }}>
+              <h3 className="serif" style={{ fontSize: 22, lineHeight: 1.1, letterSpacing: "-.015em", color: "#1F160E", margin: 0, fontWeight: 500 }}>{p.title}</h3>
+              <p style={{ fontSize: 13.5, color: "#4A3A2A", margin: "4px 0 0" }}>
+                {o.discounted ? `Save ${pesoAmount(o.savings)}` : p.description}
+                {p.discount_code && <> · code <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", letterSpacing: ".06em", color: "#1F160E" }}>{p.discount_code}</span></>}
+              </p>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+              {o.discounted && (
+                <span style={{ display: "flex", alignItems: "baseline", gap: 8, whiteSpace: "nowrap" }}>
+                  <span style={{ fontSize: 13, color: "#8B7458", textDecoration: "line-through" }}>{pesoAmount(o.base)}</span>
+                  <span className="serif" style={{ fontSize: 26, fontWeight: 500, color: "#1F160E" }}>{pesoAmount(o.price)}</span>
+                </span>
+              )}
+              <button type="button" onClick={() => setExpandedId(p.id)} className="promo-outline"
+                style={{ display: "inline-flex", alignItems: "center", gap: 7, border: "1px solid #D4BE9A", background: "#FFFCF4", color: "#1F160E", borderRadius: 999, padding: "12px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", font: "inherit" }}>
+                See this offer <IcoChevronRight size={15} stroke={1.9} />
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </>
   );
 }
 
@@ -218,6 +492,21 @@ export default function BrowsePage() {
           .hm-4col, .review-grid, .hm-foot { grid-template-columns: 1fr !important; }
           .hm-h2 { font-size: 33px !important; }
         }
+        /* Offer card — hover is desktop-only affordance, no card lift. */
+        .promo-cta { transition: background .2s; }
+        .promo-cta:hover { background: #9A6035 !important; }
+        .promo-outline { transition: border-color .2s, color .2s; }
+        .promo-outline:hover { border-color: #B07848 !important; color: #8C5A2E !important; }
+        @media (max-width: 900px) {
+          /* Stack the offer card: photo, copy, then the price column
+             left-aligned with its divider removed. */
+          .promo-head { flex-direction: column; align-items: flex-start !important; gap: 16px !important; }
+          .promo-card { grid-template-columns: 1fr !important; gap: 22px !important; }
+          .promo-card__photo { height: 200px !important; }
+          .promo-card__price { align-items: flex-start !important; padding-left: 0 !important; border-left: none !important; }
+          .promo-row { grid-template-columns: 84px minmax(0, 1fr) !important; gap: 16px !important; }
+          .promo-row > div:last-child { grid-column: 1 / -1; justify-content: space-between; }
+        }
       `}</style>
 
       {/* ═══════════ MOBILE HOME (D'Lux Mobile Guest View) ═══════════ */}
@@ -326,7 +615,7 @@ export default function BrowsePage() {
         </div>
 
         <div style={{ padding: "22px 24px 0" }}>
-          <PromoBanner promotions={activePromotions} roomId={room.id} />
+          <PromoBanner promotions={activePromotions} roomId={room.id} rates={room} variant="mobile" />
         </div>
 
         <div style={{ padding: "30px 24px 0" }}>
@@ -503,8 +792,8 @@ export default function BrowsePage() {
       </section>
 
       {/* PROMOTIONS */}
-      <section style={{ maxWidth: 1320, margin: "0 auto", padding: "48px 28px 0" }}>
-        <PromoBanner promotions={activePromotions} roomId={room.id} />
+      <section style={{ maxWidth: 1320, margin: "0 auto", padding: "64px 28px 72px" }}>
+        <PromoBanner promotions={activePromotions} roomId={room.id} rates={room} variant="desktop" />
       </section>
 
       {/* AMENITIES */}

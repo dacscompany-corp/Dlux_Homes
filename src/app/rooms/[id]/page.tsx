@@ -11,6 +11,11 @@ import { mockRooms } from "@/lib/mock-data";
 import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
 import { useGetBlockedDatesQuery } from "@/redux/api/blockedDatesApi";
 import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
+import type { ActivePromotion, PromoStayType } from "@/redux/api/promotionsApi";
+import {
+  ALL_STAY_TYPES, STAY_TYPE_LABELS, baseRateFor, expiryNoteShort, isEnforceable,
+  offerPriceFor, pesoAmount, promoCoversStay, scopedStayTypes,
+} from "@/lib/promo-offer";
 import { havenToRoom } from "@/lib/haven-adapter";
 import { stayTotal, isWeekendOrHoliday, extraPaxFee, bundleNightlyRate, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
@@ -267,29 +272,118 @@ function CardStep({ n, title, active, done, summary, onOpen, children }: {
 
 // Promo banner — renders one card per currently active promotion (server has
 // already filtered to active + in-window rows). Renders nothing when empty.
-function PromoBanner({ promotions }: { promotions: { id: string; title: string; description: string | null; image_url: string | null; discount_type: "percentage" | "fixed" | null; discount_value: number | null }[] | undefined }) {
-  if (!promotions || promotions.length === 0) return null;
+// ── Offer-card icons (hand-written inline SVG, as elsewhere on this page) ──
+function IcoTagSm() {
+  return <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41 11 3.83A2 2 0 0 0 9.59 3.24L4 3a1 1 0 0 0-1 1l.24 5.59a2 2 0 0 0 .59 1.41l9.58 9.58a2 2 0 0 0 2.83 0l4.35-4.35a2 2 0 0 0 0-2.83Z" /><circle cx="7.5" cy="7.5" r="1.1" fill="currentColor" stroke="none" /></svg>;
+}
+function IcoCheckBold({ size = 12, stroke = 2.6 }: { size?: number; stroke?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>;
+}
+function IcoCross() {
+  return <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>;
+}
+
+// "Works on" chips — the excluded stay types stay visible (dashed) because the
+// guest's question is "does this work for me?", which needs the no as much as
+// the yes.
+function StayTypeChips({ scope, fontSize = 12.5, padding = "6px 12px" }: { scope: PromoStayType[]; fontSize?: number; padding?: string }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {promotions.map((p) => (
-        <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 14, background: "#FBF3E7", border: "1px solid #ECE5D4", borderRadius: 14, padding: 12, overflow: "hidden" }}>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+      {ALL_STAY_TYPES.map((t) => {
+        const on = scope.includes(t);
+        return (
+          <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: on ? "1px solid #E0CEB2" : "1px dashed #D4BE9A", background: on ? "#FFFCF4" : "transparent", borderRadius: 999, padding, fontSize, fontWeight: on ? 500 : 400, color: on ? "#1F160E" : "#8B7458", whiteSpace: "nowrap" }}>
+            <span style={{ color: on ? "#15803D" : "#B8A88E", display: "inline-flex" }}>{on ? <IcoCheckBold /> : <IcoCross />}</span>
+            {STAY_TYPE_LABELS[t]}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+// Offer card for the room page. Unlike the home page there's no button — the
+// booking panel beside/below it is the action — so the card's job is to explain
+// that the price the guest is about to see is already the discounted one.
+function PromoBanner({ promotions, rates, variant }: {
+  promotions: ActivePromotion[] | undefined;
+  rates: { price10hr: number; price21hr: number };
+  variant: "mobile" | "desktop";
+}) {
+  if (!promotions || promotions.length === 0) return null;
+  const p = promotions[0];
+  const { base, unitLabel } = baseRateFor(p, rates);
+  const price = offerPriceFor(base, p);
+  const savings = Math.max(0, base - price);
+  // Only a code-carrying promo actually reduces the charge (see isEnforceable),
+  // so a codeless one shows as an announcement without a price claim.
+  const discounted = isEnforceable(p) && price < base;
+  const scope = scopedStayTypes(p);
+  const note = expiryNoteShort(p.end_date);
+
+  if (variant === "mobile") {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 16, padding: 14 }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
           {p.image_url && (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={p.image_url} alt={p.title} style={{ width: 64, height: 64, borderRadius: 10, objectFit: "cover", flex: "none" }} />
+            <img src={p.image_url} alt="" style={{ width: 56, height: 56, borderRadius: 11, objectFit: "cover", flex: "none" }} />
           )}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 17, color: "#1F160E" }}>{p.title}</span>
-              {p.discount_value != null && (
-                <span style={{ fontSize: 12, fontWeight: 700, color: "#8C5A2E", background: "#F3E4CB", borderRadius: 999, padding: "2px 9px", whiteSpace: "nowrap" }}>
-                  Save {p.discount_type === "percentage" ? `${p.discount_value}%` : `₱${p.discount_value}`}
-                </span>
-              )}
-            </div>
-            {p.description && <p style={{ fontSize: 13, color: "#6B6358", margin: "3px 0 0" }}>{p.description}</p>}
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 10, letterSpacing: ".14em", color: "#8C5A2E" }}>SPECIAL OFFER</div>
+            <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 18, fontWeight: 500, lineHeight: 1.15, color: "#1F160E", margin: "3px 0 0" }}>{p.title}</h3>
+            {p.description && <p style={{ fontSize: 12.5, lineHeight: 1.45, color: "#4A3A2A", margin: "4px 0 0" }}>{p.description}</p>}
           </div>
+          {discounted && (
+            <span style={{ marginLeft: "auto", flex: "none", background: "#E4F3E4", color: "#15803D", fontSize: 11.5, fontWeight: 600, padding: "5px 9px", borderRadius: 999, whiteSpace: "nowrap" }}>
+              &minus; {pesoAmount(savings)}
+            </span>
+          )}
         </div>
-      ))}
+
+        {scope && <StayTypeChips scope={scope} />}
+
+        <div style={{ display: "flex", alignItems: "center", gap: 10, paddingTop: 12, borderTop: "1px solid #EFE4CE" }}>
+          <span style={{ color: "#15803D", flex: "none", display: "inline-flex" }}><IcoCheckBold size={14} stroke={2.4} /></span>
+          <span style={{ fontSize: 12.5, color: "#4A3A2A" }}>{discounted ? "Already applied to the price below." : "Message us to have this applied to your booking."}</span>
+          {note && <span style={{ marginLeft: "auto", flex: "none", fontSize: 11.5, fontWeight: 600, color: "#8C5A2E", whiteSpace: "nowrap" }}>{note}</span>}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="promo-card" style={{ marginTop: 20, background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 20, padding: 20, display: "grid", gridTemplateColumns: "132px minmax(0, 1fr) auto", gap: 24, alignItems: "center", boxShadow: "0 4px 16px rgba(31,22,14,.05)" }}>
+      {p.image_url && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img className="promo-card__photo" src={p.image_url} alt="" style={{ width: 132, height: 132, borderRadius: 14, objectFit: "cover" }} />
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 11, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 7, background: "#F3E4CB", color: "#8C5A2E", borderRadius: 999, padding: "5px 11px", fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 10.5, letterSpacing: ".14em", whiteSpace: "nowrap" }}>
+            <IcoTagSm /> SPECIAL OFFER
+          </span>
+          {note && <span style={{ fontSize: 12, fontWeight: 600, color: "#8C5A2E", whiteSpace: "nowrap" }}>{note}</span>}
+        </div>
+        <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 26, fontWeight: 500, lineHeight: 1.05, letterSpacing: "-.02em", color: "#1F160E", margin: 0 }}>{p.title}</h3>
+        {scope && <StayTypeChips scope={scope} />}
+        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          <span style={{ color: "#15803D", flex: "none", display: "inline-flex" }}><IcoCheckBold size={15} stroke={2.4} /></span>
+          <span style={{ fontSize: 13, color: "#4A3A2A" }}>{discounted ? `Applied automatically at checkout with code ${p.discount_code}.` : "Message us to have this applied to your booking."}</span>
+        </div>
+      </div>
+      {discounted && (
+        <div className="promo-card__price" style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, paddingLeft: 24, borderLeft: "1px solid #EFE4CE" }}>
+          <span style={{ fontSize: 12.5, color: "#8B7458", textDecoration: "line-through", whiteSpace: "nowrap" }}>{pesoAmount(base)}</span>
+          <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+            <span style={{ fontFamily: "'Fraunces', serif", fontSize: 34, fontWeight: 500, lineHeight: 1, color: "#1F160E" }}>{pesoAmount(price)}</span>
+            <span style={{ fontSize: 12.5, color: "#8B7458", whiteSpace: "nowrap" }}>{unitLabel}</span>
+          </span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#E4F3E4", color: "#15803D", borderRadius: 999, padding: "6px 11px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}>
+            <IcoCheckBold size={11} stroke={2.4} /> You save {pesoAmount(savings)}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -576,6 +670,22 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   // price would be the same silent default we just removed.
   const fromPrice = Math.min(room.price10hr, room.price21hr);
 
+  // The offer the price panel is allowed to act on. The card above advertises
+  // whatever promo is running; this narrows to one that actually covers the
+  // stay type the guest picked, so an overnight-only promo never discounts a
+  // Daycation quote. Only meaningful once a stay type is chosen.
+  const stayRate = selectedWindow.stayType === "10" ? room.price10hr : room.price21hr;
+  const livePromo = stayChosen
+    ? (activePromotions || []).find(
+        (p) => isEnforceable(p)
+          && promoCoversStay(p, selectedWindow.stayType === "10" ? "10" : "21")
+          && offerPriceFor(stayRate, p) < stayRate,
+      )
+    : undefined;
+  const offerRate = livePromo ? offerPriceFor(stayRate, livePromo) : stayRate;
+  const offerSaving = stayRate - offerRate;
+  const headlinePrice = stayChosen ? offerRate : fromPrice;
+
   const handleReserve = () => {
     const params = new URLSearchParams({
       roomId: room.id,
@@ -712,7 +822,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
             </div>
 
             <div style={{ marginTop: 14 }}>
-              <PromoBanner promotions={activePromotions} />
+              <PromoBanner promotions={activePromotions} rates={room} variant="mobile" />
             </div>
 
             {/* title */}
@@ -734,12 +844,13 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
             {/* price header */}
             <div style={{ padding: "18px 18px 16px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, borderBottom: "1px solid #EFE4CE" }}>
               <div style={{ minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
                   {!stayChosen && <span style={{ fontSize: 13, color: "#8B7458" }}>From</span>}
-                  <span style={{ fontFamily: "'Fraunces', serif", fontSize: 28, fontWeight: 500, letterSpacing: "-.02em" }}>{peso(stayChosen ? (selectedWindow.stayType === "10" ? room.price10hr : room.price21hr) : fromPrice)}</span>
+                  {livePromo && <span style={{ fontSize: 13, color: "#8B7458", textDecoration: "line-through" }}>{peso(stayRate)}</span>}
+                  <span style={{ fontFamily: "'Fraunces', serif", fontSize: 28, fontWeight: 500, letterSpacing: "-.02em" }}>{peso(headlinePrice)}</span>
                   <span style={{ fontSize: 13, color: "#8B7458", whiteSpace: "nowrap" }}>{stayChosen ? (isOvernight ? "/ night" : "/ session") : ""}</span>
                 </div>
-                <div style={{ fontSize: 12, color: "#8B7458", marginTop: 3 }}>{!stayChosen ? "Choose how you'd like to stay" : isOvernight ? "Overnight · 7 PM – 4 PM next day" : `${selectedWindow.label} · 10 hours`}</div>
+                <div style={{ fontSize: 12, color: "#8B7458", marginTop: 3 }}>{!stayChosen ? "Choose how you'd like to stay" : `${livePromo ? "Offer price · " : ""}${isOvernight ? "Overnight · 7 PM – 4 PM next day" : `${selectedWindow.label} · 10 hours`}`}</div>
               </div>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#E4F3E4", color: "#15803D", fontSize: 11, fontWeight: 600, padding: "5px 10px", borderRadius: 999, whiteSpace: "nowrap", flex: "none" }}>
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg> No charge today
@@ -976,6 +1087,11 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
             .rd-book { position: static !important; top: auto !important; margin-top: 28px; }
             .rd-3col { grid-template-columns: 1fr !important; }
             .rd-2col { grid-template-columns: 1fr !important; }
+            /* Offer card stacks: photo full width, then copy, then the price
+               column left-aligned with its divider removed. */
+            .promo-card { grid-template-columns: 1fr !important; gap: 18px !important; }
+            .promo-card__photo { width: 100% !important; height: 200px !important; }
+            .promo-card__price { align-items: flex-start !important; padding-left: 0 !important; border-left: none !important; }
           }
           @media (max-width: 640px) {
             .rd-wrap { padding: 16px 16px 52px !important; }
@@ -1016,9 +1132,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
             </button>
           </div>{/* end carousel */}
 
-          <div style={{ marginTop: 20 }}>
-            <PromoBanner promotions={activePromotions} />
-          </div>
+          <PromoBanner promotions={activePromotions} rates={room} variant="desktop" />
 
           {/* All scrollable content below carousel */}
           <div style={{ marginTop: 20 }}>
@@ -1168,12 +1282,20 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                 {/* price header */}
                 <div style={{ padding: "22px 24px 18px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, borderBottom: "1px solid #EFE4CE" }}>
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "baseline", gap: 7 }}>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 7, flexWrap: "wrap" }}>
                       {!stayChosen && <span style={{ fontSize: 13.5, color: "#8B7458" }}>From</span>}
-                      <span style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 32, fontWeight: 500, letterSpacing: "-.02em" }}>{peso(stayChosen ? (selectedWindow.stayType === "10" ? room.price10hr : room.price21hr) : fromPrice)}</span>
-                      <span style={{ fontSize: 13.5, color: "#8B7458", whiteSpace: "nowrap" }}>{stayChosen ? (isOvernight ? "/ night" : "/ session") : ""}</span>
+                      {livePromo && <span style={{ fontSize: 15, color: "#8B7458", textDecoration: "line-through" }}>{peso(stayRate)}</span>}
+                      <span style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 34, fontWeight: 500, letterSpacing: "-.02em" }}>{peso(headlinePrice)}</span>
+                      <span style={{ fontSize: 13, color: "#8B7458", whiteSpace: "nowrap" }}>{stayChosen ? (isOvernight ? "/ night" : "/ session") : ""}</span>
                     </div>
-                    <div style={{ fontSize: 12.5, color: "#8B7458", marginTop: 3 }}>{!stayChosen ? "Choose how you'd like to stay" : isOvernight ? "Overnight · 7 PM – 4 PM next day" : `${selectedWindow.label} · 10 hours`}</div>
+                    {livePromo ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                        <span style={{ background: "#F3E4CB", color: "#8C5A2E", fontSize: 11.5, fontWeight: 600, padding: "5px 10px", borderRadius: 999, whiteSpace: "nowrap" }}>{livePromo.title}</span>
+                        <span style={{ fontSize: 12.5, color: "#8B7458" }}>{isOvernight ? "Overnight · 7 PM – 4 PM next day" : `${selectedWindow.label} · 10 hours`}</span>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 12.5, color: "#8B7458", marginTop: 3 }}>{!stayChosen ? "Choose how you'd like to stay" : isOvernight ? "Overnight · 7 PM – 4 PM next day" : `${selectedWindow.label} · 10 hours`}</div>
+                    )}
                   </div>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#E4F3E4", color: "#15803D", fontSize: 11.5, fontWeight: 600, padding: "6px 11px", borderRadius: 999, whiteSpace: "nowrap" }}>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg> No charge today
@@ -1318,6 +1440,25 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#4A3A2A" }}><span style={{ whiteSpace: "nowrap" }}>{selectedWindow.label} · {isOvernight ? `${stayNights} night${stayNights > 1 ? "s" : ""}${bundleLabel ? ` · ${bundleLabel}` : ""}` : (isWeekendRate ? "Weekend/Holiday" : "Weekday")}</span><span>{peso(basePrice)}</span></div>
                       {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra guests · {extraPaxCount} × {peso(room.additionalPaxFee)}</span><span>{peso(paxFee)}</span></div>}
                       <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16, paddingTop: 9, borderTop: "1px solid #EFE4CE" }}><span>Total</span><span>{peso(total)}</span></div>
+                    </div>
+                  )}
+
+                  {/* offer breakdown — only for a promo that genuinely reduces
+                      the charge, so "You pay" can't contradict checkout. */}
+                  {livePromo && (
+                    <div style={{ background: "#F6EFE2", borderRadius: 14, padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+                      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
+                        <span style={{ fontSize: 13.5, color: "#4A3A2A" }}>Usual price</span>
+                        <span style={{ fontSize: 14, color: "#8B7458", textDecoration: "line-through" }}>{peso(stayRate)}</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
+                        <span style={{ fontSize: 13.5, color: "#15803D", fontWeight: 500 }}>{livePromo.title}</span>
+                        <span style={{ fontSize: 14, color: "#15803D", fontWeight: 600, whiteSpace: "nowrap" }}>&minus; {peso(offerSaving)}</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, paddingTop: 10, borderTop: "1px solid #E0CEB2" }}>
+                        <span style={{ fontSize: 14, fontWeight: 600, color: "#1F160E" }}>You pay</span>
+                        <span style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 26, fontWeight: 500, lineHeight: 1, color: "#1F160E" }}>{peso(offerRate)}</span>
+                      </div>
                     </div>
                   )}
 

@@ -13,6 +13,8 @@ import { useGetActivityLogsQuery } from "@/redux/api/activityLogApi";
 import { useGetCleaningTasksQuery } from "@/redux/api/cleanersApi";
 import { useGetNotificationsQuery } from "@/redux/api/notificationsApi";
 import { useGetConversationsQuery } from "@/redux/api/messagesApi";
+import { PROMO_STAY_TYPE_OPTIONS } from "@/lib/promo-offer";
+import type { PromoStayType } from "@/redux/api/promotionsApi";
 import {
   getDeposits, getDeliverables, getDiscounts,
   updateDepositStatus, markBookingDeliverablesDelivered,
@@ -405,9 +407,14 @@ export default function CSRDashboard() {
   const [promotionModal, setPromotionModal] = useState(false);
   const [promotionSaving, setPromotionSaving] = useState(false);
   const [editingPromotionId, setEditingPromotionId] = useState<string | null>(null);
-  const emptyPromotion = { title: "", description: "", discount_type: "" as "" | "percentage" | "fixed", discount_value: "", start_date: "", end_date: "" };
+  const emptyPromotion = { title: "", description: "", discount_type: "" as "" | "percentage" | "fixed", discount_value: "", start_date: "", end_date: "", applies_to: [] as PromoStayType[] };
   const [promotionForm, setPromotionForm] = useState(emptyPromotion);
   const [promotionImage, setPromotionImage] = useState<File | null>(null);
+  const togglePromoStayType = (t: PromoStayType) =>
+    setPromotionForm((f) => ({
+      ...f,
+      applies_to: f.applies_to.includes(t) ? f.applies_to.filter((x) => x !== t) : [...f.applies_to, t],
+    }));
   const openCreatePromotion = () => { setEditingPromotionId(null); setPromotionForm(emptyPromotion); setPromotionImage(null); setPromotionModal(true); };
   const openEditPromotion = (p: PromotionRecord) => {
     setEditingPromotionId(p.id);
@@ -415,6 +422,7 @@ export default function CSRDashboard() {
       title: p.title, description: p.description || "",
       discount_type: p.discount_type || "", discount_value: p.discount_value != null ? String(p.discount_value) : "",
       start_date: toDateInputValue(p.start_date), end_date: toDateInputValue(p.end_date),
+      applies_to: p.applies_to ?? [],
     });
     setPromotionImage(null);
     setPromotionModal(true);
@@ -436,6 +444,8 @@ export default function CSRDashboard() {
       fd.set("discount_value", promotionForm.discount_value);
       fd.set("start_date", promotionForm.start_date);
       fd.set("end_date", promotionForm.end_date);
+      // Repeated entries — the server reads these with formData.getAll().
+      promotionForm.applies_to.forEach((t) => fd.append("applies_to", t));
       if (promotionImage) fd.set("image", promotionImage);
 
       if (editingPromotionId) await updatePromotion(editingPromotionId, fd);
@@ -1598,6 +1608,29 @@ export default function CSRDashboard() {
                   <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>End date</label>
                   <input aria-label="End date" type="date" value={promotionForm.end_date} onChange={(e) => setPromotionForm((f) => ({ ...f, end_date: e.target.value }))} className="w-full mt-1 rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
                 </div>
+              </div>
+              {/* Stay-type scope — drives the "Works on" chips on the guest
+                  offer card. Leaving all three unticked means "no scope set",
+                  and the card simply omits the chip row. */}
+              <div>
+                <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Works on</label>
+                <div className="flex flex-wrap gap-2 mt-1.5">
+                  {PROMO_STAY_TYPE_OPTIONS.map(({ value, label }) => {
+                    const on = promotionForm.applies_to.includes(value);
+                    return (
+                      <button key={value} type="button" onClick={() => togglePromoStayType(value)} aria-pressed={on}
+                        className="px-3.5 py-2 text-sm rounded-xl border cursor-pointer transition-colors"
+                        style={{ borderColor: on ? "#B07848" : "#ece5d4", backgroundColor: on ? "#B07848" : "#FAFAFA", color: on ? "#fff" : "#5a4a3a", fontWeight: on ? 600 : 400 }}>
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-xs mt-1.5" style={{ color: "#b0a187" }}>
+                  {promotionForm.applies_to.length === 0
+                    ? "None selected — the offer card won't show stay-type chips."
+                    : "Guests see these as chips on the offer card."}
+                </p>
               </div>
             </div>
             <div className="flex justify-end gap-2 mt-5">

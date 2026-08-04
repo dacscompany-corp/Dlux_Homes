@@ -1,5 +1,9 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 
+// Stay types a promotion can be scoped to — 'day' Daycation, 'night'
+// Nightcation, 'overnight' Full stay. null/[] means unscoped.
+export type PromoStayType = 'day' | 'night' | 'overnight';
+
 export interface ActivePromotion {
   id: string;
   title: string;
@@ -11,6 +15,7 @@ export interface ActivePromotion {
   discount_code: string | null;
   start_date: string;
   end_date: string;
+  applies_to: PromoStayType[] | null;
 }
 
 export interface ActivePromotionsResponse {

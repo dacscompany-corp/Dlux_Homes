@@ -5,6 +5,7 @@ import { headers } from "next/headers";
 import { createNotificationsForRoles } from "@/backend/utils/notificationHelper";
 import { requireAdmin } from "@/backend/utils/requireAdmin";
 import { upload_image_from_form } from "@/backend/utils/fileUpload";
+import type { PromoStayType } from "@/redux/api/promotionsApi";
 
 export interface DepositRecord {
   id: string; // UUID from booking_security_deposits
@@ -2156,8 +2157,26 @@ export interface PromotionRecord {
   start_date: string;
   end_date: string;
   active: boolean;
+  // null / [] = unscoped; the guest card then renders no "Works on" chips.
+  applies_to: PromoStayType[] | null;
   status: 'Active' | 'Scheduled' | 'Expired' | 'Disabled';
   created_at: string;
+}
+
+// Stay types a promotion can be scoped to. Mirrors the
+// `promotions_applies_to_valid` CHECK constraint — keep the two in sync.
+// Declared locally (not exported): a "use server" file may only export async
+// functions, so the shared copy lives in lib/promo-offer.ts.
+const PROMO_STAY_TYPES: readonly PromoStayType[] = ['day', 'night', 'overnight'];
+
+// The form posts stay types as repeated `applies_to` entries. Filter to the
+// known values so a hand-crafted POST can't trip the DB CHECK constraint.
+function readAppliesTo(formData: FormData): PromoStayType[] | null {
+  const picked = formData
+    .getAll('applies_to')
+    .map((v) => String(v))
+    .filter((v): v is PromoStayType => (PROMO_STAY_TYPES as readonly string[]).includes(v));
+  return picked.length > 0 ? Array.from(new Set(picked)) : null;
 }
 
 function derivePromotionStatus(row: { start_date: string | Date; end_date: string | Date; active: boolean }): PromotionRecord['status'] {
@@ -2177,7 +2196,7 @@ export async function getPromotions(): Promise<PromotionRecord[]> {
   try {
     const result = await client.query(
       `SELECT id, title, description, image_url, discount_type, discount_value,
-              discount_id, start_date, end_date, active, created_at
+              discount_id, start_date, end_date, active, applies_to, created_at
        FROM promotions
        ORDER BY created_at DESC`
     );
@@ -2206,6 +2225,7 @@ export async function createPromotion(formData: FormData): Promise<PromotionReco
   const discount_id = (formData.get('discount_id') as string || '').trim();
   const start_date = formData.get('start_date') as string;
   const end_date = formData.get('end_date') as string;
+  const applies_to = readAppliesTo(formData);
   const image = formData.get('image') as File | null;
 
   if (!title || !start_date || !end_date) {
@@ -2227,9 +2247,9 @@ export async function createPromotion(formData: FormData): Promise<PromotionReco
     const result = await client.query(
       `INSERT INTO promotions (
          title, description, image_url, discount_type, discount_value,
-         discount_id, start_date, end_date, active, created_by, created_at
+         discount_id, start_date, end_date, applies_to, active, created_by, created_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, $9, NOW() AT TIME ZONE 'Asia/Manila')
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, $10, NOW() AT TIME ZONE 'Asia/Manila')
        RETURNING *`,
       [
         title,
@@ -2240,6 +2260,7 @@ export async function createPromotion(formData: FormData): Promise<PromotionReco
         discount_id || null,
         start_date,
         end_date,
+        applies_to,
         employeeId || null,
       ]
     );
@@ -2280,6 +2301,9 @@ export async function updatePromotion(id: string, formData: FormData): Promise<P
   const discount_id = (formData.get('discount_id') as string || '').trim();
   const start_date = formData.get('start_date') as string;
   const end_date = formData.get('end_date') as string;
+  // Unlike the other fields this is NOT COALESCEd — clearing every checkbox is
+  // a deliberate "unscope this promotion", so null must overwrite.
+  const applies_to = readAppliesTo(formData);
   const image = formData.get('image') as File | null;
 
   let image_url: string | undefined;
@@ -2300,6 +2324,7 @@ export async function updatePromotion(id: string, formData: FormData): Promise<P
            discount_id = $7,
            start_date = COALESCE($8, start_date),
            end_date = COALESCE($9, end_date),
+           applies_to = $10,
            updated_at = NOW()
        WHERE id = $1
        RETURNING *`,
@@ -2313,6 +2338,7 @@ export async function updatePromotion(id: string, formData: FormData): Promise<P
         discount_id || null,
         start_date || null,
         end_date || null,
+        applies_to,
       ]
     );
 

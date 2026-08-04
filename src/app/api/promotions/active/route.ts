@@ -8,7 +8,7 @@ export async function GET() {
   try {
     const result = await pool.query(
       `SELECT p.id, p.title, p.description, p.image_url, p.discount_type, p.discount_value,
-              p.discount_id, p.start_date, p.end_date, d.code AS discount_code
+              p.discount_id, p.start_date, p.end_date, p.applies_to, d.code AS discount_code
        FROM promotions p
        LEFT JOIN discounts d ON d.id = p.discount_id
        WHERE p.active = true
