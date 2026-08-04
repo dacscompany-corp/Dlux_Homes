@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
 
       // If the booking row exposes a haven_id column, verify it matches the request
       if (Object.prototype.hasOwnProperty.call(guestInfo, 'haven_id')) {
-        const bookingHaven = (guestInfo as any).haven_id;
+        const bookingHaven = (guestInfo as Record<string, unknown>).haven_id;
         if (bookingHaven && haven_id && bookingHaven !== haven_id) {
           return NextResponse.json(
             { success: false, error: 'Booking does not belong to this haven' },
@@ -90,10 +90,14 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Reject if booking status is not completed
-      if (guestInfo.status !== 'completed') {
+      // Reject unless the stay is actually over. Must stay in sync with the
+      // guest UI's `isCompleted` gate (my-bookings/confirmed/page.tsx) — that
+      // unlocks the form on 'checked-out' too, so accepting only 'completed'
+      // here showed guests a form whose submit always 400'd.
+      const REVIEWABLE_STATUSES = ['completed', 'checked-out'];
+      if (!REVIEWABLE_STATUSES.includes(guestInfo.status)) {
         return NextResponse.json(
-          { success: false, error: 'Cannot submit review unless booking status is completed' },
+          { success: false, error: 'Cannot submit review until your stay is completed' },
           { status: 400 }
         );
       }

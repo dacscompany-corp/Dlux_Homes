@@ -23,7 +23,7 @@ import { BUNDLE_WEEK_LABEL, BUNDLE_TWOWEEK_LABEL, BUNDLE_MONTH_LABEL } from "@/l
 import {
   AnalyticsSection, BookingCalendarSection, BlockedDatesSection, CleaningManagementSection,
   PaymentMethodsSection, GuestAssistanceSection, UserManagementSection, PartnerManagementSection,
-  PricingCalendarSection,
+  PricingCalendarSection, Empty,
 } from "@/components/admin/owners/OwnerModules";
 import HavenWizard from "@/components/admin/owners/HavenWizard";
 import NewBookingWizard from "@/components/admin/NewBookingWizard";
@@ -545,13 +545,14 @@ export default function OwnerDashboard() {
     joined: e.hire_date ? new Date(String(e.hire_date)).toLocaleDateString("en", { month: "short", year: "numeric" }) : "—",
   }));
 
-  // Reviews (Communication)
+  // Reviews (Communication) — field names mirror /api/reviews/all exactly:
+  // guest_first_name/guest_last_name and overall_rating (not guest_name/rating).
   const reviews = reviewsList.map((r, i) => ({
     id: (r.id as number) ?? i,
-    guest: String(r.guest_name || r.name || "Guest"),
+    guest: `${r.guest_first_name ?? ""} ${r.guest_last_name ?? ""}`.trim() || "Guest",
     haven: String(r.haven_name || r.room_name || "—"),
-    rating: Number(r.rating ?? 0),
-    comment: String(r.comment || r.review || ""),
+    rating: Math.round(Number(r.overall_rating ?? 0)),
+    comment: String(r.comment || ""),
     date: r.created_at ? new Date(String(r.created_at)).toLocaleDateString() : "",
   }));
 
@@ -630,7 +631,8 @@ export default function OwnerDashboard() {
   const internalMessages = toRows(conversationsRes).map((c, i) => ({
     id: (c.id as number | string) ?? i,
     sender: String(c.name || "Conversation"),
-    role: String(c.role || "csr"),
+    // conversations rows carry `type` ("internal" | "guest"), not a role column
+    kind: String(c.type || "internal"),
     content: String(c.last_message || "No messages yet"),
     time: c.last_message_time ? new Date(String(c.last_message_time)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "",
     unread: Number(c.unread_count ?? 0) > 0,
@@ -1422,7 +1424,7 @@ export default function OwnerDashboard() {
             {tabBar([{ id: "guest", label: "Guest Assistance", icon: Headphones }, { id: "reviews", label: "Reviews & Feedback", icon: Star }, { id: "messages", label: "Internal Messages", icon: MessageSquare }], commTab, (id) => setCommTab(id as "reviews" | "messages" | "guest"))}
             {commTab === "guest" && <GuestAssistanceSection />}
 
-            {commTab === "reviews" && (
+            {commTab === "reviews" && (reviews.length === 0 ? <Empty label="No guest reviews yet." /> : (
               <div className="grid grid-cols-1 lg:grid-cols-2" style={{ gap: 20 }}>
                 {reviews.map((r) => (
                   <div key={r.id} style={{ background: "#fff", border: "1px solid #ece5d4", padding: "22px 24px" }}>
@@ -1443,16 +1445,16 @@ export default function OwnerDashboard() {
                   </div>
                 ))}
               </div>
-            )}
+            ))}
 
-            {commTab === "messages" && (
+            {commTab === "messages" && (internalMessages.length === 0 ? <Empty label="No internal conversations yet." /> : (
               <div style={{ background: "#fff", border: "1px solid #ece5d4" }}>
                 {internalMessages.map((msg) => {
-                  const csr = msg.role === "csr";
+                  const csr = msg.kind === "internal";
+                  // Read-only for now — no thread view is wired up yet, so this
+                  // row is deliberately not presented as clickable.
                   return (
-                    <div key={msg.id} className="flex items-center cursor-pointer" style={{ gap: 16, padding: "18px 24px", borderBottom: "1px solid #f3eee2" }}
-                      onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#faf7f1"}
-                      onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
+                    <div key={msg.id} className="flex items-center" style={{ gap: 16, padding: "18px 24px", borderBottom: "1px solid #f3eee2" }}>
                       <span style={{ width: 40, height: 40, borderRadius: "50%", flex: "none", background: csr ? "rgba(47,157,107,0.14)" : "#f3eee2", color: csr ? "#2f7d56" : "#b8754a", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 17 }}>{msg.sender.split(" ").map((n)=>n[0]).join("")}</span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center" style={{ gap: 10 }}>
@@ -1466,7 +1468,7 @@ export default function OwnerDashboard() {
                   );
                 })}
               </div>
-            )}
+            ))}
           </>)}
 
           {/* ── Team ── */}

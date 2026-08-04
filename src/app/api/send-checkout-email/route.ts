@@ -55,6 +55,11 @@ export async function POST(request: NextRequest) {
     const remainingBalanceFormatted = hasBalance
       ? `₱${Number(bookingData.remainingBalance).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
       : '';
+    // Deep link to the review card on the guest's own confirmation page.
+    // It's login-gated (requireBookingAccess) — a signed-out guest is bounced
+    // to /login?callbackUrl=… and lands back here after signing in.
+    const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000';
+    const reviewUrl = `${baseUrl}/my-bookings/confirmed?id=${encodeURIComponent(bookingData.bookingId)}&review=1`;
     const emailHtml = `
       <!DOCTYPE html>
       <html lang="en">
@@ -143,6 +148,18 @@ export async function POST(request: NextRequest) {
                         <td valign="middle" align="right" style="white-space:nowrap;font-size:22px;font-weight:700;color:#d9a25c;">${hasBalance ? remainingBalanceFormatted : totalAmountFormatted}</td>
                       </tr>
                     </table>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Review invite -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#faf5ec;border:1px solid #f0e6d8;border-radius:12px;margin-bottom:24px;">
+                <tr>
+                  <td align="center" style="padding:22px 20px;">
+                    <div style="font-size:12px;font-weight:700;color:#9c8974;letter-spacing:0.6px;text-transform:uppercase;margin-bottom:8px;">How was your stay?</div>
+                    <div style="font-size:13px;line-height:1.5;color:#5c4a3c;margin-bottom:16px;">Your review helps the next guest book with confidence. It takes less than a minute.</div>
+                    <a href="${reviewUrl}" style="display:inline-block;background:#2b1b12;color:#f6ede0;font-size:14px;font-weight:600;text-decoration:none;padding:13px 28px;border-radius:999px;">Leave a review</a>
+                    <div style="font-size:11px;line-height:1.5;color:#b3a48f;margin-top:12px;">You&rsquo;ll be asked to sign in with the account you booked with.</div>
                   </td>
                 </tr>
               </table>

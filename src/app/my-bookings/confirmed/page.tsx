@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useRef, useState, Suspense } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
 import { imageFileError, PHOTO_READ_ERROR } from "@/lib/validateImageFile";
 import { fileToCompressedDataUrl } from "@/lib/compressImage";
@@ -58,6 +58,9 @@ function IcoArrowRight() { return <svg width={16} height={16} viewBox="0 0 24 24
 
 const ROOM_IMAGE = "https://images.unsplash.com/photo-1631049307264-da0ec9d70304?w=1600&q=80";
 
+// Rejection sentinel: not an error, just "we're navigating away, stop here".
+const REDIRECTING = Symbol("redirecting");
+
 type ExtendedBooking = StoredBooking & {
   checkInTime?: string;
   checkOutTime?: string;
@@ -69,7 +72,12 @@ type ExtendedBooking = StoredBooking & {
 
 function ConfirmedInner() {
   const sp = useSearchParams();
+  const router = useRouter();
   const bookingId = sp.get("id") || "";
+  // ?review=1 — sent in the check-out email so the link lands on the review card
+  // instead of the top of the confirmation page.
+  const jumpToReview = sp.get("review") === "1";
+  const reviewCardRef = useRef<HTMLDivElement | null>(null);
   const [booking, setBooking] = useState<ExtendedBooking | null>(null);
   const [loading, setLoading] = useState(true);
   const [showChange, setShowChange] = useState(false);
@@ -114,7 +122,22 @@ function ConfirmedInner() {
     if (!bookingId) { setLoading(false); return; }
     let active = true;
     fetch(`/api/bookings/${encodeURIComponent(bookingId)}`)
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => {
+        // A signed-out guest opening a shared link (e.g. the review link in the
+        // check-out email) 401s here. Bounce them through sign-in and back to
+        // this exact URL — otherwise they'd land on "We couldn't find that
+        // booking", which reads as a broken link rather than "please log in".
+        if (r.status === 401) {
+          if (active) {
+            const back = `${window.location.pathname}${window.location.search}`;
+            router.replace(`/login?callbackUrl=${encodeURIComponent(back)}`);
+          }
+          // Stay on the loading screen while the redirect lands — falling
+          // through would flash the "couldn't find that booking" state.
+          return Promise.reject(REDIRECTING);
+        }
+        return r.ok ? r.json() : null;
+      })
       .then((j) => {
         if (!active) return;
         const d = j?.data;
@@ -152,9 +175,16 @@ function ConfirmedInner() {
         }
         setLoading(false);
       })
-      .catch(() => { if (active) setLoading(false); });
+      .catch((err) => { if (active && err !== REDIRECTING) setLoading(false); });
     return () => { active = false; };
-  }, [bookingId, reloadKey]);
+  }, [bookingId, reloadKey, router]);
+
+  // Scroll the review card into view for ?review=1 links. Runs after the
+  // booking renders, since the card only exists once the stay is completed.
+  useEffect(() => {
+    if (!jumpToReview || loading || !reviewCardRef.current) return;
+    reviewCardRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [jumpToReview, loading, booking]);
 
   const submitPayment = async () => {
     if (!booking) return;
@@ -532,7 +562,7 @@ function ConfirmedInner() {
           </div>
 
           {/* REVIEW CARD */}
-          <div className="cf-enter" style={{ background: "#FFFCF4", border: `2px solid ${accent}`, borderRadius: 22, overflow: "hidden", boxShadow: "0 14px 34px rgba(176,120,72,.18)" }}>
+          <div ref={reviewCardRef} id="review" className="cf-enter" style={{ background: "#FFFCF4", border: `2px solid ${accent}`, borderRadius: 22, overflow: "hidden", boxShadow: "0 14px 34px rgba(176,120,72,.18)" }}>
             <div style={{ padding: "20px 26px", background: accent, color: "#FFFCF4" }}>
               <div style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".14em", opacity: 0.92 }}>Help future guests</div>
               <div style={{ fontFamily: SERIF, fontSize: 24, fontWeight: 500, marginTop: 4 }}>How was your stay?</div>

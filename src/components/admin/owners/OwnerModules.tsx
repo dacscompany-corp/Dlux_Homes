@@ -89,7 +89,7 @@ function SectionHead({ title, sub }: { title: string; sub?: string; icon?: React
     </div>
   );
 }
-function Empty({ label }: { label: string }) {
+export function Empty({ label }: { label: string }) {
   return <div className="text-center" style={{ background: "#fff", border: "1px solid #ece5d4", padding: 40 }}><p style={{ fontSize: 13, color: "#8a8276", margin: 0 }}>{label}</p></div>;
 }
 function Table({ headers, children }: { headers: string[]; children: React.ReactNode }) {
@@ -792,22 +792,31 @@ export function PricingCalendarSection() {
 // ── 6. Guest Assistance ───────────────────────────────────────────────────
 export function GuestAssistanceSection() {
   const [rows, setRows] = useState<Row[]>([]);
+  const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     let active = true;
-    fetch("/api/report").then((r) => (r.ok ? r.json() : { data: [] })).then((j) => { if (active) setRows(arr(j.data)); }).catch(() => {});
+    fetch("/api/report")
+      .then((r) => (r.ok ? r.json() : { data: [] }))
+      .then((j) => { if (active) setRows(arr(j.data)); })
+      .catch(() => {})
+      .finally(() => { if (active) setLoaded(true); });
     return () => { active = false; };
   }, []);
   const tone = (s: string) => (s === "resolved" || s === "closed" ? "good" : s === "in-progress" ? "neutral" : "bad");
+  // Match the Property → Maintenance colour scale so the same issue doesn't
+  // read as a different severity depending on which tab you opened it from.
+  const priorityTone = (p: string) =>
+    p === "urgent" ? "bad" : p === "high" ? "warn" : p === "medium" ? "neutral" : "good";
   return (
     <div>
       <SectionHead title="Guest Assistance" icon={Headphones} sub="Support requests and reported issues across the property" />
-      {rows.length === 0 ? <Empty label="No assistance requests." /> : (
+      {rows.length === 0 ? <Empty label={loaded ? "No assistance requests." : "Loading assistance requests…"} /> : (
         <Table headers={["Haven", "Type", "Priority", "Description", "Status", "Reported"]}>
           {rows.map((r, i) => (
             <tr key={String(r.report_id ?? i)} style={{ borderTop: i > 0 ? "1px solid #F7F0E3" : "none" }}>
               <td className="px-4 py-3.5 text-sm" style={{ color: "#1a1a1a" }}>{String(r.haven_name ?? "—")}</td>
               <td className="px-4 py-3.5 text-sm" style={{ color: "#5a4a3a" }}>{String(r.issue_type ?? "—")}</td>
-              <td className="px-4 py-3.5"><Pill text={String(r.priority_level ?? "low")} tone="warn" /></td>
+              <td className="px-4 py-3.5"><Pill text={String(r.priority_level ?? "low")} tone={priorityTone(String(r.priority_level ?? "low").toLowerCase())} /></td>
               <td className="px-4 py-3.5 text-sm max-w-xs truncate" style={{ color: "#8B6344" }}>{String(r.issue_description ?? "—")}</td>
               <td className="px-4 py-3.5"><Pill text={String(r.status ?? "open")} tone={tone(String(r.status))} /></td>
               <td className="px-4 py-3.5 text-sm" style={{ color: "#8B6344" }}>{fmtDate(r.created_at)}</td>

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { GET as reviewsGET } from "../route";
 
 // Forward /api/reviews/all to the main reviews GET handler
