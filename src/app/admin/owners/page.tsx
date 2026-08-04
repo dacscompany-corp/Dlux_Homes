@@ -1053,7 +1053,29 @@ export default function OwnerDashboard() {
           {tabBar([{ id: "list", label: "Reservations", icon: CalendarDays }, { id: "calendar", label: "Booking Calendar", icon: Calendar }, { id: "blocked", label: "Blocked Dates", icon: CalendarOff }], bookingsTab, (id) => setBookingsTab(id as "list" | "calendar" | "blocked"))}
           {bookingsTab === "calendar" && <BookingCalendarSection />}
           {bookingsTab === "blocked" && <BlockedDatesSection />}
-          {bookingsTab === "list" && (
+          {bookingsTab === "list" && (<>
+          <div className="p-5 mb-5 rounded-xl" style={{ backgroundColor: "#1f1b16" }}>
+            <h3 className="font-bold text-white mb-4">Booking Status Guide</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5">
+              {[
+                { label: "View", icon: Eye, iconBg: "#8B6344", desc: "View full booking details" },
+                { label: "Pending", icon: Check, iconBg: "#f59e0b", desc: "Booking awaiting approval or payment confirmation" },
+                { label: "Approved", icon: CheckCircle2, iconBg: "#10b981", desc: "Booking confirmed and approved by management" },
+                { label: "Checked-In", icon: LogIn, iconBg: "#3b82f6", desc: "Guest has arrived and checked in to the haven" },
+                { label: "Checked-Out", icon: LogOut, iconBg: "#ef4444", desc: "Guest has completed their stay" },
+              ].map((s) => (
+                <div key={s.label} className="flex gap-2.5">
+                  <span className="flex items-center justify-center rounded-full" style={{ width: 22, height: 22, background: s.iconBg, flex: "none" }}>
+                    <s.icon className="w-3 h-3 text-white" />
+                  </span>
+                  <div>
+                    <p className="text-sm font-semibold text-white">{s.label}</p>
+                    <p className="text-xs mt-0.5" style={{ color: "#a8a29e" }}>{s.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
           <div className="border overflow-hidden" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }}>
             <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: "#ece5d4" }}>
               <div>
@@ -1120,7 +1142,7 @@ export default function OwnerDashboard() {
                             {booking.status === "awaiting-payment" && (
                               <button type="button" onClick={() => handleConfirmPayment(booking.id)} disabled={bookingUpdating} title="Confirm down payment (mark paid → Confirmed)" className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#6b7280" }}
                                 onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#d1fae5";(e.currentTarget as HTMLElement).style.color="#059669";}}
-                                onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><BadgeCheck className="w-3.5 h-3.5"/></button>
+                                onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><CheckCircle2 className="w-3.5 h-3.5"/></button>
                             )}
                             {(booking.status === "confirmed" || booking.status === "down-paid") && (
                               <button type="button" onClick={() => openCheckIn({ id: booking.id, displayId: booking.displayId, guest: booking.guest, remaining: booking.balance })} disabled={bookingUpdating} title="Check in (collect balance + deposit)" className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#6b7280" }}
@@ -1149,7 +1171,7 @@ export default function OwnerDashboard() {
               </table>
             </div>
           </div>
-          )}
+          </>)}
           </>)}
 
           {/* ── Finance ── */}
