@@ -1,16 +1,18 @@
 import jsPDF from "jspdf";
 
 // ─── Shared palette (matches the D'Lux Homes email templates) ───────────────
-const PRIMARY: [number, number, number] = [43, 27, 18]; // #2b1b12 dark ink
-const PRIMARY_DARK: [number, number, number] = [58, 42, 30]; // #3a2a1e
-const PRIMARY_SOFT: [number, number, number] = [243, 234, 217]; // #F3EAD9 cream
-const ACCENT_GOLD: [number, number, number] = [217, 162, 92]; // #d9a25c
-const MUTED_GOLD: [number, number, number] = [203, 184, 156]; // #CBB89C
-const BODY_TEXT: [number, number, number] = [92, 74, 60]; // #5c4a3c
-const LABEL_MUTED: [number, number, number] = [156, 137, 116]; // #9c8974
+// Exported so other PDF builders (houseRulesPdf.ts) use the same brand values
+// rather than re-typing hex.
+export const PRIMARY: [number, number, number] = [43, 27, 18]; // #2b1b12 dark ink
+export const PRIMARY_DARK: [number, number, number] = [58, 42, 30]; // #3a2a1e
+export const PRIMARY_SOFT: [number, number, number] = [243, 234, 217]; // #F3EAD9 cream
+export const ACCENT_GOLD: [number, number, number] = [217, 162, 92]; // #d9a25c
+export const MUTED_GOLD: [number, number, number] = [203, 184, 156]; // #CBB89C
+export const BODY_TEXT: [number, number, number] = [92, 74, 60]; // #5c4a3c
+export const LABEL_MUTED: [number, number, number] = [156, 137, 116]; // #9c8974
 const LIGHT_BORDER: [number, number, number] = [240, 230, 216]; // #f0e6d8
-const WHITE: [number, number, number] = [255, 255, 255];
-const GRAY: [number, number, number] = [179, 164, 143]; // #b3a48f
+export const WHITE: [number, number, number] = [255, 255, 255];
+export const GRAY: [number, number, number] = [179, 164, 143]; // #b3a48f
 
 export interface ReceiptData {
   bookingId: string;

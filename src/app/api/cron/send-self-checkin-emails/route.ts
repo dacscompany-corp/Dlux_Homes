@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
-import { sendSelfCheckinEmail } from "@/backend/utils/selfCheckinEmail";
+import { sendSelfCheckinEmail, loadPaymentChannels } from "@/backend/utils/selfCheckinEmail";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,16 +32,14 @@ const MANILA = "Asia/Manila";
 interface DueBooking {
   id: string;
   booking_id: string;
-  room_name: string;
   check_in_date: string;
   check_in_time: string;
   check_out_date: string;
   check_out_time: string;
-  adults: number;
-  children: number;
-  infants: number;
   first_name: string;
   email: string;
+  remaining_balance: string | number | null;
+  security_deposit: string | number | null;
 }
 
 export async function GET(req: NextRequest) {
@@ -63,19 +61,25 @@ export async function GET(req: NextRequest) {
     // Only live bookings, only the main guest (first row — same convention as
     // bookingController), only ones whose send time has arrived, and never
     // backfill a stay whose check-in date has already passed.
+    //
+    // 'checked-in' belongs in the status list: an owner may mark a guest
+    // arrived days ahead, which deliberately does NOT send the instructions
+    // early (see handleCheckInOnly in admin/owners). Those rows are still
+    // waiting on this cron to release the mail at the normal moment, so
+    // excluding them would mean the guest never gets it at all.
     const { rows } = await pool.query<DueBooking>(
       `
       SELECT
         b.id,
         b.booking_id,
-        b.room_name,
         to_char(b.check_in_date,  'YYYY-MM-DD')  AS check_in_date,
         to_char(b.check_in_time,  'HH12:MI AM')  AS check_in_time,
         to_char(b.check_out_date, 'YYYY-MM-DD')  AS check_out_date,
         to_char(b.check_out_time, 'HH12:MI AM')  AS check_out_time,
-        b.adults, b.children, b.infants,
         bg.first_name,
-        bg.email
+        bg.email,
+        bp.remaining_balance,
+        bd.amount AS security_deposit
       FROM booking b
       JOIN LATERAL (
         SELECT first_name, email
@@ -84,7 +88,9 @@ export async function GET(req: NextRequest) {
         ORDER BY id
         LIMIT 1
       ) bg ON TRUE
-      WHERE b.status IN ('approved', 'confirmed')
+      LEFT JOIN booking_payments bp ON b.id = bp.booking_id
+      LEFT JOIN booking_security_deposits bd ON b.id = bd.booking_id
+      WHERE b.status IN ('approved', 'confirmed', 'checked-in')
         AND b.self_checkin_email_sent_at IS NULL
         AND bg.email IS NOT NULL
         AND bg.email <> ''
@@ -104,19 +110,26 @@ export async function GET(req: NextRequest) {
     let sent = 0;
     const failed: string[] = [];
 
+    // One lookup for the whole run — the GCash/bank details are the same for
+    // every booking in it.
+    const channels = await loadPaymentChannels();
+
     for (const b of rows) {
-      const guests = `${b.adults} Adult${b.adults === 1 ? "" : "s"}, ${b.children} Young Adult${b.children === 1 ? "" : "s"}, ${b.infants} Child${b.infants === 1 ? "" : "ren"}`;
       try {
         await sendSelfCheckinEmail({
           email: b.email,
           guestName: b.first_name,
           bookingId: b.booking_id,
-          roomName: b.room_name,
+          balanceAmount: Number(b.remaining_balance ?? 0),
+          // No deposit row yet means it hasn't been collected, not that it is
+          // waived — fall back to the standard amount so the guest still knows
+          // to bring it.
+          depositAmount: b.security_deposit == null ? undefined : Number(b.security_deposit),
+          channels,
           checkInDate: b.check_in_date,
           checkInTime: b.check_in_time,
           checkOutDate: b.check_out_date,
           checkOutTime: b.check_out_time,
-          guests,
         });
         // Stamp only after a successful send, so a transient SMTP failure
         // simply retries on the next run rather than silently skipping a guest.

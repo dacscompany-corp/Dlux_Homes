@@ -75,6 +75,7 @@ import {
   ImageIcon,
   Trash2,
   CheckCircle2,
+  Send,
 } from "lucide-react";
 
 // PromotionRecord types start_date/end_date as string, but server actions return
@@ -240,6 +241,9 @@ export default function OwnerDashboard() {
     validIdUrl: string; paymentProofUrl: string; paymentReference: string;
     checkInRaw: string; checkOutRaw: string; checkInTime: string; checkOutTime: string;
     requestedNewDate: string;
+    // Empty until the self check-in instructions have actually gone out. Drives
+    // the manual "Send instructions now" backstop after an early check-in.
+    selfCheckinEmailSentAt: string;
     // Everyone on the booking beyond the main guest, each with their own ID.
     additionalGuests: { name: string; age: string; gender: string; validIdUrl: string }[];
   };
@@ -345,28 +349,72 @@ export default function OwnerDashboard() {
   );
   const openCheckIn = (b: { id: string; displayId: string; guest: string; remaining: number }) =>
     setCheckIn({ open: true, id: b.id, displayId: b.displayId, guest: b.guest, remaining: Math.max(0, b.remaining), method: "Cash", busy: false });
+  // Send the self check-in instructions — the four steps, what to pay on
+  // arrival, and where to send it. House rules are not part of this email; they
+  // go out with Collect. The route re-stamps self_checkin_email_sent_at, so the
+  // cron won't then send a duplicate. Best-effort: a mail failure mustn't read
+  // as a failed check-in.
+  const sendCheckInInstructions = (id: string) =>
+    fetch("/api/send-self-checkin-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ booking_id: id }),
+    }).catch(() => {});
+
   // Check in — arrival only, no money. Collecting the balance is a separate
-  // step (see confirmCollect) so a guest can be marked arrived the moment the
-  // check-in window opens, without waiting on payment.
-  const handleCheckInOnly = async (id: string) => {
+  // step (see confirmCollect) so a guest can be marked arrived without waiting
+  // on payment.
+  //
+  // Marking someone arrived is always allowed, including days ahead — the owner
+  // may know the guest is coming early. The check-in *window* governs the email
+  // only: sending a guest their door code a week out would be a real leak, so
+  // an early check-in defers the mail to the cron, which releases it at the
+  // normal moment (it matches 'checked-in' rows too — see the cron's status
+  // filter). If the cron isn't running, the Bookings row keeps a manual
+  // "Send instructions now" button as the backstop.
+  const handleCheckInOnly = async (b: { id: string; checkInRaw: string; checkInTime: string }) => {
+    const { id } = b;
     try {
       await updateBookingStatus({ id, status: "checked-in" }).unwrap();
-      // Send the self check-in instructions (key location + how to get in).
-      // House rules are deliberately excluded — they go out with Collect. The
-      // cron that normally sends these ~2h before arrival has no schedule
-      // attached, so checking the guest in is what actually gets them out.
-      // The route re-stamps self_checkin_email_sent_at, so if the cron is ever
-      // enabled it won't send a duplicate. Best-effort: the guest is already
-      // marked arrived, and a mail failure mustn't read as a failed check-in.
-      fetch("/api/send-self-checkin-email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ booking_id: id, include_house_rules: false }),
-      }).catch(() => {});
-      toast.success("Guest checked in — check-in instructions sent");
+      if (isCheckInOpen(b.checkInRaw, b.checkInTime)) {
+        sendCheckInInstructions(id);
+        toast.success("Guest checked in — check-in instructions sent");
+      } else {
+        const opensAt = checkInOpensLabel(b.checkInRaw, b.checkInTime);
+        toast.success(
+          opensAt
+            ? `Guest checked in early — instructions send ${opensAt}`
+            : "Guest checked in early — instructions not sent yet",
+        );
+      }
       refetchBookings();
     } catch {
       toast.error("Could not check the guest in");
+    }
+  };
+
+  // Backstop for an early check-in whose instructions are still pending. The
+  // cron that would normally release them runs off an external pinger, so if
+  // that isn't live the guest would otherwise get nothing at all. Unlike the
+  // automatic path this reports failure — the owner is sending deliberately and
+  // needs to know if it didn't land.
+  const [sendingInstructions, setSendingInstructions] = useState<string | null>(null);
+  const handleSendInstructionsNow = async (id: string) => {
+    if (sendingInstructions) return;
+    setSendingInstructions(id);
+    try {
+      const res = await fetch("/api/send-self-checkin-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ booking_id: id }),
+      });
+      if (!res.ok) throw new Error();
+      toast.success("Check-in instructions sent");
+      refetchBookings();
+    } catch {
+      toast.error("Could not send the check-in instructions");
+    } finally {
+      setSendingInstructions(null);
     }
   };
 
@@ -504,6 +552,7 @@ export default function OwnerDashboard() {
     checkInTime: String(b.check_in_time ?? ""),
     checkOutTime: String(b.check_out_time ?? ""),
     requestedNewDate: b.requested_new_date ? String(b.requested_new_date) : "",
+    selfCheckinEmailSentAt: b.self_checkin_email_sent_at ? String(b.self_checkin_email_sent_at) : "",
     additionalGuests: (Array.isArray(b.additional_guests) ? b.additional_guests : []).map((g) => {
       const x = (g ?? {}) as Record<string, unknown>;
       return {
@@ -1217,16 +1266,34 @@ export default function OwnerDashboard() {
                                 onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><CheckCircle2 className="w-3.5 h-3.5"/></button>
                             )}
                             {(booking.status === "confirmed" || booking.status === "down-paid") && (() => {
+                              // Always clickable — the owner may be letting the
+                              // guest in ahead of schedule. The window only
+                              // decides whether the email rides along now or
+                              // waits (see handleCheckInOnly).
                               const open = isCheckInOpen(booking.checkInRaw, booking.checkInTime);
                               const opensAt = checkInOpensLabel(booking.checkInRaw, booking.checkInTime);
                               return (
-                                <button type="button" onClick={() => handleCheckInOnly(booking.id)} disabled={bookingUpdating || !open}
-                                  title={open ? "Check in (sends the check-in instructions)" : `Check-in opens ${opensAt}`}
-                                  className="p-1.5 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed" style={{ color: "#6b7280" }}
-                                  onMouseEnter={(e)=>{ if (open) { (e.currentTarget as HTMLElement).style.backgroundColor="#d1fae5";(e.currentTarget as HTMLElement).style.color="#059669"; } }}
-                                  onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><LogIn className="w-3.5 h-3.5"/></button>
+                                <button type="button" onClick={() => handleCheckInOnly(booking)} disabled={bookingUpdating}
+                                  title={open
+                                    ? "Check in (sends the check-in instructions)"
+                                    : `Check in early — instructions send ${opensAt}`}
+                                  className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: open ? "#6b7280" : "#b08968" }}
+                                  onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#d1fae5";(e.currentTarget as HTMLElement).style.color="#059669";}}
+                                  onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color=open ? "#6b7280" : "#b08968";}}><LogIn className="w-3.5 h-3.5"/></button>
                               );
                             })()}
+                            {/* Early check-in leaves the instructions pending.
+                                They should arrive on the cron, but that runs off
+                                an external pinger on this plan — so offer a
+                                manual send rather than risk the guest getting
+                                nothing. */}
+                            {booking.status === "checked-in" && !booking.selfCheckinEmailSentAt && (
+                              <button type="button" onClick={() => handleSendInstructionsNow(booking.id)} disabled={sendingInstructions === booking.id}
+                                title="Check-in instructions haven't gone out yet — send them now"
+                                className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#b08968" }}
+                                onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#d1fae5";(e.currentTarget as HTMLElement).style.color="#059669";}}
+                                onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#b08968";}}><Send className="w-3.5 h-3.5"/></button>
+                            )}
                             {booking.status === "checked-in" && booking.balance > 0 && (
                               <button type="button" onClick={() => openCheckIn({ id: booking.id, displayId: booking.displayId, guest: booking.guest, remaining: booking.balance })} disabled={bookingUpdating}
                                 title="Collect remaining balance + deposit (sends the house rules)"
@@ -1988,7 +2055,11 @@ export default function OwnerDashboard() {
         };
         const missingIds = boardGuests.filter((g) => needsId(g) && !g.validIdUrl).length;
         const attention = missingIds + (bk.paymentProofUrl ? 0 : 1);
-        const canCheckIn = ["approved", "confirmed"].includes((bk.status || "").toLowerCase());
+        // Match the Bookings table exactly: the same statuses, the same action.
+        // This button used to open the collect-balance flow despite being
+        // labelled "Check guest in", so the two entry points disagreed.
+        const canCheckIn = ["confirmed", "down-paid"].includes((bk.status || "").toLowerCase());
+        const checkInIsOpen = isCheckInOpen(bk.checkInRaw, bk.checkInTime);
 
         return (
           <div onClick={() => setBookingModal(null)} style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: "rgba(31,27,22,0.45)", overflow: "auto" }}>
@@ -2031,11 +2102,14 @@ export default function OwnerDashboard() {
                 <div className="bb-actions" style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
                   {canCheckIn && (
                     <button type="button"
-                      onClick={() => { setBookingModal(null); openCheckIn({ id: bk.id, displayId: bk.displayId, guest: bk.guest, remaining: bk.balance }); }}
+                      onClick={() => { setBookingModal(null); handleCheckInOnly(bk); }}
+                      title={checkInIsOpen
+                        ? "Check in (sends the check-in instructions)"
+                        : `Check in early — instructions send ${checkInOpensLabel(bk.checkInRaw, bk.checkInTime)}`}
                       onMouseEnter={(e) => { e.currentTarget.style.background = "#9C6739"; }}
                       onMouseLeave={(e) => { e.currentTarget.style.background = "#B07848"; }}
                       style={{ padding: "11px 18px", borderRadius: 11, border: "none", background: "#B07848", color: "#FFFCF4", fontFamily: "inherit", fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap", cursor: "pointer", transition: "background .15s" }}>
-                      Check guest in
+                      {checkInIsOpen ? "Check guest in" : "Check in early"}
                     </button>
                   )}
                   <a href={bk.email ? `mailto:${bk.email}` : undefined}
