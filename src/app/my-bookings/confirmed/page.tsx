@@ -470,8 +470,14 @@ function ConfirmedInner() {
                 </>
               ) : hasPendingDateChange ? (
                 <span style={{ color: "#8C5A2E", fontWeight: 500 }}>Date-change request pending — we&apos;ll notify you once it&apos;s reviewed.</span>
+              ) : Number(booking.dateChangeCount ?? 0) >= 1 ? (
+                // Used their one change. Saying "message us and we'll sort it out"
+                // here promised something the no-cancellation policy doesn't allow.
+                "You've already used your one free date change, so these dates are final. Bookings can't be cancelled."
+              ) : daysUntilCheckIn < 7 ? (
+                "Date changes close 7 days before check-in, so these dates are now final. Bookings can't be cancelled."
               ) : (
-                "Need to change your dates? Just message us and we'll sort it out for you."
+                "These dates are final for this booking. Bookings can't be cancelled — message us if you have any questions."
               )}
             </p>
           </div>

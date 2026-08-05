@@ -198,7 +198,7 @@ export async function POST(request: NextRequest) {
                     <div style="font-size:12px;font-weight:700;color:#9c8974;letter-spacing:0.6px;text-transform:uppercase;margin-bottom:10px;">Good to Know</div>
                     <div style="font-size:13px;line-height:1.5;color:#5c4a3c;margin-bottom:6px;">&bull; Please bring a valid government-issued ID during check-in.</div>
                     <div style="font-size:13px;line-height:1.5;color:#5c4a3c;margin-bottom:6px;">&bull; Early check-in is subject to room availability.</div>
-                    <div style="font-size:13px;line-height:1.5;color:#5c4a3c;">&bull; Need to change your dates? Contact us at least 48 hours ahead.</div>
+                    <div style="font-size:13px;line-height:1.5;color:#5c4a3c;">&bull; No cancellation policy, but we allow one-time change of date reservation 7 days before the scheduled date. You can choose a date within a month from your original scheduled date.</div>
                   </td>
                 </tr>
               </table>
