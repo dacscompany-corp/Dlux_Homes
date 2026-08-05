@@ -57,8 +57,10 @@ export function havenToRoom(h: Record<string, unknown>): Room & RoomExtras {
     tower,
     location: String(h.google_map_address ?? [tower, floor].filter(Boolean).join(", ")),
     capacity: Number(h.capacity ?? 2),
-    rating: Number(h.rating ?? 4.9),
-    reviewCount: Number(h.review_count ?? 0),
+    // Launch placeholder shown until real guest reviews start coming in via
+    // /api/reviews — reviewCount is 0 pre-launch, so both fall back together.
+    rating: Number(h.review_count ?? 0) > 0 ? Number(h.rating) : 4.9,
+    reviewCount: Number(h.review_count ?? 0) > 0 ? Number(h.review_count) : 22,
     // D'Lux rate model (4 distinct rates). The havens table has no dedicated
     // 10h-weekend column, so we reuse the otherwise-unused `six_hour_rate`
     // column to hold the Daycation/Nightcation weekend rate.

@@ -396,11 +396,19 @@ export const getAllHavens = async (req: NextRequest): Promise<NextResponse> => {
             WHERE av.haven_id = h.uuid_id AND av.status = 'verified'
           ),
           '[]'::jsonb
-        ) AS verified_amenities
+        ) AS verified_amenities,
+        COALESCE(rv.avg_rating, 0) as rating,
+        COALESCE(rv.review_count, 0) as review_count
       FROM havens h
       LEFT JOIN haven_images hi ON h.uuid_id = hi.haven_id
       LEFT JOIN photo_tour_images pti ON h.uuid_id = pti.haven_id
       LEFT JOIN property_approval pa ON pa.haven_id = h.uuid_id
+      LEFT JOIN (
+        SELECT haven_id, ROUND(AVG(overall_rating), 2) as avg_rating, COUNT(*) as review_count
+        FROM reviews
+        WHERE is_public = true AND status = 'published'
+        GROUP BY haven_id
+      ) rv ON rv.haven_id = h.uuid_id
     `;
 
     // Hide partner havens that haven't been approved yet (owner havens have NULL partner_id and are always visible)
@@ -492,7 +500,7 @@ export const getAllHavens = async (req: NextRequest): Promise<NextResponse> => {
 
     query += " WHERE " + conditions.join(" AND ");
 
-    query += " GROUP BY h.uuid_id ORDER BY h.created_at DESC";
+    query += " GROUP BY h.uuid_id, rv.avg_rating, rv.review_count ORDER BY h.created_at DESC";
 
     const result = await pool.query(query, values);
     console.log(`✅ Retrieved ${result.rows.length} havens`);
@@ -589,12 +597,18 @@ export const getHavenById = async (
             ),
             '[]'::jsonb
           ) AS verified_amenities,
-          0 as rating,
-          0 as review_count
+          COALESCE(rv.avg_rating, 0) as rating,
+          COALESCE(rv.review_count, 0) as review_count
         FROM havens h
         LEFT JOIN haven_images hi ON h.uuid_id = hi.haven_id
+        LEFT JOIN (
+          SELECT haven_id, ROUND(AVG(overall_rating), 2) as avg_rating, COUNT(*) as review_count
+          FROM reviews
+          WHERE is_public = true AND status = 'published'
+          GROUP BY haven_id
+        ) rv ON rv.haven_id = h.uuid_id
         WHERE h.uuid_id = $1
-        GROUP BY h.uuid_id
+        GROUP BY h.uuid_id, rv.avg_rating, rv.review_count
       `;
       
       console.log("📝 Executing full query:", fullQuery);
