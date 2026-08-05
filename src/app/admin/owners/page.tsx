@@ -76,6 +76,8 @@ import {
   Trash2,
   CheckCircle2,
   Send,
+  ChevronDown,
+  Info,
 } from "lucide-react";
 
 // PromotionRecord types start_date/end_date as string, but server actions return
@@ -125,6 +127,9 @@ export default function OwnerDashboard() {
   const [systemTab, setSystemTab]     = useState<"settings"|"logs">("settings");
   const [overviewTab, setOverviewTab] = useState<"dashboard"|"analytics">("dashboard");
   const [bookingsTab, setBookingsTab] = useState<"list"|"calendar"|"blocked">("list");
+  // Booking guide starts open, matching the design — it is reference material an
+  // owner can collapse once the flow is familiar.
+  const [guideOpen, setGuideOpen] = useState(true);
   const [financeTab, setFinanceTab]   = useState<"revenue"|"methods"|"promotions">("revenue");
   const [teamTab, setTeamTab]         = useState<"staff"|"users"|"partners">("staff");
 
@@ -1147,56 +1152,94 @@ export default function OwnerDashboard() {
           {bookingsTab === "calendar" && <BookingCalendarSection />}
           {bookingsTab === "blocked" && <BlockedDatesSection />}
           {bookingsTab === "list" && (<>
-          <div className="p-5 mb-5 rounded-xl" style={{ backgroundColor: "#1f1b16" }}>
-            <h3 className="font-bold text-white mb-1">Booking Actions</h3>
-            <p className="text-xs mb-4" style={{ color: "#a8a29e" }}>
-              Each icon appears only at the stage it applies to, so a row shows just what you can do next.
-            </p>
-
-            {/* Row 1 — the normal path a booking walks, left to right. */}
-            <div className="text-[11px] uppercase tracking-[0.08em] mb-2.5" style={{ color: "#8B6344" }}>Main flow</div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 mb-5">
-              {[
-                { label: "Approve", icon: Check, iconBg: "#10b981", desc: "Accept a pending request" },
-                { label: "Confirm payment", icon: CheckCircle2, iconBg: "#059669", desc: "Down payment received → Confirmed" },
-                { label: "Check in", icon: LogIn, iconBg: "#3b82f6", desc: "Mark arrived + send check-in instructions" },
-                { label: "Collect", icon: Wallet, iconBg: "#b45309", desc: "Take balance + deposit, send house rules" },
-                { label: "Check out", icon: LogOut, iconBg: "#ef4444", desc: "Complete the stay" },
-              ].map((s) => (
-                <div key={s.label} className="flex gap-2.5">
-                  <span className="flex items-center justify-center rounded-full" style={{ width: 22, height: 22, background: s.iconBg, flex: "none" }}>
-                    <s.icon className="w-3 h-3 text-white" />
-                  </span>
-                  <div>
-                    <p className="text-sm font-semibold text-white">{s.label}</p>
-                    <p className="text-xs mt-0.5" style={{ color: "#a8a29e" }}>{s.desc}</p>
-                  </div>
-                </div>
-              ))}
+          {/* Booking guide. Collapsible — it is long, and an owner who already
+              knows the flow shouldn't have to scroll past it every visit. */}
+          <section className="mb-5" style={{ background: "#fff", border: "1px solid #ece5d4" }}>
+            <div className="flex items-start justify-between gap-6 px-6 py-5" style={{ borderBottom: guideOpen ? "1px solid #f2ece0" : "none" }}>
+              <div style={{ maxWidth: 640 }}>
+                <h3 style={{ fontFamily: "var(--font-fraunces), Georgia, serif", fontWeight: 400, fontSize: 22, lineHeight: 1, margin: "0 0 8px", color: "#1f1b16" }}>
+                  What each booking button does
+                </h3>
+                <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: "#6b6358" }}>
+                  A booking moves through five steps, from a new request to the guest leaving. In the table
+                  below, you only ever see the buttons for the step a booking is on right now — so if a
+                  button isn&rsquo;t there, it isn&rsquo;t your turn yet.
+                </p>
+              </div>
+              <button type="button" onClick={() => setGuideOpen((v) => !v)}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "#f3eee2"; e.currentTarget.style.color = "#1f1b16"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "#faf7f1"; e.currentTarget.style.color = "#6b6358"; }}
+                style={{ flex: "none", display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 14px", fontFamily: "inherit", fontSize: 13, fontWeight: 500, color: "#6b6358", background: "#faf7f1", border: "1px solid #e8e1d2", cursor: "pointer" }}>
+                {guideOpen ? "Hide guide" : "Show guide"}
+                <ChevronDown className="w-3.5 h-3.5" style={{ transform: guideOpen ? "rotate(180deg)" : "none", transition: "transform .18s" }} />
+              </button>
             </div>
 
-            {/* Row 2 — exceptions. These sit outside the flow and can show up
-                alongside whichever main-flow action is current. */}
-            <div className="text-[11px] uppercase tracking-[0.08em] mb-2.5 pt-4" style={{ color: "#8B6344", borderTop: "1px solid rgba(255,255,255,.08)" }}>Other actions</div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {[
-                { label: "View", icon: Eye, iconBg: "#8B6344", desc: "Full booking details — shown at every stage" },
-                { label: "Reject", icon: XCircle, iconBg: "#dc2626", desc: "Decline a pending request with a reason" },
-                { label: "Approve date change", icon: CalendarDays, iconBg: "#059669", desc: "Move the stay to the guest's requested date" },
-                { label: "Reject date change", icon: CalendarOff, iconBg: "#b91c1c", desc: "Keep the original date" },
-              ].map((s) => (
-                <div key={s.label} className="flex gap-2.5">
-                  <span className="flex items-center justify-center rounded-full" style={{ width: 22, height: 22, background: s.iconBg, flex: "none" }}>
-                    <s.icon className="w-3 h-3 text-white" />
-                  </span>
-                  <div>
-                    <p className="text-sm font-semibold text-white">{s.label}</p>
-                    <p className="text-xs mt-0.5" style={{ color: "#a8a29e" }}>{s.desc}</p>
-                  </div>
+            {guideOpen && (
+              <div className="p-6">
+                <div style={{ fontFamily: "var(--font-geist-mono), ui-monospace, monospace", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#8B6344", marginBottom: 16 }}>
+                  The five steps, in order
                 </div>
-              ))}
-            </div>
-          </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
+                  {[
+                    { n: 1, label: "Approve", icon: Check, bg: "#10b981", desc: "Say yes to a new booking request. The guest is told their dates are accepted and is asked to pay the down payment." },
+                    { n: 2, label: "Confirm payment", icon: CheckCircle2, bg: "#059669", desc: "Use this once the down payment has landed. The booking status changes to Confirmed and the room is held for the guest." },
+                    { n: 3, label: "Check in", icon: LogIn, bg: "#3b82f6", desc: "Mark that the guest has arrived. You can do this at any time, even days before their stay starts." },
+                    { n: 4, label: "Collect", icon: Wallet, bg: "#b45309", desc: "Take what's still owed plus the ₱1,000 refundable deposit. The house rules are emailed to the guest for you." },
+                    { n: 5, label: "Check out", icon: LogOut, bg: "#ef4444", desc: "The guest has left and the stay is finished. This closes the booking for good." },
+                  ].map((s) => (
+                    <div key={s.n} style={{ background: "#faf7f1", border: "1px solid #f0e9db", padding: "18px 16px 16px" }}>
+                      <div className="flex items-center gap-2.5 mb-3">
+                        <span className="grid place-items-center rounded-full" style={{ width: 30, height: 30, flex: "none", background: s.bg }}>
+                          <s.icon className="w-[15px] h-[15px] text-white" />
+                        </span>
+                        <span style={{ fontFamily: "var(--font-geist-mono), ui-monospace, monospace", fontSize: 11, color: "#b0a695" }}>STEP {s.n}</span>
+                      </div>
+                      <p style={{ margin: "0 0 6px", fontSize: 15, fontWeight: 600, color: "#1f1b16" }}>{s.label}</p>
+                      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: "#6b6358" }}>{s.desc}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* The least obvious behaviour in the flow, so it gets its own callout. */}
+                <div className="flex gap-3 items-start mt-4" style={{ padding: "14px 16px", background: "#fdf6ec", border: "1px solid #f0e2cb" }}>
+                  <Info className="w-[17px] h-[17px] mt-px" style={{ flex: "none", color: "#b8754a" }} />
+                  <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: "#6b5b45" }}>
+                    <strong style={{ color: "#4a3d2c", fontWeight: 600 }}>About the arrival email.</strong>{" "}
+                    Door codes and arrival instructions are sent to the guest automatically, 2 hours before
+                    check-in time. If you check someone in early, the email is not rushed out ahead of
+                    schedule — they are simply marked as arrived.
+                  </p>
+                </div>
+
+                <div style={{ fontFamily: "var(--font-geist-mono), ui-monospace, monospace", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#8B6344", margin: "28px 0 6px" }}>
+                  If something else comes up
+                </div>
+                <p style={{ margin: "0 0 16px", fontSize: 13, color: "#8a8276" }}>
+                  These aren&rsquo;t part of the normal order. They show up next to the step buttons when they apply.
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
+                  {[
+                    { label: "View", icon: Eye, bg: "#8B6344", desc: "Open the whole booking — guest, dates, room and payments. Always available." },
+                    { label: "Send instructions", icon: Send, bg: "#b08968", desc: "Send the arrival email yourself. Only appears while the automatic one hasn't gone out yet." },
+                    { label: "Reject", icon: XCircle, bg: "#dc2626", desc: "Turn down a new request. You'll be asked to give a reason, which the guest receives." },
+                    { label: "Approve date change", icon: CalendarDays, bg: "#059669", desc: "The guest asked to move their stay. This accepts their new dates." },
+                    { label: "Reject date change", icon: CalendarOff, bg: "#b91c1c", desc: "Say no to the move. The stay keeps the dates that were originally booked." },
+                  ].map((s) => (
+                    <div key={s.label} style={{ border: "1px solid #f0e9db", padding: 16 }}>
+                      <span className="grid place-items-center rounded-full mb-2.5" style={{ width: 26, height: 26, background: s.bg }}>
+                        <s.icon className="w-[13px] h-[13px] text-white" />
+                      </span>
+                      <p style={{ margin: "0 0 5px", fontSize: 14, fontWeight: 600, color: "#1f1b16" }}>{s.label}</p>
+                      <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.5, color: "#6b6358" }}>{s.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
           <div className="border overflow-hidden" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }}>
             <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: "#ece5d4" }}>
               <div>
