@@ -14,7 +14,7 @@ import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
 import type { ActivePromotion, PromoStayType } from "@/redux/api/promotionsApi";
 import {
   ALL_STAY_TYPES, STAY_TYPE_LABELS, baseRateFor, expiryNoteShort, isEnforceable,
-  offerPriceFor, pesoAmount, promoCoversStay, scopedStayTypes,
+  discountBadgeText, offerPriceFor, pesoAmount, promoCoversStay, promoDiscountOn, scopedStayTypes,
 } from "@/lib/promo-offer";
 import { havenToRoom } from "@/lib/haven-adapter";
 import { stayTotal, isWeekendOrHoliday, extraPaxFee, bundleNightlyRate, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS } from "@/lib/pricing";
@@ -305,21 +305,29 @@ function StayTypeChips({ scope, fontSize = 12.5, padding = "6px 12px" }: { scope
 // Offer card for the room page. Unlike the home page there's no button — the
 // booking panel beside/below it is the action — so the card's job is to explain
 // that the price the guest is about to see is already the discounted one.
-function PromoBanner({ promotions, rates, variant }: {
+function PromoBanner({ promotions, rates, variant, promoCode = "" }: {
   promotions: ActivePromotion[] | undefined;
   rates: { price10hr: number; price21hr: number };
   variant: "mobile" | "desktop";
+  /** ?promo= from the URL — tells us whether a voucher is actually in play. */
+  promoCode?: string;
 }) {
   if (!promotions || promotions.length === 0) return null;
   const p = promotions[0];
   const { base, unitLabel } = baseRateFor(p, rates);
   const price = offerPriceFor(base, p);
   const savings = Math.max(0, base - price);
-  // Only a code-carrying promo actually reduces the charge (see isEnforceable),
-  // so a codeless one shows as an announcement without a price claim.
+  // A promotion with no real discount is an announcement and makes no price
+  // claim at all.
   const discounted = isEnforceable(p) && price < base;
+  // A voucher only affects the booking panel once its code is in play; until
+  // then the card advertises the offer but must not claim it's applied.
+  const isVoucherPromo = p.redemption === "voucher" && !!p.discount_code;
+  const codeInPlay = isVoucherPromo && promoCode.trim().toUpperCase() === p.discount_code!.toUpperCase();
+  const appliedNow = discounted && (!isVoucherPromo || codeInPlay);
   const scope = scopedStayTypes(p);
   const note = expiryNoteShort(p.end_date);
+  const badgeText = discountBadgeText(p.discount_type, p.discount_value);
 
   if (variant === "mobile") {
     return (
@@ -335,8 +343,11 @@ function PromoBanner({ promotions, rates, variant }: {
             {p.description && <p style={{ fontSize: 12.5, lineHeight: 1.45, color: "#4A3A2A", margin: "4px 0 0" }}>{p.description}</p>}
           </div>
           {discounted && (
-            <span style={{ marginLeft: "auto", flex: "none", background: "#E4F3E4", color: "#15803D", fontSize: 11.5, fontWeight: 600, padding: "5px 9px", borderRadius: 999, whiteSpace: "nowrap" }}>
-              &minus; {pesoAmount(savings)}
+            <span style={{ marginLeft: "auto", flex: "none", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5 }}>
+              <span style={{ padding: "4px 9px", fontSize: 11.5, fontWeight: 600, color: "#FFFCF4", background: "#B07848", whiteSpace: "nowrap" }}>{badgeText}</span>
+              <span style={{ background: "#E4F3E4", color: "#15803D", fontSize: 11.5, fontWeight: 600, padding: "5px 9px", borderRadius: 999, whiteSpace: "nowrap" }}>
+                &minus; {pesoAmount(savings)}
+              </span>
             </span>
           )}
         </div>
@@ -345,7 +356,13 @@ function PromoBanner({ promotions, rates, variant }: {
 
         <div style={{ display: "flex", alignItems: "center", gap: 10, paddingTop: 12, borderTop: "1px solid #EFE4CE" }}>
           <span style={{ color: "#15803D", flex: "none", display: "inline-flex" }}><IcoCheckBold size={14} stroke={2.4} /></span>
-          <span style={{ fontSize: 12.5, color: "#4A3A2A" }}>{discounted ? "Already applied to the price below." : "Message us to have this applied to your booking."}</span>
+          <span style={{ fontSize: 12.5, color: "#4A3A2A" }}>
+            {!discounted
+              ? "Pick your dates below to book this home."
+              : appliedNow
+                ? "Already applied to the price below."
+                : `Enter code ${p.discount_code} at checkout to get this price.`}
+          </span>
           {note && <span style={{ marginLeft: "auto", flex: "none", fontSize: 11.5, fontWeight: 600, color: "#8C5A2E", whiteSpace: "nowrap" }}>{note}</span>}
         </div>
       </div>
@@ -363,13 +380,22 @@ function PromoBanner({ promotions, rates, variant }: {
           <span style={{ display: "inline-flex", alignItems: "center", gap: 7, background: "#F3E4CB", color: "#8C5A2E", borderRadius: 999, padding: "5px 11px", fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 10.5, letterSpacing: ".14em", whiteSpace: "nowrap" }}>
             <IcoTagSm /> SPECIAL OFFER
           </span>
+          {discounted && badgeText && <span style={{ padding: "5px 11px", fontSize: 12, fontWeight: 600, color: "#FFFCF4", background: "#B07848", whiteSpace: "nowrap" }}>{badgeText}</span>}
           {note && <span style={{ fontSize: 12, fontWeight: 600, color: "#8C5A2E", whiteSpace: "nowrap" }}>{note}</span>}
         </div>
         <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 26, fontWeight: 500, lineHeight: 1.05, letterSpacing: "-.02em", color: "#1F160E", margin: 0 }}>{p.title}</h3>
         {scope && <StayTypeChips scope={scope} />}
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
           <span style={{ color: "#15803D", flex: "none", display: "inline-flex" }}><IcoCheckBold size={15} stroke={2.4} /></span>
-          <span style={{ fontSize: 13, color: "#4A3A2A" }}>{discounted ? `Applied automatically at checkout with code ${p.discount_code}.` : "Message us to have this applied to your booking."}</span>
+          <span style={{ fontSize: 13, color: "#4A3A2A" }}>
+            {!discounted
+              ? "Pick your dates on the right to book this home."
+              : appliedNow
+                ? isVoucherPromo
+                  ? `Code ${p.discount_code} applied — it's in the price on the right.`
+                  : "Already applied to the price on the right. No code needed."
+                : `Enter code ${p.discount_code} at checkout to get this price.`}
+          </span>
         </div>
       </div>
       {discounted && (
@@ -457,7 +483,8 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   const [wished, setWished] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [bookingCount, setBookingCount] = useState(0);
-  const { status: authStatus } = useSession();
+  const { data: session, status: authStatus } = useSession();
+  const sessionUserId = (session?.user as { id?: string } | undefined)?.id ?? null;
   const signedIn = authStatus === "authenticated";
   useEffect(() => { setBookingCount(getMyBookingIds().length); }, []);
 
@@ -675,16 +702,78 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   // stay type the guest picked, so an overnight-only promo never discounts a
   // Daycation quote. Only meaningful once a stay type is chosen.
   const stayRate = selectedWindow.stayType === "10" ? room.price10hr : room.price21hr;
+  // Is this voucher's code actually in play for this visit? Reserve only
+  // forwards ?promo= to checkout when it arrived in the URL, so a voucher the
+  // guest hasn't opted into must NOT move the price here — showing ₱1,199 and
+  // then charging ₱1,499 at checkout is the worst possible outcome.
+  const voucherActive = (p: ActivePromotion) =>
+    !!p.discount_code && promoCode.trim().toUpperCase() === p.discount_code.toUpperCase();
   const livePromo = stayChosen
     ? (activePromotions || []).find(
         (p) => isEnforceable(p)
           && promoCoversStay(p, selectedWindow.stayType === "10" ? "10" : "21")
-          && offerPriceFor(stayRate, p) < stayRate,
+          && offerPriceFor(stayRate, p) < stayRate
+          && (p.redemption === "automatic" || voucherActive(p)),
       )
     : undefined;
   const offerRate = livePromo ? offerPriceFor(stayRate, livePromo) : stayRate;
   const offerSaving = stayRate - offerRate;
   const headlinePrice = stayChosen ? offerRate : fromPrice;
+
+  // ── Promo code entry ──────────────────────────────────────────────────
+  // Checkout owns the authoritative apply (it re-validates with the session and
+  // is where the money is computed). This is the same endpoint, so the guest can
+  // see the code land before committing instead of discovering it two screens
+  // later. `?promo=` carries it to checkout via handleReserve.
+  type EnteredDiscount = { code: string; name: string; discount_amount: number };
+  const [promoInput, setPromoInput] = useState(promoCode);
+  const [enteredPromo, setEnteredPromo] = useState<EnteredDiscount | null>(null);
+  const [promoStatus, setPromoStatus] = useState<"idle" | "checking" | "error">("idle");
+  const [promoError, setPromoError] = useState("");
+
+  const applyPromoCode = async (raw?: string) => {
+    const code = (raw ?? promoInput).trim();
+    if (!code) return;
+    setPromoStatus("checking");
+    setPromoError("");
+    try {
+      const res = await fetch("/api/discounts/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, haven_id: isUuid ? id : null, amount: total, user_id: sessionUserId }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.success) {
+        setEnteredPromo(null);
+        setPromoStatus("error");
+        setPromoError(json?.error || "This promo code is invalid or has expired.");
+        return;
+      }
+      setEnteredPromo({ code: json.data.code, name: json.data.name, discount_amount: Number(json.data.discount_amount) || 0 });
+      setPromoStatus("idle");
+    } catch {
+      setEnteredPromo(null);
+      setPromoStatus("error");
+      setPromoError("Network error. Please try again.");
+    }
+  };
+  const clearPromoCode = () => {
+    setEnteredPromo(null); setPromoInput(""); setPromoStatus("idle"); setPromoError("");
+  };
+  // The code the guest is actually travelling to checkout with.
+  const effectivePromoCode = enteredPromo?.code || promoCode;
+
+  // One discount, applied to the total — mirroring checkout, where a code the
+  // guest entered wins over an automatic promotion and the two never stack.
+  // Computed on `total` (not the nightly rate) so this page and checkout agree
+  // to the peso on multi-night stays and bookings with extra-guest fees.
+  const promoDiscount = enteredPromo
+    ? Math.min(total, enteredPromo.discount_amount)
+    : livePromo
+      ? promoDiscountOn(livePromo, total)
+      : 0;
+  const payableTotal = Math.max(0, total - promoDiscount);
+  const promoLabel = enteredPromo ? enteredPromo.code : livePromo?.title ?? "";
 
   const handleReserve = () => {
     const params = new URLSearchParams({
@@ -699,7 +788,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
       infants: String(guests.infants),
       nights: String(stayNights),
     });
-    if (promoCode) params.set("promo", promoCode);
+    if (effectivePromoCode) params.set("promo", effectivePromoCode);
     window.location.href = `/checkout?${params.toString()}`;
   };
 
@@ -822,7 +911,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
             </div>
 
             <div style={{ marginTop: 14 }}>
-              <PromoBanner promotions={activePromotions} rates={room} variant="mobile" />
+              <PromoBanner promotions={activePromotions} rates={room} variant="mobile" promoCode={promoCode} />
             </div>
 
             {/* title */}
@@ -995,7 +1084,38 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                 <div style={{ borderTop: "1px solid #EFE4CE", paddingTop: 15, display: "flex", flexDirection: "column", gap: 8, fontSize: 13.5 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#4A3A2A" }}><span style={{ whiteSpace: "nowrap" }}>{selectedWindow.label} · {isOvernight ? `${stayNights} night${stayNights > 1 ? "s" : ""}${bundleLabel ? ` · ${bundleLabel}` : ""}` : (isWeekendRate ? "Weekend/Holiday" : "Weekday")}</span><span>{peso(basePrice)}</span></div>
                   {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra guests · {extraPaxCount} × {peso(room.additionalPaxFee)}</span><span>{peso(paxFee)}</span></div>}
-                  <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16, paddingTop: 9, borderTop: "1px solid #EFE4CE" }}><span>Total</span><span>{peso(total)}</span></div>
+                  {promoDiscount > 0 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{promoLabel}</span><span style={{ flex: "none" }}>&minus;{peso(promoDiscount)}</span></div>
+                  )}
+                  <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16, paddingTop: 9, borderTop: "1px solid #EFE4CE" }}><span>Total</span><span>{peso(payableTotal)}</span></div>
+                  {/* PROMO CODE — mirrors the desktop panel; checkout re-validates. */}
+                  {enteredPromo ? (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, background: "#EAF7EF", border: "1px solid #BCE7CC", borderRadius: 12, padding: "10px 14px", marginTop: 4 }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#166534" }}>{enteredPromo.code} applied</div>
+                        <div style={{ fontSize: 11.5, color: "#3A6B4C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{enteredPromo.name}</div>
+                      </div>
+                      <button type="button" onClick={clearPromoCode} style={{ fontSize: 12, fontWeight: 600, color: "#166534", background: "transparent", border: "none", textDecoration: "underline", cursor: "pointer", flex: "none", fontFamily: "inherit" }}>Remove</button>
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: 4 }}>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <input
+                          aria-label="Promo code"
+                          value={promoInput}
+                          onChange={(e) => { setPromoInput(e.target.value.toUpperCase()); if (promoStatus === "error") { setPromoStatus("idle"); setPromoError(""); } }}
+                          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); applyPromoCode(); } }}
+                          placeholder="Promo code"
+                          style={{ flex: 1, minWidth: 0, padding: "10px 12px", fontSize: 13, fontFamily: "inherit", color: "#1F160E", background: "#FFFCF4", borderRadius: 12, border: `1.5px solid ${promoStatus === "error" ? "#ef4444" : "#E0CEB2"}`, outline: "none" }}
+                        />
+                        <button type="button" onClick={() => applyPromoCode()} disabled={!promoInput.trim() || promoStatus === "checking"}
+                          style={{ padding: "10px 16px", borderRadius: 12, background: "#1F160E", color: "#F6EFE2", border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer", flex: "none", fontFamily: "inherit", opacity: (!promoInput.trim() || promoStatus === "checking") ? 0.5 : 1 }}>
+                          {promoStatus === "checking" ? "Checking…" : "Apply"}
+                        </button>
+                      </div>
+                      {promoStatus === "error" && <div style={{ fontSize: 11.5, color: "#ef4444", marginTop: 6 }}>{promoError}</div>}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1132,7 +1252,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
             </button>
           </div>{/* end carousel */}
 
-          <PromoBanner promotions={activePromotions} rates={room} variant="desktop" />
+          <PromoBanner promotions={activePromotions} rates={room} variant="desktop" promoCode={promoCode} />
 
           {/* All scrollable content below carousel */}
           <div style={{ marginTop: 20 }}>
@@ -1439,7 +1559,10 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                     <div style={{ borderTop: "1px solid #EFE4CE", paddingTop: 16, display: "flex", flexDirection: "column", gap: 8, fontSize: 13.5 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#4A3A2A" }}><span style={{ whiteSpace: "nowrap" }}>{selectedWindow.label} · {isOvernight ? `${stayNights} night${stayNights > 1 ? "s" : ""}${bundleLabel ? ` · ${bundleLabel}` : ""}` : (isWeekendRate ? "Weekend/Holiday" : "Weekday")}</span><span>{peso(basePrice)}</span></div>
                       {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra guests · {extraPaxCount} × {peso(room.additionalPaxFee)}</span><span>{peso(paxFee)}</span></div>}
-                      <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16, paddingTop: 9, borderTop: "1px solid #EFE4CE" }}><span>Total</span><span>{peso(total)}</span></div>
+                      {promoDiscount > 0 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{promoLabel}</span><span style={{ flex: "none" }}>&minus;{peso(promoDiscount)}</span></div>
+                  )}
+                  <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16, paddingTop: 9, borderTop: "1px solid #EFE4CE" }}><span>Total</span><span>{peso(payableTotal)}</span></div>
                     </div>
                   )}
 
@@ -1459,6 +1582,42 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                         <span style={{ fontSize: 14, fontWeight: 600, color: "#1F160E" }}>You pay</span>
                         <span style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 26, fontWeight: 500, lineHeight: 1, color: "#1F160E" }}>{peso(offerRate)}</span>
                       </div>
+                    </div>
+                  )}
+
+
+                  {/* PROMO CODE — checkout re-validates and is authoritative;
+                      this just lets the guest see the code land before they
+                      commit, instead of two screens later. */}
+                  {date && stayChosen && (
+                    <div style={{ borderTop: "1px solid #EFE4CE", paddingTop: 14 }}>
+                      {enteredPromo ? (
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, background: "#EAF7EF", border: "1px solid #BCE7CC", borderRadius: 12, padding: "10px 14px" }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: "#166534" }}>{enteredPromo.code} applied</div>
+                            <div style={{ fontSize: 11.5, color: "#3A6B4C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{enteredPromo.name}</div>
+                          </div>
+                          <button type="button" onClick={clearPromoCode} style={{ fontSize: 12, fontWeight: 600, color: "#166534", background: "transparent", border: "none", textDecoration: "underline", cursor: "pointer", flex: "none", fontFamily: "inherit" }}>Remove</button>
+                        </div>
+                      ) : (
+                        <>
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <input
+                              aria-label="Promo code"
+                              value={promoInput}
+                              onChange={(e) => { setPromoInput(e.target.value.toUpperCase()); if (promoStatus === "error") { setPromoStatus("idle"); setPromoError(""); } }}
+                              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); applyPromoCode(); } }}
+                              placeholder="Promo code"
+                              style={{ flex: 1, minWidth: 0, padding: "10px 12px", fontSize: 13, fontFamily: "inherit", color: "#1F160E", background: "#FFFCF4", borderRadius: 12, border: `1.5px solid ${promoStatus === "error" ? "#ef4444" : "#E0CEB2"}`, outline: "none" }}
+                            />
+                            <button type="button" onClick={() => applyPromoCode()} disabled={!promoInput.trim() || promoStatus === "checking"}
+                              style={{ padding: "10px 16px", borderRadius: 12, background: "#1F160E", color: "#F6EFE2", border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer", flex: "none", fontFamily: "inherit", opacity: (!promoInput.trim() || promoStatus === "checking") ? 0.5 : 1 }}>
+                              {promoStatus === "checking" ? "Checking…" : "Apply"}
+                            </button>
+                          </div>
+                          {promoStatus === "error" && <div style={{ fontSize: 11.5, color: "#ef4444", marginTop: 6 }}>{promoError}</div>}
+                        </>
+                      )}
                     </div>
                   )}
 

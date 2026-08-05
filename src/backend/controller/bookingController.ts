@@ -458,6 +458,9 @@ export const createBooking = async (
       discount_id,
       discount_code,
       discount_amount,
+      // Automatic (codeless) promotion applied at checkout. Recorded against
+      // the account below so it can only ever be used once per guest.
+      promotion_id,
       // Add-ons (frontend sends snake_case `add_ons`)
       add_ons: addOns = {},
     } = body;
@@ -931,6 +934,23 @@ export const createBooking = async (
         } catch (err) {
           console.error("⚠️ [BOOKING] Failed to record discount redemption:", err);
         }
+      }
+    }
+
+    // Same rule for an automatic promotion: one redemption per guest account.
+    // The UNIQUE (promotion_id, user_id) pair is the real enforcement — from
+    // here on /api/promotions/active stops returning this promotion to this
+    // guest, so no later surface can offer it to them again.
+    if (promotion_id && user_id) {
+      try {
+        await client.query(
+          `INSERT INTO promotion_users (promotion_id, user_id, booking_id, used, used_at)
+           VALUES ($1, $2, $3, true, NOW())
+           ON CONFLICT (promotion_id, user_id) DO UPDATE SET used = true, used_at = NOW()`,
+          [promotion_id, user_id, bookingId]
+        );
+      } catch (err) {
+        console.error("⚠️ [BOOKING] Failed to record promotion redemption:", err);
       }
     }
 
@@ -1810,32 +1830,11 @@ export const updateBookingStatus = async (
       }
     }
 
-    // Send welcome / check-in email when the guest is checked in
-    if (status === "checked-in" && bookingDetailsResult.rows.length > 0) {
-      try {
-        const booking = bookingDetailsResult.rows[0];
-        const emailData = {
-          firstName: booking.first_name,
-          lastName: booking.last_name,
-          email: booking.email,
-          bookingId: booking.booking_id,
-          roomName: booking.room_name,
-          checkInDate: booking.check_in_date ? new Date(booking.check_in_date).toLocaleDateString() : "",
-          checkInTime: booking.check_in_time,
-          checkOutDate: booking.check_out_date ? new Date(booking.check_out_date).toLocaleDateString() : "",
-          checkOutTime: booking.check_out_time,
-          guests: `${booking.adults} Adults, ${booking.children} Young Adults, ${booking.infants} Children`,
-        };
-        const emailResponse = await fetch(
-          `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/send-checkin-email`,
-          { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(emailData) },
-        );
-        if (!emailResponse.ok) console.error("❌ Failed to send check-in email");
-        else console.log("✅ Check-in email sent to:", booking.email);
-      } catch (emailError) {
-        console.error("❌ Email sending error:", emailError);
-      }
-    }
+    // The welcome / house-rules email is NOT sent on the status change.
+    // Check-in and payment are separate steps now: staff mark the guest arrived
+    // as soon as the check-in window opens, then collect the balance and
+    // deposit in person. The house rules belong with that second step, so it's
+    // triggered from there via /api/send-checkin-email/for-booking/[id].
 
     // Send thank-you / check-out email when the guest checks out
     if ((status === "completed" || status === "checked-out") && bookingDetailsResult.rows.length > 0) {

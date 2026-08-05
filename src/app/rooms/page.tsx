@@ -13,7 +13,7 @@ import { havenToRoom } from "@/lib/haven-adapter";
 import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
 import type { ActivePromotion, PromoStayType } from "@/redux/api/promotionsApi";
 import {
-  ALL_STAY_TYPES, STAY_TYPE_LABELS, baseRateFor, expiryNote, isEnforceable,
+  ALL_STAY_TYPES, STAY_TYPE_LABELS, baseRateFor, discountBadgeText, expiryNote, isEnforceable,
   offerPriceFor, pesoAmount, scopedStayTypes,
 } from "@/lib/promo-offer";
 
@@ -102,6 +102,16 @@ function OfferLabelPill({ padding = "5px 11px" }: { padding?: string }) {
     <span style={{ display: "inline-flex", alignItems: "center", gap: 7, background: "#F3E4CB", color: "#8C5A2E", borderRadius: 999, padding, fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 10.5, letterSpacing: ".14em", whiteSpace: "nowrap" }}>
       <IcoTagSm /> SPECIAL OFFER
     </span>
+  );
+}
+// Headline discount badge ("20% off"). The card leads with the peso figure —
+// that was the point of the redesign — but the percentage is what owners
+// advertise, so it rides alongside rather than replacing it.
+function DiscountBadge({ promo, fontSize = 12, padding = "4px 9px" }: { promo: ActivePromotion; fontSize?: number; padding?: string }) {
+  const text = discountBadgeText(promo.discount_type, promo.discount_value);
+  if (!text) return null;
+  return (
+    <span style={{ flex: "none", padding, fontSize, fontWeight: 600, color: "#FFFCF4", background: "#B07848", whiteSpace: "nowrap" }}>{text}</span>
   );
 }
 function SavingsPill({ amount, fontSize = 12, padding = "6px 11px" }: { amount: number; fontSize?: number; padding?: string }) {
@@ -230,7 +240,9 @@ function PromoBanner({ promotions, roomId, rates, variant }: {
         <div style={{ display: "flex", gap: 10 }}>
           <span style={{ color: "#8C5A2E", flex: "none", marginTop: 1, display: "inline-flex" }}><IcoInfo /></span>
           <p style={{ fontSize: 12.5, lineHeight: 1.55, color: "#4A3A2A", margin: 0 }}>
-            Tap the button to see this home and pick your dates. Message us to have this offer applied to your booking.
+            {discounted
+              ? "Nothing to type. Tap the button, pick your date, and the lower price is already there when you pay."
+              : "Tap the button to see this home and pick your dates."}
           </p>
         </div>
       )}
@@ -254,7 +266,10 @@ function PromoBanner({ promotions, roomId, rates, variant }: {
               <img src={expanded.image_url} alt="" style={{ width: 76, height: 76, borderRadius: 12, objectFit: "cover", flex: "none" }} />
             )}
             <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>
-              <h3 className="serif" style={{ fontSize: 20, lineHeight: 1.15, letterSpacing: "-.01em", color: "#1F160E", margin: 0, fontWeight: 500 }}>{expanded.title}</h3>
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+                <h3 className="serif" style={{ fontSize: 20, lineHeight: 1.15, letterSpacing: "-.01em", color: "#1F160E", margin: 0, fontWeight: 500 }}>{expanded.title}</h3>
+                {discounted && <DiscountBadge promo={expanded} />}
+              </div>
               {expanded.description && <p style={{ fontSize: 13, lineHeight: 1.5, color: "#4A3A2A", margin: 0 }}>{expanded.description}</p>}
             </div>
           </div>
@@ -311,6 +326,7 @@ function PromoBanner({ promotions, roomId, rates, variant }: {
         <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <OfferLabelPill padding="6px 12px" />
+            {discounted && <DiscountBadge promo={expanded} fontSize={12.5} padding="5px 11px" />}
             {note && <span style={{ fontSize: 12.5, fontWeight: 600, color: "#8C5A2E", whiteSpace: "nowrap" }}>{note}</span>}
           </div>
           <h3 className="serif" style={{ fontSize: 34, lineHeight: 1.02, letterSpacing: "-.025em", color: "#1F160E", margin: 0, fontWeight: 500 }}>{expanded.title}</h3>
@@ -326,7 +342,9 @@ function PromoBanner({ promotions, roomId, rates, variant }: {
             <p style={{ fontSize: 13, lineHeight: 1.5, color: "#4A3A2A", margin: 0 }}>
               {code
                 ? <>Use code <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", letterSpacing: ".06em", color: "#1F160E" }}>{code}</span> at checkout — or just follow the button and it&rsquo;s applied for you.</>
-                : <>Follow the button to see this home and pick your dates. Message us to have this offer applied to your booking.</>}
+                : discounted
+                  ? <>Nothing to type. Pick your date and the lower price is already there when you pay.</>
+                  : <>Follow the button to see this home and pick your dates.</>}
             </p>
           </div>
         </div>

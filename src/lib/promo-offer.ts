@@ -23,17 +23,61 @@ export const PROMO_STAY_TYPE_OPTIONS: { value: PromoStayType; label: string }[] 
 /**
  * Whether a promotion actually reduces what the guest is charged.
  *
- * Only code-carrying promos do: checkout auto-applies `?promo=` against
- * /api/discounts/validate, which is the sole path that touches the amount.
- * `stayTotal()` in lib/pricing.ts has no notion of promotions, so a codeless
- * promotion is advertising with no mechanism behind it — quoting an offer price
- * for one would promise a discount the guest would never actually receive.
+ * Two delivery methods now do:
+ *  - 'voucher'   → backed by a `discounts` code; checkout validates it via
+ *                  /api/discounts/validate (and `?promo=` auto-applies it).
+ *  - 'automatic' → no code; the storefront and checkout subtract the
+ *                  promotion's own discount directly (see autoDiscountAmount).
  *
- * If codeless promos should discount too, that belongs in the pricing/booking
- * path (and is an owner business-rules decision), not in this display layer.
+ * A promotion with no discount configured is an announcement either way, and
+ * must not make a price claim.
  */
 export function isEnforceable(promo: ActivePromotion): boolean {
-  return !!promo.discount_code;
+  if (!promo.discount_type || !(Number(promo.discount_value) > 0)) return false;
+  return promo.redemption === "voucher" ? !!promo.discount_code : true;
+}
+
+/** True when the guest has to type/redeem a code to get this offer. */
+export function isVoucher(promo: ActivePromotion): boolean {
+  return promo.redemption === "voucher" && !!promo.discount_code;
+}
+
+/**
+ * Peso amount an automatic promotion takes off a given amount. Returns 0 for
+ * voucher or announcement promotions — those are never applied implicitly.
+ *
+ * Percentage promos are rounded to the peso, matching offerPriceFor, so the
+ * headline on the offer card and the checkout line agree.
+ */
+export function autoDiscountAmount(promo: ActivePromotion, amount: number): number {
+  if (promo.redemption !== "automatic") return 0;
+  return promoDiscountOn(promo, amount);
+}
+
+/**
+ * Peso amount a promotion takes off `amount`, regardless of how it's delivered.
+ * Used where the delivery method has already been checked (a voucher whose code
+ * is in play, say) and only the arithmetic is needed.
+ */
+export function promoDiscountOn(promo: ActivePromotion, amount: number): number {
+  if (!isEnforceable(promo)) return 0;
+  const value = Number(promo.discount_value);
+  const off = promo.discount_type === "percentage" ? Math.round((amount * value) / 100) : value;
+  return Math.max(0, Math.min(amount, off));
+}
+
+/**
+ * The single automatic promotion to apply to a stay, or null. First match wins
+ * (the API returns newest first) — promotions never stack with each other, and
+ * an automatic one never stacks with a voucher the guest entered.
+ */
+export function pickAutoPromo(
+  promos: ActivePromotion[] | undefined,
+  stayType: StayTypeCode,
+): ActivePromotion | null {
+  return (promos || []).find(
+    (p) => p.redemption === "automatic" && isEnforceable(p) && promoCoversStay(p, stayType),
+  ) ?? null;
 }
 
 /**
@@ -129,3 +173,20 @@ export function baseRateFor(
 }
 
 export const pesoAmount = (n: number) => `₱${Math.round(n).toLocaleString("en-PH")}`;
+
+/**
+ * Headline discount badge, e.g. "20% off" / "₱500 off".
+ *
+ * Takes the raw fields rather than a promotion so the admin form's live preview
+ * (which only has form state, not a saved row) renders the identical string the
+ * guest card will — the two drifting is what made the preview misleading.
+ * Returns null when there's no real discount, so callers can omit the badge.
+ */
+export function discountBadgeText(
+  discountType: "percentage" | "fixed" | null | undefined,
+  discountValue: number | string | null | undefined,
+): string | null {
+  const value = Number(discountValue);
+  if (!discountType || !(value > 0)) return null;
+  return discountType === "percentage" ? `${value}% off` : `${pesoAmount(value)} off`;
+}

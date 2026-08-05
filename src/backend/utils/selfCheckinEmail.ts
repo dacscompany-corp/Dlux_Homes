@@ -1,5 +1,5 @@
-// Pre-arrival "self check-in" email — the key location, unit details, and the
-// house rules. Sent automatically BEFORE the guest arrives:
+// Pre-arrival "self check-in" email — four numbered steps, what to pay on
+// arrival, and where to send it. Sent automatically BEFORE the guest arrives:
 //   Daycation (morning check-in)      → 12:00 AM on the day of check-in
 //   Nightcation / Overnight (evening) → 2 hours before check-in
 // Scheduler: src/app/api/cron/send-self-checkin-emails/route.ts
@@ -7,12 +7,15 @@
 // Distinct from the CHECK-IN module (src/app/api/send-checkin-email), which is
 // sent AFTER an admin marks a booking "Checked In" to confirm the arrival. This
 // one tells the guest how to let themselves in; that one welcomes them once
-// they already have.
+// they already have — and it is the send that carries the HOUSE RULES.
 //
-// Same table-based layout as the other status emails (Gmail's spam-quarantine
-// view doesn't reliably honor margin:0 auto / display:flex).
+// Layout is from the owner's "Self Check-In Instructions" design. That design
+// is written in flexbox; this is not, deliberately. Gmail's spam-quarantine
+// view and every Outlook build ignore display:flex, so each flex row is
+// rebuilt as a table here. Same reason the other status emails are tables.
 
 import nodemailer from "nodemailer";
+import pool from "../config/db";
 
 const transporter = nodemailer.createTransport({
   service: "gmail",
@@ -22,30 +25,54 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// Unit access details. The Wi-Fi password and Netflix PIN are secrets — they
-// come from env only and their rows are simply omitted when unset, so nothing
-// sensitive is ever committed to the repo. The non-secret address bits keep
-// sensible defaults so the email still reads correctly out of the box.
+// Where the unit is and where the key lives. Non-secret, so these keep working
+// defaults — the env vars exist only so the owner can change unit or mailbox
+// without a deploy.
 const ACCESS = {
-  building: process.env.DLUX_BUILDING || "Fern at Grass Residences (Tower 4)",
+  tower: process.env.DLUX_TOWER || "Tower 4",
   floor: process.env.DLUX_FLOOR || "12th floor",
   unit: process.env.DLUX_UNIT_NUMBER || "1240",
   mailbox: process.env.DLUX_MAILBOX || "1240",
-  wifiName: process.env.DLUX_WIFI_NAME || "",
-  wifiPassword: process.env.DLUX_WIFI_PASSWORD || "",
-  netflixPin: process.env.DLUX_NETFLIX_PIN || "",
 };
+
+// Refundable, handed back at check-out. Same figure as NewBookingWizard.
+const SECURITY_DEPOSIT = 1000;
+
+export interface PaymentChannels {
+  gcashNumber: string;
+  gcashName: string;
+  gcashQr: string;
+  bankName: string;
+  bankAccount: string;
+  bankAccountName: string;
+  bankQr: string;
+}
+
+// Cloudinary stores these as http://. Gmail and Outlook downgrade or drop
+// insecure images, so the QR would silently fail to appear — and Cloudinary
+// serves the identical asset over TLS, so upgrading costs nothing.
+function secureUrl(url: string | null | undefined): string {
+  const u = (url || "").trim();
+  if (!u) return "";
+  return u.startsWith("http://") ? "https://" + u.slice("http://".length) : u;
+}
 
 export interface SelfCheckinEmailInput {
   email: string;
   guestName: string;
   bookingId: string;
-  roomName: string;
+  /** Still owed on arrival — booking_payments.remaining_balance. */
+  balanceAmount: number;
+  /** Refundable deposit collected at check-in. Defaults to ₱1,000. */
+  depositAmount?: number;
+  /** Row label for the balance. Defaults to the standard 50% split. */
+  balanceLabel?: string;
+  /** GCash / bank details, normally from loadPaymentChannels(). */
+  channels?: Partial<PaymentChannels>;
   checkInDate: string;
   checkInTime: string;
   checkOutDate: string;
   checkOutTime: string;
-  guests: string;
 }
 
 function escapeHtml(v: string): string {
@@ -57,10 +84,18 @@ function escapeHtml(v: string): string {
     .replace(/'/g, "&#39;");
 }
 
+const peso = (n: number): string =>
+  "₱" +
+  Number(n || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 // House rules, transcribed from the owner's printed sheet in the unit. The
 // "maintain the unit's cleanliness and order" line is the section's lead-in
 // rather than a bullet, and quiet time / the pool notice get their own callout.
-const HOUSE_RULES = [
+//
+// NOT rendered by this email — the self check-in design carries payment
+// instructions instead. Kept here as the single source for the Collect send
+// (src/app/api/send-checkin-email), which imports it.
+export const HOUSE_RULES = [
   "Throw your own garbage.",
   "In the living area and bedroom, no food or drink is permitted.",
   "Instead of throwing used tissue paper down the toilet, please use the provided toilet trash can.",
@@ -71,26 +106,156 @@ const HOUSE_RULES = [
   "We only clean upon your check-out.",
 ];
 
-function detailRow(label: string, value: string, mono = false): string {
-  if (!value) return "";
+/**
+ * The owner's active GCash and bank-transfer details, straight from the
+ * payment_methods table they already manage in the admin portal — so the email
+ * can't drift from what checkout shows the guest.
+ *
+ * Missing rows come back as empty strings and their lines are then omitted from
+ * the email rather than rendering blank labels.
+ */
+export async function loadPaymentChannels(): Promise<PaymentChannels> {
+  const empty: PaymentChannels = {
+    gcashNumber: "", gcashName: "", gcashQr: "",
+    bankName: "", bankAccount: "", bankAccountName: "", bankQr: "",
+  };
+  try {
+    const { rows } = await pool.query<{
+      payment_method: string; provider: string; account_details: string;
+      description: string | null; payment_qr_link: string | null;
+    }>(
+      `SELECT payment_method, provider, account_details, description, payment_qr_link
+         FROM payment_methods
+        WHERE is_active = true`,
+    );
+    const find = (needle: string) =>
+      rows.find((r) =>
+        `${r.payment_method ?? ""} ${r.provider ?? ""}`.toLowerCase().includes(needle),
+      );
+    const gcash = find("gcash");
+    // Anything that isn't GCash is treated as the bank channel.
+    const bank = rows.find((r) => r !== gcash);
+
+    return {
+      gcashNumber: gcash?.account_details?.trim() || "",
+      gcashName: gcash?.description?.trim() || "",
+      gcashQr: secureUrl(gcash?.payment_qr_link),
+      bankName: bank?.provider?.trim() || "Bank transfer",
+      bankAccount: bank?.account_details?.trim() || "",
+      bankAccountName: bank?.description?.trim() || "",
+      bankQr: secureUrl(bank?.payment_qr_link),
+    };
+  } catch (err) {
+    // The instructions matter more than the payment box — send without it
+    // rather than failing the whole email.
+    console.error("[selfCheckinEmail] could not load payment channels:", err);
+    return empty;
+  }
+}
+
+/** One numbered step: dark circle badge in its own cell so long text wraps flush. */
+function stepRow(n: number, html: string): string {
   return `
     <tr>
-      <td style="padding:6px 0;font-size:13px;color:#9c8974;width:42%;">${label}</td>
-      <td style="padding:6px 0;font-size:14px;font-weight:600;color:#2b1b12;${mono ? "font-family:'Courier New',monospace;letter-spacing:0.5px;" : ""}">${value}</td>
+      <td valign="top" width="26" style="padding:0 0 12px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="26">
+          <tr>
+            <td align="center" valign="middle" width="26" height="26" bgcolor="#2b1b12" style="width:26px;height:26px;border-radius:13px;font-size:13px;font-weight:700;color:#f6ede0;line-height:26px;">${n}</td>
+          </tr>
+        </table>
+      </td>
+      <td valign="top" style="padding:2px 0 12px 12px;font-size:15px;line-height:1.5;color:#3a2a1e;">${html}</td>
     </tr>`;
+}
+
+/** A label/amount line inside the dark "what to pay" panel. */
+function payRow(label: string, value: string): string {
+  return `
+    <tr>
+      <td align="left" style="padding:0 0 7px;font-size:13.5px;color:#B8A689;">${label}</td>
+      <td align="right" style="padding:0 0 7px;font-size:14.5px;font-weight:600;color:#f6ede0;white-space:nowrap;">${value}</td>
+    </tr>`;
+}
+
+/**
+ * One payment-channel card. Returns "" when there is no account to show.
+ *
+ * The account number stays as selectable text and the QR is added beneath it,
+ * never instead of it — most clients block remote images by default, and a
+ * guest who can't load the QR must still be able to read (and copy) the number.
+ * The QR sits on a white tile because the panel behind it is near-black and
+ * scanners need the light quiet zone.
+ *
+ * NO height attribute, deliberately. What the owner uploads here is a whole
+ * payment-card screenshot, not a bare QR, and the two we have are different
+ * shapes (GCash 775x743, BPI 603x884 portrait). Pinning both to a square
+ * squashed the portrait one by a third and warped its QR into something a
+ * scanner could reject. Width-only + height:auto keeps each one's real ratio.
+ */
+function channelCard(label: string, account: string, holder: string, qr: string): string {
+  if (!account) return "";
+  const qrBlock = qr
+    ? `
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:11px;">
+            <tr>
+              <td align="center" bgcolor="#ffffff" style="padding:6px;border-radius:10px;">
+                <img src="${qr}" alt="${label} QR code — scan to pay" width="200" style="display:block;width:200px;max-width:100%;height:auto;border:0;outline:none;text-decoration:none;">
+              </td>
+            </tr>
+          </table>`
+    : "";
+  return `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#3a2a20;border-radius:10px;">
+      <tr>
+        <td style="padding:14px 12px;">
+          <div style="font-size:11px;font-weight:700;color:#B8A689;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:3px;">${label}</div>
+          <div style="font-size:15px;font-weight:600;color:#f6ede0;font-family:'Courier New',monospace;">${account}</div>
+          ${holder ? `<div style="font-size:12px;color:#B8A689;margin-top:2px;">${holder}</div>` : ""}
+          ${qrBlock}
+        </td>
+      </tr>
+    </table>`;
 }
 
 export function renderSelfCheckinEmailHtml(d: SelfCheckinEmailInput): string {
   const name = escapeHtml(d.guestName || "Guest");
-  // Gold bullet on its own cell, so long rules wrap flush instead of hanging
-  // under the marker (Gmail ignores list-style/padding tricks).
-  const rules = HOUSE_RULES.map(
-    (r) => `
-      <tr>
-        <td valign="top" width="14" style="padding:0 0 8px;font-size:13px;line-height:1.55;color:#d9a25c;font-weight:700;">&bull;</td>
-        <td valign="top" style="padding:0 0 8px;font-size:13px;line-height:1.55;color:#4a3a2e;">${r}</td>
-      </tr>`,
-  ).join("");
+  const balance = Number(d.balanceAmount || 0);
+  const deposit = Number(d.depositAmount ?? SECURITY_DEPOSIT);
+  const balanceLabel = escapeHtml(d.balanceLabel || "50% Balance");
+
+  const c = d.channels || {};
+  const gcash = channelCard(
+    "GCash",
+    escapeHtml(c.gcashNumber || ""),
+    escapeHtml(c.gcashName || ""),
+    escapeHtml(secureUrl(c.gcashQr)),
+  );
+  const bank = channelCard(
+    escapeHtml(c.bankName || "Bank transfer"),
+    escapeHtml(c.bankAccount || ""),
+    escapeHtml(c.bankAccountName || ""),
+    escapeHtml(secureUrl(c.bankQr)),
+  );
+
+  // Side by side, as the design has it. The budget is tight and deliberate: the
+  // panel's inner width is ~496px, so a 48% column is ~238px; the card's 12px
+  // padding and the tile's 6px leave ~202px, which is what lets the QR stay at
+  // its full 200px instead of being shrunk to fit. valign=top keeps both cards
+  // aligned at the label even though the two QR images are different heights.
+  // A single channel spans the full width rather than leaving a dead column.
+  const channelBlock =
+    gcash && bank
+      ? `
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:14px;">
+          <tr>
+            <td width="48%" valign="top">${gcash}</td>
+            <td width="4%" style="font-size:0;line-height:0;">&nbsp;</td>
+            <td width="48%" valign="top">${bank}</td>
+          </tr>
+        </table>`
+      : gcash || bank
+        ? `<div style="margin-top:14px;">${gcash || bank}</div>`
+        : "";
 
   return `
     <!DOCTYPE html>
@@ -113,12 +278,12 @@ export function renderSelfCheckinEmailHtml(d: SelfCheckinEmailInput): string {
                   <!-- Header -->
                   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#2b1b12;">
                     <tr>
-                      <td style="padding:28px 32px;">
+                      <td style="padding:24px 30px;">
                         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                           <tr>
                             <td valign="middle" align="left">
-                              <div style="font-family:'Fraunces',Georgia,serif;font-size:21px;font-weight:600;color:#f6ede0;letter-spacing:0.3px;">D&rsquo;Lux Homes</div>
-                              <div style="font-size:12px;color:#CBB89C;margin-top:2px;">Your Perfect Getaway Awaits</div>
+                              <div style="font-family:'Fraunces',Georgia,serif;font-size:20px;font-weight:600;color:#f6ede0;letter-spacing:0.3px;">D&rsquo;Lux Homes</div>
+                              <div style="font-size:12px;color:#CBB89C;margin-top:2px;">Booking ${escapeHtml(d.bookingId)}</div>
                             </td>
                             <td valign="middle" align="right" style="white-space:nowrap;">
                               <span style="display:inline-block;background:rgba(246,237,224,0.12);border:1px solid rgba(246,237,224,0.35);border-radius:999px;padding:6px 14px;white-space:nowrap;">
@@ -133,86 +298,57 @@ export function renderSelfCheckinEmailHtml(d: SelfCheckinEmailInput): string {
                   </table>
 
                   <!-- Body -->
-                  <div style="padding:28px 32px 4px;">
+                  <div style="padding:26px 30px 4px;">
 
-                    <!-- The self check-in message comes first. -->
-                    <p style="font-size:16px;font-weight:600;color:#2b1b12;margin:0 0 6px;">Hi ${name}, you can self check-in now!</p>
-                    <p style="font-size:15px;line-height:1.55;color:#3a2a1e;margin:0 0 20px;">
-                      Yung susi po ay nasa mail area, <strong>mailbox ${escapeHtml(ACCESS.mailbox)}</strong>.<br>
-                      Ang unit po ay sa <strong>Tower 4, ${escapeHtml(ACCESS.floor)}, unit ${escapeHtml(ACCESS.unit)}</strong>.
-                    </p>
+                    <div style="font-family:'Fraunces',Georgia,serif;font-size:24px;line-height:1.25;color:#2b1b12;margin-bottom:20px;">Hi ${name}, you can self check-in now!</div>
 
-                    <!-- Access details -->
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#faf5ec;border-radius:12px;margin-bottom:20px;">
+                    <!-- The four steps -->
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:22px;">
+                      ${stepRow(1, `Get your key from the <strong>mail area, mailbox ${escapeHtml(ACCESS.mailbox)}</strong>.`)}
+                      ${stepRow(2, `Go to your room: <strong>${escapeHtml(ACCESS.tower)}, ${escapeHtml(ACCESS.floor)}, unit ${escapeHtml(ACCESS.unit)}</strong>.`)}
+                      ${stepRow(3, `Once you are inside, pay what is left using <strong>GCash</strong> or <strong>bank transfer</strong>.`)}
+                      ${stepRow(4, `Message us that you are in, and send a <strong>screenshot of your payment</strong>. Thank you!`)}
+                    </table>
+
+                    <!-- What to pay -->
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#2b1b12;border-radius:14px;margin-bottom:20px;">
                       <tr>
-                        <td style="padding:18px 20px;">
-                          <div style="font-size:12px;font-weight:700;color:#9c8974;letter-spacing:0.6px;text-transform:uppercase;margin-bottom:10px;">Your Unit</div>
+                        <td style="padding:20px 22px;">
+                          <div style="font-size:12px;font-weight:700;color:#B8A689;letter-spacing:0.6px;text-transform:uppercase;margin-bottom:12px;">What to pay at check-in</div>
+
                           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                            ${detailRow("Building", escapeHtml(ACCESS.building))}
-                            ${detailRow("Unit", `${escapeHtml(ACCESS.floor)}, unit ${escapeHtml(ACCESS.unit)}`)}
-                            ${detailRow("Key", `Mail area &middot; mailbox ${escapeHtml(ACCESS.mailbox)}`)}
-                            ${detailRow("Wi-Fi name", escapeHtml(ACCESS.wifiName), true)}
-                            ${detailRow("Wi-Fi password", escapeHtml(ACCESS.wifiPassword), true)}
-                            ${detailRow("Netflix PIN", escapeHtml(ACCESS.netflixPin), true)}
+                            ${payRow(balanceLabel, peso(balance))}
+                            ${payRow("Security deposit &mdash; you get this back", peso(deposit))}
                           </table>
+
+                          <div style="height:1px;background:rgba(246,237,224,0.18);font-size:0;line-height:0;margin:14px 0 12px;">&nbsp;</div>
+
+                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                              <td align="left" valign="middle" style="font-size:14px;font-weight:700;color:#f6ede0;">Total to pay</td>
+                              <td align="right" valign="middle" style="font-family:'Fraunces',Georgia,serif;font-size:30px;font-weight:600;color:#d9a25c;white-space:nowrap;">${peso(balance + deposit)}</td>
+                            </tr>
+                          </table>
+
+                          ${channelBlock}
                         </td>
                       </tr>
                     </table>
 
-                    <!-- Stay details -->
+                    <!-- Stay dates -->
                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#faf5ec;border-radius:12px;margin-bottom:20px;">
                       <tr>
-                        <td style="padding:18px 20px 12px;">
+                        <td style="padding:14px 18px;">
                           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:13px;">
                             <tr>
-                              <td align="left" style="color:#9c8974;">${escapeHtml(d.bookingId)}</td>
-                              <td align="right" style="font-weight:600;color:#2b1b12;">${escapeHtml(d.roomName)}</td>
-                            </tr>
-                          </table>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td style="padding:0 20px 12px;">
-                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                            <tr>
-                              <td width="50%" valign="top">
-                                <div style="font-size:11px;color:#9c8974;">Check-in</div>
-                                <div style="font-size:14px;font-weight:600;color:#2b1b12;">${escapeHtml(d.checkInDate)} &middot; ${escapeHtml(d.checkInTime)}</div>
+                              <td width="49%" valign="top">
+                                <div style="color:#9c8974;margin-bottom:1px;">Check-in</div>
+                                <div style="font-weight:600;color:#2b1b12;">${escapeHtml(d.checkInDate)} &middot; ${escapeHtml(d.checkInTime)}</div>
                               </td>
                               <td width="1" style="background:#e9dcc8;font-size:0;line-height:0;">&nbsp;</td>
-                              <td width="50%" valign="top" style="padding-left:14px;">
-                                <div style="font-size:11px;color:#9c8974;">Check-out by</div>
-                                <div style="font-size:14px;font-weight:600;color:#2b1b12;">${escapeHtml(d.checkOutDate)} &middot; ${escapeHtml(d.checkOutTime)}</div>
-                              </td>
-                            </tr>
-                          </table>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td style="padding:12px 20px 18px;border-top:1px solid #e9dcc8;font-size:13px;color:#5c4a3c;">${escapeHtml(d.guests)}</td>
-                      </tr>
-                    </table>
-
-                    <!-- House rules — highlighted: cream fill + gold accent bar,
-                         so the rules read as the emphasised part of the email. -->
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#fdf7ea;border:1px solid #e9dcc8;border-left:4px solid #d9a25c;border-radius:12px;margin-bottom:20px;">
-                      <tr>
-                        <td style="padding:18px 20px;">
-                          <div style="font-size:12px;font-weight:700;color:#8c5a2e;letter-spacing:0.6px;text-transform:uppercase;margin-bottom:8px;">House Rules &amp; Info</div>
-                          <p style="font-size:13px;line-height:1.55;color:#3a2a1e;margin:0 0 14px;font-weight:600;">
-                            It is your duty to maintain the unit&rsquo;s cleanliness and order. Please read and follow all the house rules placed inside the unit.
-                          </p>
-
-                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                            ${rules}
-                          </table>
-
-                          <!-- The two rules the owner emphasised on the printed sheet. -->
-                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;border:1px solid #e9dcc8;border-radius:10px;margin-top:14px;">
-                            <tr>
-                              <td style="padding:12px 14px;">
-                                <div style="font-size:13px;font-weight:700;color:#2b1b12;margin-bottom:5px;">&#128564;&nbsp; Quiet time is between 10:00 PM and 7:00 AM.</div>
-                                <div style="font-size:12.5px;line-height:1.5;color:#5c4a3c;">The Olympic-sized pool in Tower 1 is private to owners only, so guests are not permitted to use it.</div>
+                              <td width="49%" valign="top" style="padding-left:14px;">
+                                <div style="color:#9c8974;margin-bottom:1px;">Check-out by</div>
+                                <div style="font-weight:600;color:#2b1b12;">${escapeHtml(d.checkOutDate)} &middot; ${escapeHtml(d.checkOutTime)}</div>
                               </td>
                             </tr>
                           </table>
@@ -220,29 +356,14 @@ export function renderSelfCheckinEmailHtml(d: SelfCheckinEmailInput): string {
                       </tr>
                     </table>
 
-                    <!-- Need help -->
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#2b1b12;border-radius:12px;margin-bottom:24px;">
-                      <tr>
-                        <td style="padding:16px 20px;">
-                          <div style="font-size:13px;font-weight:600;color:#f6ede0;margin-bottom:4px;">Need a Hand?</div>
-                          <div style="font-size:13px;line-height:1.5;color:#CBB89C;">We&rsquo;re here 24/7 &mdash; just reply to this email or message us on our Facebook page if anything comes up.</div>
-                        </td>
-                      </tr>
-                    </table>
-
-                    <!-- CTA -->
-                    <div style="text-align:center;margin-bottom:24px;">
-                      <div style="font-family:'Fraunces',Georgia,serif;font-size:17px;color:#2b1b12;margin-bottom:8px;">Mabuhay! Welcome to D&rsquo;Lux Homes.</div>
-                      <div style="font-size:13px;color:#5c4a3c;">Thank you &amp; God bless!</div>
-                    </div>
+                    <div style="font-size:13px;line-height:1.55;color:#5c4a3c;text-align:center;margin-bottom:22px;">We are here 24/7 &mdash; just reply to this email or message us on Facebook if you need anything.</div>
                   </div>
 
                   <!-- Footer -->
                   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#faf5ec;border-top:1px solid #f0e6d8;">
                     <tr>
-                      <td align="center" style="padding:16px 32px;">
+                      <td align="center" style="padding:14px 30px;">
                         <div style="font-size:12px;color:#5c4a3c;">homesdlux@gmail.com &middot; Tower 4, Grass Residences, QC</div>
-                        <div style="font-size:11px;color:#b3a48f;margin-top:6px;">&copy; ${new Date().getFullYear()} D&rsquo;Lux Homes. All rights reserved.</div>
                       </td>
                     </tr>
                   </table>
