@@ -102,16 +102,22 @@ export interface CalendarEventData {
   additional_guest_names?: string[];
 }
 
-/** Builds the Google Calendar event object from booking data (throws on error). */
-const buildAndInsertCalendarEvent = async (bookingData: CalendarEventData): Promise<{ id: string; htmlLink: string | null; calendarId: string }> => {
-  const auth = getGoogleCalendarAuth();
-  const calendar = google.calendar({ version: "v3", auth });
+/** Authenticated client + the configured calendar id (throws when unconfigured). */
+const getCalendarClient = () => {
   const calendarId = process.env.GOOGLE_CALENDAR_ID;
-
   if (!calendarId) {
     throw new Error("Missing GOOGLE_CALENDAR_ID in environment variables.");
   }
+  const auth = getGoogleCalendarAuth();
+  return { calendar: google.calendar({ version: "v3", auth }), calendarId };
+};
 
+/**
+ * Builds the Google Calendar event body from booking data (throws on bad dates).
+ * Pure — no API calls — so insert and update always render identical events and
+ * can never drift apart.
+ */
+const buildEventBody = (bookingData: CalendarEventData) => {
   const {
     room_name,
     check_in_date,
@@ -248,14 +254,18 @@ const buildAndInsertCalendarEvent = async (bookingData: CalendarEventData): Prom
   };
   const colorId = colorIdMap[status?.toLowerCase()] ?? "11"; // Graphite fallback
 
-  const event = {
+  return {
     summary: `Booking: ${room_name} - ${guest_first_name} ${guest_last_name}`,
     description,
     start: { dateTime: startDateTimeStr, timeZone: "Asia/Manila" },
     end: { dateTime: endDateTimeStr, timeZone: "Asia/Manila" },
     colorId,
   };
+};
 
+const buildAndInsertCalendarEvent = async (bookingData: CalendarEventData): Promise<{ id: string; htmlLink: string | null; calendarId: string }> => {
+  const { calendar, calendarId } = getCalendarClient();
+  const event = buildEventBody(bookingData);
 
   const response = await calendar.events.insert({ calendarId, requestBody: event });
 
@@ -324,6 +334,38 @@ export const createCalendarEvent = async (bookingData: CalendarEventData): Promi
     const msg = classifyCalendarError(error);
     console.error(`❌ [CALENDAR] Failed for booking ${bookingData.booking_id}: ${msg}`);
     return null;
+  }
+};
+
+/**
+ * Rewrites an existing event in place so it matches the booking as it stands
+ * now. Without this the event is frozen at whatever the booking looked like the
+ * moment it was created — every approved booking kept saying "PENDING" in
+ * yellow, and a re-timed or re-priced stay showed the old figures to whoever
+ * was collecting money at the door.
+ *
+ * `gone: true` means Google no longer has the event (deleted from the calendar
+ * by hand, or the id is stale). The caller should clear the stored
+ * google_event_id so /api/bookings/sync-calendar can recreate it — retrying the
+ * update forever would never succeed.
+ */
+export const updateCalendarEvent = async (
+  eventId: string,
+  bookingData: CalendarEventData,
+): Promise<{ ok: boolean; gone: boolean; error: string | null }> => {
+  try {
+    const { calendar, calendarId } = getCalendarClient();
+    const event = buildEventBody(bookingData);
+    await calendar.events.update({ calendarId, eventId, requestBody: event });
+    console.log(`✅ [CALENDAR] Event ${eventId} updated for booking ${bookingData.booking_id}`);
+    return { ok: true, gone: false, error: null };
+  } catch (error: any) {
+    const status = error?.response?.status;
+    // 404 = no such event, 410 = event was deleted. Both are permanent.
+    const gone = status === 404 || status === 410;
+    const msg = classifyCalendarError(error);
+    console.error(`❌ [CALENDAR] Update failed for booking ${bookingData.booking_id} (event ${eventId}): ${msg}`);
+    return { ok: false, gone, error: msg };
   }
 };
 

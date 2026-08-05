@@ -2,7 +2,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import pool from "../config/db";
 import { upload_file } from "../utils/cloudinary";
 import { validateImageDataUrl } from "../utils/imageGuard";
-import { createCalendarEvent, createCalendarEventWithResult, CalendarEventData } from "../utils/googleCalendar";
+import { createCalendarEvent, createCalendarEventWithResult, updateCalendarEvent, CalendarEventData } from "../utils/googleCalendar";
 
 // A guest may attach several ID photos. We persist them in the single
 // `valid_id_url` TEXT column as newline-separated Cloudinary URLs — a single
@@ -48,6 +48,110 @@ async function resolveValidIdUrls(
   }
   return urls.length ? urls.join(ID_URL_SEP) : null;
 }
+
+// Everything a Google Calendar event needs, for any set of bookings. The caller
+// appends its own WHERE clause. Shared by the sync endpoint (which creates
+// events) and pushCalendarUpdate() (which rewrites them) so the two can never
+// disagree about what the event should say.
+const CALENDAR_BOOKING_SELECT = `
+  SELECT
+    b.id,
+    b.booking_id,
+    b.google_event_id,
+    b.room_name,
+    b.check_in_date,
+    b.check_out_date,
+    b.check_in_time,
+    b.check_out_time,
+    b.adults,
+    b.children,
+    b.infants,
+    b.status,
+    bg.first_name as guest_first_name,
+    bg.last_name as guest_last_name,
+    bg.email as guest_email,
+    bg.phone as guest_phone,
+    bp.payment_method,
+    bp.payment_proof_url,
+    bp.total_amount,
+    bp.down_payment,
+    bp.remaining_balance,
+    -- Subqueries rather than JOINs: a booking can have more than one deposit
+    -- or guest row, and a JOIN would multiply the booking into duplicates.
+    (SELECT amount FROM booking_security_deposits
+      WHERE booking_id = b.id ORDER BY id LIMIT 1) AS security_deposit,
+    -- Everyone except the main guest. NOTE: booking_guests.id is a UUID, so
+    -- MIN(id) is not available (no min aggregate for uuid) — this repeats the
+    -- exact "ORDER BY guest_index, id" expression the main-guest JOIN uses,
+    -- so the row excluded here is guaranteed to be the row selected there.
+    (SELECT json_agg(TRIM(g.first_name || ' ' || g.last_name) ORDER BY g.guest_index, g.id)
+       FROM booking_guests g
+      WHERE g.booking_id = b.id
+        AND g.id <> (SELECT id FROM booking_guests
+                      WHERE booking_id = b.id ORDER BY guest_index, id LIMIT 1)
+    ) AS additional_guest_names
+  FROM booking b
+  LEFT JOIN booking_guests bg ON b.id = bg.booking_id
+    AND bg.id = (SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY guest_index, id LIMIT 1)
+  LEFT JOIN booking_payments bp ON b.id = bp.booking_id
+`;
+
+const toCalendarEventData = (row: any): CalendarEventData => ({
+  room_name: row.room_name,
+  check_in_date: row.check_in_date,
+  check_out_date: row.check_out_date,
+  check_in_time: row.check_in_time,
+  check_out_time: row.check_out_time,
+  guest_first_name: row.guest_first_name || "Unknown",
+  guest_last_name: row.guest_last_name || "Guest",
+  guest_email: row.guest_email || "",
+  guest_phone: row.guest_phone || "",
+  booking_id: row.booking_id,
+  status: row.status,
+  payment_method: row.payment_method,
+  payment_proof_url: row.payment_proof_url,
+  total_amount: row.total_amount,
+  down_payment: row.down_payment,
+  adults: row.adults,
+  children: row.children,
+  infants: row.infants,
+  remaining_balance: row.remaining_balance,
+  security_deposit: row.security_deposit ?? undefined,
+  additional_guest_names: row.additional_guest_names ?? undefined,
+});
+
+/**
+ * Pushes a booking's CURRENT state to its Google Calendar event. Call this
+ * after anything that changes what the event shows — status, dates/times,
+ * guests, or money. Never throws and never blocks the caller's response: a
+ * calendar outage must not fail a booking edit.
+ *
+ * Bookings with no event yet are left alone — /api/bookings/sync-calendar
+ * back-fills those. If Google says the event is gone, google_event_id is
+ * cleared so that same sync recreates it.
+ */
+export const pushCalendarUpdate = async (bookingUuid: string): Promise<void> => {
+  try {
+    const res = await pool.query(`${CALENDAR_BOOKING_SELECT} WHERE b.id = $1 LIMIT 1`, [bookingUuid]);
+    const row = res.rows[0];
+    if (!row) return;
+    if (!row.google_event_id) {
+      console.log(`📅 [CALENDAR] Booking ${row.booking_id} has no event yet — sync-calendar will create it.`);
+      return;
+    }
+
+    const { ok, gone } = await updateCalendarEvent(row.google_event_id, toCalendarEventData(row));
+    if (!ok && gone) {
+      await pool.query(
+        `UPDATE booking SET google_event_id = NULL, updated_at = NOW() WHERE id = $1`,
+        [bookingUuid],
+      );
+      console.warn(`⚠️ [CALENDAR] Event for ${row.booking_id} no longer exists — cleared google_event_id for re-sync.`);
+    }
+  } catch (err) {
+    console.error(`❌ [CALENDAR] pushCalendarUpdate failed for booking ${bookingUuid}:`, err);
+  }
+};
 
 // Add-on prices
 const ADD_ON_PRICES = {
@@ -341,6 +445,14 @@ export const updateBookingDetails = async (
       `,
       [id],
     );
+
+    // Re-render the calendar event AFTER the response is flushed — an edit to
+    // dates, times, guests or money must not leave the host reading stale
+    // details at the door. Deferred so a slow/failing Google call can't stall
+    // the admin's save.
+    after(async () => {
+      await pushCalendarUpdate(id);
+    });
 
     return NextResponse.json({
       success: true,
@@ -1862,6 +1974,13 @@ export const updateBookingStatus = async (
       }
     }
 
+    // Repaint the calendar event with the new status (its label AND its colour
+    // are derived from it). `id` may be either form of key, so use the UUID the
+    // UPDATE returned.
+    after(async () => {
+      await pushCalendarUpdate(result.rows[0].id);
+    });
+
     return NextResponse.json({
       success: true,
       data: result.rows[0],
@@ -2126,60 +2245,42 @@ export const updateCleaningStatus = async (
   }
 };
 
-// SYNC Bookings to Google Calendar (for bookings without google_event_id)
+// SYNC Bookings to Google Calendar.
+//
+// Default: create events for bookings that have no google_event_id.
+// ?refresh=1: ALSO rewrite the events that already exist, so bookings changed
+// before the calendar had an update path (every one of which still shows its
+// original status, times and amounts) get repainted in one pass.
+// ?booking_id=DL-BK…: restrict the run to that one booking, creating or
+// rewriting just its event.
 export const syncCalendarBookings = async (
-  _req: NextRequest,
+  req: NextRequest,
 ): Promise<NextResponse> => {
   try {
-    // Find all bookings that have no google_event_id, joined with guest + payment data
-    const unsyncedQuery = `
-      SELECT
-        b.id,
-        b.booking_id,
-        b.room_name,
-        b.check_in_date,
-        b.check_out_date,
-        b.check_in_time,
-        b.check_out_time,
-        b.adults,
-        b.children,
-        b.infants,
-        b.status,
-        bg.first_name as guest_first_name,
-        bg.last_name as guest_last_name,
-        bg.email as guest_email,
-        bg.phone as guest_phone,
-        bp.payment_method,
-        bp.payment_proof_url,
-        bp.total_amount,
-        bp.down_payment,
-        bp.remaining_balance,
-        -- Subqueries rather than JOINs: a booking can have more than one deposit
-        -- or guest row, and a JOIN would multiply the booking into duplicates.
-        (SELECT amount FROM booking_security_deposits
-          WHERE booking_id = b.id ORDER BY id LIMIT 1) AS security_deposit,
-        -- Everyone except the main guest. NOTE: booking_guests.id is a UUID, so
-        -- MIN(id) is not available (no min aggregate for uuid) — this repeats the
-        -- exact "ORDER BY guest_index, id" expression the main-guest JOIN uses,
-        -- so the row excluded here is guaranteed to be the row selected there.
-        (SELECT json_agg(TRIM(g.first_name || ' ' || g.last_name) ORDER BY g.guest_index, g.id)
-           FROM booking_guests g
-          WHERE g.booking_id = b.id
-            AND g.id <> (SELECT id FROM booking_guests
-                          WHERE booking_id = b.id ORDER BY guest_index, id LIMIT 1)
-        ) AS additional_guest_names
-      FROM booking b
-      LEFT JOIN booking_guests bg ON b.id = bg.booking_id
-        AND bg.id = (SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY guest_index, id LIMIT 1)
-      LEFT JOIN booking_payments bp ON b.id = bp.booking_id
-      WHERE b.google_event_id IS NULL
-      ORDER BY b.created_at ASC
-    `;
+    const params = new URL(req.url).searchParams;
+    const refresh = params.get("refresh") === "1";
+    // Optional: limit the run to one booking (accepts either key form), so a
+    // single stale event can be repaired without touching the whole calendar.
+    const only = params.get("booking_id");
 
-    const unsyncedResult = await pool.query(unsyncedQuery);
-    const bookings = unsyncedResult.rows;
+    const where = only
+      ? `WHERE (b.booking_id = $1 OR b.id::text = $1)`
+      : refresh
+        ? ``
+        : `WHERE b.google_event_id IS NULL`;
 
-    console.log(`📅 [SYNC] Found ${bookings.length} booking(s) without google_event_id`);
+    const bookings = (
+      await pool.query(
+        `${CALENDAR_BOOKING_SELECT} ${where} ORDER BY b.created_at ASC`,
+        only ? [only] : [],
+      )
+    ).rows;
+
+    console.log(
+      refresh
+        ? `📅 [SYNC] Refresh mode — ${bookings.length} booking(s) to create or update`
+        : `📅 [SYNC] Found ${bookings.length} booking(s) without google_event_id`,
+    );
 
     if (bookings.length === 0) {
       return NextResponse.json({
@@ -2211,10 +2312,11 @@ export const syncCalendarBookings = async (
     }
 
     let synced = 0;
+    let updated = 0;
     let failed = 0;
     const results: {
       booking_id: string;
-      status: "synced" | "failed";
+      status: "synced" | "updated" | "failed";
       google_event_id?: string;
       error?: string;
       html_link?: string;
@@ -2223,29 +2325,27 @@ export const syncCalendarBookings = async (
 
     // Process one at a time to avoid Google API rate limits
     for (const booking of bookings) {
-      const calendarEventData: CalendarEventData = {
-        room_name: booking.room_name,
-        check_in_date: booking.check_in_date,
-        check_out_date: booking.check_out_date,
-        check_in_time: booking.check_in_time,
-        check_out_time: booking.check_out_time,
-        guest_first_name: booking.guest_first_name || "Unknown",
-        guest_last_name: booking.guest_last_name || "Guest",
-        guest_email: booking.guest_email || "",
-        guest_phone: booking.guest_phone || "",
-        booking_id: booking.booking_id,
-        status: booking.status,
-        payment_method: booking.payment_method,
-        payment_proof_url: booking.payment_proof_url,
-        total_amount: booking.total_amount,
-        down_payment: booking.down_payment,
-        adults: booking.adults,
-        children: booking.children,
-        infants: booking.infants,
-        remaining_balance: booking.remaining_balance,
-        security_deposit: booking.security_deposit ?? undefined,
-        additional_guest_names: booking.additional_guest_names ?? undefined,
-      };
+      const calendarEventData: CalendarEventData = toCalendarEventData(booking);
+
+      // Already has an event (only reachable in refresh mode) — rewrite it in
+      // place rather than creating a duplicate.
+      if (booking.google_event_id) {
+        const { ok, gone, error: updateError } = await updateCalendarEvent(booking.google_event_id, calendarEventData);
+        if (ok) {
+          updated++;
+          results.push({ booking_id: booking.booking_id, status: "updated", google_event_id: booking.google_event_id });
+          continue;
+        }
+        if (!gone) {
+          failed++;
+          results.push({ booking_id: booking.booking_id, status: "failed", error: updateError ?? "Unknown error" });
+          continue;
+        }
+        // Event was deleted on Google's side — drop the dead id and fall
+        // through to the create path below so the booking gets an event again.
+        await pool.query(`UPDATE booking SET google_event_id = NULL, updated_at = NOW() WHERE id = $1`, [booking.id]);
+        console.warn(`⚠️ [SYNC] Event for ${booking.booking_id} is gone — recreating.`);
+      }
 
       const { id: googleEventId, htmlLink, calendarId: usedCalendarId, error: calendarError } = await createCalendarEventWithResult(calendarEventData);
 
@@ -2283,15 +2383,16 @@ export const syncCalendarBookings = async (
       }
     }
 
-    console.log(`📅 [SYNC] Done. Synced: ${synced}, Failed: ${failed}, Total: ${bookings.length}`);
+    console.log(`📅 [SYNC] Done. Created: ${synced}, Updated: ${updated}, Failed: ${failed}, Total: ${bookings.length}`);
 
     // Collect unique error messages from failures for the summary
     const uniqueErrors = [...new Set(results.filter((r) => r.error).map((r) => r.error))];
 
     return NextResponse.json({
-      success: synced > 0,
-      message: `Synced ${synced} of ${bookings.length} booking(s) to Google Calendar.`,
+      success: synced + updated > 0,
+      message: `Synced ${synced + updated} of ${bookings.length} booking(s) to Google Calendar${refresh ? ` (${synced} created, ${updated} updated)` : ""}.`,
       synced,
+      updated,
       failed,
       total: bookings.length,
       ...(uniqueErrors.length > 0 && { errors: uniqueErrors }),

@@ -20,6 +20,45 @@ function safeIntStr(value: unknown, fallback: number, max = 3650): string {
   return String(Math.min(n, max));
 }
 
+// Revenue / bookings / distinct-bookers for one time window. `where` is
+// interpolated, so callers must pass only literals they built themselves.
+//
+// booking_guests is deliberately NOT joined here. It holds one row per guest,
+// so joining it fans every booking out into N rows and SUM() then counts that
+// booking's revenue N times — a 2-guest ₱1,899 stay was being reported as
+// ₱3,798. COUNT(DISTINCT ...) survived the fan-out, which is why the booking
+// count looked right while the money did not. The booker's email comes from a
+// subquery instead, which cannot multiply rows.
+const summaryStatsQuery = (where: string) => `
+  SELECT
+    COALESCE(SUM(CASE
+      WHEN bp.payment_status = 'approved_down_payment' THEN bp.down_payment
+      WHEN bp.payment_status = 'approved_full_payment' THEN bp.total_amount
+      ELSE 0
+    END), 0) as total_revenue,
+    COUNT(DISTINCT b.id) as total_bookings,
+    COUNT(DISTINCT COALESCE(
+      b.user_id::text,
+      (SELECT g.email FROM booking_guests g
+        WHERE g.booking_id = b.id ORDER BY g.guest_index, g.id LIMIT 1)
+    )) as new_guests
+  FROM ${BOOKING_TABLE} b
+  LEFT JOIN booking_payments bp ON b.id = bp.booking_id
+  ${where}
+`;
+
+// The window each summary card covers: bookings CREATED in the last `period`
+// days, and the equal-length window before it for the % change.
+const currentWindow = (period: string) => `
+  WHERE b.created_at >= NOW() - INTERVAL '${period} days'
+    AND b.status IN ('approved', 'confirmed', 'checked-in', 'completed')
+`;
+const previousWindow = (period: string) => `
+  WHERE b.created_at >= NOW() - INTERVAL '${parseInt(period) * 2} days'
+    AND b.created_at < NOW() - INTERVAL '${period} days'
+    AND b.status IN ('approved', 'confirmed', 'checked-in', 'completed')
+`;
+
 export interface AnalyticsSummary {
   total_revenue: number;
   total_bookings: number;
@@ -45,44 +84,8 @@ export interface MonthlyRevenue {
 // Helper function for direct data fetching (non-API)
 export async function fetchAnalyticsSummary(period: string = '30'): Promise<AnalyticsSummary> {
   period = safeIntStr(period, 30);
-  const currentStatsQuery = `
-    SELECT
-      COALESCE(SUM(CASE
-        WHEN bp.payment_status = 'approved_down_payment' THEN bp.down_payment
-        WHEN bp.payment_status = 'approved_full_payment' THEN bp.total_amount
-        ELSE 0
-      END), 0) as total_revenue,
-      COUNT(DISTINCT b.id) as total_bookings,
-      COUNT(DISTINCT CASE
-        WHEN b.user_id IS NOT NULL THEN b.user_id::text
-        ELSE bg.email
-      END) as new_guests
-    FROM ${BOOKING_TABLE} b
-    LEFT JOIN booking_payments bp ON b.id = bp.booking_id
-    LEFT JOIN booking_guests bg ON b.id = bg.booking_id
-    WHERE b.created_at >= NOW() - INTERVAL '${period} days'
-      AND b.status IN ('approved', 'confirmed', 'checked-in', 'completed')
-  `;
-
-  const previousStatsQuery = `
-    SELECT
-      COALESCE(SUM(CASE
-        WHEN bp.payment_status = 'approved_down_payment' THEN bp.down_payment
-        WHEN bp.payment_status = 'approved_full_payment' THEN bp.total_amount
-        ELSE 0
-      END), 0) as total_revenue,
-      COUNT(DISTINCT b.id) as total_bookings,
-      COUNT(DISTINCT CASE
-        WHEN b.user_id IS NOT NULL THEN b.user_id::text
-        ELSE bg.email
-      END) as new_guests
-    FROM ${BOOKING_TABLE} b
-    LEFT JOIN booking_payments bp ON b.id = bp.booking_id
-    LEFT JOIN booking_guests bg ON b.id = bg.booking_id
-    WHERE b.created_at >= NOW() - INTERVAL '${parseInt(period) * 2} days'
-      AND b.created_at < NOW() - INTERVAL '${period} days'
-      AND b.status IN ('approved', 'confirmed', 'checked-in', 'completed')
-  `;
+  const currentStatsQuery = summaryStatsQuery(currentWindow(period));
+  const previousStatsQuery = summaryStatsQuery(previousWindow(period));
 
   const occupancyQuery = `
     SELECT
@@ -224,45 +227,10 @@ export const getAnalyticsSummary = async (req: NextRequest): Promise<NextRespons
     const period = safeIntStr(searchParams.get('period'), 30); // days
 
     // Get current period stats
-    const currentStatsQuery = `
-      SELECT
-        COALESCE(SUM(CASE
-          WHEN bp.payment_status = 'approved_down_payment' THEN bp.down_payment
-          WHEN bp.payment_status = 'approved_full_payment' THEN bp.total_amount
-          ELSE 0
-        END), 0) as total_revenue,
-        COUNT(DISTINCT b.id) as total_bookings,
-        COUNT(DISTINCT CASE
-          WHEN b.user_id IS NOT NULL THEN b.user_id::text
-          ELSE bg.email
-        END) as new_guests
-      FROM ${BOOKING_TABLE} b
-      LEFT JOIN booking_payments bp ON b.id = bp.booking_id
-      LEFT JOIN booking_guests bg ON b.id = bg.booking_id
-      WHERE b.created_at >= NOW() - INTERVAL '${period} days'
-        AND b.status IN ('approved', 'confirmed', 'checked-in', 'completed')
-    `;
+    const currentStatsQuery = summaryStatsQuery(currentWindow(period));
 
     // Get previous period stats for comparison
-    const previousStatsQuery = `
-      SELECT
-        COALESCE(SUM(CASE
-          WHEN bp.payment_status = 'approved_down_payment' THEN bp.down_payment
-          WHEN bp.payment_status = 'approved_full_payment' THEN bp.total_amount
-          ELSE 0
-        END), 0) as total_revenue,
-        COUNT(DISTINCT b.id) as total_bookings,
-        COUNT(DISTINCT CASE
-          WHEN b.user_id IS NOT NULL THEN b.user_id::text
-          ELSE bg.email
-        END) as new_guests
-      FROM ${BOOKING_TABLE} b
-      LEFT JOIN booking_payments bp ON b.id = bp.booking_id
-      LEFT JOIN booking_guests bg ON b.id = bg.booking_id
-      WHERE b.created_at >= NOW() - INTERVAL '${parseInt(period) * 2} days'
-        AND b.created_at < NOW() - INTERVAL '${period} days'
-        AND b.status IN ('approved', 'confirmed', 'checked-in', 'completed')
-    `;
+    const previousStatsQuery = summaryStatsQuery(previousWindow(period));
 
     // Get occupancy rate - calculate based on booked days vs total available days
     const occupancyQuery = `
