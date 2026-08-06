@@ -228,6 +228,40 @@ const fmt12h = (t: string) => {
 
 type DayBooking = { name: string; id: string; kind: StayKind; checkInTime: string; checkOutTime: string; isCheckIn: boolean; isCheckOut: boolean; isMiddle: boolean };
 
+// Every cell is split along one diagonal: the upper-left triangle is the
+// DAYTIME half (7AM–5PM), the lower-right triangle is the NIGHT half
+// (7PM–5AM). This clip-path paints the night half over the day half, and the
+// legend uses the same geometry so a swatch always matches a real cell.
+const NIGHT_CLIP = "polygon(100% 0, 100% 100%, 0 100%)";
+
+// Solid tan for Daycation, dark maroon-brown for Nightcation, slate for a full
+// stay, lighter slate for a mid-stay (continuing) day.
+const COLOR = {
+  blocked: "#F3C9C2",
+  day: "#D9A857",        // Daycation — tan/gold
+  night: "#3B2418",      // Nightcation — dark maroon-brown
+  full: "#6E8A96",       // Full stay — slate blue
+  continuing: "#9DB3BC", // Continuing (mid-stay) — lighter slate
+  empty: "#ffffff",      // half is open / bookable
+};
+
+// Contrast colour for text and icons drawn on top of each fill.
+const TEXT_ON: Record<string, string> = {
+  [COLOR.blocked]: "#8a4a3a",
+  [COLOR.day]: "#4a3a1f",
+  [COLOR.night]: "#ffffff",
+  [COLOR.full]: "#ffffff",
+  [COLOR.continuing]: "#1f1b16",
+  [COLOR.empty]: "#4a4034",
+};
+const textOn = (fill: string) => TEXT_ON[fill] ?? "#4a4034";
+
+// The render model for one day: which half is held by what, plus the label,
+// icons and marker the cell shows.
+type DayCell = { dayFill: string; nightFill: string; label: string; sub: string; sun?: boolean; moon?: boolean; asterisk?: boolean };
+const cell = (dayFill: string, nightFill: string, label: string, sub: string, extra: Omit<DayCell, "dayFill" | "nightFill" | "label" | "sub"> = {}): DayCell =>
+  ({ dayFill, nightFill, label, sub, ...extra });
+
 export function BookingCalendarSection() {
   const { data: bookingsData } = useGetBookingsQuery();
   const { data: blockedData } = useGetBlockedDatesQuery({});
@@ -280,20 +314,11 @@ export function BookingCalendarSection() {
   const monthName = first.toLocaleString("en", { month: "long", year: "numeric" });
   const shift = (n: number) => setMonth((p) => { const d = new Date(p.y, p.m + n, 1); return { y: d.getFullYear(), m: d.getMonth() }; });
 
-  // Diagonal-split day system: solid tan for Daycation, dark maroon-brown for
-  // Nightcation, slate blue for Full stay/Continuing, split combos for Day+Night and checkouts.
-  const COLOR = {
-    blocked: "#F3C9C2",
-    day: "#D9A857",    // Daycation — tan/gold
-    night: "#3B2418",  // Nightcation / checkout diagonal — dark maroon-brown
-    full: "#6E8A96",   // Full stay / Continuing — slate blue
-    empty: "#ffffff",
-  };
-
-  // Resolve a day's bookings into the render model the reference design uses:
-  // which half (day 7AM-5PM / night 7PM-5AM|4PM) is occupied, by what, and
-  // what label/icon each half shows.
-  function resolveDay(day: number) {
+  // Resolve a day's bookings into a DayCell: which half is held, by what, and
+  // what label/icon it shows. A half is only filled when a booking actually
+  // holds it — an open half stays white so the owner can see what's still
+  // sellable on that date.
+  function resolveDay(day: number): DayCell | null {
     const list = dayBookings[day] || [];
     const overnightMiddle = list.find((x) => x.kind === "overnight" && x.isMiddle);
     const overnightCheckIn = list.find((x) => x.kind === "overnight" && x.isCheckIn);
@@ -301,30 +326,52 @@ export function BookingCalendarSection() {
     const daycation = list.find((x) => x.kind === "daycation");
     const nightcation = list.find((x) => x.kind === "nightcation" && (x.isCheckIn || x.isMiddle));
     const nightcationOut = list.find((x) => x.kind === "nightcation" && x.isCheckOut && !x.isCheckIn);
+    // Every cell reads the same way: the stay's name on the first line (the
+    // same wording the legend uses), its timing on the second. The fills
+    // already say which half is open, so the label never repeats that.
+    const dayRange = daycation && fmt12h(daycation.checkInTime) && fmt12h(daycation.checkOutTime)
+      ? `${fmt12h(daycation.checkInTime)}–${fmt12h(daycation.checkOutTime)}` : "";
 
-    if (overnightMiddle) return { variant: "continuing" as const, label: "Full stay", sub: "Continuing" };
-    if (overnightCheckIn) return { variant: "full" as const, label: "Full stay", sub: "" };
+    // Mid-stay day of a multi-night full stay — both halves held, but a lighter
+    // slate so a pass-through day reads apart from the check-in day.
+    if (overnightMiddle) return cell(COLOR.continuing, COLOR.continuing, "Full stay", "Continuing", { moon: true });
+
+    // Full-stay check-in: the guest only arrives 7PM, so the daytime is still
+    // sellable as a Daycation — a 7AM–5PM stay plus its 2h turnover lands
+    // exactly on 7PM, which the availability check in createBooking allows.
+    // Only fill the day half when a Daycation has actually taken it.
+    if (overnightCheckIn) {
+      const t = fmt12h(overnightCheckIn.checkInTime);
+      if (daycation) return cell(COLOR.day, COLOR.full, "Day + Full", dayRange, { sun: true, moon: true, asterisk: true });
+      return cell(COLOR.empty, COLOR.full, "Full stay", t ? `In ${t}` : "", { moon: true });
+    }
+
+    // Full-stay checkout (out 4PM): the daytime is held to checkout, the
+    // evening is still sellable as a Nightcation — unless one already took it.
     if (overnightCheckOut) {
       const t = fmt12h(overnightCheckOut.checkOutTime);
-      // Full-stay checkout in the morning + a same-day Daycation booking that
-      // afternoon — flag it so the cell can swap its corner icon to a sun.
-      return { variant: "full-checkout" as const, label: t ? `Out ${t}` : "Checkout", sub: "", sameDayDaycation: !!daycation };
+      const sub = t ? `Out ${t}` : "Checkout";
+      if (nightcation) return cell(COLOR.full, COLOR.night, "Full + Night", sub, { moon: true, asterisk: true });
+      return cell(COLOR.full, COLOR.empty, "Full stay", sub);
     }
-    if (daycation && (nightcation || nightcationOut)) {
-      const dIn = fmt12h(daycation.checkInTime), dOut = fmt12h(daycation.checkOutTime);
-      return { variant: "day-night" as const, label: "Day + Night", sub: dIn && dOut ? `Day ${dIn}–${dOut}` : "" };
-    }
-    if (daycation) {
-      const dIn = fmt12h(daycation.checkInTime), dOut = fmt12h(daycation.checkOutTime);
-      return { variant: "day" as const, label: dIn && dOut ? `Day ${dIn}–${dOut}` : "Daycation", sub: "" };
-    }
+
+    // Two separate bookings sharing the date: Daycation by day, Nightcation at night.
+    if (daycation && nightcation) return cell(COLOR.day, COLOR.night, "Day + Night", dayRange, { sun: true, moon: true, asterisk: true });
+
+    // Daycation holds the morning; the evening stays open. A Nightcation that
+    // ended 5AM that morning is only a note — it holds neither half of today.
+    if (daycation) return cell(COLOR.day, COLOR.empty, "Daycation", dayRange, { sun: true });
+
     if (nightcation) {
       const t = fmt12h(nightcation.checkInTime);
-      return { variant: "night" as const, label: t ? `In ${t}` : "Night in", sub: "" };
+      return cell(COLOR.empty, COLOR.night, "Nightcation", t ? `In ${t}` : "", { moon: true });
     }
+
+    // Nightcation checkout at 5AM — the whole date is back on the market, so
+    // neither half is filled; the label is just a heads-up about the departure.
     if (nightcationOut) {
       const t = fmt12h(nightcationOut.checkOutTime);
-      return { variant: "night-out" as const, label: t ? `Out ${t}` : "Night out", sub: "" };
+      return cell(COLOR.empty, COLOR.empty, "Nightcation", t ? `Out ${t}` : "Checkout");
     }
     return null;
   }
@@ -349,16 +396,21 @@ export function BookingCalendarSection() {
           </button>
         </div>
 
-        {/* Legend — light cream card, stacked rows with a colored diagonal glyph per state */}
+        {/* Legend — light cream card. Each swatch is drawn with the same
+            geometry as a real cell: upper-left = daytime, lower-right = night,
+            white = that half is still open. */}
         <div style={{ background: "#FAF6EF", border: "1px solid #ece5d4", borderRadius: 8, padding: "14px 18px", marginBottom: 16 }}>
+          <div style={{ fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "#8a8276", marginBottom: 10 }}>
+            Upper-left = daytime 7AM–5PM · lower-right = night 7PM–5AM · white = still open
+          </div>
           <div className="flex flex-col" style={{ gap: 9, fontSize: 12.5, color: "#4a4034" }}>
-            <div className="flex items-center" style={{ gap: 9 }}><LegendTriangle color={COLOR.blocked} /><b>Blocked</b>&nbsp;— not bookable</div>
-            <div className="flex items-center" style={{ gap: 9 }}><LegendTriangle color={COLOR.day} /><b>Daycation</b>&nbsp;— 7AM–5PM, night open</div>
-            <div className="flex items-center" style={{ gap: 9 }}><LegendTriangle color={COLOR.night} /><b>Nightcation</b>&nbsp;— 7PM–5AM, day open</div>
-            <div className="flex items-center" style={{ gap: 9 }}><span style={{ width: 12, height: 12, background: COLOR.full, borderRadius: 2 }} /><b>Full stay</b>&nbsp;— 7PM–4PM, nothing open</div>
-            <div className="flex items-center" style={{ gap: 9 }}><LegendTriangle color={COLOR.night} secondColor={COLOR.day} /><b>Day + Night</b>&nbsp;— two separate bookings, same date</div>
-            <div className="flex items-center" style={{ gap: 9 }}><span style={{ width: 12, height: 12, background: COLOR.full, borderRadius: 2 }} /><b>Continuing</b>&nbsp;— full stay, guest stays through tomorrow</div>
-            <div className="flex items-center" style={{ gap: 9 }}><span style={{ width: 12, height: 12, background: COLOR.night, borderRadius: 2 }} /><b>Full stay checkout</b>&nbsp;— out 4PM, evening still open for a Nightcation</div>
+            <div className="flex items-center" style={{ gap: 9 }}><LegendCell dayFill={COLOR.blocked} nightFill={COLOR.blocked} /><b>Blocked</b>&nbsp;— not bookable</div>
+            <div className="flex items-center" style={{ gap: 9 }}><LegendCell dayFill={COLOR.day} nightFill={COLOR.empty} /><b>Daycation</b>&nbsp;— 7AM–5PM, night open</div>
+            <div className="flex items-center" style={{ gap: 9 }}><LegendCell dayFill={COLOR.empty} nightFill={COLOR.night} /><b>Nightcation</b>&nbsp;— 7PM–5AM, day open</div>
+            <div className="flex items-center" style={{ gap: 9 }}><LegendCell dayFill={COLOR.day} nightFill={COLOR.night} /><b>Day + Night</b>&nbsp;— two separate bookings, same date</div>
+            <div className="flex items-center" style={{ gap: 9 }}><LegendCell dayFill={COLOR.empty} nightFill={COLOR.full} /><b>Full stay check-in</b>&nbsp;— in 7PM, daytime still open for a Daycation</div>
+            <div className="flex items-center" style={{ gap: 9 }}><LegendCell dayFill={COLOR.continuing} nightFill={COLOR.continuing} /><b>Continuing</b>&nbsp;— mid-stay, guest is in the unit all day, nothing open</div>
+            <div className="flex items-center" style={{ gap: 9 }}><LegendCell dayFill={COLOR.full} nightFill={COLOR.empty} /><b>Full stay checkout</b>&nbsp;— out 4PM, evening still open for a Nightcation</div>
           </div>
         </div>
 
@@ -371,57 +423,78 @@ export function BookingCalendarSection() {
             const day = i + 1;
             const blocked = !!blockInfo[day];
             const r = blocked ? null : resolveDay(day);
-            const asterisk = r?.variant === "day-night";
 
-            let bg = COLOR.empty;
-            let split: { topLeft: string; bottomRight: string } | null = null;
-            let textColor = "#4a4034";
-            // Sun = a Daycation booking that day, shown at the top (its half is
-            // always the top-left corner). Moon = a Nightcation/Overnight
-            // booking, shown at the bottom (its half covers the bottom corners).
-            // Day+Night cells carry both, since two separate bookings share the date.
-            let TopIcon: React.ElementType | null = null;
-            let BottomIcon: React.ElementType | null = null;
+            // A blocked day overrides both halves; a free day is white on both.
+            const dayFill = blocked ? COLOR.blocked : r?.dayFill ?? COLOR.empty;
+            const nightFill = blocked ? COLOR.blocked : r?.nightFill ?? COLOR.empty;
 
-            if (blocked) { bg = COLOR.blocked; textColor = "#8a4a3a"; }
-            else if (r?.variant === "full" || r?.variant === "continuing") { bg = COLOR.full; textColor = "#fff"; BottomIcon = Moon; }
-            else if (r?.variant === "day") { split = { topLeft: COLOR.empty, bottomRight: COLOR.day }; textColor = "#4a3a1f"; TopIcon = Sun; }
-            else if (r?.variant === "night") { split = { topLeft: COLOR.night, bottomRight: COLOR.empty }; textColor = "#fff"; BottomIcon = Moon; }
-            else if (r?.variant === "night-out") { split = { topLeft: COLOR.night, bottomRight: COLOR.empty }; textColor = "#fff"; BottomIcon = Moon; }
-            else if (r?.variant === "full-checkout") { split = { topLeft: COLOR.night, bottomRight: COLOR.empty }; textColor = "#fff"; BottomIcon = Moon; }
-            else if (r?.variant === "day-night") { split = { topLeft: COLOR.night, bottomRight: COLOR.day }; textColor = "#fff"; TopIcon = Sun; BottomIcon = Moon; }
+            const solid = dayFill === nightFill;
 
-            // The split clip-path covers the bottom-right AND bottom-left corners —
-            // only the top-left corner keeps `split.topLeft`. So content placed at
-            // the top belongs to topLeft's color, and anything at the bottom sits
-            // on bottomRight's color; each needs its own contrasting text color.
-            const topColor = textColor;
-            const bottomColor = split && split.bottomRight === COLOR.day ? "#4a3a1f" : textColor;
+            // A label has to sit inside the band its booking actually occupies,
+            // and each triangle is only wide enough for text at one end: the
+            // upper-left (daytime) triangle is widest along the TOP, the
+            // lower-right (night) triangle is widest along the BOTTOM. So a
+            // daytime label anchors top-left, and a night-only label anchors
+            // bottom-right — neither ever reaches the diagonal.
+            const labelInNight = dayFill === COLOR.empty && nightFill !== COLOR.empty;
+
+            // The day number, its label and the Sun all belong to the daytime
+            // band, so they sit on ONE row at the top-left. The top row is the
+            // widest part of the upper triangle, which both keeps the label
+            // clear of the diagonal and leaves the whole second line free for
+            // the time — the line that used to run into the split.
+            const heading = (color: string) => (
+              <div className="flex items-center" style={{ gap: 6 }}>
+                <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 12, fontWeight: 600, color }}>{day}</span>
+                {blocked ? <span style={{ fontSize: 10.5, color }}>Blocked</span> : null}
+                {!labelInNight && r?.label ? <span style={{ fontSize: 10.5, color, opacity: 0.95 }}>{r.label}</span> : null}
+                {r?.asterisk ? <span style={{ fontSize: 11, fontWeight: 700, color }}>*</span> : null}
+                {r?.sun ? <Sun className="w-4 h-4" strokeWidth={2.5} style={{ color }} /> : null}
+              </div>
+            );
+
+            // Drawn twice in identical absolute boxes — once in the day half's
+            // colour, once in the night half's clipped to the night triangle —
+            // so whichever band a run of text lands in, it is already the right
+            // colour for that fill.
+            const content = (color: string) => (
+              <>
+                {heading(color)}
+                {labelInNight ? (
+                  // Night-only booking: label rides the bottom edge, right
+                  // aligned, with the Moon inline so the two stay together
+                  // inside the widest part of the night triangle.
+                  <div style={{ position: "absolute", right: 8, bottom: 6, textAlign: "right" }}>
+                    <div className="flex items-center justify-end" style={{ gap: 4 }}>
+                      {r?.moon ? <Moon className="w-4 h-4" strokeWidth={2.5} style={{ color }} /> : null}
+                      {r?.label ? <span style={{ fontSize: 10.5, color, opacity: 0.95, lineHeight: 1.3 }}>{r.label}</span> : null}
+                    </div>
+                    {r?.sub ? <div style={{ fontSize: 9.5, marginTop: 1, color, opacity: 0.75, fontStyle: "italic" }}>{r.sub}</div> : null}
+                  </div>
+                ) : (
+                  <>
+                    {r?.sub ? <div style={{ fontSize: 9.5, marginTop: 3, color, opacity: 0.75, fontStyle: "italic" }}>{r.sub}</div> : null}
+                    {r?.moon ? (
+                      <div style={{ position: "absolute", bottom: 6, right: 8, color }}>
+                        <Moon className="w-4 h-4" strokeWidth={2.5} />
+                      </div>
+                    ) : null}
+                  </>
+                )}
+              </>
+            );
 
             return (
               <button key={day} type="button" onClick={() => setSelectedDay(day)}
                 className="text-left cursor-pointer relative overflow-hidden"
-                style={{ minHeight: 76, padding: 8, background: split ? split.topLeft : bg, border: "1px solid #f3eee2" }}>
-                {split ? (
-                  <span aria-hidden style={{ position: "absolute", inset: 0, background: split.bottomRight, clipPath: "polygon(100% 0, 100% 100%, 0 100%)" }} />
-                ) : null}
-                <div className="flex items-start justify-between" style={{ position: "relative" }}>
-                  <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 12, fontWeight: 600, color: topColor }}>{day}</div>
-                  <div className="flex items-center" style={{ gap: 3 }}>
-                    {asterisk ? <span style={{ fontSize: 11, fontWeight: 700, color: topColor }}>*</span> : null}
-                    {TopIcon ? <TopIcon className="w-4 h-4" strokeWidth={2.5} style={{ color: topColor, opacity: 1 }} /> : null}
-                  </div>
-                </div>
-                <div style={{ position: "relative", marginTop: 3 }}>
-                  {r?.label ? <div style={{ fontSize: 10.5, color: bottomColor, opacity: 0.95, lineHeight: 1.3 }}>{r.label}</div> : null}
-                  {r?.sub ? <div style={{ fontSize: 9.5, marginTop: 1, color: bottomColor, opacity: 0.75, fontStyle: "italic" }}>{r.sub}</div> : null}
-                  {blocked ? <div style={{ fontSize: 10.5, color: textColor }}>Blocked</div> : null}
-                </div>
-                {BottomIcon ? (
-                  <div style={{ position: "absolute", bottom: 6, right: 6, color: bottomColor, opacity: 1 }}>
-                    <BottomIcon className="w-4 h-4" strokeWidth={2.5} />
-                  </div>
-                ) : null}
+                style={{ minHeight: 76, background: dayFill, border: "1px solid #f3eee2" }}>
+                {solid ? null : (
+                  <span aria-hidden style={{ position: "absolute", inset: 0, background: nightFill, clipPath: NIGHT_CLIP }} />
+                )}
+                <div style={{ position: "absolute", inset: 0, padding: 8 }}>{content(textOn(dayFill))}</div>
+                {solid ? null : (
+                  <div aria-hidden style={{ position: "absolute", inset: 0, padding: 8, clipPath: NIGHT_CLIP }}>{content(textOn(nightFill))}</div>
+                )}
               </button>
             );
           })}
@@ -466,16 +539,16 @@ export function BookingCalendarSection() {
 
 // Small diagonal glyph used in the legend — a solid triangle for single-color
 // states, or two triangles side-by-side (split look) when a secondColor is given.
-function LegendTriangle({ color, secondColor }: { color: string; secondColor?: string }) {
-  if (secondColor) {
-    return (
-      <span style={{ position: "relative", display: "inline-block", width: 14, height: 12, flex: "none" }}>
-        <span aria-hidden style={{ position: "absolute", inset: 0, background: color, clipPath: "polygon(0 0, 100% 0, 0 100%)" }} />
-        <span aria-hidden style={{ position: "absolute", inset: 0, background: secondColor, clipPath: "polygon(100% 0, 100% 100%, 0 100%)" }} />
-      </span>
-    );
-  }
-  return <span style={{ display: "inline-block", width: 0, height: 0, borderStyle: "solid", borderWidth: "0 0 12px 14px", borderColor: `transparent transparent ${color} transparent`, flex: "none" }} />;
+// A legend swatch is a miniature calendar cell — same fills, same diagonal, so
+// a swatch and the day it describes are always drawn by the same rule.
+function LegendCell({ dayFill, nightFill }: { dayFill: string; nightFill: string }) {
+  return (
+    <span style={{ position: "relative", display: "inline-block", width: 16, height: 14, flex: "none", background: dayFill, border: "1px solid #ded6c6" }}>
+      {dayFill === nightFill ? null : (
+        <span aria-hidden style={{ position: "absolute", inset: 0, background: nightFill, clipPath: NIGHT_CLIP }} />
+      )}
+    </span>
+  );
 }
 
 // ── 3. Blocked Dates ──────────────────────────────────────────────────────
