@@ -632,7 +632,7 @@ function CheckoutInner() {
             .co-deskhdr { display: none !important; }
             .co-back-chip { display: none !important; }
             .co-h1 { font-size: 30px !important; }
-            .co-qr { width: 168px !important; height: 168px !important; }
+            .co-qr { width: min(260px, 74vw) !important; }
           }
           @media (max-width: 420px) {
             .co-pay-amt { font-size: 42px !important; }
@@ -963,12 +963,16 @@ function CheckoutInner() {
                       <div style={{ border: "1px solid #E0CEB2", borderRadius: 18, background: "#FFFCF4", overflow: "hidden" }}>
                         <div style={{ padding: "22px 22px 24px", textAlign: "center", background: "#EFE4CE" }}>
                           <div style={{ fontFamily: "'Geist Mono', monospace", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".14em", color: "#8B7458", marginBottom: 16 }}>Scan to pay {peso(downPayment)} · {selectedMethod.payment_name}</div>
-                          <div className="co-qr" style={{ position: "relative", width: 184, height: 184, margin: "0 auto" }}>
+                          {/* Width-constrained, height-free: hosts upload tall poster-style
+                              QR graphics, and boxing those into a fixed square shrank the
+                              scannable code to a fraction of the frame. Letting the height
+                              follow the image's own ratio fills the width instead. */}
+                          <div className="co-qr" style={{ position: "relative", width: 280, maxWidth: "100%", margin: "0 auto" }}>
                             {selectedMethod.payment_qr_link ? (
                               // eslint-disable-next-line @next/next/no-img-element
-                              <img src={selectedMethod.payment_qr_link} alt={`${selectedMethod.payment_name} QR`} style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: 14, background: "#FFFCF4", border: "1px solid #E6D8BC" }} />
+                              <img src={selectedMethod.payment_qr_link} alt={`${selectedMethod.payment_name} QR`} style={{ display: "block", width: "100%", height: "auto", borderRadius: 14, background: "#FFFCF4", border: "1px solid #E6D8BC" }} />
                             ) : (
-                              <div style={{ width: "100%", height: "100%", borderRadius: 14, background: "#FFFCF4", display: "grid", placeItems: "center", color: "#A88E63", fontSize: 12, padding: 20, lineHeight: 1.5, textAlign: "center", border: "1px solid #E6D8BC" }}>QR code appears here once the host uploads it — meanwhile, use the number below.</div>
+                              <div style={{ width: "100%", aspectRatio: "1 / 1", borderRadius: 14, background: "#FFFCF4", display: "grid", placeItems: "center", color: "#A88E63", fontSize: 12, padding: 20, lineHeight: 1.5, textAlign: "center", border: "1px solid #E6D8BC" }}>QR code appears here once the host uploads it — meanwhile, use the number below.</div>
                             )}
                             <span style={{ position: "absolute", top: -3, left: -3, width: 26, height: 26, borderTop: "3px solid #B07848", borderLeft: "3px solid #B07848", borderRadius: "9px 0 0 0" }} />
                             <span style={{ position: "absolute", top: -3, right: -3, width: 26, height: 26, borderTop: "3px solid #B07848", borderRight: "3px solid #B07848", borderRadius: "0 9px 0 0" }} />

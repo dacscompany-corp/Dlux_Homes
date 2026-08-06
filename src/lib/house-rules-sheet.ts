@@ -82,7 +82,10 @@ export interface SheetAccess {
 export function houseRulesAccess(): SheetAccess {
   return {
     building: process.env.DLUX_BUILDING || "Fern at Grass Residences (Tower 4)",
-    unitLine: process.env.DLUX_UNIT_LINE || "12th floor, unit 40",
+    // "unit 1240" is the full unit number (floor 12 + door 40). The owner's
+    // printed sheet abbreviates it to "unit 40"; the emails have always used
+    // the full form, so the sheet follows them rather than the other way round.
+    unitLine: process.env.DLUX_UNIT_LINE || "12th floor, unit 1240",
     wifiName: process.env.DLUX_WIFI_NAME || "",
     wifiPassword: process.env.DLUX_WIFI_PASSWORD || "",
     netflixPin: process.env.DLUX_NETFLIX_PIN || "",
