@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import { imageFileError } from "@/lib/validateImageFile";
 import ImageThumb from "@/components/ImageThumb";
-import { BarChart3, Calendar, CalendarOff, Sparkles, CreditCard, Headphones, UsersRound, Handshake, Plus, Trash2, Power, Pencil, X } from "lucide-react";
+import { BarChart3, Calendar, CalendarOff, Sparkles, CreditCard, Headphones, UsersRound, Handshake, Plus, Trash2, Power, Pencil, X, Moon, Sun } from "lucide-react";
 import { useGetAnalyticsSummaryQuery, useGetMonthlyRevenueQuery, useGetRevenueByRoomQuery } from "@/redux/api/analyticsApi";
 import { useGetBookingsQuery } from "@/redux/api/bookingsApi";
 import { useGetBlockedDatesQuery, useCreateBlockedDateMutation, useDeleteBlockedDateMutation } from "@/redux/api/blockedDatesApi";
@@ -206,6 +206,28 @@ export function AnalyticsSection() {
 }
 
 // ── 2. Booking Calendar ───────────────────────────────────────────────────
+
+// Stay type from the booking's check-in/out clock times (business rules:
+// Daycation 7AM–5PM, Nightcation 7PM–5AM, Overnight/Full-stay 7PM–4PM).
+// The `booking` table has no stay_type column, so this is the only signal.
+type StayKind = "daycation" | "nightcation" | "overnight";
+function stayKind(checkInTime: string, checkOutTime: string): StayKind {
+  const ci = parseInt(String(checkInTime || "").slice(0, 2), 10);
+  const co = parseInt(String(checkOutTime || "").slice(0, 2), 10);
+  if (ci >= 15) return co <= 6 ? "nightcation" : "overnight"; // 19:00 start
+  return "daycation"; // 07:00 start
+}
+const fmt12h = (t: string) => {
+  const m = String(t || "").match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return "";
+  let hr = parseInt(m[1], 10);
+  const ap = hr >= 12 ? "PM" : "AM";
+  hr = hr % 12 || 12;
+  return `${hr}${m[2] === "00" ? "" : ":" + m[2]}${ap}`;
+};
+
+type DayBooking = { name: string; id: string; kind: StayKind; checkInTime: string; checkOutTime: string; isCheckIn: boolean; isCheckOut: boolean; isMiddle: boolean };
+
 export function BookingCalendarSection() {
   const { data: bookingsData } = useGetBookingsQuery();
   const { data: blockedData } = useGetBlockedDatesQuery({});
@@ -215,25 +237,30 @@ export function BookingCalendarSection() {
   const first = new Date(month.y, month.m, 1);
   const daysInMonth = new Date(month.y, month.m + 1, 0).getDate();
   const startWeekday = first.getDay();
-  const sameMonth = (d: unknown) => { if (!d) return null; const dt = new Date(String(d)); return dt.getFullYear() === month.y && dt.getMonth() === month.m ? dt.getDate() : null; };
 
-  // Per-day check-ins / check-outs + the full occupied span, with guest + id.
-  type Entry = { name: string; id: string };
-  const dayInfo: Record<number, { ins: Entry[]; outs: Entry[] }> = {};
-  const occupiedByDay: Record<number, Entry[]> = {};
+  // Per-day bookings touching this date, each tagged with its stay kind and
+  // whether this day is its check-in day, check-out day, or a middle
+  // (continuing) day of the stay.
+  const dayBookings: Record<number, DayBooking[]> = {};
   bookings.forEach((b) => {
     if (["rejected", "cancelled"].includes(String(b.status))) return;
     const name = `${b.guest_first_name ?? ""} ${b.guest_last_name ?? ""}`.trim() || "Guest";
     const id = String(b.booking_id ?? b.id ?? "");
-    const ci = sameMonth(b.check_in_date); const co = sameMonth(b.check_out_date);
-    if (ci) (dayInfo[ci] = dayInfo[ci] || { ins: [], outs: [] }).ins.push({ name, id });
-    if (co) (dayInfo[co] = dayInfo[co] || { ins: [], outs: [] }).outs.push({ name, id });
-    // Shade every day of the stay (check-in through check-out).
+    const checkInTime = String(b.check_in_time ?? "");
+    const checkOutTime = String(b.check_out_time ?? "");
+    const kind = stayKind(checkInTime, checkOutTime);
     const start = new Date(String(b.check_in_date)); start.setHours(0, 0, 0, 0);
     const end = new Date(String(b.check_out_date)); end.setHours(0, 0, 0, 0);
     if (isNaN(start.getTime())) return;
-    for (const d = new Date(start); d <= (isNaN(end.getTime()) ? start : end); d.setDate(d.getDate() + 1)) {
-      if (d.getFullYear() === month.y && d.getMonth() === month.m) (occupiedByDay[d.getDate()] = occupiedByDay[d.getDate()] || []).push({ name, id });
+    const last = isNaN(end.getTime()) ? start : end;
+    for (const d = new Date(start); d <= last; d.setDate(d.getDate() + 1)) {
+      if (d.getFullYear() !== month.y || d.getMonth() !== month.m) continue;
+      const isCheckIn = d.getTime() === start.getTime();
+      const isCheckOut = d.getTime() === last.getTime() && last.getTime() !== start.getTime();
+      (dayBookings[d.getDate()] = dayBookings[d.getDate()] || []).push({
+        name, id, kind, checkInTime, checkOutTime,
+        isCheckIn, isCheckOut, isMiddle: !isCheckIn && !isCheckOut,
+      });
     }
   });
 
@@ -252,14 +279,65 @@ export function BookingCalendarSection() {
 
   const monthName = first.toLocaleString("en", { month: "long", year: "numeric" });
   const shift = (n: number) => setMonth((p) => { const d = new Date(p.y, p.m + n, 1); return { y: d.getFullYear(), m: d.getMonth() }; });
-  const sel = selectedDay != null ? { day: selectedDay, info: dayInfo[selectedDay], blocks: blockInfo[selectedDay], occ: occupiedByDay[selectedDay] } : null;
+
+  // Diagonal-split day system: solid tan for Daycation, dark maroon-brown for
+  // Nightcation, slate blue for Full stay/Continuing, split combos for Day+Night and checkouts.
+  const COLOR = {
+    blocked: "#F3C9C2",
+    day: "#D9A857",    // Daycation — tan/gold
+    night: "#3B2418",  // Nightcation / checkout diagonal — dark maroon-brown
+    full: "#6E8A96",   // Full stay / Continuing — slate blue
+    empty: "#ffffff",
+  };
+
+  // Resolve a day's bookings into the render model the reference design uses:
+  // which half (day 7AM-5PM / night 7PM-5AM|4PM) is occupied, by what, and
+  // what label/icon each half shows.
+  function resolveDay(day: number) {
+    const list = dayBookings[day] || [];
+    const overnightMiddle = list.find((x) => x.kind === "overnight" && x.isMiddle);
+    const overnightCheckIn = list.find((x) => x.kind === "overnight" && x.isCheckIn);
+    const overnightCheckOut = list.find((x) => x.kind === "overnight" && x.isCheckOut);
+    const daycation = list.find((x) => x.kind === "daycation");
+    const nightcation = list.find((x) => x.kind === "nightcation" && (x.isCheckIn || x.isMiddle));
+    const nightcationOut = list.find((x) => x.kind === "nightcation" && x.isCheckOut && !x.isCheckIn);
+
+    if (overnightMiddle) return { variant: "continuing" as const, label: "Full stay", sub: "Continuing" };
+    if (overnightCheckIn) return { variant: "full" as const, label: "Full stay", sub: "" };
+    if (overnightCheckOut) {
+      const t = fmt12h(overnightCheckOut.checkOutTime);
+      // Full-stay checkout in the morning + a same-day Daycation booking that
+      // afternoon — flag it so the cell can swap its corner icon to a sun.
+      return { variant: "full-checkout" as const, label: t ? `Out ${t}` : "Checkout", sub: "", sameDayDaycation: !!daycation };
+    }
+    if (daycation && (nightcation || nightcationOut)) {
+      const dIn = fmt12h(daycation.checkInTime), dOut = fmt12h(daycation.checkOutTime);
+      return { variant: "day-night" as const, label: "Day + Night", sub: dIn && dOut ? `Day ${dIn}–${dOut}` : "" };
+    }
+    if (daycation) {
+      const dIn = fmt12h(daycation.checkInTime), dOut = fmt12h(daycation.checkOutTime);
+      return { variant: "day" as const, label: dIn && dOut ? `Day ${dIn}–${dOut}` : "Daycation", sub: "" };
+    }
+    if (nightcation) {
+      const t = fmt12h(nightcation.checkInTime);
+      return { variant: "night" as const, label: t ? `In ${t}` : "Night in", sub: "" };
+    }
+    if (nightcationOut) {
+      const t = fmt12h(nightcationOut.checkOutTime);
+      return { variant: "night-out" as const, label: t ? `Out ${t}` : "Night out", sub: "" };
+    }
+    return null;
+  }
+
+  const sel = selectedDay != null ? { day: selectedDay, list: dayBookings[selectedDay] || [], blocks: blockInfo[selectedDay] } : null;
   const selDate = selectedDay != null ? new Date(month.y, month.m, selectedDay).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }) : "";
+
 
   return (
     <div>
       <SectionHead title="Booking Calendar" icon={Calendar} sub="Check-ins, check-outs & blocked dates — click a day for details" />
       <div style={{ background: "#fff", border: "1px solid #ece5d4", padding: 24 }}>
-        <div className="flex items-center justify-between" style={{ marginBottom: 20 }}>
+        <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
           <button type="button" onClick={() => shift(-1)} className="inline-flex items-center cursor-pointer" style={{ gap: 8, padding: "8px 14px", background: "transparent", border: "1px solid #d9d1c2", fontSize: 13, color: "#6b6358" }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
             <span>Prev</span>
@@ -270,34 +348,83 @@ export function BookingCalendarSection() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
           </button>
         </div>
-        <div className="grid grid-cols-7" style={{ gap: 6, marginBottom: 6 }}>
-          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => <div key={d} style={{ textAlign: "center", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "#8a8276", padding: "6px 0" }}>{d}</div>)}
+
+        {/* Legend — light cream card, stacked rows with a colored diagonal glyph per state */}
+        <div style={{ background: "#FAF6EF", border: "1px solid #ece5d4", borderRadius: 8, padding: "14px 18px", marginBottom: 16 }}>
+          <div className="flex flex-col" style={{ gap: 9, fontSize: 12.5, color: "#4a4034" }}>
+            <div className="flex items-center" style={{ gap: 9 }}><LegendTriangle color={COLOR.blocked} /><b>Blocked</b>&nbsp;— not bookable</div>
+            <div className="flex items-center" style={{ gap: 9 }}><LegendTriangle color={COLOR.day} /><b>Daycation</b>&nbsp;— 7AM–5PM, night open</div>
+            <div className="flex items-center" style={{ gap: 9 }}><LegendTriangle color={COLOR.night} /><b>Nightcation</b>&nbsp;— 7PM–5AM, day open</div>
+            <div className="flex items-center" style={{ gap: 9 }}><span style={{ width: 12, height: 12, background: COLOR.full, borderRadius: 2 }} /><b>Full stay</b>&nbsp;— 7PM–4PM, nothing open</div>
+            <div className="flex items-center" style={{ gap: 9 }}><LegendTriangle color={COLOR.night} secondColor={COLOR.day} /><b>Day + Night</b>&nbsp;— two separate bookings, same date</div>
+            <div className="flex items-center" style={{ gap: 9 }}><span style={{ width: 12, height: 12, background: COLOR.full, borderRadius: 2 }} /><b>Continuing</b>&nbsp;— full stay, guest stays through tomorrow</div>
+            <div className="flex items-center" style={{ gap: 9 }}><span style={{ width: 12, height: 12, background: COLOR.night, borderRadius: 2 }} /><b>Full stay checkout</b>&nbsp;— out 4PM, evening still open for a Nightcation</div>
+          </div>
         </div>
-        <div className="grid grid-cols-7" style={{ gap: 6 }}>
-          {Array.from({ length: startWeekday }).map((_, i) => <div key={`e${i}`} />)}
+
+        <div className="grid grid-cols-7" style={{ gap: 0, marginBottom: 0 }}>
+          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => <div key={d} style={{ textAlign: "left", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "#8a8276", padding: "8px 12px" }}>{d}</div>)}
+        </div>
+        <div className="grid grid-cols-7" style={{ border: "1px solid #ece5d4" }}>
+          {Array.from({ length: startWeekday }).map((_, i) => <div key={`e${i}`} style={{ minHeight: 76, background: "#fff", border: "1px solid #f3eee2" }} />)}
           {Array.from({ length: daysInMonth }).map((_, i) => {
-            const day = i + 1; const ev = dayInfo[day]; const blocked = !!blockInfo[day];
-            const occupied = !!occupiedByDay[day]?.length;
-            const boundary = !!(ev?.ins.length || ev?.outs.length);
-            const cellBg = blocked ? "#f7e9e5" : boundary ? "#faf0e6" : occupied ? "#eaf2e3" : "#fff";
-            const cellBorder = blocked ? "#e0b8ad" : boundary ? "#e6c9a8" : occupied ? "#c2d6b0" : "#ece5d4";
+            const day = i + 1;
+            const blocked = !!blockInfo[day];
+            const r = blocked ? null : resolveDay(day);
+            const asterisk = r?.variant === "day-night";
+
+            let bg = COLOR.empty;
+            let split: { topLeft: string; bottomRight: string } | null = null;
+            let textColor = "#4a4034";
+            // Sun = a Daycation booking that day, shown at the top (its half is
+            // always the top-left corner). Moon = a Nightcation/Overnight
+            // booking, shown at the bottom (its half covers the bottom corners).
+            // Day+Night cells carry both, since two separate bookings share the date.
+            let TopIcon: React.ElementType | null = null;
+            let BottomIcon: React.ElementType | null = null;
+
+            if (blocked) { bg = COLOR.blocked; textColor = "#8a4a3a"; }
+            else if (r?.variant === "full" || r?.variant === "continuing") { bg = COLOR.full; textColor = "#fff"; BottomIcon = Moon; }
+            else if (r?.variant === "day") { split = { topLeft: COLOR.empty, bottomRight: COLOR.day }; textColor = "#4a3a1f"; TopIcon = Sun; }
+            else if (r?.variant === "night") { split = { topLeft: COLOR.night, bottomRight: COLOR.empty }; textColor = "#fff"; BottomIcon = Moon; }
+            else if (r?.variant === "night-out") { split = { topLeft: COLOR.night, bottomRight: COLOR.empty }; textColor = "#fff"; BottomIcon = Moon; }
+            else if (r?.variant === "full-checkout") { split = { topLeft: COLOR.night, bottomRight: COLOR.empty }; textColor = "#fff"; BottomIcon = Moon; }
+            else if (r?.variant === "day-night") { split = { topLeft: COLOR.night, bottomRight: COLOR.day }; textColor = "#fff"; TopIcon = Sun; BottomIcon = Moon; }
+
+            // The split clip-path covers the bottom-right AND bottom-left corners —
+            // only the top-left corner keeps `split.topLeft`. So content placed at
+            // the top belongs to topLeft's color, and anything at the bottom sits
+            // on bottomRight's color; each needs its own contrasting text color.
+            const topColor = textColor;
+            const bottomColor = split && split.bottomRight === COLOR.day ? "#4a3a1f" : textColor;
+
             return (
               <button key={day} type="button" onClick={() => setSelectedDay(day)}
-                className="text-left cursor-pointer"
-                style={{ border: `1px solid ${cellBorder}`, background: cellBg, padding: 8, minHeight: 64 }}>
-                <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 12, color: blocked ? "#9a4a3a" : "#4a4034" }}>{day}</div>
-                {blocked ? <div style={{ fontSize: 10, marginTop: 4, padding: "1px 6px", background: "#f0d8d0", color: "#9a4a3a", display: "inline-block" }}>Blocked</div> : null}
-                {ev?.ins.length ? <div style={{ fontSize: 10, marginTop: 4, padding: "1px 6px", background: "#eaf2e3", color: "#4a6a3a", display: "inline-block" }}>{ev.ins.length} in</div> : null}
-                {ev?.outs.length ? <div style={{ fontSize: 10, marginTop: 4, padding: "1px 6px", background: "#faf0e6", color: "#8a6a2f", display: "inline-block" }}>{ev.outs.length} out</div> : null}
-                {occupied && !ev?.ins.length && !ev?.outs.length ? <div style={{ fontSize: 10, marginTop: 4, padding: "1px 6px", background: "#eaf2e3", color: "#4a6a3a", display: "inline-block" }}>Booked</div> : null}
+                className="text-left cursor-pointer relative overflow-hidden"
+                style={{ minHeight: 76, padding: 8, background: split ? split.topLeft : bg, border: "1px solid #f3eee2" }}>
+                {split ? (
+                  <span aria-hidden style={{ position: "absolute", inset: 0, background: split.bottomRight, clipPath: "polygon(100% 0, 100% 100%, 0 100%)" }} />
+                ) : null}
+                <div className="flex items-start justify-between" style={{ position: "relative" }}>
+                  <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 12, fontWeight: 600, color: topColor }}>{day}</div>
+                  <div className="flex items-center" style={{ gap: 3 }}>
+                    {asterisk ? <span style={{ fontSize: 11, fontWeight: 700, color: topColor }}>*</span> : null}
+                    {TopIcon ? <TopIcon className="w-4 h-4" strokeWidth={2.5} style={{ color: topColor, opacity: 1 }} /> : null}
+                  </div>
+                </div>
+                <div style={{ position: "relative", marginTop: 3 }}>
+                  {r?.label ? <div style={{ fontSize: 10.5, color: bottomColor, opacity: 0.95, lineHeight: 1.3 }}>{r.label}</div> : null}
+                  {r?.sub ? <div style={{ fontSize: 9.5, marginTop: 1, color: bottomColor, opacity: 0.75, fontStyle: "italic" }}>{r.sub}</div> : null}
+                  {blocked ? <div style={{ fontSize: 10.5, color: textColor }}>Blocked</div> : null}
+                </div>
+                {BottomIcon ? (
+                  <div style={{ position: "absolute", bottom: 6, right: 6, color: bottomColor, opacity: 1 }}>
+                    <BottomIcon className="w-4 h-4" strokeWidth={2.5} />
+                  </div>
+                ) : null}
               </button>
             );
           })}
-        </div>
-        <div className="flex flex-wrap" style={{ gap: 24, marginTop: 20, paddingTop: 18, borderTop: "1px solid #f3eee2", fontSize: 12, color: "#6b6358" }}>
-          <div className="flex items-center" style={{ gap: 8 }}><span style={{ width: 10, height: 10, background: "#eaf2e3", border: "1px solid #c2d6b0" }} />Booked / staying</div>
-          <div className="flex items-center" style={{ gap: 8 }}><span style={{ width: 10, height: 10, background: "#faf0e6", border: "1px solid #e6c9a8" }} />Check-in / out</div>
-          <div className="flex items-center" style={{ gap: 8 }}><span style={{ width: 10, height: 10, background: "#f7e9e5", border: "1px solid #e0b8ad" }} />Blocked</div>
         </div>
       </div>
 
@@ -315,29 +442,19 @@ export function BookingCalendarSection() {
                 <p className="text-xs mt-0.5" style={{ color: "#9C3B28" }}>{sel.blocks.filter((r) => r !== "Blocked").join(" · ") || "Unavailable for booking"}</p>
               </div>
             ) : null}
-            {sel.info?.ins.length ? (
-              <div className="mb-3">
-                <p className="text-xs font-semibold mb-1.5" style={{ color: "#065f46" }}>Check-ins</p>
-                {sel.info.ins.map((g, i) => <div key={i} className="flex justify-between text-sm py-1.5 px-3 rounded-lg mb-1" style={{ backgroundColor: "#ECFDF3" }}><span style={{ color: "#1a1a1a" }}>{g.name}</span><span className="font-mono text-xs" style={{ color: "#8B6344" }}>{g.id}</span></div>)}
-              </div>
-            ) : null}
-            {sel.info?.outs.length ? (
-              <div className="mb-1">
-                <p className="text-xs font-semibold mb-1.5" style={{ color: "#B07848" }}>Check-outs</p>
-                {sel.info.outs.map((g, i) => <div key={i} className="flex justify-between text-sm py-1.5 px-3 rounded-lg mb-1" style={{ backgroundColor: "#F7F0E3" }}><span style={{ color: "#1a1a1a" }}>{g.name}</span><span className="font-mono text-xs" style={{ color: "#8B6344" }}>{g.id}</span></div>)}
-              </div>
-            ) : null}
-            {(() => {
-              const boundary = new Set([...(sel.info?.ins || []), ...(sel.info?.outs || [])].map((g) => g.id));
-              const staying = (sel.occ || []).filter((g) => !boundary.has(g.id));
-              return staying.length ? (
-                <div className="mb-1">
-                  <p className="text-xs font-semibold mb-1.5" style={{ color: "#065f46" }}>Staying</p>
-                  {staying.map((g, i) => <div key={i} className="flex justify-between text-sm py-1.5 px-3 rounded-lg mb-1" style={{ backgroundColor: "#ECFDF3" }}><span style={{ color: "#1a1a1a" }}>{g.name}</span><span className="font-mono text-xs" style={{ color: "#8B6344" }}>{g.id}</span></div>)}
+            {sel.list.length ? sel.list.map((g, i) => (
+              <div key={i} className="flex items-center justify-between text-sm py-2 px-3 rounded-lg mb-1.5" style={{ backgroundColor: "#F7F0E3" }}>
+                <div>
+                  <span style={{ color: "#1a1a1a" }}>{g.name}</span>
+                  <span className="block text-xs mt-0.5" style={{ color: "#8B6344" }}>
+                    {g.kind === "overnight" ? "Overnight" : g.kind === "nightcation" ? "Nightcation" : "Daycation"} ·{" "}
+                    {g.isCheckIn ? `Check-in ${fmt12h(g.checkInTime)}` : g.isCheckOut ? `Check-out ${fmt12h(g.checkOutTime)}` : "Staying"}
+                  </span>
                 </div>
-              ) : null;
-            })()}
-            {!sel.blocks?.length && !sel.info?.ins.length && !sel.info?.outs.length && !sel.occ?.length ? (
+                <span className="font-mono text-xs" style={{ color: "#8B6344" }}>{g.id}</span>
+              </div>
+            )) : null}
+            {!sel.blocks?.length && !sel.list.length ? (
               <p className="text-sm text-center py-4" style={{ color: "#C9B79E" }}>No bookings or blocks on this day.</p>
             ) : null}
           </div>
@@ -345,6 +462,20 @@ export function BookingCalendarSection() {
       )}
     </div>
   );
+}
+
+// Small diagonal glyph used in the legend — a solid triangle for single-color
+// states, or two triangles side-by-side (split look) when a secondColor is given.
+function LegendTriangle({ color, secondColor }: { color: string; secondColor?: string }) {
+  if (secondColor) {
+    return (
+      <span style={{ position: "relative", display: "inline-block", width: 14, height: 12, flex: "none" }}>
+        <span aria-hidden style={{ position: "absolute", inset: 0, background: color, clipPath: "polygon(0 0, 100% 0, 0 100%)" }} />
+        <span aria-hidden style={{ position: "absolute", inset: 0, background: secondColor, clipPath: "polygon(100% 0, 100% 100%, 0 100%)" }} />
+      </span>
+    );
+  }
+  return <span style={{ display: "inline-block", width: 0, height: 0, borderStyle: "solid", borderWidth: "0 0 12px 14px", borderColor: `transparent transparent ${color} transparent`, flex: "none" }} />;
 }
 
 // ── 3. Blocked Dates ──────────────────────────────────────────────────────
