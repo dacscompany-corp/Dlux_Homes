@@ -129,7 +129,7 @@ export default function OwnerDashboard() {
   const [bookingsTab, setBookingsTab] = useState<"list"|"calendar"|"blocked">("list");
   // Booking guide starts open, matching the design — it is reference material an
   // owner can collapse once the flow is familiar.
-  const [guideOpen, setGuideOpen] = useState(true);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [financeTab, setFinanceTab]   = useState<"revenue"|"methods"|"promotions">("revenue");
   const [teamTab, setTeamTab]         = useState<"staff"|"users"|"partners">("staff");
 
