@@ -7,7 +7,17 @@ D'Lux Homes is one physical unit — Tower 4, Grass Residences, SM North EDSA, Q
 - Daycation/Nightcation (10h, 7AM–5PM or 7PM–5AM): weekday ₱1,499 / weekend+holiday ₱1,799
 - Weekend = Fri/Sat/Sun check-in + PH holidays (`isWeekendOrHoliday()` in `src/lib/pricing.ts`)
 
-**Extra pax:** base covers 2 pax. Each additional counted pax (adults + young adults, ages 7+) is **+₱300 flat per booking** (not per night), max 4 counted pax total (fee caps at ₱600). Children 7-under are free, uncapped, and excluded from the count entirely. More than 4 counted pax isn't bookable online — routes to Facebook/Messenger instead. Implemented in `extraPaxFee()` in `src/lib/pricing.ts`.
+**Extra pax:** base covers 2 pax. Each additional counted pax (adults + young adults, ages 7+) is **+₱200 per night** — a 3-night stay with one extra pax pays ₱600. Max 4 counted pax total, so a stay tops out at 2 extra pax × ₱200 × nights. Applies to bundle-discounted long stays too (no night cap). 10-hour Daycation/Nightcation is a single session, so it's charged once. Children 7-under are free and excluded from the count entirely (the booking UI caps them at 4). More than 4 counted pax isn't bookable online — routes to Facebook/Messenger instead. Implemented in `extraPaxFee()` in `src/lib/pricing.ts`; the ₱200 lives in `havens.extra_pax_fee` and is owner-editable.
+
+**Length-of-stay bundles (Overnight/21h only):** once a stay reaches 5 / 12 / 20 nights, the WHOLE stay reprices at a flat nightly rate instead of night-by-night. Weekday / weekend:
+
+| Tier | Nights | 1–2 pax | 3–4 pax |
+|---|---|---|---|
+| 1 week | 5–11 | ₱1,799 / ₱1,899 | ₱1,899 / ₱1,999 |
+| 2 weeks | 12–19 | ₱1,699 / ₱1,799 | ₱1,799 / ₱1,899 |
+| 1 month | 20+ | ₱1,599 / ₱1,699 | ₱1,699 / ₱1,799 |
+
+A bundle stay with extra pax pays **+₱100 per night on the rate itself** (flat — 3 pax and 4 pax pay the same bump), *and* still pays the per-pax fee above; the two stack. Weekday vs weekend is decided by the CHECK-IN date alone, unlike normal pricing which prices each night by its own date — so a Friday check-in puts every night of the stay on the weekend tier. Tiers are per-haven columns (`havens.{weekday,weekend}_{week,twoweek,month}_rate`) with activate/deactivate flags; the ₱100 bump is the `BUNDLE_EXTRA_PAX_SURCHARGE` constant in `src/lib/pricing.ts` and is NOT owner-editable. Known defect: 20 nights currently costs less than 19 at 1–2 pax (see `bundleNightlyRate()`).
 
 **Payment:** 50% down payment to reserve, 50% balance + a ₱1,000 refundable security deposit due at check-in. GCash or BPI transfer.
 

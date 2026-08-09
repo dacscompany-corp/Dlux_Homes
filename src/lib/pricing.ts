@@ -81,6 +81,14 @@ export const BUNDLE_WEEK_NIGHTS = 5;
 export const BUNDLE_TWOWEEK_NIGHTS = 12;
 export const BUNDLE_MONTH_NIGHTS = 20;
 
+// A stay on a bundle tier that also carries extra pax (3–4 counted guests) pays
+// this much MORE per night — the bundle nightly rate itself steps up, e.g.
+// weekday 1-week ₱1,799 → ₱1,899. Flat: 3 pax and 4 pax pay the same bump. This
+// is ON TOP of the normal per-pax-per-night fee (`extraPaxFee`), not instead of
+// it. Unlike that fee (owner-editable via `havens.extra_pax_fee`), this is a
+// code constant — changing it needs a deploy.
+export const BUNDLE_EXTRA_PAX_SURCHARGE = 100;
+
 // Human-readable night band per tier, derived from the constants above so the
 // admin UI can never drift out of sync with the pricing logic.
 export const BUNDLE_WEEK_LABEL = `${BUNDLE_WEEK_NIGHTS}–${BUNDLE_TWOWEEK_NIGHTS - 1} nights`;
@@ -100,14 +108,21 @@ export function pickRate(stayType: string, dateISO: string, rates: Rates, rules:
 // callers should fall back to normal per-night pricing. Weekday vs weekend
 // tier is decided by the CHECK-IN date, same as the normal nightly split (NOT
 // by whether every night in the stay falls on a weekend).
-export function bundleNightlyRate(nights: number, checkInISO: string, rates: Rates, rules: CalendarRules = DEFAULT_CALENDAR_RULES): number | undefined {
+//
+// `hasExtraPax` (3–4 counted guests) steps the rate up by
+// BUNDLE_EXTRA_PAX_SURCHARGE. The bump lives HERE rather than on the extra-pax
+// line because it is part of the nightly rate: it belongs in the booking's
+// `room_rate`, and keeping it here means the rate we display is the rate we
+// charge. Callers still add extraPaxFee() separately — the two stack.
+export function bundleNightlyRate(nights: number, checkInISO: string, rates: Rates, rules: CalendarRules = DEFAULT_CALENDAR_RULES, hasExtraPax = false): number | undefined {
   const weekend = isWeekendOrHoliday(checkInISO, rules);
   const month = weekend ? rates.weekendMonthRate : rates.weekdayMonthRate;
   const twoWeek = weekend ? rates.weekendTwoWeekRate : rates.weekdayTwoWeekRate;
   const week = weekend ? rates.weekendWeekRate : rates.weekdayWeekRate;
-  if (nights >= BUNDLE_MONTH_NIGHTS && month) return month;
-  if (nights >= BUNDLE_TWOWEEK_NIGHTS && twoWeek) return twoWeek;
-  if (nights >= BUNDLE_WEEK_NIGHTS && week) return week;
+  const bump = hasExtraPax ? BUNDLE_EXTRA_PAX_SURCHARGE : 0;
+  if (nights >= BUNDLE_MONTH_NIGHTS && month) return month + bump;
+  if (nights >= BUNDLE_TWOWEEK_NIGHTS && twoWeek) return twoWeek + bump;
+  if (nights >= BUNDLE_WEEK_NIGHTS && week) return week + bump;
   return undefined;
 }
 
@@ -125,10 +140,15 @@ export function addDaysISO(iso: string, n: number): string {
 // stay), UNLESS the stay qualifies for a length-of-stay bundle discount (5/12/
 // 20+ nights), in which case the whole stay is priced at that flat nightly
 // rate instead of mixing per-night rates.
-export function stayTotal(stayType: string, checkInISO: string, nights: number, rates: Rates, rules: CalendarRules = DEFAULT_CALENDAR_RULES): number {
+//
+// `hasExtraPax` only matters for stays that actually reach a bundle tier — it
+// raises that flat rate by BUNDLE_EXTRA_PAX_SURCHARGE. Stays priced night-by-
+// night are unaffected by it; their extra guests are billed solely through
+// extraPaxFee().
+export function stayTotal(stayType: string, checkInISO: string, nights: number, rates: Rates, rules: CalendarRules = DEFAULT_CALENDAR_RULES, hasExtraPax = false): number {
   if (stayType === "10" || !checkInISO) return pickRate(stayType, checkInISO, rates, rules);
   const n = Math.max(1, Math.floor(nights || 1));
-  const bundleRate = bundleNightlyRate(n, checkInISO, rates, rules);
+  const bundleRate = bundleNightlyRate(n, checkInISO, rates, rules, hasExtraPax);
   if (bundleRate != null) return bundleRate * n;
   let total = 0;
   for (let i = 0; i < n; i++) total += pickRate("21", addDaysISO(checkInISO, i), rates, rules);
@@ -136,10 +156,18 @@ export function stayTotal(stayType: string, checkInISO: string, nights: number, 
 }
 
 // Extra-pax surcharge. The base rate covers `basePax` guests (2 for D'Lux);
-// each additional guest up to the max adds `feePerPax`, charged ONCE per
-// booking (flat — not multiplied by nights). Returns 0 within the allowance
-// or when no fee is configured.
-export function extraPaxFee(totalPax: number, basePax: number, feePerPax: number): number {
+// each additional guest up to the max adds `feePerPax` PER NIGHT — a 3-night
+// stay with one extra guest pays the fee three times. Applies to every stay
+// length, including ones discounted by a length-of-stay bundle. 10-hour stays
+// are a single session, so their night count is 1 and the multiply is a no-op.
+//
+// `nights` defaults to 1 so a caller that hasn't been updated keeps the old
+// once-per-booking behaviour instead of throwing, and the Math.max(1, …) floor
+// absorbs a 0/NaN arriving from a URL param.
+//
+// Returns 0 within the allowance or when no fee is configured.
+export function extraPaxFee(totalPax: number, basePax: number, feePerPax: number, nights = 1): number {
   const extra = Math.max(0, Math.floor(totalPax || 0) - Math.floor(basePax || 0));
-  return extra * Math.max(0, feePerPax || 0);
+  const n = Math.max(1, Math.floor(nights || 1));
+  return extra * Math.max(0, feePerPax || 0) * n;
 }

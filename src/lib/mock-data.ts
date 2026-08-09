@@ -15,7 +15,7 @@ export const mockRooms = [
     price10hrWeekend: 1799,
     price21hr: 1899,
     price21hrWeekend: 2099,
-    additionalPaxFee: 300,
+    additionalPaxFee: 200,
     basePax: 2,
     maxPax: 4,
     images: [

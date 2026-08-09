@@ -17,7 +17,7 @@ import {
   discountBadgeText, offerPriceFor, pesoAmount, promoCoversStay, promoDiscountOn, scopedStayTypes,
 } from "@/lib/promo-offer";
 import { havenToRoom } from "@/lib/haven-adapter";
-import { stayTotal, isWeekendOrHoliday, extraPaxFee, bundleNightlyRate, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS } from "@/lib/pricing";
+import { stayTotal, isWeekendOrHoliday, extraPaxFee, bundleNightlyRate, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS, BUNDLE_EXTRA_PAX_SURCHARGE } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import type { Room } from "@/types";
 
@@ -549,24 +549,28 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
 
   // D'Lux: rate depends on stay type + whether each night is a weekend/holiday.
   // Base rate covers the first `basePax` (2) guests; each guest beyond that adds
-  // a flat per-pax fee (once per booking). Only adults + young adults are
-  // chargeable — "Children (7 under)" are exempt from the fee (but still count
-  // toward the 4-pax max). No cleaning or service fee.
+  // a per-pax fee CHARGED PER NIGHT. Only adults + young adults are chargeable —
+  // "Children (7 under)" are exempt from the fee (but still count toward the
+  // 4-pax max). No cleaning or service fee.
   // Owner-editable weekend/holiday calendar (System → Settings in the admin
   // portal); falls back to Fri/Sat + built-in PH holidays if unreachable.
   const calendarRules = useCalendarRules();
   const isWeekendRate = isWeekendOrHoliday(date, calendarRules);
-  const basePrice = stayTotal(selectedWindow.stayType, date, stayNights, room, calendarRules);
+  // Counted pax must be resolved BEFORE the price: on a bundle stay, having any
+  // extra pax raises the nightly bundle rate itself (not just the pax line).
+  const feePax = guests.adults + guests.children; // adults + young adults; excludes 7-under
+  const extraPaxCount = Math.max(0, feePax - room.basePax);
+  const hasExtraPax = extraPaxCount > 0;
+  const basePrice = stayTotal(selectedWindow.stayType, date, stayNights, room, calendarRules, hasExtraPax);
   // Length-of-stay bundle discount (5/12/20+ nights, Overnight only) — null if
-  // this stay doesn't qualify or the haven hasn't configured that tier.
-  const bundleRate = selectedWindow.stayType === "10" ? undefined : bundleNightlyRate(stayNights, date, room, calendarRules);
+  // this stay doesn't qualify or the haven hasn't configured that tier. Already
+  // includes the extra-pax bump, so it's the rate actually charged.
+  const bundleRate = selectedWindow.stayType === "10" ? undefined : bundleNightlyRate(stayNights, date, room, calendarRules, hasExtraPax);
   const bundleLabel = bundleRate == null ? null
     : stayNights >= BUNDLE_MONTH_NIGHTS ? "Monthly rate"
     : stayNights >= BUNDLE_TWOWEEK_NIGHTS ? "Two-week rate"
     : "Weekly rate";
-  const feePax = guests.adults + guests.children; // adults + young adults; excludes 7-under
-  const extraPaxCount = Math.max(0, feePax - room.basePax);
-  const paxFee = extraPaxFee(feePax, room.basePax, room.additionalPaxFee);
+  const paxFee = extraPaxFee(feePax, room.basePax, room.additionalPaxFee, stayNights);
   const total = basePrice + paxFee;
 
   // Normalize any date value (DATE column may arrive as a UTC timestamp) to a
@@ -1072,7 +1076,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                           <button onClick={() => { if (guests.infants < 4) setGuests({ ...guests, infants: guests.infants + 1 }); }} style={stepStyle(guests.infants < 4)}>{plus}</button>
                         </div>
                       </div>
-                      <div style={{ fontSize: 11, color: "#9B8B73", padding: "0 0 12px", lineHeight: 1.5 }}>Rate covers 2 guests. Each extra adult or teen is {peso(room.additionalPaxFee)} (up to 4). Little ones stay free, up to 4. For 5+, message us on <a href="https://www.facebook.com/messages/t/270893736109969" target="_blank" rel="noopener" style={{ color: "#B07848", fontWeight: 600 }}>Facebook</a>.</div>
+                      <div style={{ fontSize: 11, color: "#9B8B73", padding: "0 0 12px", lineHeight: 1.5 }}>Rate covers 2 guests. Each extra adult or teen is {peso(room.additionalPaxFee)} per night (up to 4). Little ones stay free, up to 4. For 5+, message us on <a href="https://www.facebook.com/messages/t/270893736109969" target="_blank" rel="noopener" style={{ color: "#B07848", fontWeight: 600 }}>Facebook</a>.</div>
                     </div>
                   );
                 })()}
@@ -1083,7 +1087,11 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
               {date && stayChosen && (
                 <div style={{ borderTop: "1px solid #EFE4CE", paddingTop: 15, display: "flex", flexDirection: "column", gap: 8, fontSize: 13.5 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#4A3A2A" }}><span style={{ whiteSpace: "nowrap" }}>{selectedWindow.label} · {isOvernight ? `${stayNights} night${stayNights > 1 ? "s" : ""}${bundleLabel ? ` · ${bundleLabel}` : ""}` : (isWeekendRate ? "Weekend/Holiday" : "Weekday")}</span><span>{peso(basePrice)}</span></div>
-                  {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra guests · {extraPaxCount} × {peso(room.additionalPaxFee)}</span><span>{peso(paxFee)}</span></div>}
+                  {/* Bundle stays quote one flat nightly rate, so show it —
+                      otherwise a guest can't tell why the room total moved when
+                      they added a 3rd guest. */}
+                  {bundleRate != null && <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: -4 }}>{peso(bundleRate)}/night{hasExtraPax ? ` · includes ${peso(BUNDLE_EXTRA_PAX_SURCHARGE)} extra-guest rate` : ""}</div>}
+                  {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra guests · {extraPaxCount} × {peso(room.additionalPaxFee)}{stayNights > 1 ? ` × ${stayNights} nights` : ""}</span><span>{peso(paxFee)}</span></div>}
                   {promoDiscount > 0 && (
                     <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{promoLabel}</span><span style={{ flex: "none" }}>&minus;{peso(promoDiscount)}</span></div>
                   )}
@@ -1548,7 +1556,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                               <button onClick={() => { if (guests.infants < 4) setGuests({ ...guests, infants: guests.infants + 1 }); }} style={stepStyle(guests.infants < 4)}>{plus}</button>
                             </div>
                           </div>
-                          <div style={{ fontSize: 11.5, color: "#9B8B73", padding: "0 0 12px", lineHeight: 1.5 }}>The rate covers 2 guests. Each extra adult or teen is {peso(room.additionalPaxFee)} (up to 4). Little ones stay free, up to 4. For 5+ adults/teens, message us on <a href="https://www.facebook.com/messages/t/270893736109969" target="_blank" rel="noopener" style={{ color: "#B07848", fontWeight: 600 }}>Facebook</a>.</div>
+                          <div style={{ fontSize: 11.5, color: "#9B8B73", padding: "0 0 12px", lineHeight: 1.5 }}>The rate covers 2 guests. Each extra adult or teen is {peso(room.additionalPaxFee)} per night (up to 4). Little ones stay free, up to 4. For 5+ adults/teens, message us on <a href="https://www.facebook.com/messages/t/270893736109969" target="_blank" rel="noopener" style={{ color: "#B07848", fontWeight: 600 }}>Facebook</a>.</div>
                         </div>
                       );
                     })()}
@@ -1558,7 +1566,11 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                   {date && stayChosen && (
                     <div style={{ borderTop: "1px solid #EFE4CE", paddingTop: 16, display: "flex", flexDirection: "column", gap: 8, fontSize: 13.5 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#4A3A2A" }}><span style={{ whiteSpace: "nowrap" }}>{selectedWindow.label} · {isOvernight ? `${stayNights} night${stayNights > 1 ? "s" : ""}${bundleLabel ? ` · ${bundleLabel}` : ""}` : (isWeekendRate ? "Weekend/Holiday" : "Weekday")}</span><span>{peso(basePrice)}</span></div>
-                      {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra guests · {extraPaxCount} × {peso(room.additionalPaxFee)}</span><span>{peso(paxFee)}</span></div>}
+                  {/* Bundle stays quote one flat nightly rate, so show it —
+                      otherwise a guest can't tell why the room total moved when
+                      they added a 3rd guest. */}
+                  {bundleRate != null && <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: -4 }}>{peso(bundleRate)}/night{hasExtraPax ? ` · includes ${peso(BUNDLE_EXTRA_PAX_SURCHARGE)} extra-guest rate` : ""}</div>}
+                      {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra guests · {extraPaxCount} × {peso(room.additionalPaxFee)}{stayNights > 1 ? ` × ${stayNights} nights` : ""}</span><span>{peso(paxFee)}</span></div>}
                       {promoDiscount > 0 && (
                     <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{promoLabel}</span><span style={{ flex: "none" }}>&minus;{peso(promoDiscount)}</span></div>
                   )}

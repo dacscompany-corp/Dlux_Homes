@@ -10,6 +10,7 @@ import { fileToCompressedDataUrl, GALLERY_PRESET } from "@/lib/compressImage";
 import {
   BUNDLE_WEEK_NIGHTS, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS,
   BUNDLE_WEEK_LABEL, BUNDLE_TWOWEEK_LABEL, BUNDLE_MONTH_LABEL,
+  BUNDLE_EXTRA_PAX_SURCHARGE,
 } from "@/lib/pricing";
 
 // ── Static option lists (mirrors the Staycation haven builder) ──
@@ -338,7 +339,7 @@ export default function HavenWizard({
               </div>
               <div className="pt-2">
                 <p className="text-xs font-semibold" style={{ color: "#8B6344" }}>Overnight (21h) length-of-stay bundle discounts <span className="font-normal" style={{ color: "#C9B79E" }}>· optional</span></p>
-                <p className="text-xs mt-1" style={{ color: "#C9B79E" }}>Flat nightly rate once a stay reaches {BUNDLE_WEEK_NIGHTS} / {BUNDLE_TWOWEEK_NIGHTS} / {BUNDLE_MONTH_NIGHTS} nights, based on the check-in day (weekday vs weekend/holiday). Toggle a tier off to pause its discount without clearing the rates.</p>
+                <p className="text-xs mt-1" style={{ color: "#C9B79E" }}>Flat nightly rate once a stay reaches {BUNDLE_WEEK_NIGHTS} / {BUNDLE_TWOWEEK_NIGHTS} / {BUNDLE_MONTH_NIGHTS} nights, based on the check-in day (weekday vs weekend/holiday). A bundle stay with extra pax (3–4 guests) charges ₱{BUNDLE_EXTRA_PAX_SURCHARGE} more per night than the rates below, on top of the normal per-pax fee. Toggle a tier off to pause its discount without clearing the rates.</p>
                 <div className="space-y-2 mt-2">
                   {[
                     { label: "1 week", nights: BUNDLE_WEEK_LABEL, activeKey: "week_bundle_active", weekday: "weekday_week_rate", weekend: "weekend_week_rate" },

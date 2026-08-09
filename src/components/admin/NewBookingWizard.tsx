@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import { generateBookingId } from "@/lib/booking-store";
 import { fileToCompressedDataUrl } from "@/lib/compressImage";
-import { stayTotal, pickRate, isWeekendOrHoliday, addDaysISO } from "@/lib/pricing";
+import { stayTotal, pickRate, isWeekendOrHoliday, addDaysISO, extraPaxFee } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import { havenToRoom } from "@/lib/haven-adapter";
 
@@ -194,11 +194,18 @@ export default function NewBookingWizard({
     const counted = adults + young;
     const overCap = counted > MAX_COUNTED;
     const basePax = room?.basePax ?? BASE_PAX_FALLBACK;
-    const perPax = room?.additionalPaxFee ?? 300;
-    const base = room && stay && form.ci ? stayTotal(stay.group, form.ci, nights, room, rules) : 0;
-    // Fee is charged once per booking and tops out at the max counted pax.
+    const perPax = room?.additionalPaxFee ?? 200;
+    // On a bundle stay, extra pax also step the nightly bundle rate up — so the
+    // flag has to reach stayTotal(), not just the pax line below.
+    // `!overCap` keeps the whole quote consistent while the party is too big to
+    // book: paxFee is zeroed there, so the rate must not show the bump either.
+    const hasExtraPax = !overCap && counted > basePax;
+    const base = room && stay && form.ci ? stayTotal(stay.group, form.ci, nights, room, rules, hasExtraPax) : 0;
+    // Fee is charged PER NIGHT and tops out at the max counted pax. Shares
+    // extraPaxFee() with the guest-facing pages so an admin-made booking can
+    // never be priced differently from the same booking made on the site.
     const extraCount = Math.min(Math.max(0, counted - basePax), MAX_COUNTED - basePax);
-    const paxFee = overCap ? 0 : extraCount * perPax;
+    const paxFee = overCap ? 0 : extraPaxFee(basePax + extraCount, basePax, perPax, nights);
     const total = base + paxFee;
     const down = form.downMode === "full" ? total : Math.round(total * 0.5);
     const balance = total - down;
@@ -541,7 +548,7 @@ export default function NewBookingWizard({
                     </div>
                   ) : (
                     <p style={{ margin: "9px 0 0", fontSize: 11.5, color: TEXTBROWN }}>
-                      {c.extraCount > 0 ? `2 guests included · ${c.extraCount} extra × ${peso(c.perPax)} = ${peso(c.paxFee)}` : "2 guests included in the rate"}
+                      {c.extraCount > 0 ? `2 guests included · ${c.extraCount} extra × ${peso(c.perPax)}${c.nights > 1 ? ` × ${c.nights} nights` : ""} = ${peso(c.paxFee)}` : "2 guests included in the rate"}
                     </p>
                   )}
 
@@ -682,7 +689,7 @@ export default function NewBookingWizard({
 
                   <div style={{ marginTop: 18, borderRadius: 15, background: "#FAFAF7", border: `1px solid ${BORDER}`, padding: "16px 18px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: TEXTBROWN }}><span>{stayLine}</span><span style={{ color: DARK, fontWeight: 600 }}>{peso(c.base)}</span></div>
-                    {c.paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: TEXTBROWN, marginTop: 7 }}><span>Extra guests · {c.extraCount} × {peso(c.perPax)}</span><span style={{ color: DARK, fontWeight: 600 }}>{peso(c.paxFee)}</span></div>}
+                    {c.paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: TEXTBROWN, marginTop: 7 }}><span>Extra guests · {c.extraCount} × {peso(c.perPax)}{c.nights > 1 ? ` × ${c.nights} nights` : ""}</span><span style={{ color: DARK, fontWeight: 600 }}>{peso(c.paxFee)}</span></div>}
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, fontWeight: 700, color: DARK, marginTop: 9, paddingTop: 9, borderTop: `1px solid ${BORDER}` }}><span>Total</span><span style={{ color: ACCENT }}>{peso(c.total)}</span></div>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: TEXTBROWN, marginTop: 11 }}><span>{form.downMode === "full" ? "Paid in full today" : "50% down to reserve"}</span><span style={{ color: DARK, fontWeight: 600 }}>{peso(c.down)}</span></div>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: TEXTBROWN, marginTop: 6 }}><span>At check-in (balance + {peso(SECURITY_DEPOSIT)} deposit)</span><span style={{ color: DARK, fontWeight: 600 }}>{peso(c.atCheckin)}</span></div>

@@ -13,7 +13,7 @@ import { mockRooms } from "@/lib/mock-data";
 import { generateBookingId, addMyBookingId } from "@/lib/booking-store";
 import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
 import { havenToRoom } from "@/lib/haven-adapter";
-import { stayTotal, isWeekendOrHoliday, addDaysISO, extraPaxFee, bundleNightlyRate, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS } from "@/lib/pricing";
+import { stayTotal, isWeekendOrHoliday, addDaysISO, extraPaxFee, bundleNightlyRate, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS, BUNDLE_EXTRA_PAX_SURCHARGE } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
 import { autoDiscountAmount, pickAutoPromo } from "@/lib/promo-offer";
@@ -306,21 +306,23 @@ function CheckoutInner() {
   const calendarRules = useCalendarRules();
   // Weekday vs weekend/holiday rate based on the check-in date.
   const isWeekendRate = isWeekendOrHoliday(date, calendarRules);
+  // D'Lux pricing: base rate covers 2 pax; each extra adult/young adult adds a
+  // per-pax fee CHARGED PER NIGHT. "Children (7 under)" are exempt from the fee.
+  // No cleaning or service fee. Resolved BEFORE the price because on a bundle
+  // stay, extra pax also raise the nightly bundle rate itself.
+  const feePax = adults + children; // adults + young adults; excludes 7-under
+  const extraPaxCount = Math.max(0, feePax - room.basePax);
+  const hasExtraPax = extraPaxCount > 0;
   // Stay price: 10h single session, or 21h × nights (each night priced by its
   // own date) — UNLESS the stay is long enough to qualify for a length-of-stay
   // bundle discount (5/12/20+ nights), in which case a flat nightly rate applies.
-  const basePrice = stayTotal(stayType, date, nights, room, calendarRules);
-  const bundleRate = stayType === "10" ? undefined : bundleNightlyRate(nights, date, room, calendarRules);
+  const basePrice = stayTotal(stayType, date, nights, room, calendarRules, hasExtraPax);
+  const bundleRate = stayType === "10" ? undefined : bundleNightlyRate(nights, date, room, calendarRules, hasExtraPax);
   const bundleLabel = bundleRate == null ? null
     : nights >= BUNDLE_MONTH_NIGHTS ? "Monthly rate"
     : nights >= BUNDLE_TWOWEEK_NIGHTS ? "Two-week rate"
     : "Weekly rate";
-  // D'Lux pricing: base rate covers 2 pax; each extra adult/young adult adds a
-  // flat per-pax fee (once per booking). "Children (7 under)" are exempt from
-  // the fee. No cleaning or service fee.
-  const feePax = adults + children; // adults + young adults; excludes 7-under
-  const extraPaxCount = Math.max(0, feePax - room.basePax);
-  const paxFee = extraPaxFee(feePax, room.basePax, room.additionalPaxFee);
+  const paxFee = extraPaxFee(feePax, room.basePax, room.additionalPaxFee, nights);
   const subtotal = basePrice + paxFee;
   const { data: activePromotions } = useGetActivePromotionsQuery();
 
@@ -1125,7 +1127,10 @@ function CheckoutInner() {
                 </div>
                 <div style={{ padding: "16px 0 0", fontSize: 13, display: "flex", flexDirection: "column", gap: 6 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>{stayType === "10" ? `10-hour stay · ${isWeekendRate ? "Weekend/Holiday" : "Weekday"}` : `Overnight · ${nights} night${nights > 1 ? "s" : ""}${bundleLabel ? ` · ${bundleLabel}` : ""}`}</span><span>{peso(basePrice)}</span></div>
-                  {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra pax · {extraPaxCount} × {peso(room.additionalPaxFee)}</span><span>{peso(paxFee)}</span></div>}
+                  {/* Bundle stays quote one flat nightly rate — show it, so the
+                      extra-guest bump on the rate isn't invisible. */}
+                  {bundleRate != null && <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: -4 }}>{peso(bundleRate)}/night{hasExtraPax ? ` · includes ${peso(BUNDLE_EXTRA_PAX_SURCHARGE)} extra-guest rate` : ""}</div>}
+                  {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra pax · {extraPaxCount} × {peso(room.additionalPaxFee)}{nights > 1 ? ` × ${nights} nights` : ""}</span><span>{peso(paxFee)}</span></div>}
                   {appliedDiscount && (
                     <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span>Promo · {appliedDiscount.code}</span><span>−{peso(appliedDiscount.discount_amount)}</span></div>
                   )}

@@ -80,7 +80,7 @@ export function havenToRoom(h: Record<string, unknown>): Room & RoomExtras {
     weekendWeekRate: h.week_bundle_active !== false && h.weekend_week_rate != null ? Number(h.weekend_week_rate) : undefined,
     weekendTwoWeekRate: h.twoweek_bundle_active !== false && h.weekend_twoweek_rate != null ? Number(h.weekend_twoweek_rate) : undefined,
     weekendMonthRate: h.month_bundle_active !== false && h.weekend_month_rate != null ? Number(h.weekend_month_rate) : undefined,
-    additionalPaxFee: Number(h.extra_pax_fee ?? 300),
+    additionalPaxFee: Number(h.extra_pax_fee ?? 200),
     basePax: Number(h.base_pax ?? 2),
     maxPax: Number(h.capacity ?? 4),
     // Keep a local placeholder if the haven has no uploaded images yet, so the
