@@ -9,7 +9,7 @@ import Image from "next/image";
 // component on navigation since it's mounted above <Providers> in the root
 // layout, but the session flag also guards a full page reload/reopen.
 const SESSION_KEY = "dlux-splash-shown";
-const HOLD_MS = 1400;
+const HOLD_MS = 3000;
 const FADE_MS = 500;
 
 export default function SplashScreen() {
