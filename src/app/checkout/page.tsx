@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, Suspense } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import Image from "next/image";
 import { useSearchParams, useRouter } from "next/navigation";
@@ -122,11 +123,185 @@ type ExtraGuest = { firstName: string; lastName: string; age: string; gender: st
 type PayMethod = { id: string; payment_name: string; payment_method: string; provider: string; account_details: string; payment_qr_link: string | null; is_active: boolean };
 type Payment = { methodId: string; method: string; reference: string; proofName: string | null; proofData: string | null; idName: string | null; idData: string | null };
 
-function FieldLabel({ label, children, span }: { label: string; children: React.ReactNode; span?: boolean }) {
+// One guest row plus the popup that edits it. The row is all that lives in the
+// page; the form opens in a modal.
+//
+// The modal is PORTALLED to <body> on purpose. Its ancestors here carry
+// `overflow: hidden` and an animated `translateY` (.page-enter), and a
+// transformed ancestor becomes the containing block for `position: fixed` —
+// which would quietly break the overlay. Portalling avoids that whole class of
+// bug. `children` is unchanged from the accordion version, so no form JSX moved.
+function GuestCard({ index, title, subtitle, rowTitle, rowNote, complete, hasErrors, open, onToggle, onDone, filled, total, missing, children }: {
+  index: number; title: string; subtitle: string; rowTitle: string; rowNote: string;
+  complete: boolean; hasErrors: boolean; open: boolean;
+  onToggle: () => void; onDone: () => void;
+  filled: number; total: number; missing: string[]; children: React.ReactNode;
+}) {
+  const accent = hasErrors ? G.err : complete ? G.green : G.accent;
+  const pct = total > 0 ? Math.round((filled / total) * 100) : 0;
+  // Esc closes, and the page behind must not scroll under the sheet. Mirrors the
+  // scroll-lock pattern already used in the owner portal.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onToggle(); };
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKey);
+    return () => { document.body.style.overflow = previous; window.removeEventListener("keydown", onKey); };
+  }, [open, onToggle]);
   return (
-    <div style={{ gridColumn: span ? "1 / -1" : undefined }}>
-      <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: ".12em", color: "#1F160E", marginBottom: 8 }}>{label}</div>
-      {children}
+    <div style={{
+      border: hasErrors ? `2px solid ${G.err}` : complete ? `1px solid #ECE5D4` : `1.5px solid ${G.accent}`,
+      borderRadius: 16, background: hasErrors ? G.errField : G.white, marginBottom: 12,
+    }}>
+      {/* The row's action is a labelled button, not a bare chevron — "Fill in"
+          says what tapping does; "Edit" says the guest is already finished. */}
+      <button type="button" onClick={onToggle} aria-expanded={open}
+        style={{ display: "flex", alignItems: "center", gap: 14, width: "100%", padding: 18, background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+        {/* A number, not a person glyph — it reads as "guest 1 of N" and makes
+            the list feel like an ordered checklist rather than a set of icons. */}
+        <span style={{ width: 40, height: 40, flex: "none", borderRadius: "50%", display: "grid", placeItems: "center", fontSize: 15, fontWeight: 700, background: hasErrors ? G.errBg : complete ? G.greenBg : "#F3EADA", color: accent }}>
+          {complete
+            ? <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+            : index}
+        </span>
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ display: "block", fontSize: 16, fontWeight: 600, color: G.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{rowTitle}</span>
+          <span style={{ display: "block", fontSize: 13.5, color: hasErrors ? G.err : complete ? G.green : G.muted, marginTop: 3 }}>{rowNote}</span>
+        </span>
+        <span style={{ flex: "none", fontSize: 13.5, fontWeight: 600, borderRadius: 999,
+          ...(complete
+            ? { color: G.accentInk, border: `1px solid ${G.line}`, padding: "10px 18px" }
+            : { color: G.white, background: G.accent, padding: "11px 20px" }) }}>{complete ? "Edit" : "Fill in"}</span>
+      </button>
+      {open && typeof document !== "undefined" && createPortal(
+        <div className="gc-overlay" role="dialog" aria-modal="true" aria-label={title} onClick={onToggle}
+          style={{ position: "fixed", inset: 0, zIndex: 120, display: "flex", justifyContent: "center", background: "rgba(20,15,10,0.5)" }}>
+          {/* stopPropagation so clicks inside the form don't reach the backdrop */}
+          <div className="gc-panel" onClick={(e) => e.stopPropagation()}
+            style={{ background: G.white, width: "100%", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 -10px 44px rgba(20,15,10,.28)" }}>
+            <div style={{ flex: "none", padding: "16px 20px 14px", borderBottom: "1px solid #F0E8D8", display: "flex", flexDirection: "column", gap: 12 }}>
+              <div className="gc-grab" style={{ width: 42, height: 4, borderRadius: 3, background: "#E1D8C6", margin: "0 auto 2px" }} />
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: "block", fontFamily: "'Fraunces', Georgia, serif", fontSize: 21, fontWeight: 500, color: G.ink }}>{title}</span>
+                  <span style={{ display: "block", fontSize: 13.5, color: G.muted, marginTop: 3 }}>{subtitle}</span>
+                </span>
+                <button type="button" onClick={onToggle} aria-label="Close"
+                  style={{ flex: "none", width: 40, height: 40, borderRadius: "50%", border: "1px solid #E1D8C6", background: "transparent", display: "grid", placeItems: "center", cursor: "pointer", color: G.ink }}>
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                </button>
+              </div>
+              {/* Progress is measured in filled fields, so it moves as they type */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ flex: 1, height: 7, borderRadius: 4, background: "#EFE4CE", overflow: "hidden" }}>
+                  <div style={{ width: `${pct}%`, height: "100%", background: complete ? G.green : G.accent, borderRadius: 4, transition: "width .25s ease" }} />
+                </div>
+                <span style={{ flex: "none", fontSize: 12.5, fontWeight: 600, color: complete ? G.green : G.muted, whiteSpace: "nowrap" }}>
+                  {complete ? "All set" : `${filled} of ${total} filled`}
+                </span>
+              </div>
+            </div>
+            {/* the only scroller — keeps Save pinned no matter how tall the form is */}
+            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "20px 20px 22px", display: "flex", flexDirection: "column", gap: 20 }}>{children}</div>
+            <div style={{ flex: "none", padding: "14px 20px calc(16px + env(safe-area-inset-bottom))", borderTop: "1px solid #F0E8D8", background: G.white, display: "flex", flexDirection: "column", gap: 10 }}>
+              {/* A greyed button that says nothing is the thing we keep fixing —
+                  print the reason above it instead of failing silently. */}
+              {/* Tell them what is still below the fold, so the ID step is never
+                  a surprise they scroll past. */}
+              {!complete && missing.some((m) => m.includes("photo")) && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontSize: 12.5, color: G.muted }}>
+                  <span style={{ color: G.accent, display: "inline-flex" }}><IcoShield /></span>
+                  Next below: a photo of the valid ID
+                </div>
+              )}
+              {!complete && missing.length > 0 && (
+                <div style={{ fontSize: 13, color: G.muted, textAlign: "center" }}>
+                  Fill the {missing.length} item{missing.length > 1 ? "s" : ""} above to save this guest
+                </div>
+              )}
+              <button type="button" onClick={onDone}
+                style={{ width: "100%", padding: 16, borderRadius: 14, border: "none", fontFamily: "inherit", fontSize: 16, fontWeight: 600, cursor: "pointer",
+                  background: complete ? G.accent : G.offBg, color: complete ? G.white : G.offInk }}>Save this guest</button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+    </div>
+  );
+}
+
+// ── Guest form primitives (Claude Design: "Guest Details Modal") ──────────
+// Plain-language labels, "required" spelled out, and every control clearing
+// 48px so the sheet is usable one-handed on a phone.
+const G = {
+  ink: "#1F160E", muted: "#8B7458", line: "#E0CEB2", line2: "#D4BE9A",
+  accent: "#B07848", accentInk: "#8C5A2E", white: "#FFFCF4", soft: "#FAF7F1",
+  green: "#2F7D55", greenBg: "#E7F2EA", err: "#A8492F", errBg: "#FBEDE9",
+  errLine: "#F0CFC6", errField: "#FFF8F6", offBg: "#E3D6C0", offInk: "#97866F",
+};
+
+function AskLabel({ label, required, hint }: { label: string; required?: boolean; hint?: string }) {
+  return (
+    <>
+      <div style={{ fontSize: 15, fontWeight: 600, color: G.ink, marginBottom: hint ? 6 : 9 }}>
+        {label}{required && <span style={{ color: G.err, fontWeight: 600 }}> required</span>}
+      </div>
+      {hint && <div style={{ fontSize: 13, color: G.muted, lineHeight: 1.55, marginBottom: 10 }}>{hint}</div>}
+    </>
+  );
+}
+
+// Age as a stepper rather than a keyboard-summoning number field.
+function AgeStepper({ value, onChange, min, max, note, invalid }: {
+  value: string; onChange: (v: string) => void; min: number; max: number; note: string; invalid?: boolean;
+}) {
+  const n = parseInt(value, 10);
+  const cur = isNaN(n) ? null : n;
+  const step = (d: number) => onChange(String(Math.min(max, Math.max(min, (cur ?? (d > 0 ? min - 1 : max + 1)) + d))));
+  const pad: React.CSSProperties = { width: 46, height: 46, flex: "none", borderRadius: 11, background: "#F3EADA", border: "none", display: "grid", placeItems: "center", color: G.accentInk, fontSize: 21, cursor: "pointer", fontFamily: "inherit", lineHeight: 1 };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, border: `1.5px solid ${invalid ? G.err : G.line2}`, borderRadius: 14, background: invalid ? G.errField : G.white, padding: 5 }}>
+        <button type="button" aria-label="Younger" onClick={() => step(-1)} style={pad}>&minus;</button>
+        <span style={{ minWidth: 56, textAlign: "center", fontSize: 18, fontWeight: 600, color: cur == null ? "#A89B86" : G.ink }}>{cur ?? "–"}</span>
+        <button type="button" aria-label="Older" onClick={() => step(1)} style={pad}>+</button>
+      </div>
+      <div style={{ fontSize: 13, color: invalid ? G.err : G.muted, flex: 1, minWidth: 150, fontWeight: invalid ? 600 : 400 }}>{note}</div>
+    </div>
+  );
+}
+
+function GenderChips({ value, onChange, name }: { value: string; onChange: (v: string) => void; name: string }) {
+  return (
+    <div style={{ display: "flex", gap: 9 }}>
+      {["Male", "Female", "Other"].map((g) => {
+        const on = value === g;
+        return (
+          <button key={g} type="button" aria-pressed={on} aria-label={`${name}: ${g}`} onClick={() => onChange(g)}
+            style={{ flex: 1, textAlign: "center", padding: "14px 8px", borderRadius: 14, fontFamily: "inherit", cursor: "pointer",
+              border: `1.5px solid ${on ? G.accent : G.line}`, background: on ? "rgba(176,120,72,.08)" : G.white,
+              fontSize: 15, fontWeight: on ? 600 : 400, color: G.ink }}>{g}</button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Numbered to-do shown once at the top of the popup body.
+function MissingList({ items }: { items: string[] }) {
+  if (items.length === 0) return null;
+  const head = items.length === 1 ? "One thing is still needed" : `${items.length} things are still needed`;
+  return (
+    <div style={{ display: "flex", gap: 12, padding: "14px 16px", borderRadius: 14, background: G.errBg, border: `1px solid ${G.errLine}` }}>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={G.err} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none", marginTop: 1 }}><circle cx="12" cy="12" r="10" /><path d="M12 8v5M12 16h.01" /></svg>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14.5, fontWeight: 600, color: "#7E3320", marginBottom: 6 }}>{head}</div>
+        <div style={{ fontSize: 13.5, color: "#7E3320", lineHeight: 1.7 }}>
+          {items.map((t, i) => <div key={i}>{i + 1}. {t}</div>)}
+        </div>
+      </div>
     </div>
   );
 }
@@ -170,7 +345,7 @@ function ReviewBlock({ title, onEdit, children }: { title: string; onEdit: () =>
 
 // Compact dark valid-ID uploader reused for each additional guest. Supports
 // attaching several photos (e.g. front & back of an ID, or multiple IDs).
-function GuestIdUpload({ values, onAdd, onRemove, invalid, id, title = "Valid ID (Required for guests 10+ years old)", accepted, requiredMsg = "Please upload a valid ID for this guest." }: { values: IdDoc[]; onAdd: (name: string, data: string) => void; onRemove: (index: number) => void; invalid?: boolean; id?: string; title?: string; accepted?: string; requiredMsg?: string }) {
+function GuestIdUpload({ values, onAdd, onRemove, invalid, id, title = "Photo of their valid ID", accepted, requiredMsg = "Please add a photo of this guest's ID." }: { values: IdDoc[]; onAdd: (name: string, data: string) => void; onRemove: (index: number) => void; invalid?: boolean; id?: string; title?: string; accepted?: string; requiredMsg?: string }) {
   const pick = (capture?: boolean) => {
     const f = document.createElement("input");
     f.type = "file";
@@ -180,36 +355,49 @@ function GuestIdUpload({ values, onAdd, onRemove, invalid, id, title = "Valid ID
     f.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) addFilesSequentially(files, onAdd); };
     f.click();
   };
-  const btn: React.CSSProperties = { flex: 1, minWidth: 150, padding: 14, borderRadius: 12, fontSize: 13, fontWeight: 600, background: "#4d4337", color: "#F6EFE2", border: "1px solid #5d5347", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 };
+  // Camera first — most guests are on a phone and photographing the ID beats
+  // hunting for a saved file.
+  const tile = (primary: boolean): React.CSSProperties => ({
+    flex: 1, minWidth: 0, padding: "20px 12px", borderRadius: 16, cursor: "pointer", fontFamily: "inherit",
+    display: "flex", flexDirection: "column", alignItems: "center", gap: 8, textAlign: "center",
+    border: primary
+      ? `${invalid ? 2 : 1.5}px solid ${invalid ? G.err : G.accent}`
+      : `1.5px dashed ${G.line2}`,
+    background: primary ? (invalid ? G.errField : "rgba(176,120,72,.07)") : G.soft,
+  });
   return (
-    <div id={id} style={{ marginTop: 16, padding: 20, background: "#3d3529", borderRadius: 16, border: invalid ? "1px solid #ef4444" : "1px solid transparent" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: accepted ? 6 : 14 }}>
-        <span style={{ color: "#D4A96A" }}><IcoShield /></span>
-        <div style={{ fontSize: 13, fontWeight: 600, color: "#F6EFE2" }}>{title}</div>
+    <div id={id}>
+      <AskLabel label={title} required hint={accepted ?? "Take a picture of the driver's licence, passport, national ID or school ID. Make sure the name and photo are readable. Everyone aged 10 and above needs one."} />
+      {invalid && <div style={{ fontSize: 13, color: G.err, fontWeight: 600, marginBottom: 10 }}>{requiredMsg}</div>}
+      <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+        <button type="button" onClick={() => pick(true)} style={tile(true)}>
+          <svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke={invalid ? G.err : G.accentInk} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          <span style={{ fontSize: 15, fontWeight: 600, color: G.ink }}>Take a photo</span>
+          <span style={{ fontSize: 12, color: G.muted }}>Opens your camera</span>
+        </button>
+        <button type="button" onClick={() => pick(false)} style={tile(false)}>
+          <svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke={G.accentInk} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <span style={{ fontSize: 15, fontWeight: 600, color: G.ink }}>Choose a photo</span>
+          <span style={{ fontSize: 12, color: G.muted }}>From your phone or computer</span>
+        </button>
       </div>
-      {accepted && <div style={{ fontSize: 12, color: "#B8A68E", marginBottom: 14 }}>{accepted}</div>}
-      {invalid && <div style={{ fontSize: 11, color: "#ff8f8f", marginBottom: 12 }}>{requiredMsg}</div>}
       {values.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {values.map((doc, idx) => (
-            <div key={idx} style={{ background: "#4d4337", borderRadius: 14, padding: 16, display: "flex", alignItems: "center", gap: 14 }}>
-              <ImageThumb src={doc.data} alt={doc.name} size={44} rounded={10} />
+            <div key={idx} style={{ display: "flex", alignItems: "center", gap: 14, padding: 12, border: `1px solid ${G.line}`, borderRadius: 14, background: G.soft }}>
+              <ImageThumb src={doc.data} alt={doc.name} size={62} rounded={11} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "#F6EFE2", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.name}</div>
-                <div style={{ fontSize: 12, color: "#B8A68E" }}>Uploaded · tap to view</div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: G.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.name}</div>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600, color: "#15803D", background: "#DCFCE7", padding: "4px 10px", borderRadius: 999, marginTop: 6 }}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Added
+                </span>
               </div>
-              <button onClick={() => onRemove(idx)} style={{ fontSize: 13, color: "#ef4444", background: "transparent", border: "none", cursor: "pointer", textDecoration: "underline", fontWeight: 500 }}>Remove</button>
+              <button type="button" onClick={() => onRemove(idx)} style={{ flex: "none", fontSize: 13, fontWeight: 600, color: "#B4453C", background: "transparent", border: "none", cursor: "pointer", padding: 8, fontFamily: "inherit" }}>Remove</button>
             </div>
           ))}
         </div>
       )}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <button onClick={() => pick(false)} style={btn}><IcoUpload /> {values.length > 0 ? "Add another photo" : "Upload ID photo"}</button>
-        <button onClick={() => pick(true)} style={btn}>
-          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6}><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-          Take photo
-        </button>
-      </div>
+      <div style={{ fontSize: 12.5, color: G.muted, marginTop: 10 }}>You can add more than one photo — front and back, for example.</div>
     </div>
   );
 }
@@ -300,6 +488,15 @@ function CheckoutInner() {
     if (pos <= adults + children) return "child";
     return "infant";
   };
+
+  // Which guest card is expanded. 0 = main guest, 1..n = extraGuests[0..n-1].
+  // Only one is open at a time, so a 4-pax booking reads as a short checklist
+  // instead of four stacked forms. Clamped on read (below) because extraGuests
+  // resizes by effect when the pax counts change.
+  // Starts closed. It defaulted to 0 back when this was an inline accordion,
+  // where an open first section was helpful; as a modal that same default threw
+  // a popup over the page before the guest had done anything.
+  const [openGuest, setOpenGuest] = useState<number | null>(null);
 
   // Owner-editable weekend/holiday calendar (System → Settings in the admin
   // portal); falls back to Fri/Sat + built-in PH holidays if unreachable.
@@ -430,6 +627,102 @@ function CheckoutInner() {
     return e;
   })();
 
+  // ── Guest card completion ────────────────────────────────────────────────
+  // Derived from fieldErrors, never stored, so the "N/M Added" counter and the
+  // Continue button can never disagree about who is finished.
+  const totalGuests = 1 + extraGuests.length;
+  const openGuestIdx = openGuest == null ? null : Math.min(openGuest, totalGuests - 1);
+  // Error keys belonging to guest `gi` — 0 is the main guest, 1.. are the rest.
+  const guestErrorKeys = (gi: number) =>
+    gi === 0
+      ? ["firstName", "lastName", "age", "gender", "email", "phone", "validId"].filter((k) => fieldErrors.has(k))
+      : [...fieldErrors].filter((k) => k.startsWith(`x${gi - 1}-`));
+  const guestComplete = (gi: number) => guestErrorKeys(gi).length === 0;
+  // Fields counted by the popup's progress meter. The main guest carries the
+  // contact block the others don't, hence the different totals (8 vs 5).
+  const guestTotal = (gi: number) => (gi === 0 ? 8 : 5);
+  const guestFilled = (gi: number) => {
+    const some = (v: unknown) => String(v ?? "").trim().length > 0;
+    if (gi === 0) return [info.firstName, info.lastName, info.age, info.gender, info.email, info.phone, info.facebook].filter(some).length + (info.validIds.length ? 1 : 0);
+    const g = extraGuests[gi - 1];
+    return g ? [g.firstName, g.lastName, g.age, g.gender].filter(some).length + (g.validIds.length ? 1 : 0) : 0;
+  };
+  // Plain-language name for each error key — the popup lists these as a numbered
+  // to-do and the row repeats them, so "what is wrong" is never a red outline
+  // the guest has to go hunting for.
+  const guestMissing = (gi: number) => {
+    const words: Record<string, string> = {
+      firstName: "first name", lastName: "last name", age: "age", gender: "gender",
+      email: "email address", phone: "phone number",
+      validId: gi === 0 ? "a photo of your ID" : "a photo of their ID",
+    };
+    return guestErrorKeys(gi).map((k) => words[k.replace(/^x\d+-/, "")]).filter(Boolean);
+  };
+  // ["a","b","c"] → "a, b and c"
+  const listPhrase = (xs: string[]) => xs.length <= 1 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
+  const sentence = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+  // First guest still missing something — drives the "not finished yet" banner
+  // and the reason printed above a disabled Continue.
+  const firstIncomplete = Array.from({ length: totalGuests }, (_, gi) => gi).find((gi) => !guestComplete(gi)) ?? null;
+  // Field chrome for the popup — 16px text and 48px targets per the design.
+  const askStyle = (invalid: boolean): React.CSSProperties => ({
+    width: "100%", padding: "15px 16px", borderRadius: 14, fontSize: 16, fontFamily: "inherit",
+    color: G.ink, outline: "none", boxSizing: "border-box",
+    border: `${invalid ? 2 : 1.5}px solid ${invalid ? G.err : G.line2}`,
+    background: invalid ? G.errField : G.white,
+  });
+  const askRow = (invalid: boolean): React.CSSProperties => ({
+    display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderRadius: 14,
+    border: `${invalid ? 2 : 1.5}px solid ${invalid ? G.err : G.line2}`,
+    background: invalid ? G.errField : G.white,
+  });
+  const bareInput: React.CSSProperties = { flex: 1, minWidth: 0, border: "none", background: "transparent", outline: "none", fontSize: 16, fontFamily: "inherit", color: G.ink };
+  // The row lists what a guest still needs as short grouped nouns
+  // ("Name, age, contact, valid ID") rather than one phrase per field, which
+  // ran to two lines and buried the point.
+  const guestNeeds = (gi: number) => {
+    const has = (k: string) => fieldErrors.has(gi === 0 ? k : `x${gi - 1}-${k}`);
+    const needs: string[] = [];
+    if (has("firstName") || has("lastName")) needs.push("Name");
+    if (has("age")) needs.push("Age");
+    if (gi === 0 && (has("email") || has("phone"))) needs.push("Contact");
+    // fieldErrors only flags a missing ID once an age of 10+ has been typed, so
+    // relying on it alone hid "Valid ID" from the row until the age was in —
+    // exactly when the guest most needs to know it is coming. List it whenever
+    // one is certain to be required: the booker is 18+ by definition, and so is
+    // anyone counted as an adult.
+    const docs = gi === 0 ? info.validIds : (extraGuests[gi - 1]?.validIds ?? []);
+    const age = Number(gi === 0 ? info.age : extraGuests[gi - 1]?.age);
+    const certain = gi === 0 || guestType(gi - 1) === "adult" || (!isNaN(age) && age >= 10);
+    if (docs.length === 0 && (certain || has("validId"))) needs.push("Valid ID");
+    return needs;
+  };
+  // "Main guest — you", then Second/Third/Fourth guest.
+  const guestLabel = (gi: number) =>
+    gi === 0 ? "Main guest — you" : `${["Second", "Third", "Fourth", "Fifth"][gi - 1] ?? `Guest ${gi + 1}`} guest`;
+  // What the collapsed row says under the guest's name.
+  const guestRowNote = (gi: number) => {
+    const needs = guestNeeds(gi);
+    if (needs.length === 0) return "All done";
+    // Sentence-case the first, lower-case the rest: "Name, age, valid ID".
+    return needs.map((n, i) => (i === 0 ? n : n.toLowerCase())).join(", ");
+  };
+  const addedCount = Array.from({ length: totalGuests }, (_, gi) => gi).filter(guestComplete).length;
+  // Which card owns a given error key — used to open it before scrolling there.
+  const guestOfKey = (key: string) => {
+    const m = /^x(\d+)-/.exec(key);
+    return m ? Number(m[1]) + 1 : 0;
+  };
+  // Collapse the finished card and move to the next one still missing details.
+  // Pressing Done on a guest that still has gaps marks those fields instead of
+  // doing nothing visible — the card stays open so they can be seen and fixed.
+  const goToNextIncomplete = (from: number) => {
+    if (!guestComplete(from)) { setShowErrors(true); return; }
+    for (let gi = from + 1; gi < totalGuests; gi++) if (!guestComplete(gi)) return setOpenGuest(gi);
+    for (let gi = 0; gi < from; gi++) if (!guestComplete(gi)) return setOpenGuest(gi);
+    setOpenGuest(null);
+  };
+
   // Run `action` only when the step is valid; otherwise surface the markings.
   const tryAdvance = (action: () => void) => {
     if (fieldErrors.size > 0) {
@@ -437,6 +730,10 @@ function CheckoutInner() {
       toast.error(`Please complete the ${fieldErrors.size} highlighted field${fieldErrors.size > 1 ? "s" : ""} before continuing.`);
       // Jump to the first missing field (Set keeps form order).
       const firstKey = fieldErrors.values().next().value;
+      // A collapsed card's inputs are NOT in the DOM, so the scroll/focus below
+      // would silently do nothing. Open the offending guest first — the 60ms
+      // timeout is what gives React the tick it needs to mount the fields.
+      if (step === 0 && firstKey) setOpenGuest(guestOfKey(firstKey));
       setTimeout(() => {
         const el = document.getElementById(`f-${firstKey}`);
         el?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -451,33 +748,9 @@ function CheckoutInner() {
   // Style/marking helpers driven by a failed Continue attempt.
   const fieldStyle = (key: string): React.CSSProperties =>
     showErrors && fieldErrors.has(key) ? { ...inputStyle, borderColor: "#ef4444" } : inputStyle;
-  const Req = ({ k, msg = "Required" }: { k: string; msg?: string }) =>
-    showErrors && fieldErrors.has(k) ? <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>{msg}</div> : null;
-
-  // Live age feedback — warns the moment an out-of-range value is typed, before
-  // any Continue click. Adults 18–120, young adults 7–17, children 7 & under.
-  type GType = "adult" | "child" | "infant";
-  const ageInvalidNow = (value: string, t: GType): boolean => {
-    if (value === "") return false;
-    const a = parseInt(value);
-    if (isNaN(a)) return true;
-    return t === "adult" ? a < 18 || a > 120 : t === "child" ? a < 7 || a > 17 : a < 0 || a > 7;
-  };
-  const ageStyle = (value: string, t: GType, key: string): React.CSSProperties =>
-    ageInvalidNow(value, t) || (showErrors && fieldErrors.has(key)) ? { ...inputStyle, borderColor: "#ef4444" } : inputStyle;
-  const AgeNote = ({ value, t, k }: { value: string; t: GType; k: string }) => {
-    if (ageInvalidNow(value, t)) {
-      const a = parseInt(value);
-      const msg = t === "adult"
-        ? (a < 18 ? "Must be 18 or older — adults only." : "Enter a realistic age (max 120).")
-        : t === "child"
-        ? "Young adults must be aged 7–17."
-        : "Children must be aged 7 or under.";
-      return <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>{msg}</div>;
-    }
-    if (showErrors && fieldErrors.has(k) && value === "") return <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>Enter the age.</div>;
-    return null;
-  };
+  // The old Req / AgeNote / ageStyle helpers lived here. They are gone: the age
+  // stepper cannot produce an out-of-range value, and per-field messages now
+  // come from the popup's numbered to-do plus the label under each input.
 
   const submit = async () => {
     if (submitting) return;
@@ -623,14 +896,44 @@ function CheckoutInner() {
           @keyframes co-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(212,169,106,.45); } 50% { box-shadow: 0 0 0 6px rgba(212,169,106,0); } }
           .co-fade { animation: co-fade .28s cubic-bezier(.2,.7,.2,1); }
           .co-pay-now { animation: co-pulse 2.6s ease-in-out infinite; }
-          .co-mobile-steps, .co-mobhdr, .co-mob-stay { display: none; }
+          .co-mobile-steps, .co-mobhdr { display: none; }
+          /* Guest popup: centered dialog on desktop, bottom sheet on phones. */
+          .gc-overlay { align-items: center; padding: 20px; animation: gc-fade .18s ease; }
+          .gc-panel { max-width: 560px; max-height: 90vh; border-radius: 20px; animation: gc-pop .22s cubic-bezier(.2,.7,.2,1); }
+          .gc-grab { display: none; }
+          @media (max-width: 860px) { .gc-grab { display: block !important; } }
+          @keyframes gc-fade { from { opacity: 0; } to { opacity: 1; } }
+          @keyframes gc-pop { from { opacity: 0; transform: translateY(10px) scale(.985); } to { opacity: 1; transform: none; } }
+          @keyframes gc-slide { from { transform: translateY(100%); } to { transform: none; } }
+          @media (max-width: 860px) {
+            .gc-overlay { align-items: flex-end; padding: 0; }
+            .gc-panel { max-width: 100%; max-height: 92vh; border-radius: 20px 20px 0 0; animation: gc-slide .26s cubic-bezier(.2,.7,.2,1); }
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .gc-overlay, .gc-panel { animation: none !important; }
+          }
           @media (max-width: 860px) {
             .co-wrap { padding: 14px 16px 48px !important; }
             .co-grid { grid-template-columns: 1fr !important; gap: 22px !important; }
             .co-form-grid { grid-template-columns: 1fr !important; }
             .co-aside-inner { position: static !important; top: auto !important; }
             .co-mobhdr { display: flex !important; }
-            .co-mob-stay { display: flex !important; }
+            /* Below 860px the sidebar's two cards separate: display:contents
+               drops the aside wrappers so both become grid items in their own
+               right. The summary card (thumbnail, dates, price, promo) leads in
+               place of the old cut-down strip, while the pay-now hero keeps its
+               original spot at the very bottom, next to the action it prompts. */
+            /* display:contents drops the aside wrappers so the summary card is a
+               grid item in its own right. It keeps DOM order, so it sits below
+               the form — the sticky bar carries the amount up top instead. */
+            .co-aside, .co-aside-inner { display: contents !important; }
+            /* The sticky bar takes over from the pay-now hero and the inline
+               Back/Continue row; the settle-up figures move into the summary. */
+            .co-pay-now, .co-nav { display: none !important; }
+            .co-sum-settle { display: flex !important; }
+            .co-stickybar { display: flex !important; }
+            /* Clear the fixed bar so it never covers the last of the content. */
+            .co-wrap { padding-bottom: 128px !important; }
             .co-deskhdr { display: none !important; }
             .co-back-chip { display: none !important; }
             .co-h1 { font-size: 30px !important; }
@@ -744,9 +1047,16 @@ function CheckoutInner() {
         <h1 className="co-h1" style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 46, fontWeight: 400, letterSpacing: "-.025em", margin: "0 0 4px" }}>Confirm and pay</h1>
         <p style={{ margin: "0 0 26px", fontSize: 14, color: "#8B7458" }}>{stepCaption}</p>
 
+        {/* minWidth:0 on BOTH grid items is load-bearing, not tidying. Grid items
+            default to min-width:auto, so a track can never be narrower than its
+            content's min-content width — `1fr` becomes a maximum, not a floor.
+            Long unbreakable content (an uploaded ID's filename, a payment
+            account number) then widens the column past the viewport and scrolls
+            the whole page sideways on mobile. Zeroing the minimum makes the
+            track authoritative so the ellipsis/wrapping inside can do its job. */}
         <div className="co-grid" style={{ display: "grid", gridTemplateColumns: "1.45fr 1fr", gap: 44, alignItems: "start" }}>
           {/* STEP CONTENT */}
-          <div>
+          <div style={{ minWidth: 0 }}>
             {/* Mobile-only step dots (the header step bar hides below 860px) */}
             <div className="co-mobile-steps" style={{ alignItems: "center", gap: 5, marginBottom: 22 }}>
               {STEPS.map((s, i) => {
@@ -767,16 +1077,9 @@ function CheckoutInner() {
             </div>
 
             {/* MOBILE compact stay card */}
-            <div className="co-mob-stay" style={{ gap: 14, background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 18, padding: 14, marginBottom: 18 }}>
-              <div style={{ width: 74, height: 74, borderRadius: 12, overflow: "hidden", flexShrink: 0, position: "relative", background: "#EFE4CE" }}>
-                <Image src={room.images[0]} alt="" fill unoptimized style={{ objectFit: "cover" }} />
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 16, lineHeight: 1.15 }}>{room.name}</div>
-                <div style={{ fontSize: 12, color: "#8B7458", marginTop: 6 }}>{stayType === "10" ? "Day / Night use" : "Overnight"} · {formatDate(date)}</div>
-                <div style={{ fontSize: 12, color: "#8B7458", marginTop: 2 }}>{checkInTime} → {checkOutTime} · {adults + children + infants} guest{adults + children + infants > 1 ? "s" : ""}</div>
-              </div>
-            </div>
+            {/* The cut-down mobile stay strip used to sit here. It duplicated the
+                summary card's header while hiding the price, so below 860px the
+                real summary card is ordered above this column instead. */}
 
             {/* reserve-now reminder banner — sets the pay-to-reserve expectation early */}
             <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 18px", borderRadius: 16, background: "#2C2218", color: "#F6EFE2", marginBottom: 26 }}>
@@ -791,128 +1094,177 @@ function CheckoutInner() {
             {/* Step 0: Guest info */}
             {step === 0 && (
               <div className="fade-in">
-                <h2 style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 27, fontWeight: 500, margin: "0 0 6px", letterSpacing: "-.02em" }}>Guest information</h2>
-                <p style={{ color: "#8B7458", fontSize: 14, margin: "0 0 22px" }}>Adult 1 · Main guest</p>
-                <div className="co-form-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                  <FieldLabel label="First Name *">
-                    <input id="f-firstName" style={fieldStyle("firstName")} value={info.firstName} onChange={(e) => setInfo((prev) => ({ ...prev, firstName: e.target.value }))} placeholder="John" />
-                    <Req k="firstName" msg="Enter the first name" />
-                  </FieldLabel>
-                  <FieldLabel label="Last Name *">
-                    <input id="f-lastName" style={fieldStyle("lastName")} value={info.lastName} onChange={(e) => setInfo((prev) => ({ ...prev, lastName: e.target.value }))} placeholder="Doe" />
-                    <Req k="lastName" msg="Enter the last name" />
-                  </FieldLabel>
-                  <FieldLabel label="Age * (18+)">
-                    <input id="f-age" style={ageStyle(info.age, "adult", "age")} type="number" min="18" max="120" value={info.age} onChange={(e) => setInfo((prev) => ({ ...prev, age: e.target.value.replace(/\D/g, "").slice(0, 3) }))} placeholder="18" />
-                    <AgeNote value={info.age} t="adult" k="age" />
-                  </FieldLabel>
-                  <FieldLabel label="Gender *">
-                    <select style={inputStyle} value={info.gender} onChange={(e) => setInfo((prev) => ({ ...prev, gender: e.target.value }))}>
-                      <option value="Male">Male</option>
-                      <option value="Female">Female</option>
-                      <option value="Other">Other</option>
-                    </select>
-                  </FieldLabel>
-                  <FieldLabel label="Email Address *">
-                    <input id="f-email" style={fieldStyle("email")} type="email" value={info.email} onChange={(e) => setInfo((prev) => ({ ...prev, email: e.target.value }))} placeholder="juan@email.com" />
-                    <Req k="email" msg="Enter a valid email address" />
-                  </FieldLabel>
-                  <FieldLabel label="Phone Number *">
-                    <input id="f-phone" style={fieldStyle("phone")} type="tel" inputMode="numeric" maxLength={11} value={info.phone} onChange={(e) => setInfo((prev) => ({ ...prev, phone: e.target.value.replace(/\D/g, "").slice(0, 11) }))} placeholder="09991484954" />
-                    <Req k="phone" msg="Enter an 11-digit phone number" />
-                  </FieldLabel>
-                  <FieldLabel label="Facebook Name or Link" span>
-                    <input style={inputStyle} value={info.facebook} onChange={(e) => setInfo((prev) => ({ ...prev, facebook: e.target.value }))} placeholder="e.g. Juan Dela Cruz or facebook.com/juandelacruz" />
-                    <div style={{ fontSize: 11, color: "#8B7458", marginTop: 6 }}>Alternative contact in case email is incorrect.</div>
-                  </FieldLabel>
-                </div>
-                <div id="f-validId" style={{ marginTop: 24, border: showErrors && fieldErrors.has("validId") ? "1px solid #ef4444" : "1px solid #D4BE9A", borderRadius: 18, background: "#FFFCF4", overflow: "hidden" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", background: "#EFE4CE", borderBottom: "1px solid #E0CEB2" }}>
-                    <span style={{ color: "#8C5A2E", display: "inline-flex" }}><IcoShield /></span>
-                    <div style={{ fontSize: 13.5, fontWeight: 600, color: "#1F160E" }}>Valid ID <span style={{ color: "#8B7458", fontWeight: 500 }}>· required for guests 10+</span></div>
+                <h2 style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 27, fontWeight: 500, margin: "0 0 4px", letterSpacing: "-.02em" }}>Who is staying?</h2>
+                <p style={{ color: G.muted, fontSize: 15, margin: "0 0 14px" }}>
+                  Details for each guest, exactly as printed on the ID they will show at check-in.
+                </p>
+                {/* Progress in guests, not a cryptic "1/2" tag */}
+                <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "0 0 14px" }}>
+                  <div style={{ flex: 1, height: 5, borderRadius: 4, background: "#EFE4CE", overflow: "hidden" }}>
+                    <div style={{ width: `${totalGuests ? Math.round((addedCount / totalGuests) * 100) : 0}%`, height: "100%", background: addedCount === totalGuests ? G.green : G.accent, borderRadius: 4, transition: "width .25s ease" }} />
                   </div>
-                  <div style={{ padding: "16px 18px" }}>
-                    <div style={{ fontSize: 12.5, color: "#8B7458", marginBottom: 14 }}>Accepted: Driver&apos;s License, Passport, National ID, School ID.</div>
-                    {showErrors && fieldErrors.has("validId") && <div style={{ fontSize: 12, color: "#ef4444", marginBottom: 14 }}>Please upload a valid ID for the main guest.</div>}
-                    {info.validIds.length > 0 && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 12 }}>
-                        {info.validIds.map((doc, idx) => (
-                          <div key={idx} style={{ display: "flex", alignItems: "center", gap: 14, padding: 12, border: "1px solid #E0CEB2", borderRadius: 14, background: "#FAF7F1" }}>
-                            <div style={{ position: "relative", width: 66, height: 66, flex: "none" }}>
-                              <ImageThumb src={doc.data} alt={doc.name} size={66} rounded={11} />
-                              <div style={{ position: "absolute", right: -5, bottom: -5, width: 22, height: 22, borderRadius: "50%", background: "#22C55E", border: "2px solid #FAF7F1", display: "grid", placeItems: "center", color: "#fff", pointerEvents: "none" }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
-                            </div>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 13.5, fontWeight: 600, color: "#1F160E", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.name}</div>
-                              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 5 }}>
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "#15803D", background: "#DCFCE7", padding: "3px 9px", borderRadius: 999 }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Uploaded</span>
-                              </div>
-                            </div>
-                            <button onClick={() => setInfo((prev) => ({ ...prev, validIds: prev.validIds.filter((_, j) => j !== idx) }))} style={{ fontSize: 12.5, fontWeight: 600, color: "#B4453C", background: "transparent", border: "none", cursor: "pointer", padding: "7px 8px" }}>Remove</button>
-                          </div>
-                        ))}
+                  <span style={{ flex: "none", fontSize: 12.5, fontWeight: 600, color: addedCount === totalGuests ? G.green : G.muted }}>{addedCount} of {totalGuests} done</span>
+                </div>
+
+                {/* Name what is wrong and where, rather than leaving the guest to
+                    hunt for a red outline somewhere below. */}
+                {showErrors && firstIncomplete != null && (
+                  <div style={{ display: "flex", gap: 12, padding: "16px 18px", borderRadius: 16, background: G.errBg, border: `1px solid ${G.errLine}`, marginBottom: 18 }}>
+                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke={G.err} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none", marginTop: 1 }}><circle cx="12" cy="12" r="10" /><path d="M12 8v5M12 16h.01" /></svg>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 15, fontWeight: 600, color: "#7E3320", marginBottom: 4 }}>Guest {firstIncomplete + 1} is not finished yet</div>
+                      <div style={{ fontSize: 13.5, color: "#7E3320", lineHeight: 1.6 }}>
+                        {sentence(listPhrase(guestMissing(firstIncomplete)))} {guestMissing(firstIncomplete).length > 1 ? "are" : "is"} still missing. Tap <strong>Fill in</strong> to add {guestMissing(firstIncomplete).length > 1 ? "them" : "it"}.
                       </div>
-                    )}
-                    <div>
-                      <div style={{ border: "1px dashed #D4BE9A", borderRadius: 14, padding: 32, textAlign: "center", marginBottom: 12, cursor: "pointer", background: "#FAF7F1" }} onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/png,image/jpeg,image/gif,image/webp"; f.multiple = true; f.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) addFilesSequentially(files, (name, data) => setInfo((prev) => ({ ...prev, validIds: [...prev.validIds, { name, data }] }))); }; f.click(); }}>
-                        <div style={{ width: 52, height: 52, borderRadius: 12, background: "#EFE4CE", display: "grid", placeItems: "center", margin: "0 auto 14px", color: "#A88E63" }}>
-                          <IcoUpload />
-                        </div>
-                        <div style={{ fontSize: 14, fontWeight: 600, color: "#1F160E", marginBottom: 6 }}>{info.validIds.length > 0 ? "Add another ID photo" : "Click to upload ID photo"}</div>
-                        <div style={{ fontSize: 12, color: "#8B7458" }}>PNG, JPG, JPEG up to 5MB · you can add more than one</div>
-                      </div>
-                      <button onClick={() => { const f = document.createElement("input"); f.type = "file"; f.accept = "image/png,image/jpeg,image/gif,image/webp"; (f as unknown as { capture: string }).capture = "environment"; f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) { const err = imageFileError(file); if (err) { toast.error(err); return; } fileToBase64(file).then((data) => { if (data) setInfo((prev) => ({ ...prev, validIds: [...prev.validIds, { name: file.name, data }] })); }); } }; f.click(); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: 10, border: "1px dashed #D4BE9A", borderRadius: 12, background: "transparent", color: "#8C5A2E", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
-                        <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-                        Take photo with camera
-                      </button>
                     </div>
                   </div>
-                </div>
+                )}
+
+                <GuestCard
+                  index={1}
+                  title={`Guest 1 of ${totalGuests}`}
+                  subtitle="This is you, the person booking"
+                  rowTitle={guestComplete(0) ? (`${info.firstName} ${info.lastName}`.trim() || guestLabel(0)) : guestLabel(0)}
+                  rowNote={guestRowNote(0)}
+                  complete={guestComplete(0)}
+                  hasErrors={showErrors && guestErrorKeys(0).length > 0}
+                  open={openGuestIdx === 0}
+                  onToggle={() => setOpenGuest(openGuestIdx === 0 ? null : 0)}
+                  onDone={() => goToNextIncomplete(0)}
+                  filled={guestFilled(0)}
+                  total={guestTotal(0)}
+                  missing={guestMissing(0)}
+                >
+                  {showErrors && <MissingList items={guestMissing(0)} />}
+
+                  <div>
+                      <AskLabel label="Full name" required hint="Copy it letter for letter from the ID you will show at check-in." />
+                      <div style={{ display: "flex", gap: 12 }}>
+                        <input id="f-firstName" style={{ ...askStyle(showErrors && fieldErrors.has("firstName")), flex: 1, minWidth: 0 }} value={info.firstName} onChange={(e) => setInfo((prev) => ({ ...prev, firstName: e.target.value }))} placeholder="First name" />
+                        <input id="f-lastName" style={{ ...askStyle(showErrors && fieldErrors.has("lastName")), flex: 1, minWidth: 0 }} value={info.lastName} onChange={(e) => setInfo((prev) => ({ ...prev, lastName: e.target.value }))} placeholder="Last name" />
+                      </div>
+                      <div style={{ display: "flex", gap: 12, marginTop: 7, fontSize: 12.5 }}>
+                        <span style={{ flex: 1, color: showErrors && fieldErrors.has("firstName") ? G.err : G.muted, fontWeight: showErrors && fieldErrors.has("firstName") ? 600 : 400 }}>{showErrors && fieldErrors.has("firstName") ? "Please add your first name" : "First name"}</span>
+                        <span style={{ flex: 1, color: showErrors && fieldErrors.has("lastName") ? G.err : G.muted, fontWeight: showErrors && fieldErrors.has("lastName") ? 600 : 400 }}>{showErrors && fieldErrors.has("lastName") ? "Please add your last name" : "Last name"}</span>
+                      </div>
+                    </div>
+
+                    <div id="f-age">
+                      <AskLabel label="Age" required />
+                      <AgeStepper value={info.age} min={18} max={120} invalid={showErrors && fieldErrors.has("age")}
+                        note="You must be 18 or older to book."
+                        onChange={(v) => setInfo((prev) => ({ ...prev, age: v }))} />
+                    </div>
+
+                    <div>
+                      <AskLabel label="Gender" />
+                      <GenderChips name="Your gender" value={info.gender} onChange={(v) => setInfo((prev) => ({ ...prev, gender: v }))} />
+                    </div>
+
+                    <div>
+                      <AskLabel label="How can we reach you?" required hint="Your booking confirmation and check-in code are sent here." />
+                      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                        <div style={askRow(showErrors && fieldErrors.has("email"))}>
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={G.muted} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><rect x="2" y="4" width="20" height="16" rx="2" /><path d="m22 7-10 6L2 7" /></svg>
+                          <input id="f-email" type="email" placeholder="Email address" style={bareInput} value={info.email} onChange={(e) => setInfo((prev) => ({ ...prev, email: e.target.value }))} />
+                        </div>
+                        <div style={askRow(showErrors && fieldErrors.has("phone"))}>
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={G.muted} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.37 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.33 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" /></svg>
+                          <input id="f-phone" type="tel" inputMode="numeric" maxLength={11} placeholder="Phone number (11 digits)" style={bareInput} value={info.phone} onChange={(e) => setInfo((prev) => ({ ...prev, phone: e.target.value.replace(/\D/g, "").slice(0, 11) }))} />
+                        </div>
+                        <div style={{ ...askRow(false), border: `1.5px dashed ${G.line2}`, background: G.soft }}>
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={G.muted} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><circle cx="12" cy="12" r="10" /><path d="M12 8v8M8 12h8" /></svg>
+                          <input placeholder="Facebook name or link — optional" style={bareInput} value={info.facebook} onChange={(e) => setInfo((prev) => ({ ...prev, facebook: e.target.value }))} />
+                        </div>
+                      </div>
+                      {showErrors && (fieldErrors.has("email") || fieldErrors.has("phone")) && (
+                        <div style={{ fontSize: 12.5, color: G.err, fontWeight: 600, marginTop: 7 }}>
+                          {fieldErrors.has("email") ? "Please add a valid email address. " : ""}{fieldErrors.has("phone") ? "Please add an 11-digit phone number." : ""}
+                        </div>
+                      )}
+                    </div>
+
+                  <GuestIdUpload
+                    id="f-validId"
+                    values={info.validIds}
+                    invalid={showErrors && fieldErrors.has("validId")}
+                    title="Photo of your valid ID"
+                    requiredMsg="Please add a photo of your ID."
+                    onAdd={(name, data) => setInfo((prev) => ({ ...prev, validIds: [...prev.validIds, { name, data }] }))}
+                    onRemove={(idx) => setInfo((prev) => ({ ...prev, validIds: prev.validIds.filter((_, j) => j !== idx) }))}
+                  />
+                </GuestCard>
 
                 {/* Additional guests — name, age, gender + valid ID only */}
                 {extraGuests.map((g, i) => {
                   const t = guestType(i);
                   const typeLabel = t === "adult" ? "Adult (18+)" : t === "child" ? "Young Adult (7–17)" : "Child (7 & under)";
-                  const ageLabel = t === "adult" ? "Age * (18+)" : t === "child" ? "Age * (7–17)" : "Age * (7 & under)";
                   const ageMin = t === "adult" ? 18 : t === "child" ? 7 : 0;
                   const ageMax = t === "adult" ? 120 : t === "child" ? 17 : 7;
-                  const agePlaceholder = t === "adult" ? "18" : t === "child" ? "12" : "5";
+                  const ageNote = t === "adult" ? "Adults are 18 or older." : t === "child" ? "Young adults are 7 to 17." : "Children are 7 or under.";
+                  const gi = i + 1; // card index — 0 is the main guest
+                  const filledName = `${g.firstName} ${g.lastName}`.trim();
+                  const bad = (k: string) => showErrors && fieldErrors.has(`x${i}-${k}`);
                   return (
-                  <div key={i} style={{ marginTop: 28, paddingTop: 24, borderTop: "1px solid var(--line)" }}>
-                    <p style={{ color: "var(--ink)", fontSize: 16, fontWeight: 600, margin: "0 0 16px" }}>Guest {i + 2} <span style={{ color: "var(--muted)", fontWeight: 500, fontSize: 13 }}>· {typeLabel}</span></p>
-                    <div className="co-form-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                      <FieldLabel label="First Name *">
-                        <input id={`f-x${i}-firstName`} style={fieldStyle(`x${i}-firstName`)} value={g.firstName} onChange={(e) => updateGuest(i, { firstName: e.target.value })} placeholder="Jane" />
-                        <Req k={`x${i}-firstName`} msg="Enter the first name" />
-                      </FieldLabel>
-                      <FieldLabel label="Last Name *">
-                        <input id={`f-x${i}-lastName`} style={fieldStyle(`x${i}-lastName`)} value={g.lastName} onChange={(e) => updateGuest(i, { lastName: e.target.value })} placeholder="Doe" />
-                        <Req k={`x${i}-lastName`} msg="Enter the last name" />
-                      </FieldLabel>
-                      <FieldLabel label={ageLabel}>
-                        <input id={`f-x${i}-age`} style={ageStyle(g.age, t, `x${i}-age`)} type="number" min={ageMin} max={ageMax} value={g.age} onChange={(e) => updateGuest(i, { age: e.target.value.replace(/\D/g, "").slice(0, 3) })} placeholder={agePlaceholder} />
-                        <AgeNote value={g.age} t={t} k={`x${i}-age`} />
-                      </FieldLabel>
-                      <FieldLabel label="Gender *">
-                        <select aria-label={`Guest ${i + 2} gender`} style={inputStyle} value={g.gender} onChange={(e) => updateGuest(i, { gender: e.target.value })}>
-                          <option value="Male">Male</option>
-                          <option value="Female">Female</option>
-                          <option value="Other">Other</option>
-                        </select>
-                      </FieldLabel>
-                    </div>
+                  <GuestCard
+                    key={i}
+                    index={i + 2}
+                    title={`Guest ${i + 2} of ${totalGuests}`}
+                    subtitle={typeLabel}
+                    rowTitle={guestComplete(gi) && filledName ? filledName : guestLabel(gi)}
+                    rowNote={guestRowNote(gi)}
+                    complete={guestComplete(gi)}
+                    hasErrors={showErrors && guestErrorKeys(gi).length > 0}
+                    open={openGuestIdx === gi}
+                    onToggle={() => setOpenGuest(openGuestIdx === gi ? null : gi)}
+                    onDone={() => goToNextIncomplete(gi)}
+                    filled={guestFilled(gi)}
+                    total={guestTotal(gi)}
+                    missing={guestMissing(gi)}
+                  >
+                    {showErrors && <MissingList items={guestMissing(gi)} />}
+
+                    <div>
+                        <AskLabel label="Full name" required hint="Copy it letter for letter from the ID they will show at check-in." />
+                        <div style={{ display: "flex", gap: 12 }}>
+                          <input id={`f-x${i}-firstName`} style={{ ...askStyle(bad("firstName")), flex: 1, minWidth: 0 }} value={g.firstName} onChange={(e) => updateGuest(i, { firstName: e.target.value })} placeholder="First name" />
+                          <input id={`f-x${i}-lastName`} style={{ ...askStyle(bad("lastName")), flex: 1, minWidth: 0 }} value={g.lastName} onChange={(e) => updateGuest(i, { lastName: e.target.value })} placeholder="Last name" />
+                        </div>
+                        <div style={{ display: "flex", gap: 12, marginTop: 7, fontSize: 12.5 }}>
+                          <span style={{ flex: 1, color: bad("firstName") ? G.err : G.muted, fontWeight: bad("firstName") ? 600 : 400 }}>{bad("firstName") ? "Please add their first name" : "First name"}</span>
+                          <span style={{ flex: 1, color: bad("lastName") ? G.err : G.muted, fontWeight: bad("lastName") ? 600 : 400 }}>{bad("lastName") ? "Please add their last name" : "Last name"}</span>
+                        </div>
+                      </div>
+
+                      <div id={`f-x${i}-age`}>
+                        <AskLabel label="Age" required />
+                        <AgeStepper value={g.age} min={ageMin} max={ageMax} invalid={bad("age")}
+                          note={ageNote} onChange={(v) => updateGuest(i, { age: v })} />
+                      </div>
+
+                      <div>
+                        <AskLabel label="Gender" />
+                        <GenderChips name={`Guest ${i + 2} gender`} value={g.gender} onChange={(v) => updateGuest(i, { gender: v })} />
+                      </div>
+
                     <GuestIdUpload
                       id={`f-x${i}-validId`}
                       values={g.validIds}
-                      invalid={showErrors && fieldErrors.has(`x${i}-validId`)}
-                      title="Valid ID (Required for guests 10+ years old)"
-                      requiredMsg="Please upload a valid ID for this guest."
+                      invalid={bad("validId")}
+                      title="Photo of their valid ID"
+                      requiredMsg="Please add a photo of this guest's ID."
                       onAdd={(name, data) => updateGuest(i, { validIds: [...g.validIds, { name, data }] })}
                       onRemove={(index) => updateGuest(i, { validIds: g.validIds.filter((_, j) => j !== index) })}
                     />
-                  </div>
+                  </GuestCard>
                   );
                 })}
+
+                {/* Says why the IDs are being asked for, right where they're asked. */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, fontSize: 12.5, color: G.muted }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+                  Secure checkout · IDs are used only for check-in verification
+                </div>
               </div>
             )}
 
@@ -1085,16 +1437,29 @@ function CheckoutInner() {
             )}
 
             {/* Nav buttons */}
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 34 }}>
+            {/* flex-END, not flex-start: the Continue side is a column with the
+                reason text stacked above the button, so aligning to the top left
+                the two buttons on different lines. Aligning to the bottom puts
+                them on a shared baseline whether or not the hint is showing. */}
+            <div className="co-nav" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 14, rowGap: 16, flexWrap: "wrap", marginTop: 34 }}>
               <button onClick={() => step === 0 ? router.back() : setStep(step - 1)}
-                style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "13px 24px", borderRadius: 999, fontSize: 14, fontWeight: 600, background: "#FFFCF4", color: "#1F160E", border: "1px solid #D4BE9A", cursor: "pointer" }}>
+                style={{ flex: "none", display: "inline-flex", alignItems: "center", gap: 6, padding: "13px 24px", borderRadius: 999, fontSize: 14, fontWeight: 600, background: "#FFFCF4", color: "#1F160E", border: "1px solid #D4BE9A", cursor: "pointer" }}>
                 <IcoChevLeft /> {step === 0 ? "Back to stay" : "Back"}
               </button>
               {step < STEPS.length - 1 ? (
-                <button onClick={() => tryAdvance(() => setStep(step + 1))}
-                  style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "13px 28px", borderRadius: 999, fontSize: 15, fontWeight: 600, background: "#B07848", color: "#FFFCF4", border: "none", cursor: "pointer" }}>
-                  Continue <IcoArrowRight />
-                </button>
+                // Continue reads as blocked and says WHO is blocking it, instead
+                // of looking live and then rejecting the tap.
+                <span style={{ flex: "none", display: "inline-flex", flexDirection: "column", alignItems: "flex-end", gap: 7, minWidth: 0 }}>
+                  {step === 0 && firstIncomplete != null && (
+                    <span style={{ fontSize: 13, color: G.muted, textAlign: "right" }}>Finish Guest {firstIncomplete + 1} to continue</span>
+                  )}
+                  <button onClick={() => tryAdvance(() => setStep(step + 1))}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 30px", borderRadius: 999, fontSize: 15, fontWeight: 600, border: "none", cursor: "pointer",
+                      background: step === 0 && firstIncomplete != null ? G.offBg : G.accent,
+                      color: step === 0 && firstIncomplete != null ? G.offInk : G.white }}>
+                    Continue <IcoArrowRight />
+                  </button>
+                </span>
               ) : (
                 <button onClick={() => tryAdvance(submit)} disabled={submitting}
                   style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "13px 28px", borderRadius: 999, fontSize: 15, fontWeight: 600, background: "#B07848", color: "#FFFCF4", border: "none", cursor: submitting ? "not-allowed" : "pointer", opacity: submitting ? 0.7 : 1 }}>
@@ -1105,11 +1470,11 @@ function CheckoutInner() {
           </div>
 
           {/* RIGHT SIDEBAR — stay summary + pay-now hero */}
-          <aside>
+          <aside className="co-aside" style={{ minWidth: 0 }}>
             <div className="co-aside-inner" style={{ position: "sticky", top: 92, display: "flex", flexDirection: "column", gap: 16 }}>
 
               {/* stay summary card */}
-              <div style={{ background: "#FFFCF4", borderRadius: 20, padding: 22, border: "1px solid #E0CEB2", boxShadow: "0 1px 2px rgba(31,22,14,.04), 0 2px 8px rgba(31,22,14,.04)" }}>
+              <div className="co-sum" style={{ background: "#FFFCF4", borderRadius: 20, padding: 22, border: "1px solid #E0CEB2", boxShadow: "0 1px 2px rgba(31,22,14,.04), 0 2px 8px rgba(31,22,14,.04)" }}>
                 <div style={{ display: "flex", gap: 14, paddingBottom: 18, borderBottom: "1px solid #E0CEB2" }}>
                   <div style={{ width: 74, height: 74, borderRadius: 12, overflow: "hidden", flexShrink: 0, background: "#EFE4CE", position: "relative" }}>
                     <Image src={room.images[0]} alt="" fill unoptimized style={{ objectFit: "cover" }} />
@@ -1137,6 +1502,13 @@ function CheckoutInner() {
                   {autoDiscount > 0 && autoPromo && (
                     <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span>{autoPromo.title}</span><span>−{peso(autoDiscount)}</span></div>
                   )}
+                  {/* Mobile only: the pay-now hero carries these on desktop, but
+                      below 860px it collapses to the sticky bar, so the settle-up
+                      figures live here instead of disappearing. */}
+                  <div className="co-sum-settle" style={{ display: "none", flexDirection: "column", gap: 6 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Balance at check-in</span><span style={{ fontWeight: 600 }}>{peso(total - downPayment)}</span></div>
+                    <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Refundable deposit</span><span style={{ fontWeight: 600 }}>{peso(SECURITY_DEPOSIT)}</span></div>
+                  </div>
                   <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16, marginTop: 6, paddingTop: 10, borderTop: "1px solid #E0CEB2" }}><span>Total stay value</span><span>{peso(total)}</span></div>
                 </div>
 
@@ -1197,6 +1569,32 @@ function CheckoutInner() {
             </div>
           </aside>
         </div>
+      </div>
+
+      {/* MOBILE sticky action bar — below 860px this replaces both the sidebar's
+          pay-now hero and the inline Back/Continue row, so the amount and the
+          next action stay in reach without scrolling. Back is dropped here on
+          purpose: the header already carries a ← for the same job. */}
+      <div className="co-stickybar" style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 60, background: "#2C2218", color: "#F6EFE2", padding: "12px 16px calc(12px + env(safe-area-inset-bottom))", display: "none", alignItems: "center", gap: 14, boxShadow: "0 -10px 30px rgba(20,15,10,.28)" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontFamily: "'Geist Mono', monospace", fontSize: 9.5, fontWeight: 600, letterSpacing: ".14em", textTransform: "uppercase", color: "#D4A96A", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            Pay now to reserve · 50%
+          </div>
+          <div style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 26, lineHeight: 1.15, marginTop: 1 }}>{peso(downPayment)}</div>
+        </div>
+        {step < STEPS.length - 1 ? (
+          <button onClick={() => tryAdvance(() => setStep(step + 1))}
+            style={{ flex: "none", display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 24px", borderRadius: 999, fontSize: 15, fontWeight: 600, border: "none", fontFamily: "inherit", cursor: "pointer",
+              background: step === 0 && firstIncomplete != null ? "#4d4337" : G.accent,
+              color: step === 0 && firstIncomplete != null ? "#A2937D" : G.white }}>
+            Continue <IcoArrowRight />
+          </button>
+        ) : (
+          <button onClick={() => tryAdvance(submit)} disabled={submitting}
+            style={{ flex: "none", display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 22px", borderRadius: 999, fontSize: 14.5, fontWeight: 600, background: G.accent, color: G.white, border: "none", fontFamily: "inherit", cursor: submitting ? "not-allowed" : "pointer", opacity: submitting ? 0.7 : 1 }}>
+            <IcoCheckLg /> {submitting ? "Submitting…" : "Submit"}
+          </button>
+        )}
       </div>
     </div>
   );

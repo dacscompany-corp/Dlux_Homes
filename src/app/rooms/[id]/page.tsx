@@ -545,33 +545,11 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
 
   // Overnight (21h) stays can span multiple nights; 10h sessions are always 1.
   const isOvernight = selectedWindow.stayType !== "10";
-  const stayNights = isOvernight ? nights : 1;
 
-  // D'Lux: rate depends on stay type + whether each night is a weekend/holiday.
-  // Base rate covers the first `basePax` (2) guests; each guest beyond that adds
-  // a per-pax fee CHARGED PER NIGHT. Only adults + young adults are chargeable —
-  // "Children (7 under)" are exempt from the fee (but still count toward the
-  // 4-pax max). No cleaning or service fee.
-  // Owner-editable weekend/holiday calendar (System → Settings in the admin
-  // portal); falls back to Fri/Sat + built-in PH holidays if unreachable.
-  const calendarRules = useCalendarRules();
-  const isWeekendRate = isWeekendOrHoliday(date, calendarRules);
-  // Counted pax must be resolved BEFORE the price: on a bundle stay, having any
-  // extra pax raises the nightly bundle rate itself (not just the pax line).
-  const feePax = guests.adults + guests.children; // adults + young adults; excludes 7-under
-  const extraPaxCount = Math.max(0, feePax - room.basePax);
-  const hasExtraPax = extraPaxCount > 0;
-  const basePrice = stayTotal(selectedWindow.stayType, date, stayNights, room, calendarRules, hasExtraPax);
-  // Length-of-stay bundle discount (5/12/20+ nights, Overnight only) — null if
-  // this stay doesn't qualify or the haven hasn't configured that tier. Already
-  // includes the extra-pax bump, so it's the rate actually charged.
-  const bundleRate = selectedWindow.stayType === "10" ? undefined : bundleNightlyRate(stayNights, date, room, calendarRules, hasExtraPax);
-  const bundleLabel = bundleRate == null ? null
-    : stayNights >= BUNDLE_MONTH_NIGHTS ? "Monthly rate"
-    : stayNights >= BUNDLE_TWOWEEK_NIGHTS ? "Two-week rate"
-    : "Weekly rate";
-  const paxFee = extraPaxFee(feePax, room.basePax, room.additionalPaxFee, stayNights);
-  const total = basePrice + paxFee;
+  // NOTE: `stayNights` and the whole pricing block used to live here, but the
+  // night count is now CLAMPED to what the calendar can actually take, which
+  // needs the availability helpers below. Both moved to just after
+  // `maxNightsFrom()` — search for "Nights, clamped".
 
   // Normalize any date value (DATE column may arrive as a UTC timestamp) to a
   // local YYYY-MM-DD, then expand ranges into the individual unavailable days.
@@ -630,24 +608,78 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
     return end > start ? [{ start, end }] : [];
   });
 
-  // Can this specific window be booked starting on this date?
-  const isWindowFreeOn = (iso: string, w: Window) => {
+  // Can this specific window be booked starting on this date, for `forNights`?
+  //
+  // `forNights` is an EXPLICIT argument, never read from the night-count state.
+  // It used to close over `stayNights`, which made a rate's availability depend
+  // on the stepper: raising the nights past a booked date dropped Overnight out
+  // of the list, which unmounted the stepper itself and left the guest with no
+  // way back. Availability must be answerable for any length, independently of
+  // what is currently selected.
+  const isWindowFreeOn = (iso: string, w: Window, forNights: number) => {
     if (ownerBlocked.has(iso)) return false;
     const ci = minutesOf(w.checkIn), co = minutesOf(w.checkOut);
     if (ci == null || co == null) return true;
     const overnight = w.stayType !== "10";
-    const span = overnight ? Math.max(1, stayNights) : 1;
+    const span = overnight ? Math.max(1, Math.floor(forNights || 1)) : 1;
     const ns = atMs(iso, ci);
     // A 10-hour session ending earlier than it starts rolls into the next day
-    // (nightcation); an overnight stay runs for `stayNights` nights.
+    // (nightcation); an overnight stay runs for `span` nights.
     const ne = overnight ? atMs(iso, co, span) : atMs(iso, co, co <= ci ? 1 : 0);
     return !busyIntervals.some(
       ({ start, end }) => start < ne + bufferMs(ns, ne) && end + bufferMs(start, end) > ns,
     );
   };
 
-  // The rates actually bookable on a given date — this drives step 2.
-  const availableWindowsOn = (iso: string) => (iso ? windows.filter((w) => isWindowFreeOn(iso, w)) : []);
+  // Longest overnight stay that can actually START on `iso` — 0 when the date
+  // can't take even one night. This is what caps the stepper, so an unbookable
+  // length can never be entered in the first place.
+  const MAX_BOOKABLE_NIGHTS = 60;
+  const maxNightsFrom = (iso: string, w: Window) => {
+    if (!iso || w.stayType === "10") return 1;
+    let n = 0;
+    while (n < MAX_BOOKABLE_NIGHTS && isWindowFreeOn(iso, w, n + 1)) n++;
+    return n;
+  };
+
+  // A rate is offered on a date if it can run there AT ALL (one night for an
+  // overnight). How LONG it can run is the stepper's business, not the rate
+  // list's — conflating the two is what made the option vanish.
+  const availableWindowsOn = (iso: string) => (iso ? windows.filter((w) => isWindowFreeOn(iso, w, 1)) : []);
+
+  // ── Nights, clamped ──────────────────────────────────────────────────────
+  // `nights` is what the guest clicked; `stayNights` is what is bookable. The
+  // clamp is DERIVED rather than pushed back into state by an effect, so there
+  // is no render where the two disagree and no setState-in-effect cascade.
+  const maxNights = isOvernight ? maxNightsFrom(date, selectedWindow) : 1;
+  const stayNights = isOvernight ? Math.min(Math.max(1, nights), Math.max(1, maxNights)) : 1;
+  const nightsCapped = isOvernight && !!date && maxNights > 0 && nights > maxNights;
+
+  // D'Lux: rate depends on stay type + whether each night is a weekend/holiday.
+  // Base rate covers the first `basePax` (2) guests; each guest beyond that adds
+  // a per-pax fee CHARGED PER NIGHT. Only adults + young adults are chargeable —
+  // "Children (7 under)" are exempt from the fee (but still count toward the
+  // 4-pax max). No cleaning or service fee.
+  // Owner-editable weekend/holiday calendar (System → Settings in the admin
+  // portal); falls back to Fri/Sat + built-in PH holidays if unreachable.
+  const calendarRules = useCalendarRules();
+  const isWeekendRate = isWeekendOrHoliday(date, calendarRules);
+  // Counted pax must be resolved BEFORE the price: on a bundle stay, having any
+  // extra pax raises the nightly bundle rate itself (not just the pax line).
+  const feePax = guests.adults + guests.children; // adults + young adults; excludes 7-under
+  const extraPaxCount = Math.max(0, feePax - room.basePax);
+  const hasExtraPax = extraPaxCount > 0;
+  const basePrice = stayTotal(selectedWindow.stayType, date, stayNights, room, calendarRules, hasExtraPax);
+  // Length-of-stay bundle discount (5/12/20+ nights, Overnight only) — null if
+  // this stay doesn't qualify or the haven hasn't configured that tier. Already
+  // includes the extra-pax bump, so it's the rate actually charged.
+  const bundleRate = selectedWindow.stayType === "10" ? undefined : bundleNightlyRate(stayNights, date, room, calendarRules, hasExtraPax);
+  const bundleLabel = bundleRate == null ? null
+    : stayNights >= BUNDLE_MONTH_NIGHTS ? "Monthly rate"
+    : stayNights >= BUNDLE_TWOWEEK_NIGHTS ? "Two-week rate"
+    : "Weekly rate";
+  const paxFee = extraPaxFee(feePax, room.basePax, room.additionalPaxFee, stayNights);
+  const total = basePrice + paxFee;
 
   // What the calendar greys out depends on whether a rate is already in play.
   //
@@ -657,9 +689,14 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   //    free would send them to a day that can't give them what they came for.
   //  • No rate yet → close a date only when EVERY rate is taken, so the guest
   //    can pick a day first and then see what it offers.
+  //
+  // Always asked for ONE night, matching the legend ("can't take an overnight").
+  // Asking for the currently-selected length instead meant a 3-night selection
+  // greyed out every date that couldn't host 3 nights — a rule the guest could
+  // neither see nor change once the stepper was gone.
   const calendarWindow = stayIndicated ? selectedWindow : null;
   const isDateClosed = (iso: string) =>
-    calendarWindow ? !isWindowFreeOn(iso, calendarWindow) : availableWindowsOn(iso).length === 0;
+    calendarWindow ? !isWindowFreeOn(iso, calendarWindow, 1) : availableWindowsOn(iso).length === 0;
 
   const blockedDates = (() => {
     const set = new Set<string>(ownerBlocked);
@@ -981,11 +1018,14 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                 ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
                   <div style={{ fontSize: 11.5, color: "#8B7458", marginBottom: 1 }}>
-                    Available on <strong style={{ color: "#1F160E", fontWeight: 600 }}>{formatDateLong(date)}</strong>
-                    {availableWindows.length < windows.length ? " — the rest are taken" : ""}
+                    Rates for <strong style={{ color: "#1F160E", fontWeight: 600 }}>{formatDateLong(date)}</strong>
                   </div>
-                  {availableWindows.map((w) => {
-                    const active = stayChosen && selectedWindow.checkIn === w.checkIn && selectedWindow.checkOut === w.checkOut;
+                  {/* Every rate stays listed — a taken one is shown disabled with
+                      the reason. Dropping it from the list made it look like a
+                      glitch and hid why it went. */}
+                  {windows.map((w) => {
+                    const free = isWindowFreeOn(date, w, 1);
+                    const active = free && stayChosen && selectedWindow.checkIn === w.checkIn && selectedWindow.checkOut === w.checkOut;
                     const price = w.stayType === "10" ? room.price10hr : room.price21hr;
                     const i = windows.indexOf(w); // icon follows the original order
                     const ic = i === 0
@@ -994,17 +1034,16 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                       ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>
                       : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M2 9v11M2 13h18a2 2 0 0 1 2 2v5M2 16h20" /><path d="M5 9V7a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2" /></svg>;
                     return (
-                      <button key={i} onClick={() => {
-                        // Only rates that are free on the chosen date are listed,
-                        // so anything picked here is bookable. A 10-hour session
-                        // needs no night count, so it skips ahead to the guests.
+                      <button key={i} disabled={!free} onClick={() => {
+                        // A 10-hour session needs no night count, so it skips
+                        // ahead to the guests.
                         setSelectedWindow(w); setStayPicked(true); setDateOpen(false);
                         if (w.stayType === "10") { setCardStep(3); setGuestOpen(true); }
-                      }} className="bk-opt" style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 13px", cursor: "pointer", borderRadius: 14, width: "100%", fontFamily: "inherit", background: active ? "#FBF4E6" : "#FFFCF4", border: active ? "1.5px solid #B07848" : "1.5px solid #E0CEB2" }}>
+                      }} className="bk-opt" style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 13px", cursor: free ? "pointer" : "not-allowed", borderRadius: 14, width: "100%", fontFamily: "inherit", opacity: free ? 1 : 0.55, background: active ? "#FBF4E6" : "#FFFCF4", border: active ? "1.5px solid #B07848" : "1.5px solid #E0CEB2" }}>
                         <span style={{ width: 38, height: 38, flex: "none", borderRadius: 11, display: "grid", placeItems: "center", color: active ? "#fff" : "#8C5A2E", background: active ? "#B07848" : "#EFE4CE" }}>{ic}</span>
                         <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-                          <span style={{ display: "block", fontSize: 14.5, fontWeight: 600, color: "#1F160E" }}>{w.label}</span>
-                          <span style={{ display: "block", fontSize: 11.5, color: "#8B7458", marginTop: 2 }}>{w.checkIn} – {w.checkOut}</span>
+                          <span style={{ display: "block", fontSize: 14.5, fontWeight: 600, color: "#1F160E", textDecoration: free ? "none" : "line-through" }}>{w.label}</span>
+                          <span style={{ display: "block", fontSize: 11.5, color: free ? "#8B7458" : "#A8492F", marginTop: 2 }}>{free ? `${w.checkIn} – ${w.checkOut}` : "Already booked on this date"}</span>
                         </span>
                         <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5 }}>
                           <span style={{ fontSize: 13, fontWeight: 700, color: "#1F160E" }}>{peso(price)}</span>
@@ -1016,8 +1055,11 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                 </div>
                 )}
                 {/* Nights belong to the overnight rate, so they live here rather
-                    than in the date step. */}
-                {stayChosen && isOvernight && date && (
+                    than in the date step.
+                    Gated on stayIndicated (the guest PICKED overnight), never on
+                    stayChosen — tying it to validity let a night count unmount
+                    the only control that could undo it. */}
+                {stayIndicated && isOvernight && date && maxNights > 0 && (
                   <>
                   <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", border: "1px solid #E0CEB2", borderRadius: 14, padding: "12px 16px", background: "#FAF7F1" }}>
                     <div>
@@ -1025,11 +1067,20 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                       <div style={{ fontSize: 11.5, color: "#8B7458", marginTop: 1 }}>{peso(selectedWindow.stayType === "10" ? room.price10hr : room.price21hr)} × {stayNights} night{stayNights > 1 ? "s" : ""}</div>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                      <button aria-label="Fewer nights" onClick={() => setNights((n) => Math.max(1, n - 1))} style={{ width: 34, height: 34, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: nights > 1 ? "pointer" : "not-allowed", opacity: nights > 1 ? 1 : 0.4 }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
-                      <span style={{ minWidth: 16, textAlign: "center", fontWeight: 700, fontSize: 15 }}>{nights}</span>
-                      <button aria-label="More nights" onClick={() => setNights((n) => n + 1)} style={{ width: 34, height: 34, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: "pointer" }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
+                      <button aria-label="Fewer nights" onClick={() => setNights(Math.max(1, stayNights - 1))} style={{ width: 34, height: 34, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: stayNights > 1 ? "pointer" : "not-allowed", opacity: stayNights > 1 ? 1 : 0.4 }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
+                      <span style={{ minWidth: 16, textAlign: "center", fontWeight: 700, fontSize: 15 }}>{stayNights}</span>
+                      <button aria-label="More nights" disabled={stayNights >= maxNights} onClick={() => setNights(Math.min(maxNights, stayNights + 1))} style={{ width: 34, height: 34, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: stayNights < maxNights ? "pointer" : "not-allowed", opacity: stayNights < maxNights ? 1 : 0.4 }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
                     </div>
                   </div>
+                  {/* Say WHY the + stopped, rather than letting it just not respond. */}
+                  {stayNights >= maxNights && (
+                    <div style={{ fontSize: 11.5, color: nightsCapped ? "#A8492F" : "#8B7458", marginTop: 7, lineHeight: 1.45 }}>
+                      {maxNights === 1
+                        ? `Only 1 night is free from ${formatDateLong(date)} — the next night is already booked.`
+                        : `Up to ${maxNights} nights from ${formatDateLong(date)} — night ${maxNights + 1} is already booked.`}
+                      {nightsCapped ? " We've adjusted your stay to fit." : ""}
+                    </div>
+                  )}
                   <button onClick={() => { setCardStep(3); setGuestOpen(true); setDateOpen(false); }} style={{ marginTop: 10, width: "100%", padding: "13px 16px", borderRadius: 14, border: "none", background: "#B07848", color: "#fff", fontFamily: "inherit", fontSize: 14.5, fontWeight: 600, cursor: "pointer" }}>Continue &rarr;</button>
                   </>
                 )}
@@ -1462,11 +1513,12 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                     ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
                       <div style={{ fontSize: 12, color: "#8B7458", marginBottom: 1 }}>
-                        Available on <strong style={{ color: "#1F160E", fontWeight: 600 }}>{formatDateLong(date)}</strong>
-                        {availableWindows.length < windows.length ? " — the rest are taken" : ""}
+                        Rates for <strong style={{ color: "#1F160E", fontWeight: 600 }}>{formatDateLong(date)}</strong>
                       </div>
-                      {availableWindows.map((w) => {
-                        const active = stayChosen && selectedWindow.checkIn === w.checkIn && selectedWindow.checkOut === w.checkOut;
+                      {/* See desktop copy — taken rates stay listed, disabled. */}
+                      {windows.map((w) => {
+                        const free = isWindowFreeOn(date, w, 1);
+                        const active = free && stayChosen && selectedWindow.checkIn === w.checkIn && selectedWindow.checkOut === w.checkOut;
                         const price = w.stayType === "10" ? room.price10hr : room.price21hr;
                         const i = windows.indexOf(w); // icon follows the original order
                     const ic = i === 0
@@ -1475,17 +1527,16 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                           ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>
                           : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M2 9v11M2 13h18a2 2 0 0 1 2 2v5M2 16h20" /><path d="M5 9V7a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2" /></svg>;
                         return (
-                          <button key={i} onClick={() => {
-                        // Only rates that are free on the chosen date are listed,
-                        // so anything picked here is bookable. A 10-hour session
-                        // needs no night count, so it skips ahead to the guests.
+                          <button key={i} disabled={!free} onClick={() => {
+                        // A 10-hour session needs no night count, so it skips
+                        // ahead to the guests.
                         setSelectedWindow(w); setStayPicked(true); setDateOpen(false);
                         if (w.stayType === "10") { setCardStep(3); setGuestOpen(true); }
-                      }} className="bk-opt" style={{ display: "flex", alignItems: "center", gap: 13, padding: "12px 14px", cursor: "pointer", borderRadius: 15, width: "100%", fontFamily: "inherit", background: active ? "#FBF4E6" : "#FFFCF4", border: active ? "1.5px solid #B07848" : "1.5px solid #E0CEB2" }}>
+                      }} className="bk-opt" style={{ display: "flex", alignItems: "center", gap: 13, padding: "12px 14px", cursor: free ? "pointer" : "not-allowed", borderRadius: 15, width: "100%", fontFamily: "inherit", opacity: free ? 1 : 0.55, background: active ? "#FBF4E6" : "#FFFCF4", border: active ? "1.5px solid #B07848" : "1.5px solid #E0CEB2" }}>
                             <span style={{ width: 38, height: 38, flex: "none", borderRadius: 11, display: "grid", placeItems: "center", color: active ? "#fff" : "#8C5A2E", background: active ? "#B07848" : "#EFE4CE" }}>{ic}</span>
                             <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-                              <span style={{ display: "block", fontSize: 14.5, fontWeight: 600, color: "#1F160E" }}>{w.label}</span>
-                              <span style={{ display: "block", fontSize: 12, color: "#8B7458", marginTop: 2 }}>{w.checkIn} – {w.checkOut}</span>
+                              <span style={{ display: "block", fontSize: 14.5, fontWeight: 600, color: "#1F160E", textDecoration: free ? "none" : "line-through" }}>{w.label}</span>
+                              <span style={{ display: "block", fontSize: 12, color: free ? "#8B7458" : "#A8492F", marginTop: 2 }}>{free ? `${w.checkIn} – ${w.checkOut}` : "Already booked on this date"}</span>
                             </span>
                             <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
                               <span style={{ fontSize: 13.5, fontWeight: 700, color: "#1F160E" }}>{peso(price)}</span>
@@ -1497,7 +1548,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                     </div>
                     )}
                     {/* Nights belong to the overnight rate — see desktop copy. */}
-                    {stayChosen && isOvernight && date && (
+                    {stayIndicated && isOvernight && date && maxNights > 0 && (
                       <>
                       <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", border: "1px solid #E0CEB2", borderRadius: 14, padding: "12px 16px", background: "#FAF7F1" }}>
                         <div>
@@ -1505,11 +1556,19 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                           <div style={{ fontSize: 12, color: "#8B7458", marginTop: 1 }}>{peso(selectedWindow.stayType === "10" ? room.price10hr : room.price21hr)} × {stayNights} night{stayNights > 1 ? "s" : ""}</div>
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
-                          <button aria-label="Fewer nights" onClick={() => setNights((n) => Math.max(1, n - 1))} style={{ width: 32, height: 32, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: nights > 1 ? "pointer" : "not-allowed", opacity: nights > 1 ? 1 : 0.4 }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
-                          <span style={{ minWidth: 16, textAlign: "center", fontWeight: 700, fontSize: 15 }}>{nights}</span>
-                          <button aria-label="More nights" onClick={() => setNights((n) => n + 1)} style={{ width: 32, height: 32, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: "pointer" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
+                          <button aria-label="Fewer nights" onClick={() => setNights(Math.max(1, stayNights - 1))} style={{ width: 32, height: 32, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: stayNights > 1 ? "pointer" : "not-allowed", opacity: stayNights > 1 ? 1 : 0.4 }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
+                          <span style={{ minWidth: 16, textAlign: "center", fontWeight: 700, fontSize: 15 }}>{stayNights}</span>
+                          <button aria-label="More nights" disabled={stayNights >= maxNights} onClick={() => setNights(Math.min(maxNights, stayNights + 1))} style={{ width: 32, height: 32, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: stayNights < maxNights ? "pointer" : "not-allowed", opacity: stayNights < maxNights ? 1 : 0.4 }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
                         </div>
                       </div>
+                      {stayNights >= maxNights && (
+                        <div style={{ fontSize: 12, color: nightsCapped ? "#A8492F" : "#8B7458", marginTop: 7, lineHeight: 1.45 }}>
+                          {maxNights === 1
+                            ? `Only 1 night is free from ${formatDateLong(date)} — the next night is already booked.`
+                            : `Up to ${maxNights} nights from ${formatDateLong(date)} — night ${maxNights + 1} is already booked.`}
+                          {nightsCapped ? " We've adjusted your stay to fit." : ""}
+                        </div>
+                      )}
                       <button onClick={() => { setCardStep(3); setGuestOpen(true); setDateOpen(false); }} style={{ marginTop: 10, width: "100%", padding: "13px 16px", borderRadius: 14, border: "none", background: "#B07848", color: "#fff", fontFamily: "inherit", fontSize: 14.5, fontWeight: 600, cursor: "pointer" }}>Continue &rarr;</button>
                       </>
                     )}
