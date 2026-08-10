@@ -895,19 +895,35 @@ export default function BrowsePage() {
             </div>
             {[
               { h: "Stay", items: ["10-Hour Daycation", "10-Hour Nightcation", "21-Hour Full Stay"] },
-              { h: "Info", items: ["House rules", "Amenities", "Location"] },
-              { h: "Contact", items: ["homesdlux@gmail.com", "Tower 4, Grass Residences, QC"] },
+              {
+                h: "Social Media",
+                items: [
+                  { label: "Facebook", href: "https://www.facebook.com/profile.php?id=61557644293485" },
+                  { label: "TikTok", href: "https://www.tiktok.com/@dluxhomes2024/video/7631110590492101906" },
+                ],
+              },
+              {
+                h: "Contact",
+                items: [
+                  { label: "homesdlux@gmail.com", href: "mailto:homesdlux@gmail.com" },
+                  { label: "Tower 4, Grass Residences, QC", href: "/location" },
+                ],
+              },
             ].map((col, i) => (
               <div key={col.h} className="footer-col" style={{ animationDelay: `${(i + 1) * 110}ms` }}>
                 <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--ink)", marginBottom: 14, fontWeight: 600 }}>{col.h}</div>
                 <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 8 }}>
                   {col.items.map((item) =>
-                    item === "Location" ? (
-                      <li key={item} className="footer-link" style={{ fontSize: 13 }}>
-                        <Link href="/location" style={{ color: "var(--ink)", textDecoration: "none" }}>{item}</Link>
+                    typeof item === "string" ? (
+                      <li key={item} className="footer-link" style={{ fontSize: 13, color: "var(--ink)" }}>{item}</li>
+                    ) : item.href.startsWith("/") ? (
+                      <li key={item.label} className="footer-link" style={{ fontSize: 13 }}>
+                        <Link href={item.href} style={{ color: "var(--ink)", textDecoration: "none" }}>{item.label}</Link>
                       </li>
                     ) : (
-                      <li key={item} className="footer-link" style={{ fontSize: 13, color: "var(--ink)" }}>{item}</li>
+                      <li key={item.label} className="footer-link" style={{ fontSize: 13 }}>
+                        <a href={item.href} target="_blank" rel="noopener noreferrer" style={{ color: "var(--ink)", textDecoration: "none" }}>{item.label}</a>
+                      </li>
                     )
                   )}
                 </ul>

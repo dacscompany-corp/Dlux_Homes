@@ -1,7 +1,6 @@
 // Pre-arrival "self check-in" email — four numbered steps, what to pay on
-// arrival, and where to send it. Sent automatically BEFORE the guest arrives:
-//   Daycation (morning check-in)      → 12:00 AM on the day of check-in
-//   Nightcation / Overnight (evening) → 2 hours before check-in
+// arrival, and where to send it. Sent automatically 1 hour before the guest's
+// check-in time, for every stay type.
 // Scheduler: src/app/api/cron/send-self-checkin-emails/route.ts
 //
 // Distinct from the CHECK-IN module (src/app/api/send-checkin-email), which is
@@ -300,7 +299,8 @@ export function renderSelfCheckinEmailHtml(d: SelfCheckinEmailInput): string {
                   <!-- Body -->
                   <div style="padding:26px 30px 4px;">
 
-                    <div style="font-family:'Fraunces',Georgia,serif;font-size:24px;line-height:1.25;color:#2b1b12;margin-bottom:20px;">Hi ${name}, you can self check-in now!</div>
+                    <div style="font-family:'Fraunces',Georgia,serif;font-size:24px;line-height:1.25;color:#2b1b12;margin-bottom:8px;">Hi ${name}, you can self check-in now!</div>
+                    <div style="font-size:14px;line-height:1.5;color:#5c4a3c;margin-bottom:20px;">You&rsquo;re receiving this 1 hour before your check-in time &mdash; you&rsquo;re welcome to come in any time from now on, ahead of your scheduled check-in.</div>
 
                     <!-- The four steps -->
                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:22px;">
@@ -342,7 +342,7 @@ export function renderSelfCheckinEmailHtml(d: SelfCheckinEmailInput): string {
                           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:13px;">
                             <tr>
                               <td width="49%" valign="top">
-                                <div style="color:#9c8974;margin-bottom:1px;">Check-in</div>
+                                <div style="color:#9c8974;margin-bottom:1px;">Check-in (you may arrive up to 1 hour early)</div>
                                 <div style="font-weight:600;color:#2b1b12;">${escapeHtml(d.checkInDate)} &middot; ${escapeHtml(d.checkInTime)}</div>
                               </td>
                               <td width="1" style="background:#e9dcc8;font-size:0;line-height:0;">&nbsp;</td>
