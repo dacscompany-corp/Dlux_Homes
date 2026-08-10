@@ -6,12 +6,7 @@
 // mark them arrived before that. Keeping one definition means the email and the
 // admin button can't drift apart.
 //
-// In Asia/Manila:
-//   Daycation  (check-in before noon, 07:00) → 00:00 on the check-in date
-//   Nightcation / Overnight (evening, 19:00) → 2 hours before check-in
-//
-// Nightcation and Overnight share a 19:00 check-in, so they don't need telling
-// apart — only "morning vs evening" matters.
+// In Asia/Manila: 1 hour before check-in, for every stay type.
 
 const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
 
@@ -47,11 +42,11 @@ export function checkInOpensAt(
   if (Number.isNaN(midnightManila)) return null;
 
   const hour = parseHour(checkInTime);
-  // Morning check-in (or unknown time) → the whole day is fair game.
-  if (hour == null || hour < 12) return midnightManila;
+  // Unknown time → the whole day is fair game.
+  if (hour == null) return midnightManila;
 
-  // Evening check-in → two hours before it.
-  return midnightManila + (hour - 2) * 60 * 60 * 1000;
+  // One hour before the scheduled check-in time.
+  return midnightManila + (hour - 1) * 60 * 60 * 1000;
 }
 
 /** Has check-in opened for this booking yet? Unknown dates are permissive. */

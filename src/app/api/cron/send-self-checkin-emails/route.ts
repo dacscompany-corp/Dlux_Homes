@@ -17,13 +17,8 @@ export const dynamic = "force-dynamic";
  * Run this every ~15 minutes; it is idempotent — a booking is stamped with
  * `self_checkin_email_sent_at` only after its email actually goes out.
  *
- * Send time, in Asia/Manila:
- *   Daycation  (check-in before noon) → 12:00 AM on the check-in date
- *   Nightcation / Overnight (evening) → 2 hours before check-in
- *
- * Daycation is detected by its morning check-in time (07:00). Nightcation and
- * Overnight both check in at 19:00 and share the same "2 hours before" rule, so
- * they don't need to be told apart.
+ * Send time, in Asia/Manila: 1 hour before check-in, for every stay type
+ * (Daycation, Nightcation, Overnight all share this rule).
  *
  * Protected by CRON_SECRET, and fails closed in production if it isn't set.
  */
@@ -95,13 +90,7 @@ export async function GET(req: NextRequest) {
         AND bg.email IS NOT NULL
         AND bg.email <> ''
         AND b.check_in_date >= (NOW() AT TIME ZONE $1)::date
-        AND (
-          CASE
-            WHEN b.check_in_time < TIME '12:00'
-              THEN b.check_in_date::timestamp                              -- midnight, day of check-in
-            ELSE (b.check_in_date + b.check_in_time) - INTERVAL '2 hours'  -- 2h before check-in
-          END
-        ) AT TIME ZONE $1 <= NOW()
+        AND ((b.check_in_date + b.check_in_time) - INTERVAL '1 hour') AT TIME ZONE $1 <= NOW()
       ORDER BY b.check_in_date, b.check_in_time
       `,
       [MANILA],
