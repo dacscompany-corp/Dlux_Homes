@@ -188,6 +188,8 @@ export const updateBookingDetails = async (
       guest_phone,
       guest_age,
       guest_gender,
+      guest_senior_pwd,
+      guest_birthdate,
       facebook_link,
       valid_id,
       valid_ids,
@@ -269,6 +271,8 @@ export const updateBookingDetails = async (
       facebook_link: facebook_link || null,
       validId: null,
       valid_id_url: mainValidIdUrl,
+      senior_pwd: guest_senior_pwd === true,
+      birthdate: guest_birthdate || null,
     });
     if (Array.isArray(additional_guests)) {
       for (const g of additional_guests) {
@@ -283,6 +287,8 @@ export const updateBookingDetails = async (
           facebook_link: null,
           validId: null,
           valid_id_url: guestIdUrl,
+          senior_pwd: g?.seniorPwd === true,
+          birthdate: g?.birthdate || null,
         });
       }
     }
@@ -296,9 +302,9 @@ export const updateBookingDetails = async (
       await client.query(
         `
           INSERT INTO booking_guests (
-            booking_id, first_name, last_name, age, gender, email, phone, facebook_link, valid_id_url, guest_index
+            booking_id, first_name, last_name, age, gender, email, phone, facebook_link, valid_id_url, guest_index, is_senior_pwd, birthdate
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         `,
         [
           id,
@@ -311,6 +317,8 @@ export const updateBookingDetails = async (
           g.facebook_link,
           g.valid_id_url,
           gi,
+          g.senior_pwd === true,
+          g.birthdate ?? null,
         ],
       );
     }
@@ -551,6 +559,8 @@ export const createBooking = async (
       guest_phone,
       guest_age,
       guest_gender,
+      guest_senior_pwd,
+      guest_birthdate,
       facebook_link,
       valid_id, // base64 (legacy single)
       valid_ids, // base64[] (one or more ID photos)
@@ -565,6 +575,7 @@ export const createBooking = async (
       add_ons_total,
       total_amount,
       down_payment,
+      senior_discount,
       // Promo code redeemed at checkout (validated client-side against
       // /api/discounts/validate before submit)
       discount_id,
@@ -917,9 +928,9 @@ export const createBooking = async (
     // once put a 3-year-old at the top of the admin booking detail.
     const mainGuestQuery = `
       INSERT INTO booking_guests (
-        booking_id, first_name, last_name, age, gender, email, phone, facebook_link, valid_id_url, guest_index
+        booking_id, first_name, last_name, age, gender, email, phone, facebook_link, valid_id_url, guest_index, is_senior_pwd, birthdate
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $10, $11)
     `;
 
     const mainGuestValues = [
@@ -932,6 +943,8 @@ export const createBooking = async (
       guest_phone,
       facebook_link || null,
       validIdUrl,
+      guest_senior_pwd === true,
+      guest_birthdate || null,
     ];
 
     console.log("📝 [BOOKING] Inserting main guest record...");
@@ -955,9 +968,9 @@ export const createBooking = async (
 
         const additionalGuestQuery = `
           INSERT INTO booking_guests (
-            booking_id, first_name, last_name, age, gender, email, phone, facebook_link, valid_id_url, guest_index
+            booking_id, first_name, last_name, age, gender, email, phone, facebook_link, valid_id_url, guest_index, is_senior_pwd, birthdate
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         `;
 
         const additionalGuestValues = [
@@ -971,6 +984,8 @@ export const createBooking = async (
           null,
           guestIdUrl,
           gi + 1, // 0 is the main guest, so additional guests start at 1
+          guest.seniorPwd === true,
+          guest.birthdate || null,
         ];
 
         await client.query(additionalGuestQuery, additionalGuestValues);
@@ -1000,9 +1015,9 @@ export const createBooking = async (
       INSERT INTO booking_payments (
         booking_id, payment_method, payment_proof_url, payment_reference, room_rate,
         add_ons_total, total_amount, down_payment, amount_paid, remaining_balance,
-        discount_id, discount_code, discount_amount
+        discount_id, discount_code, discount_amount, senior_discount
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
     `;
 
     const paymentValues = [
@@ -1019,6 +1034,7 @@ export const createBooking = async (
       discount_id || null,
       discount_code || null,
       Number(discount_amount) || 0,
+      Number(senior_discount) || 0,
     ];
 
     console.log("📝 [BOOKING] Inserting payment record...");

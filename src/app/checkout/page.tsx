@@ -14,7 +14,7 @@ import { mockRooms } from "@/lib/mock-data";
 import { generateBookingId, addMyBookingId } from "@/lib/booking-store";
 import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
 import { havenToRoom } from "@/lib/haven-adapter";
-import { stayTotal, isWeekendOrHoliday, addDaysISO, extraPaxFee, bundleNightlyRate, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS, BUNDLE_EXTRA_PAX_SURCHARGE } from "@/lib/pricing";
+import { stayTotal, isWeekendOrHoliday, addDaysISO, extraPaxFee, bundleNightlyRate, seniorPwdDiscount, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS, BUNDLE_EXTRA_PAX_SURCHARGE } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
 import { autoDiscountAmount, pickAutoPromo } from "@/lib/promo-offer";
@@ -116,9 +116,11 @@ function methodLogo(m: { payment_method?: string | null; provider?: string | nul
 
 // One uploaded ID photo: original filename + base64 data. Guests may attach several.
 type IdDoc = { name: string; data: string };
-type Info = { firstName: string; lastName: string; age: string; gender: string; email: string; phone: string; facebook: string; notes: string; validIds: IdDoc[] };
+// senior: qualifies for the RA 9994 / RA 10754 20% discount. birthday is
+// captured for verification at check-in and is required while senior is on.
+type Info = { firstName: string; lastName: string; age: string; gender: string; email: string; phone: string; facebook: string; notes: string; validIds: IdDoc[]; senior: boolean; birthday: string };
 // Additional (non-main) guests collect only name, age, gender + valid ID(s).
-type ExtraGuest = { firstName: string; lastName: string; age: string; gender: string; validIds: IdDoc[] };
+type ExtraGuest = { firstName: string; lastName: string; age: string; gender: string; validIds: IdDoc[]; senior: boolean; birthday: string };
 // A payment method configured by the owner (Admin → Payment methods).
 type PayMethod = { id: string; payment_name: string; payment_method: string; provider: string; account_details: string; payment_qr_link: string | null; is_active: boolean };
 type Payment = { methodId: string; method: string; reference: string; proofName: string | null; proofData: string | null; idName: string | null; idData: string | null };
@@ -131,8 +133,8 @@ type Payment = { methodId: string; method: string; reference: string; proofName:
 // transformed ancestor becomes the containing block for `position: fixed` —
 // which would quietly break the overlay. Portalling avoids that whole class of
 // bug. `children` is unchanged from the accordion version, so no form JSX moved.
-function GuestCard({ index, title, subtitle, rowTitle, rowNote, complete, hasErrors, open, onToggle, onDone, filled, total, missing, children }: {
-  index: number; title: string; subtitle: string; rowTitle: string; rowNote: string;
+function GuestCard({ index, title, subtitle, rowTitle, rowNote, badge, complete, hasErrors, open, onToggle, onDone, filled, total, missing, children }: {
+  index: number; title: string; subtitle: string; rowTitle: string; rowNote: string; badge?: string;
   complete: boolean; hasErrors: boolean; open: boolean;
   onToggle: () => void; onDone: () => void;
   filled: number; total: number; missing: string[]; children: React.ReactNode;
@@ -166,7 +168,10 @@ function GuestCard({ index, title, subtitle, rowTitle, rowNote, complete, hasErr
             : index}
         </span>
         <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ display: "block", fontSize: 16, fontWeight: 600, color: G.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{rowTitle}</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <span style={{ fontSize: 16, fontWeight: 600, color: G.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{rowTitle}</span>
+            {badge && <span style={{ flex: "none", fontSize: 10.5, fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", color: G.accentInk, background: "#F3EADA", padding: "3px 8px", borderRadius: 999 }}>{badge}</span>}
+          </span>
           <span style={{ display: "block", fontSize: 13.5, color: hasErrors ? G.err : complete ? G.green : G.muted, marginTop: 3 }}>{rowNote}</span>
         </span>
         <span style={{ flex: "none", fontSize: 13.5, fontWeight: 600, borderRadius: 999,
@@ -253,9 +258,14 @@ function AskLabel({ label, required, hint }: { label: string; required?: boolean
   );
 }
 
-// Age as a stepper rather than a keyboard-summoning number field.
-function AgeStepper({ value, onChange, min, max, note, invalid }: {
-  value: string; onChange: (v: string) => void; min: number; max: number; note: string; invalid?: boolean;
+// Age as a stepper, but the number is also typeable — tapping + eleven times
+// to reach 29 is nobody's idea of fast. Typed input is NOT clamped as you
+// type ("1" on the way to "18" would jump to 18); the existing range check
+// flags it, and the ± buttons still clamp, so a stray 200 self-corrects on the
+// next tap. uid=197609(John Aerol Tapales) gid=197121 groups=197121 lands on the input so a failed Continue can actually focus it
+// — it used to sit on the wrapping div, which cannot take focus.
+function AgeStepper({ value, onChange, min, max, note, invalid, id }: {
+  value: string; onChange: (v: string) => void; min: number; max: number; note: string; invalid?: boolean; id?: string;
 }) {
   const n = parseInt(value, 10);
   const cur = isNaN(n) ? null : n;
@@ -265,7 +275,9 @@ function AgeStepper({ value, onChange, min, max, note, invalid }: {
     <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 4, border: `1.5px solid ${invalid ? G.err : G.line2}`, borderRadius: 14, background: invalid ? G.errField : G.white, padding: 5 }}>
         <button type="button" aria-label="Younger" onClick={() => step(-1)} style={pad}>&minus;</button>
-        <span style={{ minWidth: 56, textAlign: "center", fontSize: 18, fontWeight: 600, color: cur == null ? "#A89B86" : G.ink }}>{cur ?? "–"}</span>
+        <input id={id} type="text" inputMode="numeric" aria-label="Age" placeholder="–" value={value}
+          onChange={(e) => onChange(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
+          style={{ width: 56, textAlign: "center", fontSize: 18, fontWeight: 600, color: G.ink, border: "none", background: "transparent", outline: "none", fontFamily: "inherit", padding: 0 }} />
         <button type="button" aria-label="Older" onClick={() => step(1)} style={pad}>+</button>
       </div>
       <div style={{ fontSize: 13, color: invalid ? G.err : G.muted, flex: 1, minWidth: 150, fontWeight: invalid ? 600 : 400 }}>{note}</div>
@@ -285,6 +297,134 @@ function GenderChips({ value, onChange, name }: { value: string; onChange: (v: s
               fontSize: 15, fontWeight: on ? 600 : 400, color: G.ink }}>{g}</button>
         );
       })}
+    </div>
+  );
+}
+
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+// Birthday as three dropdowns rather than <input type="date">. The native date
+// picker is a calendar that opens on the current month — reaching 1958 from
+// there is a lot of tapping, and this field is aimed squarely at people born
+// 60+ years ago. Day options follow the chosen month so 31 February can't be
+// entered. Emits "" until all three are chosen, so validation still catches a
+// half-filled date.
+function BirthdayPicker({ value, onChange, invalid }: {
+  value: string; onChange: (v: string) => void; invalid: boolean;
+}) {
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(value) ? value.split("-") : ["", "", ""];
+  const [year, setYear] = useState(parsed[0]);
+  const [month, setMonth] = useState(parsed[1]);
+  const [day, setDay] = useState(parsed[2]);
+  const thisYear = new Date().getFullYear();
+  const years = Array.from({ length: thisYear - 1899 }, (_, i) => String(thisYear - i));
+  const daysInMonth = month
+    ? new Date(Number(year) || 2000, Number(month), 0).getDate()
+    : 31;
+  const emit = (y: string, m: string, d: string) => {
+    // Trim an out-of-range day when the month changes (e.g. Mar 31 → Feb).
+    const max = m ? new Date(Number(y) || 2000, Number(m), 0).getDate() : 31;
+    const dd = d && Number(d) > max ? "" : d;
+    setYear(y); setMonth(m); setDay(dd);
+    onChange(y && m && dd ? `${y}-${m}-${dd}` : "");
+  };
+  const sel: React.CSSProperties = {
+    width: "100%", boxSizing: "border-box", padding: "12px 13px", borderRadius: 12,
+    border: `1.5px solid ${invalid ? G.err : G.line2}`, background: invalid ? G.errField : G.white,
+    fontFamily: "inherit", fontSize: 15, color: G.ink, appearance: "none", WebkitAppearance: "none",
+  };
+  const cap: React.CSSProperties = { display: "block", fontSize: 12, fontWeight: 600, color: "#6F5B43", marginBottom: 5 };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <label style={{ display: "block" }}>
+        <span style={cap}>Month</span>
+        <select value={month} onChange={(e) => emit(year, e.target.value, day)} style={sel}>
+          <option value="">Choose month</option>
+          {MONTHS.map((m, i) => <option key={m} value={String(i + 1).padStart(2, "0")}>{m}</option>)}
+        </select>
+      </label>
+      <div style={{ display: "flex", gap: 12 }}>
+        <label style={{ flex: 1, minWidth: 0 }}>
+          <span style={cap}>Day</span>
+          <select value={day} onChange={(e) => emit(year, month, e.target.value)} style={sel}>
+            <option value="">Day</option>
+            {Array.from({ length: daysInMonth }, (_, i) => String(i + 1).padStart(2, "0")).map((d) => <option key={d} value={d}>{Number(d)}</option>)}
+          </select>
+        </label>
+        <label style={{ flex: 1, minWidth: 0 }}>
+          <span style={cap}>Year</span>
+          <select value={year} onChange={(e) => emit(e.target.value, month, day)} style={sel}>
+            <option value="">Year</option>
+            {years.map((y) => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </label>
+      </div>
+    </div>
+  );
+}
+
+// Senior citizen / PWD claim. A big tappable checkmark row rather than a switch
+// — switches read as a setting, and this is a claim the guest is making. The
+// eligibility card spells out who qualifies in plain words, because "senior or
+// PWD" alone leaves people guessing and the wrong guess costs them 20%.
+function SeniorPwdField({ on, birthday, onToggle, onBirthday, invalid, idPrefix, main }: {
+  on: boolean; birthday: string; onToggle: (v: boolean) => void; onBirthday: (v: string) => void;
+  invalid: boolean; idPrefix: string; main: boolean;
+}) {
+  return (
+    <div>
+      <div style={{ fontSize: 15, fontWeight: 600, color: G.ink, marginBottom: 5 }}>Discount</div>
+      <div style={{ fontSize: 13, color: "#6F5B43", lineHeight: 1.55, marginBottom: 10 }}>
+        Senior citizens and persons with disability get 20% off their share of the room.
+      </div>
+
+      <button type="button" role="checkbox" aria-checked={on} onClick={() => onToggle(!on)}
+        style={{ display: "flex", alignItems: "flex-start", gap: 14, width: "100%", textAlign: "left", fontFamily: "inherit", cursor: "pointer", padding: 14, borderRadius: 14, boxSizing: "border-box",
+          border: `2px solid ${on ? G.accent : G.line2}`, background: on ? "rgba(176,120,72,.08)" : G.white }}>
+        <span style={{ flex: "none", width: 28, height: 28, borderRadius: 8, display: "grid", placeItems: "center", color: G.white,
+          border: `2px solid ${on ? G.accent : "#C4B398"}`, background: on ? G.accent : G.white }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: on ? 1 : 0 }}><polyline points="20 6 9 17 4 12" /></svg>
+        </span>
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ display: "block", fontSize: 15, fontWeight: 600, color: G.ink, lineHeight: 1.35 }}>
+            {main ? "I am a senior citizen or a PWD" : "This guest is a senior citizen or a PWD"}
+          </span>
+          <span style={{ display: "block", fontSize: 12.5, color: "#6F5B43", marginTop: 4, lineHeight: 1.45 }}>Tap this box to claim the 20% discount.</span>
+        </span>
+      </button>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "12px 14px", marginTop: 10, borderRadius: 13, background: G.soft, border: "1px solid #ECE0CC" }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: G.ink }}>You can tick the box if either is true:</div>
+        {[
+          main
+            ? <>You are <strong style={{ color: G.ink }}>60 years old or older</strong></>
+            : <>This guest is <strong style={{ color: G.ink }}>60 years old or older</strong></>,
+          main
+            ? <>You have a <strong style={{ color: G.ink }}>PWD ID</strong> from your city or municipality</>
+            : <>This guest has a <strong style={{ color: G.ink }}>PWD ID</strong> from their city or municipality</>,
+        ].map((line, i) => (
+          <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+            <span style={{ flex: "none", width: 5, height: 5, borderRadius: "50%", background: G.accent, marginTop: 8 }} />
+            <span style={{ fontSize: 13, color: "#6F5B43", lineHeight: 1.5 }}>{line}</span>
+          </div>
+        ))}
+        <div style={{ fontSize: 12.5, color: G.muted, lineHeight: 1.5, marginTop: 2 }}>
+          {main ? "Bring that same ID with you at check-in." : "They must bring that same ID at check-in."} Not sure? Leave the box unticked.
+        </div>
+      </div>
+
+      {on && (
+        <div id={`f-${idPrefix}birthday`} style={{ marginTop: 12, padding: 14, borderRadius: 14, border: `2px solid ${invalid ? G.err : G.accent}`, background: invalid ? G.errField : "rgba(176,120,72,.06)" }}>
+          <div style={{ fontSize: 15, fontWeight: 600, color: G.ink, marginBottom: 4 }}>
+            {main ? "What is your birthday?" : "What is their birthday?"}<span style={{ color: G.err }}> required</span>
+          </div>
+          <div style={{ fontSize: 12.5, color: "#6F5B43", lineHeight: 1.55, marginBottom: 12 }}>
+            Use the date printed on {main ? "your" : "their"} senior citizen or PWD ID.
+          </div>
+          <BirthdayPicker value={birthday} onChange={onBirthday} invalid={invalid} />
+          {invalid && <div style={{ fontSize: 12.5, color: G.err, fontWeight: 600, marginTop: 10 }}>Choose the month, day and year.</div>}
+        </div>
+      )}
     </div>
   );
 }
@@ -441,7 +581,7 @@ function CheckoutInner() {
   // overwrites the finished upload with the older snapshot, silently emptying
   // validIds — the guest sees their ID thumbnail, submits, and the booking is
   // stored with no ID attached.
-  const [info, setInfo] = useState<Info>({ firstName: "", lastName: "", age: "", gender: "Male", email: "", phone: "", facebook: "", notes: "", validIds: [] });
+  const [info, setInfo] = useState<Info>({ firstName: "", lastName: "", age: "", gender: "Male", email: "", phone: "", facebook: "", notes: "", validIds: [], senior: false, birthday: "" });
   const [payment, setPayment] = useState<Payment>({ methodId: "", method: "", reference: "", proofName: null, proofData: null, idName: null, idData: null });
   // Active payment methods (with QR + account details) configured by the owner.
   const [methods, setMethods] = useState<PayMethod[]>([]);
@@ -474,7 +614,7 @@ function CheckoutInner() {
   useEffect(() => {
     setExtraGuests((prev) => {
       const next = prev.slice(0, extraCount);
-      while (next.length < extraCount) next.push({ firstName: "", lastName: "", age: "", gender: "Male", validIds: [] });
+      while (next.length < extraCount) next.push({ firstName: "", lastName: "", age: "", gender: "Male", validIds: [], senior: false, birthday: "" });
       return next;
     });
   }, [extraCount]);
@@ -520,7 +660,12 @@ function CheckoutInner() {
     : nights >= BUNDLE_TWOWEEK_NIGHTS ? "Two-week rate"
     : "Weekly rate";
   const paxFee = extraPaxFee(feePax, room.basePax, room.additionalPaxFee, nights);
-  const subtotal = basePrice + paxFee;
+  // Senior citizen / PWD: 20% off each qualifying guest's share of the ROOM
+  // (basePrice), never the pax fee. Comes off before any promo code, so a promo
+  // lands on the already-reduced subtotal — the statutory discount is protected.
+  const seniorCount = (info.senior ? 1 : 0) + extraGuests.filter((g) => g.senior).length;
+  const seniorDiscount = seniorPwdDiscount(basePrice, feePax, seniorCount);
+  const subtotal = Math.max(0, basePrice + paxFee - seniorDiscount);
   const { data: activePromotions } = useGetActivePromotionsQuery();
 
   // Promo code — validated against /api/discounts/validate as the guest types.
@@ -601,6 +746,9 @@ function CheckoutInner() {
       if (!info.email || !/@/.test(info.email)) e.add("email");
       if (!/^\d{11}$/.test(info.phone)) e.add("phone");
       if (age >= 10 && info.validIds.length === 0) e.add("validId");
+      // Only required while the senior/PWD toggle is on — no age gate, since
+      // PWD status has no minimum age.
+      if (info.senior && !info.birthday) e.add("birthday");
       extraGuests.forEach((g, i) => {
         const a = Number(g.age);
         const t = guestType(i);
@@ -614,6 +762,7 @@ function CheckoutInner() {
         // Document: required when the guest is 10 or older.
         const needDoc = a >= 10;
         if (needDoc && g.validIds.length === 0) e.add(`x${i}-validId`);
+        if (g.senior && !g.birthday) e.add(`x${i}-birthday`);
       });
     }
     // Step 1 (Payment): a payment method must be selected.
@@ -655,6 +804,7 @@ function CheckoutInner() {
       firstName: "first name", lastName: "last name", age: "age", gender: "gender",
       email: "email address", phone: "phone number",
       validId: gi === 0 ? "a photo of your ID" : "a photo of their ID",
+      birthday: "the birthday on the senior citizen or PWD ID",
     };
     return guestErrorKeys(gi).map((k) => words[k.replace(/^x\d+-/, "")]).filter(Boolean);
   };
@@ -785,6 +935,8 @@ function CheckoutInner() {
       guest_phone: info.phone,
       guest_age: parseInt(info.age, 10) || null,
       guest_gender: info.gender,
+      guest_senior_pwd: info.senior,
+      guest_birthdate: info.birthday || null,
       facebook_link: info.facebook || null,
       valid_ids: info.validIds.map((d) => d.data),       // base64[]; each uploaded to Cloudinary when configured
       additional_guests: extraGuests.map((g) => ({       // non-main guests: name, age, gender, ID(s)
@@ -792,6 +944,8 @@ function CheckoutInner() {
         lastName: g.lastName,
         age: g.age,
         gender: g.gender,
+        seniorPwd: g.senior,
+        birthdate: g.birthday || null,
         validIds: g.validIds.map((d) => d.data),
       })),
       payment_proof: payment.proofData || undefined,     // base64; uploaded to Cloudinary when configured
@@ -805,6 +959,9 @@ function CheckoutInner() {
       discount_id: appliedDiscount?.id || undefined,
       discount_code: appliedDiscount?.code || undefined,
       discount_amount: discountAmount || undefined,
+      // Statutory 20% (RA 9994 / RA 10754). Recorded separately from promo codes
+      // so it can be audited and reconciled at check-in.
+      senior_discount: seniorDiscount || undefined,
       // Only when an automatic promotion actually reduced this booking — the
       // server records it against the account so it can't be used a second time.
       promotion_id: autoDiscount > 0 ? autoPromo?.id : undefined,
@@ -1126,6 +1283,7 @@ function CheckoutInner() {
                   subtitle="This is you, the person booking"
                   rowTitle={guestComplete(0) ? (`${info.firstName} ${info.lastName}`.trim() || guestLabel(0)) : guestLabel(0)}
                   rowNote={guestRowNote(0)}
+                  badge={info.senior ? "Senior/PWD" : undefined}
                   complete={guestComplete(0)}
                   hasErrors={showErrors && guestErrorKeys(0).length > 0}
                   open={openGuestIdx === 0}
@@ -1149,9 +1307,9 @@ function CheckoutInner() {
                       </div>
                     </div>
 
-                    <div id="f-age">
+                    <div>
                       <AskLabel label="Age" required />
-                      <AgeStepper value={info.age} min={18} max={120} invalid={showErrors && fieldErrors.has("age")}
+                      <AgeStepper id="f-age" value={info.age} min={18} max={120} invalid={showErrors && fieldErrors.has("age")}
                         note="You must be 18 or older to book."
                         onChange={(v) => setInfo((prev) => ({ ...prev, age: v }))} />
                     </div>
@@ -1160,6 +1318,16 @@ function CheckoutInner() {
                       <AskLabel label="Gender" />
                       <GenderChips name="Your gender" value={info.gender} onChange={(v) => setInfo((prev) => ({ ...prev, gender: v }))} />
                     </div>
+
+                    <SeniorPwdField
+                      on={info.senior}
+                      birthday={info.birthday}
+                      main
+                      idPrefix=""
+                      invalid={showErrors && fieldErrors.has("birthday")}
+                      onToggle={(v) => setInfo((prev) => ({ ...prev, senior: v }))}
+                      onBirthday={(v) => setInfo((prev) => ({ ...prev, birthday: v }))}
+                    />
 
                     <div>
                       <AskLabel label="How can we reach you?" required hint="Your booking confirmation and check-in code are sent here." />
@@ -1213,6 +1381,7 @@ function CheckoutInner() {
                     subtitle={typeLabel}
                     rowTitle={guestComplete(gi) && filledName ? filledName : guestLabel(gi)}
                     rowNote={guestRowNote(gi)}
+                    badge={g.senior ? "Senior/PWD" : undefined}
                     complete={guestComplete(gi)}
                     hasErrors={showErrors && guestErrorKeys(gi).length > 0}
                     open={openGuestIdx === gi}
@@ -1236,9 +1405,9 @@ function CheckoutInner() {
                         </div>
                       </div>
 
-                      <div id={`f-x${i}-age`}>
+                      <div>
                         <AskLabel label="Age" required />
-                        <AgeStepper value={g.age} min={ageMin} max={ageMax} invalid={bad("age")}
+                        <AgeStepper id={`f-x${i}-age`} value={g.age} min={ageMin} max={ageMax} invalid={bad("age")}
                           note={ageNote} onChange={(v) => updateGuest(i, { age: v })} />
                       </div>
 
@@ -1246,6 +1415,16 @@ function CheckoutInner() {
                         <AskLabel label="Gender" />
                         <GenderChips name={`Guest ${i + 2} gender`} value={g.gender} onChange={(v) => updateGuest(i, { gender: v })} />
                       </div>
+
+                        <SeniorPwdField
+                          on={g.senior}
+                          birthday={g.birthday}
+                          main={false}
+                          idPrefix={`x${i}-`}
+                          invalid={bad("birthday")}
+                          onToggle={(v) => updateGuest(i, { senior: v })}
+                          onBirthday={(v) => updateGuest(i, { birthday: v })}
+                        />
 
                     <GuestIdUpload
                       id={`f-x${i}-validId`}
@@ -1496,6 +1675,7 @@ function CheckoutInner() {
                       extra-guest bump on the rate isn't invisible. */}
                   {bundleRate != null && <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: -4 }}>{peso(bundleRate)}/night{hasExtraPax ? ` · includes ${peso(BUNDLE_EXTRA_PAX_SURCHARGE)} extra-guest rate` : ""}</div>}
                   {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra pax · {extraPaxCount} × {peso(room.additionalPaxFee)}{nights > 1 ? ` × ${nights} nights` : ""}</span><span>{peso(paxFee)}</span></div>}
+                  {seniorDiscount > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span>Senior/PWD discount · {seniorCount} guest{seniorCount > 1 ? "s" : ""}</span><span>−{peso(seniorDiscount)}</span></div>}
                   {appliedDiscount && (
                     <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span>Promo · {appliedDiscount.code}</span><span>−{peso(appliedDiscount.discount_amount)}</span></div>
                   )}

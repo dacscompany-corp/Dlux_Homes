@@ -155,6 +155,27 @@ export function stayTotal(stayType: string, checkInISO: string, nights: number, 
   return total;
 }
 
+// Senior citizen / PWD discount (RA 9994, RA 10754): 20% off a qualifying
+// guest's OWN share of the room, not off the whole bill. Each guest's share is
+// the room total split evenly across counted pax (adults + young adults;
+// 7-and-under are free and never priced, so they can't dilute a share).
+//
+// `roomTotal` is the room only — the extra-pax fee and the bundle surcharge are
+// neither divided nor discounted. Rounded to whole pesos so the quote, the
+// payload and the 50% down payment never carry centavos.
+//
+//   ₱1,899, 2 pax, 1 qualifying → 1899/2 = 949.50 → ×20% = ₱190 → total ₱1,709
+export const SENIOR_PWD_RATE = 0.2;
+
+export function seniorPwdDiscount(roomTotal: number, countedPax: number, qualifying: number): number {
+  const pax = Math.floor(countedPax || 0);
+  const n = Math.floor(qualifying || 0);
+  if (!(roomTotal > 0) || pax <= 0 || n <= 0) return 0;
+  // Clamp: more flagged guests than priced pax must never discount past 20%
+  // of the whole room total.
+  return Math.round((roomTotal / pax) * SENIOR_PWD_RATE * Math.min(n, pax));
+}
+
 // Extra-pax surcharge. The base rate covers `basePax` guests (2 for D'Lux);
 // each additional guest up to the max adds `feePerPax` PER NIGHT — a 3-night
 // stay with one extra guest pays the fee three times. Applies to every stay
