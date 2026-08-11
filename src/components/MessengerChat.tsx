@@ -1,10 +1,25 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // Direct link to the D'Lux Homes Facebook page Messenger thread.
 const MESSENGER_URL = "https://www.facebook.com/messages/t/270893736109969";
+
+const POS_KEY = "dlux-messenger-pos";
+const EDGE_GAP = 12;
+const BUTTON_SIZE = 60;
+
+type Pos = { right: number; bottom: number };
+
+// Pinned to the right edge — only the vertical offset is ever draggable.
+function clampPos(pos: Pos): Pos {
+  const maxBottom = Math.max(EDGE_GAP, window.innerHeight - BUTTON_SIZE - EDGE_GAP);
+  return {
+    right: EDGE_GAP + 10,
+    bottom: Math.min(Math.max(pos.bottom, EDGE_GAP), maxBottom),
+  };
+}
 
 function IcoMessenger({ size = 28 }: { size?: number }) {
   return (
@@ -21,12 +36,57 @@ export default function MessengerChat() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
+  const [pos, setPos] = useState<Pos>({ right: 22, bottom: 22 });
+  const [dragging, setDragging] = useState(false);
+  const dragMoved = useRef(false);
+  const dragStart = useRef({ x: 0, y: 0, right: 22, bottom: 22 });
+
+  // Restore the last spot the user dropped the button, clamped in case the
+  // viewport is now smaller (e.g. rotated phone, resized window).
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(POS_KEY);
+      if (saved) setPos(clampPos(JSON.parse(saved)));
+    } catch { /* ignore malformed/unavailable storage */ }
+  }, []);
+
+  useEffect(() => {
+    const onResize = () => setPos((p) => clampPos(p));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const onPointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    dragMoved.current = false;
+    dragStart.current = { x: e.clientX, y: e.clientY, right: pos.right, bottom: pos.bottom };
+    setDragging(true);
+  };
+
+  const onPointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!dragging) return;
+    const dy = e.clientY - dragStart.current.y;
+    if (Math.abs(dy) > 4) dragMoved.current = true;
+    setPos(clampPos({ right: dragStart.current.right, bottom: dragStart.current.bottom - dy }));
+  };
+
+  const endDrag = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!dragging) return;
+    setDragging(false);
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    setPos((p) => {
+      const clamped = clampPos(p);
+      try { localStorage.setItem(POS_KEY, JSON.stringify(clamped)); } catch { /* ignore */ }
+      return clamped;
+    });
+  };
 
   // Don't show the customer chat widget inside the admin dashboard.
   if (pathname?.startsWith("/admin")) return null;
 
   return (
-    <div style={{ position: "fixed", right: 22, bottom: 22, zIndex: 1000, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 12 }}>
+    <div style={{ position: "fixed", right: pos.right, bottom: pos.bottom, zIndex: 1000, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 12, touchAction: "none" }}>
       {open && (
         <div
           style={{
@@ -71,22 +131,28 @@ export default function MessengerChat() {
       )}
 
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => { if (!dragMoved.current) setOpen((v) => !v); }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         aria-label={open ? "Close Messenger chat" : "Open Messenger chat"}
+        title="Drag to move"
         style={{
           width: 60,
           height: 60,
           borderRadius: "50%",
           border: "none",
-          cursor: "pointer",
+          cursor: dragging ? "grabbing" : "pointer",
           background: "linear-gradient(135deg,#0A7CFF,#0A60E8)",
           boxShadow: "0 10px 26px rgba(10,124,255,0.45)",
           display: "grid",
           placeItems: "center",
-          transform: hovered ? "scale(1.06)" : "scale(1)",
-          transition: "transform .15s ease",
+          transform: hovered && !dragging ? "scale(1.06)" : "scale(1)",
+          transition: dragging ? "none" : "transform .15s ease",
+          touchAction: "none",
         }}
       >
         {open ? (

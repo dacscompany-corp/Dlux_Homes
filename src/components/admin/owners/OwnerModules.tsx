@@ -257,7 +257,7 @@ const COLOR = {
   day: "#D9A857",        // Daycation — tan/gold
   night: "#3B2418",      // Nightcation — dark maroon-brown
   full: "#6E8A96",       // Full stay — slate blue
-  continuing: "#9DB3BC", // Continuing (mid-stay) — lighter slate
+  continuing: "#A9D8B4", // Continuing (mid-stay) / fully booked all day — light green
   empty: "#ffffff",      // half is open / bookable
 };
 
