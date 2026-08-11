@@ -158,7 +158,9 @@ export default function SplashScreen() {
 
       <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
         <div data-plane style={{ position: "relative", display: "grid", placeItems: "center", transformStyle: "preserve-3d" }}>
-          <div data-mark style={{ position: "relative", width: 220, opacity: 0 }}>
+          {/* Responsive rather than a fixed 220px: caps at 360 on desktop and falls back
+              to 62vw so it can never crowd the edges of a narrow phone. */}
+          <div data-mark style={{ position: "relative", width: "min(360px, 62vw)", opacity: 0 }}>
             <Image src="/logo.png" alt="D'Lux Homes" width={1056} height={232} priority style={{ width: "100%", height: "auto", objectFit: "contain" }} />
             <div className="dlux-shimmer" />
           </div>
