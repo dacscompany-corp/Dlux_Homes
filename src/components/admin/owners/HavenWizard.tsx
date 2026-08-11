@@ -1,5 +1,6 @@
 "use client";
 
+import { spanHours, fmtSpan } from "@/lib/stay-window";
 import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import {
@@ -62,7 +63,7 @@ const empty = {
   haven_name: "", property_type: "Studio", tower: "", floor: "", view_type: "", description: "", google_map_address: "",
   // pricing
   six_hour_rate: "", ten_hour_rate: "", weekday_rate: "", weekend_rate: "",
-  // Overnight (21h) length-of-stay bundle discounts — flat per-night rate once
+  // Overnight length-of-stay bundle discounts — flat per-night rate once
   // a stay reaches 5/12/20 nights. Blank = not configured for that tier.
   weekday_week_rate: "", weekday_twoweek_rate: "", weekday_month_rate: "",
   weekend_week_rate: "", weekend_twoweek_rate: "", weekend_month_rate: "",
@@ -161,6 +162,12 @@ export default function HavenWizard({
   const [existingImages, setExistingImages] = useState<ImgRef[]>([]);
   const [existingTours, setExistingTours] = useState<ImgRef[]>([]);
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }));
+
+  // Lengths quoted by the rate labels, read from the windows this same wizard
+  // edits in step 3. Empty while a window is blank, so a label omits the span
+  // rather than asserting a wrong one.
+  const dayLen = fmtSpan(form.ten_hour_check_in, form.ten_hour_check_out);
+  const nightLen = fmtSpan(form.twenty_one_hour_check_in, form.twenty_one_hour_check_out);
   const isEdit = !!editHaven;
   const havenId = editHaven ? String(editHaven.uuid_id || editHaven.id || "") : "";
 
@@ -325,11 +332,13 @@ export default function HavenWizard({
             <div className="space-y-3">
               <p className="text-xs" style={{ color: "#8B6344" }}>Rates per the D&apos;Lux card. Numbers only — no ₱ or commas. Weekend/holiday rate applies on Fri/Sat &amp; PH holidays.</p>
               <div className="grid grid-cols-2 gap-3">
+                {/* Lengths follow the windows set in step 3 — never retyped, so
+                    editing a check-out hour cannot leave these labels lying. */}
                 {[
-                  ["Daycation/Nightcation 10h — Weekday (₱)", "ten_hour_rate"],
-                  ["Daycation/Nightcation 10h — Weekend/Holiday (₱)", "six_hour_rate"],
-                  ["Overnight 21h — Weekday (₱)", "weekday_rate"],
-                  ["Overnight 21h — Weekend/Holiday (₱)", "weekend_rate"],
+                  [`Daycation/Nightcation${dayLen ? " " + dayLen : ""} — Weekday (₱)`, "ten_hour_rate"],
+                  [`Daycation/Nightcation${dayLen ? " " + dayLen : ""} — Weekend/Holiday (₱)`, "six_hour_rate"],
+                  [`Overnight${nightLen ? " " + nightLen : ""} — Weekday (₱)`, "weekday_rate"],
+                  [`Overnight${nightLen ? " " + nightLen : ""} — Weekend/Holiday (₱)`, "weekend_rate"],
                 ].map(([lbl, key]) => (
                   <div key={key}>
                     <label className={labelCls} style={labelStyle}>{lbl}</label>
@@ -338,7 +347,7 @@ export default function HavenWizard({
                 ))}
               </div>
               <div className="pt-2">
-                <p className="text-xs font-semibold" style={{ color: "#8B6344" }}>Overnight (21h) length-of-stay bundle discounts <span className="font-normal" style={{ color: "#C9B79E" }}>· optional</span></p>
+                <p className="text-xs font-semibold" style={{ color: "#8B6344" }}>Overnight{nightLen ? ` (${nightLen})` : ""} length-of-stay bundle discounts <span className="font-normal" style={{ color: "#C9B79E" }}>· optional</span></p>
                 <p className="text-xs mt-1" style={{ color: "#C9B79E" }}>Flat nightly rate once a stay reaches {BUNDLE_WEEK_NIGHTS} / {BUNDLE_TWOWEEK_NIGHTS} / {BUNDLE_MONTH_NIGHTS} nights, based on the check-in day (weekday vs weekend/holiday). A bundle stay with extra pax (3–4 guests) charges ₱{BUNDLE_EXTRA_PAX_SURCHARGE} more per night than the rates below, on top of the normal per-pax fee. Toggle a tier off to pause its discount without clearing the rates.</p>
                 <div className="space-y-2 mt-2">
                   {[
@@ -391,26 +400,39 @@ export default function HavenWizard({
           {/* Step 3 — Check-in */}
           {step === 2 && (
             <div className="space-y-3">
-              <p className="text-xs" style={{ color: "#8B6344" }}>Default check-in / check-out windows per rate plan.</p>
+              <p className="text-xs" style={{ color: "#8B6344" }}>Default check-in / check-out windows per rate plan. Each row is named for what the guest sees on the site; the duration is read from the times below it.</p>
               {[
-                ["6-hour stay", "six_hour_check_in", "six_hour_check_out"],
-                ["10-hour stay", "ten_hour_check_in", "ten_hour_check_out"],
-                ["21-hour stay", "twenty_one_hour_check_in", "twenty_one_hour_check_out"],
-              ].map(([lbl, inK, outK]) => (
+                // The column names (six_hour/ten_hour/twenty_one_hour) are legacy
+                // from the Staycation port and no longer describe these windows —
+                // `six_hour_*` is the Nightcation and runs 10 hours. Label the rows
+                // by their guest-facing stay type (see havenToRoom) and compute the
+                // length from the times, so editing an hour updates what is shown.
+                ["Nightcation", "six_hour_check_in", "six_hour_check_out"],
+                ["Daycation", "ten_hour_check_in", "ten_hour_check_out"],
+                ["Overnight", "twenty_one_hour_check_in", "twenty_one_hour_check_out"],
+              ].map(([lbl, inK, outK]) => {
+                const start = form[inK as keyof Form] as string;
+                const end = form[outK as keyof Form] as string;
+                const hours = spanHours(start, end);
+                return (
                 <div key={lbl} className="rounded-xl border p-3" style={{ borderColor: "#EDE3D2" }}>
-                  <p className="text-xs font-semibold mb-2" style={{ color: "#B07848" }}>{lbl}</p>
+                  <p className="text-xs font-semibold mb-2" style={{ color: "#B07848" }}>
+                    {lbl}
+                    {hours != null && <span style={{ color: "#8B6344", fontWeight: 500 }}> · {hours} hour{hours === 1 ? "" : "s"}</span>}
+                  </p>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className={labelCls} style={labelStyle}>Check-in</label>
-                      <input aria-label={`${lbl} check-in`} type="time" value={form[inK as keyof Form] as string} onChange={(e) => set({ [inK]: e.target.value } as Partial<Form>)} className={`${field} mt-1`} style={fieldStyle} />
+                      <input aria-label={`${lbl} check-in`} type="time" value={start} onChange={(e) => set({ [inK]: e.target.value } as Partial<Form>)} className={`${field} mt-1`} style={fieldStyle} />
                     </div>
                     <div>
                       <label className={labelCls} style={labelStyle}>Check-out</label>
-                      <input aria-label={`${lbl} check-out`} type="time" value={form[outK as keyof Form] as string} onChange={(e) => set({ [outK]: e.target.value } as Partial<Form>)} className={`${field} mt-1`} style={fieldStyle} />
+                      <input aria-label={`${lbl} check-out`} type="time" value={end} onChange={(e) => set({ [outK]: e.target.value } as Partial<Form>)} className={`${field} mt-1`} style={fieldStyle} />
                     </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import pool from "../config/db";
 import { upload_file } from "../utils/cloudinary";
 import { validateImageDataUrl } from "../utils/imageGuard";
+import { validateDiscount } from "../utils/validateDiscount";
 import { createCalendarEvent, createCalendarEventWithResult, updateCalendarEvent, CalendarEventData } from "../utils/googleCalendar";
 
 // A guest may attach several ID photos. We persist them in the single
@@ -1007,6 +1008,46 @@ export const createBooking = async (
       down_payment: paymentDownPayment,
       amount_paid: paymentAmountPaid,
     });
+
+    // ── Re-validate the promo code before it is honoured ──────────────────
+    // The browser validated this code when the guest typed it, but that was
+    // minutes ago and on a client we do not control. Re-run the SAME rules
+    // here: a code deactivated in the meantime, expired, over its cap, or
+    // already redeemed by this account must not pay out, and the peso amount is
+    // recomputed rather than trusted.
+    //
+    // `preDiscount` is the total the guest confirmed plus the discount taken off
+    // it — i.e. what the code was applied to. This catches an inflated
+    // discount_amount; it does NOT re-derive the room price itself, which is
+    // still client-supplied (tracked separately).
+    if (discount_id || discount_code) {
+      const claimed = Number(discount_amount) || 0;
+      const preDiscount = (Number(paymentTotalAmount) || 0) + claimed;
+      const check = await validateDiscount({
+        db: client,
+        code: discount_code || null,
+        discountId: discount_id || null,
+        havenId: haven_id || null,
+        userId: user_id || null,
+        amount: preDiscount,
+      });
+      if (!check.ok) {
+        await client.query("ROLLBACK");
+        console.warn("[BOOKING] Rejected promo at submit:", discount_code, check.error);
+        return NextResponse.json(
+          { success: false, error: `${check.error} Please remove the code and try again.`, code: "DISCOUNT_INVALID" },
+          { status: 409 },
+        );
+      }
+      if (claimed > check.discount.discount_amount) {
+        await client.query("ROLLBACK");
+        console.warn("[BOOKING] Discount amount overstated:", claimed, ">", check.discount.discount_amount);
+        return NextResponse.json(
+          { success: false, error: "The promo discount could not be verified. Please re-apply the code.", code: "DISCOUNT_INVALID" },
+          { status: 409 },
+        );
+      }
+    }
 
     // remaining_balance satisfies the DB check (= total_amount - amount_paid).
     // (Original live DB had this as a GENERATED column; the reconstructed schema

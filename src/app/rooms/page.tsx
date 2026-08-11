@@ -9,6 +9,8 @@ import { useSession, signOut } from "next-auth/react";
 import { getMyBookingIds } from "@/lib/booking-store";
 import { mockRooms, mockReviews } from "@/lib/mock-data";
 import { useGetHavensQuery } from "@/redux/api/roomApi";
+import { spanHours } from "@/lib/stay-window";
+import { IcoZoom, PromoLightbox } from "@/components/PromoLightbox";
 import { havenToRoom } from "@/lib/haven-adapter";
 import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
 import type { ActivePromotion, PromoStayType } from "@/redux/api/promotionsApi";
@@ -155,6 +157,7 @@ function PromoBanner({ promotions, roomId, rates, variant }: {
   // First promo expanded, the rest collapsed (design 2b / 3a).
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<string | null>(null);
   useEffect(() => {
     if (!copiedCode) return;
     const t = setTimeout(() => setCopiedCode(null), 2000);
@@ -252,27 +255,36 @@ function PromoBanner({ promotions, roomId, rates, variant }: {
   if (variant === "mobile") {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 14, background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 18, padding: 16, boxShadow: "0 4px 16px rgba(31,22,14,.05)" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 18, padding: 14, boxShadow: "0 4px 16px rgba(31,22,14,.05)", overflow: "hidden" }}>
+
+          {/* Artwork bleeds past the card padding and keeps its real aspect
+              ratio — the old 76px square cropped a banner that carries its
+              offer in the artwork itself. */}
+          {expanded.image_url && (
+            <button type="button" onClick={() => setLightbox(expanded.image_url!)} aria-label="Enlarge offer artwork"
+              style={{ position: "relative", display: "block", margin: "-14px -14px 0", padding: 0, border: "none", background: "#2C2218", cursor: "zoom-in", font: "inherit", width: "calc(100% + 28px)" }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={expanded.image_url} alt="" style={{ display: "block", width: "100%", height: "auto" }} />
+              <span style={{ position: "absolute", left: 10, top: 10, display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(243,228,203,.92)", color: "#6B3F1C", borderRadius: 999, padding: "5px 10px", fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 9, letterSpacing: ".14em" }}>SPECIAL OFFER</span>
+              <span style={{ position: "absolute", right: 10, bottom: 10, display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(31,22,14,.55)", backdropFilter: "blur(8px)", color: "#FFFCF4", borderRadius: 999, padding: "6px 11px", fontSize: 11, fontWeight: 600 }}>
+                <IcoZoom size={12} /> Tap to enlarge
+              </span>
+            </button>
+          )}
+
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-            <OfferLabelPill />
+            {!expanded.image_url && <OfferLabelPill />}
             {counter
-              ? <span style={{ fontSize: 11.5, color: "#8B7458", whiteSpace: "nowrap" }}>{counter}</span>
-              : note && <span style={{ fontSize: 11.5, fontWeight: 600, color: "#8C5A2E", whiteSpace: "nowrap" }}>{note}</span>}
+              ? <span style={{ fontSize: 11.5, color: "#8B7458", whiteSpace: "nowrap", marginLeft: "auto" }}>{counter}</span>
+              : note && <span style={{ fontSize: 11.5, fontWeight: 600, color: "#8C5A2E", whiteSpace: "nowrap", marginLeft: "auto" }}>{note}</span>}
           </div>
 
-          <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
-            {expanded.image_url && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={expanded.image_url} alt="" style={{ width: 76, height: 76, borderRadius: 12, objectFit: "cover", flex: "none" }} />
-            )}
-            <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
-                <h3 className="serif" style={{ fontSize: 20, lineHeight: 1.15, letterSpacing: "-.01em", color: "#1F160E", margin: 0, fontWeight: 500 }}>{expanded.title}</h3>
-                {discounted && <DiscountBadge promo={expanded} />}
-              </div>
-              {expanded.description && <p style={{ fontSize: 13, lineHeight: 1.5, color: "#4A3A2A", margin: 0 }}>{expanded.description}</p>}
-            </div>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+            <h3 className="serif" style={{ fontSize: 21, lineHeight: 1.1, letterSpacing: "-.01em", color: "#1F160E", margin: 0, fontWeight: 500 }}>{expanded.title}</h3>
+            {discounted && <DiscountBadge promo={expanded} />}
           </div>
+
+          {expanded.description && <p style={{ fontSize: 13, lineHeight: 1.5, color: "#4A3A2A", margin: 0 }}>{expanded.description}</p>}
 
           {discounted && (
             <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, paddingTop: 14, borderTop: "1px solid #EFE4CE" }}>
@@ -303,6 +315,7 @@ function PromoBanner({ promotions, roomId, rates, variant }: {
         </div>
 
         {collapsed.map((p) => renderCollapsedRow(p))}
+        <PromoLightbox src={lightbox} onClose={() => setLightbox(null)} />
       </div>
     );
   }
@@ -321,7 +334,7 @@ function PromoBanner({ promotions, roomId, rates, variant }: {
       <div className="promo-card" style={{ display: "grid", gridTemplateColumns: "340px minmax(0, 1fr) auto", gap: 36, alignItems: "center", background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 22, padding: 22, boxShadow: "0 4px 16px rgba(31,22,14,.05)" }}>
         {expanded.image_url && (
           // eslint-disable-next-line @next/next/no-img-element
-          <img className="promo-card__photo" src={expanded.image_url} alt="" style={{ width: "100%", height: 224, borderRadius: 16, objectFit: "cover" }} />
+          <img className="promo-card__photo" src={expanded.image_url} alt="" style={{ width: "100%", height: "auto", maxHeight: 240, borderRadius: 16, objectFit: "contain", alignSelf: "center", background: "#2C2218", border: "1px solid #E0CEB2" }} />
         )}
         <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -515,12 +528,13 @@ export default function BrowsePage() {
         .promo-cta:hover { background: #9A6035 !important; }
         .promo-outline { transition: border-color .2s, color .2s; }
         .promo-outline:hover { border-color: #B07848 !important; color: #8C5A2E !important; }
+        /* Lightbox fade — the mobile card still opens the artwork full-screen. */
+        @keyframes promoLbIn { from { opacity: 0 } to { opacity: 1 } }
         @media (max-width: 900px) {
           /* Stack the offer card: photo, copy, then the price column
              left-aligned with its divider removed. */
           .promo-head { flex-direction: column; align-items: flex-start !important; gap: 16px !important; }
           .promo-card { grid-template-columns: 1fr !important; gap: 22px !important; }
-          .promo-card__photo { height: 200px !important; }
           .promo-card__price { align-items: flex-start !important; padding-left: 0 !important; border-left: none !important; }
           .promo-row { grid-template-columns: 84px minmax(0, 1fr) !important; gap: 16px !important; }
           .promo-row > div:last-child { grid-column: 1 / -1; justify-content: space-between; }
@@ -614,7 +628,7 @@ export default function BrowsePage() {
           <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".2em", color: "#8C5A2E" }}>A staycation in the sky</div>
           <h1 style={{ fontFamily: "'Fraunces', serif", fontWeight: 400, fontSize: 42, lineHeight: 0.98, letterSpacing: "-.03em", margin: "14px 0 0" }}>The city, <em style={{ color: "#8C5A2E" }}>on pause.</em></h1>
           <p style={{ fontSize: 14.5, lineHeight: 1.55, color: "#4A3A2A", margin: "14px 0 0" }}>One quiet home on the 12th floor of Grass Residences. Book by the hour, check in within minutes, leave rested.</p>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 20, fontSize: 12.5, color: "#4A3A2A", fontWeight: 500 }}><span>28 sqm</span><span style={{ width: 3, height: 3, borderRadius: "50%", background: "#C4B69C" }} /><span>Up to 4 guests</span><span style={{ width: 3, height: 3, borderRadius: "50%", background: "#C4B69C" }} /><span>10 / 21 hrs</span></div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 20, fontSize: 12.5, color: "#4A3A2A", fontWeight: 500 }}><span>28 sqm</span><span style={{ width: 3, height: 3, borderRadius: "50%", background: "#C4B69C" }} /><span>Up to 4 guests</span><span style={{ width: 3, height: 3, borderRadius: "50%", background: "#C4B69C" }} /><span>10 / 22 hrs</span></div>
         </div>
 
         <div style={{ padding: "30px 24px 0" }}>
@@ -718,8 +732,8 @@ export default function BrowsePage() {
           {[
             { h: "28 sqm", s: "1 bedroom · balcony" },
             { h: "Up to 4", s: "Full double + pull-out" },
-            { h: "10 or 21 hrs", s: "Pick your window" },
-            { h: "₱1,499", s: "Starting rate" },
+            { h: "10 or 22 hrs", s: "Pick your window" },
+            { h: `₱${Math.min(room.price10hr, room.price21hr).toLocaleString()}`, s: "Starting rate" },
           ].map((item) => (
             <div key={item.h}>
               <div className="serif" style={{ fontSize: 36, fontWeight: 400, letterSpacing: "-.025em", lineHeight: 1, color: "var(--ink)" }}>{item.h}</div>
@@ -791,7 +805,7 @@ export default function BrowsePage() {
                 <div className="stay-card__inner">
                   <div className="stay-card__sheen" />
                   <div style={{ position: "relative", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--gold)" }}>{w.stayType}-hours</div>
+                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--gold)" }}>{spanHours(w.checkIn, w.checkOut) ?? w.stayType}-hours</div>
                     <span className="stay-card__arrow"><IcoArrowRight size={16} /></span>
                   </div>
                   <div className="serif" style={{ position: "relative", fontSize: 36, fontWeight: 400, letterSpacing: "-.02em", marginTop: 14, lineHeight: 1 }}>{w.label}</div>
@@ -894,7 +908,7 @@ export default function BrowsePage() {
               </p>
             </div>
             {[
-              { h: "Stay", items: ["10-Hour Daycation", "10-Hour Nightcation", "21-Hour Full Stay"] },
+              { h: "Stay", items: ["10-Hour Daycation", "10-Hour Nightcation", "22-Hour Full Stay"] },
               {
                 h: "Social Media",
                 items: [
