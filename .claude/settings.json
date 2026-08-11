@@ -18,7 +18,11 @@
       "Bash(grep -nA4 \"amenityFees:\" src/lib/mock-data.ts)",
       "Bash(grep -nA3 \"nearby:\" src/lib/mock-data.ts)",
       "Bash(grep -nA3 \"houseRules:\" src/lib/mock-data.ts)",
-      "Bash(grep -nA3 \"blockedDates:\" src/lib/mock-data.ts)"
+      "Bash(grep -nA3 \"blockedDates:\" src/lib/mock-data.ts)",
+      "Bash(curl -s -o /dev/null -w \"status=%{http_code} size=%{size_download}\\\\n\" http://localhost:3000/ --max-time 90)",
+      "Bash(curl -s http://localhost:3000/ --max-time 90)",
+      "PowerShell(Get-ChildItem -LiteralPath \"C:\\\\Users\\\\John Aerol Tapales\\\\Documents\\\\D'Lux Homes\" -File | Where-Object { $_.Name -match 'success|error|\\\\{|\\\\\\(' } | Select-Object Name, Length, LastWriteTime | Format-List)",
+      "Bash(git ls-tree *)"
     ]
   }
 }
