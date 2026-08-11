@@ -1608,7 +1608,7 @@ function CheckoutInner() {
                   <ul style={{ margin: 0, padding: "0 0 0 18px", fontSize: 13, color: "#4A3A2A", lineHeight: 1.75 }}>
                     <li>Check-in at {checkInTime} and check-out by {checkOutTime}</li>
                     <li>House rules — strictly no smoking/vaping, no pets, no walk-ins</li>
-                    <li>50% balance + ₱1,000 refundable security deposit due at check-in</li>
+                    <li>50% balance + {peso(SECURITY_DEPOSIT)} refundable security deposit due at check-in</li>
                     <li>No cancellations — one free date change if requested ≥7 days before check-in, new date within 1 month</li>
                   </ul>
                 </div>

@@ -19,6 +19,7 @@ import { useGetEmployeesQuery, useCreateEmployeeMutation } from "@/redux/api/emp
 import { useGetReviewsQuery } from "@/redux/api/reviewsApi";
 import { useGetReportsQuery } from "@/redux/api/reportApi";
 import { useGetConversationsQuery } from "@/redux/api/messagesApi";
+import { fmtWindow, fmtSpan } from "@/lib/stay-window";
 import { BUNDLE_WEEK_LABEL, BUNDLE_TWOWEEK_LABEL, BUNDLE_MONTH_LABEL } from "@/lib/pricing";
 import PromotionModal, { type PromotionFormState } from "@/components/admin/PromotionModal";
 import { checkInOpensLabel, isCheckInOpen } from "@/lib/checkin-window";
@@ -690,9 +691,13 @@ export default function OwnerDashboard() {
     { label: `1 month (${BUNDLE_MONTH_LABEL})`, weekday: rnumOrNull(h0.weekday_month_rate), weekend: rnumOrNull(h0.weekend_month_rate), active: h0.month_bundle_active !== false },
   ];
   const stayRates = [
-    { name: "Daycation (10h)",  window: "07:00 – 17:00", weekday: rnum(h0.ten_hour_rate), weekend: rnum(h0.six_hour_rate) },
-    { name: "Nightcation (10h)", window: "19:00 – 05:00", weekday: rnum(h0.ten_hour_rate), weekend: rnum(h0.six_hour_rate) },
-    { name: "Overnight (21h)",  window: "19:00 – 16:00", weekday: rnum(h0.weekday_rate), weekend: rnum(h0.weekend_rate) },
+    // Name, window and length all come from the haven row. These were literal
+    // strings ("19:00 – 16:00", "21h"), so this card claimed to show "the live
+    // rates guests are charged" while ignoring the saved times entirely.
+    // `key` is what the bundle block below keys off — never the display name.
+    { key: "day", name: "Daycation", window: fmtWindow(h0.ten_hour_check_in, h0.ten_hour_check_out), span: fmtSpan(h0.ten_hour_check_in, h0.ten_hour_check_out), weekday: rnum(h0.ten_hour_rate), weekend: rnum(h0.six_hour_rate) },
+    { key: "night", name: "Nightcation", window: fmtWindow(h0.six_hour_check_in, h0.six_hour_check_out), span: fmtSpan(h0.six_hour_check_in, h0.six_hour_check_out), weekday: rnum(h0.ten_hour_rate), weekend: rnum(h0.six_hour_rate) },
+    { key: "overnight", name: "Overnight", window: fmtWindow(h0.twenty_one_hour_check_in, h0.twenty_one_hour_check_out), span: fmtSpan(h0.twenty_one_hour_check_in, h0.twenty_one_hour_check_out), weekday: rnum(h0.weekday_rate), weekend: rnum(h0.weekend_rate) },
   ];
 
   // Today's Snapshot — derived from the live bookings + havens (no extra API)
@@ -1791,8 +1796,8 @@ export default function OwnerDashboard() {
 
                 <div className="grid grid-cols-1 md:grid-cols-3" style={{ gap: 1, background: "#ece5d4", border: "1px solid #ece5d4" }}>
                   {stayRates.map((rate) => (
-                    <div key={rate.name} style={{ background: "#fff", padding: "22px 24px" }}>
-                      <div style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 19, color: "#1f1b16" }}>{rate.name}</div>
+                    <div key={rate.key} style={{ background: "#fff", padding: "22px 24px" }}>
+                      <div style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 19, color: "#1f1b16" }}>{rate.name}{rate.span && <span style={{ color: "#a08a6c" }}> ({rate.span})</span>}</div>
                       <div className="flex items-center" style={{ gap: 6, fontSize: 12, color: "#8a8276", marginTop: 6 }}>
                         <span>Check-in</span><span style={{ color: "#4a4034" }}>{rate.window}</span>
                       </div>
@@ -1805,7 +1810,7 @@ export default function OwnerDashboard() {
                           <span style={{ fontSize: 13, color: "#8a8276" }}>Weekend / Holiday</span>
                           <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 14, color: "#b8754a" }}>{peso(rate.weekend)}</span>
                         </div>
-                        {rate.name === "Overnight (21h)" && (
+                        {rate.key === "overnight" && (
                           <div style={{ marginTop: 6, paddingTop: 10, borderTop: "1px dashed #f3eee2", display: "flex", flexDirection: "column", gap: 8 }}>
                             <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".07em", color: "#c2ad88" }}>Length-of-stay bundles</div>
                             {overnightBundles.map((b) => (
@@ -2382,6 +2387,8 @@ export default function OwnerDashboard() {
         // each with weekday & weekend prices, plus an extra-pax fee.
         const dayWeekday = num(r.ten_hour_rate);
         const dayWeekend = num(r.six_hour_rate) || dayWeekday;
+        // Length comes from this haven’s own overnight window, not a literal.
+        const nightSpan = fmtSpan(r.twenty_one_hour_check_in, r.twenty_one_hour_check_out);
         const nightWeekday = num(r.weekday_rate);
         const nightWeekend = num(r.weekend_rate) || nightWeekday;
         const extraPax = num(r.extra_pax_fee);
@@ -2477,7 +2484,7 @@ export default function OwnerDashboard() {
                       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "#6f5c44", padding: "3px 0" }}><span>Weekend</span><span style={{ color: "#1f1b16" }}>{peso(dayWeekend)}</span></div>
                     </div>
                     <div style={{ padding: "14px 16px" }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: "#1f1b16", marginBottom: 8 }}>Overnight <span style={{ color: "#a08a6c", fontWeight: 400 }}>· 21h</span></div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: "#1f1b16", marginBottom: 8 }}>Overnight{nightSpan && <span style={{ color: "#a08a6c", fontWeight: 400 }}> · {nightSpan}</span>}</div>
                       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "#6f5c44", padding: "3px 0" }}><span>Weekday</span><span style={{ color: "#1f1b16" }}>{peso(nightWeekday)}</span></div>
                       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "#6f5c44", padding: "3px 0" }}><span>Weekend</span><span style={{ color: "#1f1b16" }}>{peso(nightWeekend)}</span></div>
                     </div>

@@ -9,6 +9,7 @@ import { useSession, signOut } from "next-auth/react";
 import { getMyBookingIds } from "@/lib/booking-store";
 import { mockRooms, mockReviews } from "@/lib/mock-data";
 import { useGetHavensQuery } from "@/redux/api/roomApi";
+import { spanHours } from "@/lib/stay-window";
 import { havenToRoom } from "@/lib/haven-adapter";
 import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
 import type { ActivePromotion, PromoStayType } from "@/redux/api/promotionsApi";
@@ -614,7 +615,7 @@ export default function BrowsePage() {
           <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".2em", color: "#8C5A2E" }}>A staycation in the sky</div>
           <h1 style={{ fontFamily: "'Fraunces', serif", fontWeight: 400, fontSize: 42, lineHeight: 0.98, letterSpacing: "-.03em", margin: "14px 0 0" }}>The city, <em style={{ color: "#8C5A2E" }}>on pause.</em></h1>
           <p style={{ fontSize: 14.5, lineHeight: 1.55, color: "#4A3A2A", margin: "14px 0 0" }}>One quiet home on the 12th floor of Grass Residences. Book by the hour, check in within minutes, leave rested.</p>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 20, fontSize: 12.5, color: "#4A3A2A", fontWeight: 500 }}><span>28 sqm</span><span style={{ width: 3, height: 3, borderRadius: "50%", background: "#C4B69C" }} /><span>Up to 4 guests</span><span style={{ width: 3, height: 3, borderRadius: "50%", background: "#C4B69C" }} /><span>10 / 21 hrs</span></div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 20, fontSize: 12.5, color: "#4A3A2A", fontWeight: 500 }}><span>28 sqm</span><span style={{ width: 3, height: 3, borderRadius: "50%", background: "#C4B69C" }} /><span>Up to 4 guests</span><span style={{ width: 3, height: 3, borderRadius: "50%", background: "#C4B69C" }} /><span>10 / 22 hrs</span></div>
         </div>
 
         <div style={{ padding: "30px 24px 0" }}>
@@ -718,8 +719,8 @@ export default function BrowsePage() {
           {[
             { h: "28 sqm", s: "1 bedroom · balcony" },
             { h: "Up to 4", s: "Full double + pull-out" },
-            { h: "10 or 21 hrs", s: "Pick your window" },
-            { h: "₱1,499", s: "Starting rate" },
+            { h: "10 or 22 hrs", s: "Pick your window" },
+            { h: `₱${Math.min(room.price10hr, room.price21hr).toLocaleString()}`, s: "Starting rate" },
           ].map((item) => (
             <div key={item.h}>
               <div className="serif" style={{ fontSize: 36, fontWeight: 400, letterSpacing: "-.025em", lineHeight: 1, color: "var(--ink)" }}>{item.h}</div>
@@ -791,7 +792,7 @@ export default function BrowsePage() {
                 <div className="stay-card__inner">
                   <div className="stay-card__sheen" />
                   <div style={{ position: "relative", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--gold)" }}>{w.stayType}-hours</div>
+                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--gold)" }}>{spanHours(w.checkIn, w.checkOut) ?? w.stayType}-hours</div>
                     <span className="stay-card__arrow"><IcoArrowRight size={16} /></span>
                   </div>
                   <div className="serif" style={{ position: "relative", fontSize: 36, fontWeight: 400, letterSpacing: "-.02em", marginTop: 14, lineHeight: 1 }}>{w.label}</div>
@@ -894,7 +895,7 @@ export default function BrowsePage() {
               </p>
             </div>
             {[
-              { h: "Stay", items: ["10-Hour Daycation", "10-Hour Nightcation", "21-Hour Full Stay"] },
+              { h: "Stay", items: ["10-Hour Daycation", "10-Hour Nightcation", "22-Hour Full Stay"] },
               {
                 h: "Social Media",
                 items: [

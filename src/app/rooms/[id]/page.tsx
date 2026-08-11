@@ -17,6 +17,7 @@ import {
   discountBadgeText, offerPriceFor, pesoAmount, promoCoversStay, promoDiscountOn, scopedStayTypes,
 } from "@/lib/promo-offer";
 import { havenToRoom } from "@/lib/haven-adapter";
+import { spanHours } from "@/lib/stay-window";
 import { stayTotal, isWeekendOrHoliday, extraPaxFee, bundleNightlyRate, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS, BUNDLE_EXTRA_PAX_SURCHARGE } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import type { Room } from "@/types";
@@ -546,6 +547,13 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   // Overnight (21h) stays can span multiple nights; 10h sessions are always 1.
   const isOvernight = selectedWindow.stayType !== "10";
 
+  // Was hardcoded as "Overnight · 7 PM – 4 PM next day" in three places, so it
+  // kept advertising the old window after the owner changed check-out. Both the
+  // times and the 10-hour span now come from the selected window itself.
+  const stayNote = isOvernight
+    ? `Overnight · ${selectedWindow.checkIn} – ${selectedWindow.checkOut} next day`
+    : `${selectedWindow.label} · ${spanHours(selectedWindow.checkIn, selectedWindow.checkOut) ?? 10} hours`;
+
   // NOTE: `stayNights` and the whole pricing block used to live here, but the
   // night count is now CLAMPED to what the calendar can actually take, which
   // needs the availability helpers below. Both moved to just after
@@ -980,7 +988,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                   <span style={{ fontFamily: "'Fraunces', serif", fontSize: 28, fontWeight: 500, letterSpacing: "-.02em" }}>{peso(headlinePrice)}</span>
                   <span style={{ fontSize: 13, color: "#8B7458", whiteSpace: "nowrap" }}>{stayChosen ? (isOvernight ? "/ night" : "/ session") : ""}</span>
                 </div>
-                <div style={{ fontSize: 12, color: "#8B7458", marginTop: 3 }}>{!stayChosen ? "Choose how you'd like to stay" : `${livePromo ? "Offer price · " : ""}${isOvernight ? "Overnight · 7 PM – 4 PM next day" : `${selectedWindow.label} · 10 hours`}`}</div>
+                <div style={{ fontSize: 12, color: "#8B7458", marginTop: 3 }}>{!stayChosen ? "Choose how you'd like to stay" : `${livePromo ? "Offer price · " : ""}${stayNote}`}</div>
               </div>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#E4F3E4", color: "#15803D", fontSize: 11, fontWeight: 600, padding: "5px 10px", borderRadius: 999, whiteSpace: "nowrap", flex: "none" }}>
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg> No charge today
@@ -1470,10 +1478,10 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                     {livePromo ? (
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
                         <span style={{ background: "#F3E4CB", color: "#8C5A2E", fontSize: 11.5, fontWeight: 600, padding: "5px 10px", borderRadius: 999, whiteSpace: "nowrap" }}>{livePromo.title}</span>
-                        <span style={{ fontSize: 12.5, color: "#8B7458" }}>{isOvernight ? "Overnight · 7 PM – 4 PM next day" : `${selectedWindow.label} · 10 hours`}</span>
+                        <span style={{ fontSize: 12.5, color: "#8B7458" }}>{stayNote}</span>
                       </div>
                     ) : (
-                      <div style={{ fontSize: 12.5, color: "#8B7458", marginTop: 3 }}>{!stayChosen ? "Choose how you'd like to stay" : isOvernight ? "Overnight · 7 PM – 4 PM next day" : `${selectedWindow.label} · 10 hours`}</div>
+                      <div style={{ fontSize: 12.5, color: "#8B7458", marginTop: 3 }}>{!stayChosen ? "Choose how you'd like to stay" : stayNote}</div>
                     )}
                   </div>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#E4F3E4", color: "#15803D", fontSize: 11.5, fontWeight: 600, padding: "6px 11px", borderRadius: 999, whiteSpace: "nowrap" }}>
