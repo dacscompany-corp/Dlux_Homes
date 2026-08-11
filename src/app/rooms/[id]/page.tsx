@@ -16,6 +16,7 @@ import {
   ALL_STAY_TYPES, STAY_TYPE_LABELS, baseRateFor, expiryNoteShort, isEnforceable,
   discountBadgeText, offerPriceFor, pesoAmount, promoCoversStay, promoDiscountOn, scopedStayTypes,
 } from "@/lib/promo-offer";
+import { IcoZoom, PromoLightbox } from "@/components/PromoLightbox";
 import { havenToRoom } from "@/lib/haven-adapter";
 import { spanHours } from "@/lib/stay-window";
 import { stayTotal, isWeekendOrHoliday, extraPaxFee, bundleNightlyRate, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS, BUNDLE_EXTRA_PAX_SURCHARGE } from "@/lib/pricing";
@@ -313,6 +314,9 @@ function PromoBanner({ promotions, rates, variant, promoCode = "" }: {
   /** ?promo= from the URL — tells us whether a voucher is actually in play. */
   promoCode?: string;
 }) {
+  // Declared before the early return below: a hook after a conditional return
+  // breaks the rules of hooks.
+  const [lightbox, setLightbox] = useState<string | null>(null);
   if (!promotions || promotions.length === 0) return null;
   const p = promotions[0];
   const { base, unitLabel } = baseRateFor(p, rates);
@@ -332,19 +336,28 @@ function PromoBanner({ promotions, rates, variant, promoCode = "" }: {
 
   if (variant === "mobile") {
     return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 12, background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 16, padding: 14 }}>
-        <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-          {p.image_url && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={p.image_url} alt="" style={{ width: 56, height: 56, borderRadius: 11, objectFit: "cover", flex: "none" }} />
-          )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 16, padding: 14, overflow: "hidden" }}>
+        {/* Artwork bleeds past the card padding at its true aspect ratio. */}
+        {p.image_url && (
+          <button type="button" onClick={() => setLightbox(p.image_url!)} aria-label="Enlarge offer artwork"
+            style={{ position: "relative", display: "block", margin: "-14px -14px 0", padding: 0, border: "none", background: "#2C2218", cursor: "zoom-in", font: "inherit", width: "calc(100% + 28px)" }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={p.image_url} alt="" style={{ display: "block", width: "100%", height: "auto" }} />
+            <span style={{ position: "absolute", left: 10, top: 10, background: "rgba(243,228,203,.92)", color: "#6B3F1C", borderRadius: 999, padding: "5px 10px", fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 9, letterSpacing: ".14em" }}>SPECIAL OFFER</span>
+            <span style={{ position: "absolute", right: 10, bottom: 10, display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(31,22,14,.55)", backdropFilter: "blur(8px)", color: "#FFFCF4", borderRadius: 999, padding: "6px 11px", fontSize: 11, fontWeight: 600 }}>
+              <IcoZoom size={12} /> Tap to enlarge
+            </span>
+          </button>
+        )}
+
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 10, letterSpacing: ".14em", color: "#8C5A2E" }}>SPECIAL OFFER</div>
-            <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 18, fontWeight: 500, lineHeight: 1.15, color: "#1F160E", margin: "3px 0 0" }}>{p.title}</h3>
+            {!p.image_url && <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 10, letterSpacing: ".14em", color: "#8C5A2E" }}>SPECIAL OFFER</div>}
+            <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 18, fontWeight: 500, lineHeight: 1.15, color: "#1F160E", margin: 0 }}>{p.title}</h3>
             {p.description && <p style={{ fontSize: 12.5, lineHeight: 1.45, color: "#4A3A2A", margin: "4px 0 0" }}>{p.description}</p>}
           </div>
           {discounted && (
-            <span style={{ marginLeft: "auto", flex: "none", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5 }}>
+            <span style={{ flex: "none", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5 }}>
               <span style={{ padding: "4px 9px", fontSize: 11.5, fontWeight: 600, color: "#FFFCF4", background: "#B07848", whiteSpace: "nowrap" }}>{badgeText}</span>
               <span style={{ background: "#E4F3E4", color: "#15803D", fontSize: 11.5, fontWeight: 600, padding: "5px 9px", borderRadius: 999, whiteSpace: "nowrap" }}>
                 &minus; {pesoAmount(savings)}
@@ -366,51 +379,71 @@ function PromoBanner({ promotions, rates, variant, promoCode = "" }: {
           </span>
           {note && <span style={{ marginLeft: "auto", flex: "none", fontSize: 11.5, fontWeight: 600, color: "#8C5A2E", whiteSpace: "nowrap" }}>{note}</span>}
         </div>
+        <PromoLightbox src={lightbox} onClose={() => setLightbox(null)} />
       </div>
     );
   }
 
   return (
-    <div className="promo-card" style={{ marginTop: 20, background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 20, padding: 20, display: "grid", gridTemplateColumns: "132px minmax(0, 1fr) auto", gap: 24, alignItems: "center", boxShadow: "0 4px 16px rgba(31,22,14,.05)" }}>
+    <div className="promo-card" style={{ marginTop: 20, background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 20, overflow: "hidden", boxShadow: "0 4px 16px rgba(31,22,14,.05)" }}>
+
+      {/* Artwork leads the card at full width. There is no CTA here — the
+          booking panel alongside is the action — so the art plus the price
+          column carry the offer. */}
       {p.image_url && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img className="promo-card__photo" src={p.image_url} alt="" style={{ width: 132, height: 132, borderRadius: 14, objectFit: "cover" }} />
+        <button type="button" onClick={() => setLightbox(p.image_url!)} aria-label="Enlarge offer artwork"
+          style={{ position: "relative", display: "block", width: "100%", padding: 0, border: "none", background: "#2C2218", cursor: "zoom-in", font: "inherit", overflow: "hidden" }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img className="promo-card__photo" src={p.image_url} alt="" style={{ display: "block", width: "100%", height: "auto" }} />
+          <span style={{ position: "absolute", left: 18, top: 18, display: "inline-flex", alignItems: "center", gap: 7, background: "rgba(243,228,203,.9)", color: "#6B3F1C", borderRadius: 999, padding: "6px 12px", fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 10, letterSpacing: ".14em" }}>
+            SPECIAL OFFER{note ? ` · ${note.toUpperCase()}` : ""}
+          </span>
+          <span style={{ position: "absolute", right: 18, top: 18, display: "inline-flex", alignItems: "center", gap: 7, background: "rgba(31,22,14,.5)", backdropFilter: "blur(8px)", color: "#FFFCF4", borderRadius: 999, padding: "7px 13px", fontSize: 12, fontWeight: 600 }}>
+            <IcoZoom /> Enlarge
+          </span>
+        </button>
       )}
-      <div style={{ display: "flex", flexDirection: "column", gap: 11, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 7, background: "#F3E4CB", color: "#8C5A2E", borderRadius: 999, padding: "5px 11px", fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 10.5, letterSpacing: ".14em", whiteSpace: "nowrap" }}>
-            <IcoTagSm /> SPECIAL OFFER
-          </span>
-          {discounted && badgeText && <span style={{ padding: "5px 11px", fontSize: 12, fontWeight: 600, color: "#FFFCF4", background: "#B07848", whiteSpace: "nowrap" }}>{badgeText}</span>}
-          {note && <span style={{ fontSize: 12, fontWeight: 600, color: "#8C5A2E", whiteSpace: "nowrap" }}>{note}</span>}
+
+      <div className="promo-card__body" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 24, alignItems: "center", padding: 20 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 11, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            {!p.image_url && (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 7, background: "#F3E4CB", color: "#8C5A2E", borderRadius: 999, padding: "5px 11px", fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 10.5, letterSpacing: ".14em", whiteSpace: "nowrap" }}>
+                <IcoTagSm /> SPECIAL OFFER
+              </span>
+            )}
+            <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 26, fontWeight: 500, lineHeight: 1.05, letterSpacing: "-.02em", color: "#1F160E", margin: 0 }}>{p.title}</h3>
+            {discounted && badgeText && <span style={{ padding: "5px 11px", fontSize: 12, fontWeight: 600, color: "#FFFCF4", background: "#B07848", whiteSpace: "nowrap" }}>{badgeText}</span>}
+          </div>
+          {p.description && <p style={{ fontSize: 14, lineHeight: 1.5, color: "#4A3A2A", margin: 0, maxWidth: "52ch" }}>{p.description}</p>}
+          {scope && <StayTypeChips scope={scope} />}
+          <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+            <span style={{ color: "#15803D", flex: "none", display: "inline-flex" }}><IcoCheckBold size={15} stroke={2.4} /></span>
+            <span style={{ fontSize: 13, color: "#4A3A2A" }}>
+              {!discounted
+                ? "Pick your dates on the right to book this home."
+                : appliedNow
+                  ? isVoucherPromo
+                    ? `Code ${p.discount_code} applied — it's in the price on the right.`
+                    : "Already applied to the price on the right. No code needed."
+                  : `Enter code ${p.discount_code} at checkout to get this price.`}
+            </span>
+          </div>
         </div>
-        <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 26, fontWeight: 500, lineHeight: 1.05, letterSpacing: "-.02em", color: "#1F160E", margin: 0 }}>{p.title}</h3>
-        {scope && <StayTypeChips scope={scope} />}
-        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-          <span style={{ color: "#15803D", flex: "none", display: "inline-flex" }}><IcoCheckBold size={15} stroke={2.4} /></span>
-          <span style={{ fontSize: 13, color: "#4A3A2A" }}>
-            {!discounted
-              ? "Pick your dates on the right to book this home."
-              : appliedNow
-                ? isVoucherPromo
-                  ? `Code ${p.discount_code} applied — it's in the price on the right.`
-                  : "Already applied to the price on the right. No code needed."
-                : `Enter code ${p.discount_code} at checkout to get this price.`}
-          </span>
-        </div>
+        {discounted && (
+          <div className="promo-card__price" style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, paddingLeft: 24, borderLeft: "1px solid #EFE4CE" }}>
+            <span style={{ fontSize: 12.5, color: "#8B7458", textDecoration: "line-through", whiteSpace: "nowrap" }}>{pesoAmount(base)}</span>
+            <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+              <span style={{ fontFamily: "'Fraunces', serif", fontSize: 34, fontWeight: 500, lineHeight: 1, color: "#1F160E" }}>{pesoAmount(price)}</span>
+              <span style={{ fontSize: 12.5, color: "#8B7458", whiteSpace: "nowrap" }}>{unitLabel}</span>
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#E4F3E4", color: "#15803D", borderRadius: 999, padding: "6px 11px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}>
+              <IcoCheckBold size={11} stroke={2.4} /> You save {pesoAmount(savings)}
+            </span>
+          </div>
+        )}
       </div>
-      {discounted && (
-        <div className="promo-card__price" style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, paddingLeft: 24, borderLeft: "1px solid #EFE4CE" }}>
-          <span style={{ fontSize: 12.5, color: "#8B7458", textDecoration: "line-through", whiteSpace: "nowrap" }}>{pesoAmount(base)}</span>
-          <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-            <span style={{ fontFamily: "'Fraunces', serif", fontSize: 34, fontWeight: 500, lineHeight: 1, color: "#1F160E" }}>{pesoAmount(price)}</span>
-            <span style={{ fontSize: 12.5, color: "#8B7458", whiteSpace: "nowrap" }}>{unitLabel}</span>
-          </span>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#E4F3E4", color: "#15803D", borderRadius: 999, padding: "6px 11px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}>
-            <IcoCheckBold size={11} stroke={2.4} /> You save {pesoAmount(savings)}
-          </span>
-        </div>
-      )}
+      <PromoLightbox src={lightbox} onClose={() => setLightbox(null)} />
     </div>
   );
 }
@@ -1276,9 +1309,14 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
             .rd-2col { grid-template-columns: 1fr !important; }
             /* Offer card stacks: photo full width, then copy, then the price
                column left-aligned with its divider removed. */
-            .promo-card { grid-template-columns: 1fr !important; gap: 18px !important; }
-            .promo-card__photo { width: 100% !important; height: 200px !important; }
+            .promo-card__body { grid-template-columns: 1fr !important; gap: 18px !important; }
             .promo-card__price { align-items: flex-start !important; padding-left: 0 !important; border-left: none !important; }
+          }
+          .promo-card__photo { transition: transform .6s cubic-bezier(.2,.7,.3,1); }
+          .promo-card:hover .promo-card__photo { transform: scale(1.03); }
+          @keyframes promoLbIn { from { opacity: 0 } to { opacity: 1 } }
+          @media (prefers-reduced-motion: reduce) {
+            .promo-card__photo, .promo-card:hover .promo-card__photo { transition: none; transform: none; }
           }
           @media (max-width: 640px) {
             .rd-wrap { padding: 16px 16px 52px !important; }
