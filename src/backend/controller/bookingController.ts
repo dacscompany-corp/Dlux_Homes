@@ -4,6 +4,16 @@ import { upload_file } from "../utils/cloudinary";
 import { validateImageDataUrl } from "../utils/imageGuard";
 import { validateDiscount } from "../utils/validateDiscount";
 import { createCalendarEvent, createCalendarEventWithResult, updateCalendarEvent, CalendarEventData } from "../utils/googleCalendar";
+import { turnoverSql, TURNOVER_BLURB } from "@/lib/turnover";
+
+// The existing booking's start/end as timestamps, for the availability check.
+// A '00:00' checkout means end-of-day, i.e. midnight starting the NEXT day —
+// spelled out once here because the expression appears three times in the
+// query (as the end itself, and twice inside the turnover CASE).
+const EXISTING_START_SQL = `(b.check_in_date::DATE + b.check_in_time::TIME)::TIMESTAMP`;
+const EXISTING_END_SQL = `(CASE WHEN b.check_out_time = '00:00'
+        THEN (b.check_out_date::DATE + INTERVAL '1 day')::TIMESTAMP
+        ELSE (b.check_out_date::DATE + b.check_out_time::TIME)::TIMESTAMP END)`;
 
 // A guest may attach several ID photos. We persist them in the single
 // `valid_id_url` TEXT column as newline-separated Cloudinary URLs — a single
@@ -593,10 +603,12 @@ export const createBooking = async (
     // '00:00' checkout means end-of-day midnight, so treat it as the start of the next day.
     // Only active bookings block a new one — completed, checked-out, rejected, cancelled, declined do not.
     // Time-aware availability WITH a cleaning turnover buffer. After every stay
-    // the unit is unavailable for cleaning before the next guest can check in:
-    //   21-hour overnight (≥20h) → 3 hours,  shorter stays (e.g. 10h) → 2 hours.
-    // The buffer is applied to BOTH bookings so neither can butt up against the
-    // other's cleaning window (works for the preset windows AND custom times).
+    // the unit is unavailable for cleaning before the next guest can check in.
+    // The hours live in src/lib/turnover.ts — the room calendar reads the same
+    // constants, so what the calendar offers and what this check accepts can't
+    // drift apart. The buffer is applied to BOTH bookings so neither can butt
+    // up against the other's cleaning window (works for the preset windows AND
+    // custom times).
     const availabilityCheckQuery = `
       WITH n AS (
         SELECT
@@ -610,19 +622,12 @@ export const createBooking = async (
       WHERE b.room_name = $1
         AND b.status IN ('pending', 'approved', 'confirmed', 'checked-in', 'on-going')
         -- existing check-in  <  new check-out + new cleaning buffer
-        AND (b.check_in_date::DATE + b.check_in_time::TIME)::TIMESTAMP <
-            n.ne + (CASE WHEN (n.ne - n.ns) >= INTERVAL '20 hours' THEN INTERVAL '3 hours' ELSE INTERVAL '2 hours' END)
+        AND ${EXISTING_START_SQL} <
+            n.ne + ${turnoverSql("n.ns", "n.ne")}
         -- existing check-out + existing cleaning buffer  >  new check-in
         AND (
-          (CASE WHEN b.check_out_time = '00:00'
-                THEN (b.check_out_date::DATE + INTERVAL '1 day')::TIMESTAMP
-                ELSE (b.check_out_date::DATE + b.check_out_time::TIME)::TIMESTAMP END)
-          + (CASE WHEN (
-                (CASE WHEN b.check_out_time = '00:00'
-                      THEN (b.check_out_date::DATE + INTERVAL '1 day')::TIMESTAMP
-                      ELSE (b.check_out_date::DATE + b.check_out_time::TIME)::TIMESTAMP END)
-                - (b.check_in_date::DATE + b.check_in_time::TIME)::TIMESTAMP
-              ) >= INTERVAL '20 hours' THEN INTERVAL '3 hours' ELSE INTERVAL '2 hours' END)
+          ${EXISTING_END_SQL}
+          + ${turnoverSql(EXISTING_START_SQL, EXISTING_END_SQL)}
         ) > n.ns
       LIMIT 1
     `;
@@ -642,7 +647,7 @@ export const createBooking = async (
       return NextResponse.json(
         {
           success: false,
-          error: "This room isn't available for the selected time — it overlaps another booking or its cleaning turnover (3 hrs after an overnight stay, 2 hrs otherwise). Please choose a different date or time.",
+          error: `This room isn't available for the selected time — it overlaps another booking or its cleaning turnover (${TURNOVER_BLURB}). Please choose a different date or time.`,
         },
         { status: 400 }
       );

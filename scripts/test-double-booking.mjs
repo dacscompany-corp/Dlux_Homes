@@ -1,18 +1,20 @@
 import pg from "pg";
+import { turnoverSql, describeTurnover } from "./_turnover.mjs";
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
+console.log(`${describeTurnover()}\n`);
+
 // The exact availability query from createBooking (time-aware + cleaning buffer).
+const B_START = `(b.check_in_date::DATE + b.check_in_time::TIME)::TIMESTAMP`;
+const B_END = `(CASE WHEN b.check_out_time = '00:00' THEN (b.check_out_date::DATE + INTERVAL '1 day')::TIMESTAMP ELSE (b.check_out_date::DATE + b.check_out_time::TIME)::TIMESTAMP END)`;
 const Q = `
   WITH n AS (
     SELECT ($2::DATE + $3::TIME)::TIMESTAMP AS ns,
       (CASE WHEN $5 = '00:00' THEN ($4::DATE + INTERVAL '1 day')::TIMESTAMP ELSE ($4::DATE + $5::TIME)::TIMESTAMP END) AS ne)
   SELECT b.id FROM booking b, n
   WHERE b.room_name = $1 AND b.status IN ('pending','approved','confirmed','checked-in','on-going')
-    AND (b.check_in_date::DATE + b.check_in_time::TIME)::TIMESTAMP <
-        n.ne + (CASE WHEN (n.ne - n.ns) >= INTERVAL '20 hours' THEN INTERVAL '3 hours' ELSE INTERVAL '2 hours' END)
-    AND ((CASE WHEN b.check_out_time = '00:00' THEN (b.check_out_date::DATE + INTERVAL '1 day')::TIMESTAMP ELSE (b.check_out_date::DATE + b.check_out_time::TIME)::TIMESTAMP END)
-      + (CASE WHEN ((CASE WHEN b.check_out_time='00:00' THEN (b.check_out_date::DATE + INTERVAL '1 day')::TIMESTAMP ELSE (b.check_out_date::DATE + b.check_out_time::TIME)::TIMESTAMP END) - (b.check_in_date::DATE + b.check_in_time::TIME)::TIMESTAMP) >= INTERVAL '20 hours' THEN INTERVAL '3 hours' ELSE INTERVAL '2 hours' END)
-    ) > n.ns
+    AND ${B_START} < n.ne + ${turnoverSql("n.ns", "n.ne")}
+    AND (${B_END} + ${turnoverSql(B_START, B_END)}) > n.ns
   LIMIT 1`;
 
 const c = await pool.connect();
@@ -44,11 +46,15 @@ try {
     ["1h before E1 cleaning ends (Jul2 6PM)",  "R1","2026-07-02","18:00","2026-07-03","15:00", true],
     ["E2 same daycation slot",                "R1","2026-07-05","07:00","2026-07-05","17:00", true],
     ["nightcation after E2 (Jul5 7PM) OK",     "R1","2026-07-05","19:00","2026-07-06","05:00", false],
-    ["inside E2's 2h cleaning (Jul5 6PM)",      "R1","2026-07-05","18:00","2026-07-06","04:00", true],
+    // E2 is a 10h daycation ending 5PM, so it owes the SHORT turnover. These
+    // two straddle the moment that turnover ends.
+    ["inside E2's cleaning (Jul5 5:30PM)",      "R1","2026-07-05","17:30","2026-07-06","03:30", true],
+    ["exactly as E2's cleaning ends (Jul5 6PM)","R1","2026-07-05","18:00","2026-07-06","04:00", false],
     ["far future, no conflict (Jul15)",        "R1","2026-07-15","19:00","2026-07-16","16:00", false],
     ["midnight-checkout new booking ok (Aug)", "R1","2026-08-01","19:00","2026-08-02","00:00", false],
-    ["inside E3 midnight stay's cleaning",      "R1","2026-07-11","01:00","2026-07-11","11:00", true],
-    ["after E3 cleaning ends (Jul11 2AM) OK",   "R1","2026-07-11","02:00","2026-07-11","12:00", false],
+    // E3 runs 7PM→midnight (5h), so it also owes the SHORT turnover.
+    ["inside E3's cleaning (Jul11 12:30AM)",    "R1","2026-07-11","00:30","2026-07-11","10:30", true],
+    ["exactly as E3's cleaning ends (Jul11 1AM)","R1","2026-07-11","01:00","2026-07-11","11:00", false],
     ["same dates but DIFFERENT room R2",        "R2","2026-07-01","19:00","2026-07-02","16:00", false],
     ["overlaps the CANCELLED E4 (allowed)",     "R1","2026-07-20","19:00","2026-07-21","16:00", false],
   ];

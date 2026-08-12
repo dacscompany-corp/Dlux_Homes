@@ -20,6 +20,7 @@ import {
 import { IcoZoom, PromoLightbox } from "@/components/PromoLightbox";
 import { havenToRoom } from "@/lib/haven-adapter";
 import { spanHours } from "@/lib/stay-window";
+import { turnoverMs } from "@/lib/turnover";
 import { stayTotal, isWeekendOrHoliday, extraPaxFee, bundleNightlyRate, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS, BUNDLE_EXTRA_PAX_SURCHARGE } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import type { Room } from "@/types";
@@ -603,13 +604,12 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   // ── Availability ─────────────────────────────────────────────────────────
   // Mirrors createBooking's time-aware check. Bookings occupy TIME, not whole
   // days: a 7am–5pm daycation and a 7pm–5am nightcation share one date. Two
-  // stays clash only once each one's cleaning turnover is added — 3 hours after
-  // a stay of 20h or more, 2 hours otherwise.
+  // stays clash only once each one's cleaning turnover is added. The hours come
+  // from src/lib/turnover.ts, which the server's SQL check reads too — if these
+  // ever disagree the calendar offers dates the server then refuses.
   const isoOf = (d: Date) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  const HOUR = 3600_000;
-  const bufferMs = (startMs: number, endMs: number) =>
-    (endMs - startMs >= 20 * HOUR ? 3 : 2) * HOUR;
+  const bufferMs = (startMs: number, endMs: number) => turnoverMs(endMs - startMs);
   // "7:00 PM" / "19:00" → minutes since midnight.
   const minutesOf = (t: string): number | null => {
     const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i.exec((t || "").trim());
