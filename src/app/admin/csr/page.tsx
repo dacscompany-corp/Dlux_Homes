@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
-import Image from "next/image";
+import DluxMark from "@/components/brand/DluxMark";
 import toast from "react-hot-toast";
 import ImageThumb from "@/components/ImageThumb";
 import { imageFileError } from "@/lib/validateImageFile";
@@ -511,7 +511,7 @@ export default function CSRDashboard() {
       >
         <div className="px-2 py-1 flex items-center justify-between border-b" style={{ borderColor: "rgba(250,247,241,0.1)" }}>
           <Link href="/rooms" className="flex items-center min-w-0 flex-1">
-            <Image src="/logo.png" alt="D'Lux Homes" width={1254} height={1254} style={{ width: "100%", height: "auto", maxHeight: "72px", objectFit: "contain" }} />
+            <DluxMark layout="compact" accent="gold" dark width={180} ambient={false} />
           </Link>
           <button onClick={() => setSidebarOpen(false)} className="lg:hidden" style={{ color: "#6b5040" }}>
             <X className="w-4 h-4" />

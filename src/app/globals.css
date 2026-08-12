@@ -41,6 +41,14 @@
 }
 .slide-in-right { animation: slideInRight .35s cubic-bezier(.2,.8,.2,1); }
 .slide-in-left  { animation: slideInLeft  .35s cubic-bezier(.2,.8,.2,1); }
+
+/* Brand mark (components/brand/DluxMark). The resting window glow — the house
+   reads as occupied. Lives here rather than in the component because the mark
+   renders many times per page and a per-instance <style> would duplicate it. */
+@keyframes dlux-glow { 0%, 100% { opacity: .6 } 50% { opacity: 1 } }
+@media (prefers-reduced-motion: reduce) {
+  .dlux-mark, .dlux-mark * { animation: none !important; transition: none !important; }
+}
 .serif      { font-family: var(--font-fraunces), Georgia, serif; font-optical-sizing: auto; }
 
 @custom-variant dark (&:is(.dark *));

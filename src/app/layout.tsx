@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono, Fraunces } from "next/font/google";
+import { Geist, Geist_Mono, Fraunces, Instrument_Serif } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/Providers";
 import MessengerChat from "@/components/MessengerChat";
@@ -21,6 +21,15 @@ const fraunces = Fraunces({
   axes: ["opsz"],
 });
 
+// Wordmark-only face, used by the D'Lux brand mark (see components/brand/DluxMark).
+// Fraunces stays the general-purpose serif; Instrument Serif is narrower and sits
+// on the logo lockup alone, which is why it ships as its own variable.
+const instrumentSerif = Instrument_Serif({
+  variable: "--font-instrument-serif",
+  subsets: ["latin"],
+  weight: "400",
+});
+
 export const metadata: Metadata = {
   title: "D'Lux Homes",
   description: "Book your perfect stay at D'Lux Homes",
@@ -40,7 +49,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} ${fraunces.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${fraunces.variable} ${instrumentSerif.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col" style={{ backgroundColor: "var(--bg)", color: "var(--ink)" }}>
         <SplashScreen />

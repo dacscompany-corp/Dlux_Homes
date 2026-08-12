@@ -1,13 +1,19 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
+import DluxMark from "@/components/brand/DluxMark";
 
 // First-visit loading screen — "Photo-through" (2e): a defocused property shot
 // sharpens as the app becomes ready, gold glow tracks the pointer (device tilt
-// on mobile), taps ripple, and the wordmark shimmers. Progress is real: it
-// steps on font readiness, document readyState, hero-image decode and load.
-// Shown once per browser session (sessionStorage).
+// on mobile), taps ripple, and the full brand lockup builds in. Progress is
+// real: it steps on font readiness, document readyState, hero-image decode and
+// load. Shown once per browser session (sessionStorage).
+//
+// The mark used to be /logo.png with a shimmer sweep masked to its silhouette.
+// It is now the drawn lockup (components/brand/DluxMark), which carries its own
+// load state — the roof rises, then the window settles into its glow. A mask
+// sweep can't follow live wordmark text, so the shimmer went with the raster.
 const SESSION_KEY = "dlux-splash-shown";
 const HERO = "/images/rooms/1.jpg";
 const GOLD = "#D4A96A";
@@ -16,6 +22,16 @@ const FADE_MS = 700;
 
 export default function SplashScreen() {
   const rootRef = useRef<HTMLDivElement | null>(null);
+  // The lockup sizes every element off one px width, so it can't be fluid in
+  // CSS alone — this is the old `min(360px, 62vw)` resolved in JS.
+  const [markWidth, setMarkWidth] = useState(360);
+
+  useEffect(() => {
+    const fit = () => setMarkWidth(Math.round(Math.min(360, window.innerWidth * 0.62)));
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, []);
 
   useEffect(() => {
     const el = rootRef.current;
@@ -158,12 +174,10 @@ export default function SplashScreen() {
 
       <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
         <div data-plane style={{ position: "relative", display: "grid", placeItems: "center", transformStyle: "preserve-3d" }}>
-          {/* Responsive rather than a fixed 220px: caps at 360 on desktop and falls back
-              to 62vw so it can never crowd the edges of a narrow phone. */}
-          <div data-mark style={{ position: "relative", width: "min(360px, 62vw)", opacity: 0 }}>
-            <Image src="/logo.png" alt="D'Lux Homes" width={1254} height={1254} priority style={{ width: "100%", height: "auto", objectFit: "contain" }} />
-
-            <div className="dlux-shimmer" />
+          {/* Caps at 360 on desktop and falls back to 62vw so the lockup can
+              never crowd the edges of a narrow phone. */}
+          <div data-mark style={{ position: "relative", opacity: 0 }}>
+            <DluxMark layout="full" accent="gold" dark width={markWidth} />
           </div>
           <div style={{ position: "relative", marginTop: 26, width: 180, height: 7, borderRadius: 4, background: "rgba(255,255,255,0.14)", overflow: "hidden" }}>
             <div data-bar style={{ position: "absolute", left: 0, top: 0, height: 7, width: 0, borderRadius: 4, background: GOLD }} />
@@ -173,16 +187,6 @@ export default function SplashScreen() {
 
       <style>{`
         @keyframes dluxRipple { from { opacity:.55; transform:translate(-50%,-50%) scale(.05); } to { opacity:0; transform:translate(-50%,-50%) scale(1); } }
-        @keyframes dluxShimmer { 0%,18% { background-position:190% 0; } 62%,100% { background-position:-90% 0; } }
-        .dlux-shimmer {
-          position:absolute; inset:0; pointer-events:none;
-          background:linear-gradient(100deg, transparent 42%, rgba(255,255,255,0.5) 50%, transparent 58%);
-          background-size:220% 100%;
-          -webkit-mask-image:url(/logo.png); mask-image:url(/logo.png);
-          -webkit-mask-size:100% 100%; mask-size:100% 100%;
-          animation:dluxShimmer 3.6s ease-in-out infinite;
-        }
-        @media (prefers-reduced-motion: reduce) { .dlux-shimmer { animation:none; } }
       `}</style>
     </div>
   );

@@ -7,8 +7,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { useRouter } from "next/navigation";
+import DluxMark from "@/components/brand/DluxMark";
 import { useSession, signOut } from "next-auth/react";
 import { getMyBookingIds } from "@/lib/booking-store";
 
@@ -185,7 +185,9 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
             </>
           )}
           <Link href="/rooms" style={{ display: "flex", alignItems: "center", textDecoration: "none", color: "inherit", minWidth: 0 }}>
-            <Image src="/logo-guest.png" alt="D'Lux Homes" width={1056} height={232} priority style={{ width: "auto", maxWidth: "100%", height: backHref ? 46 : 52, objectFit: "contain", filter: "invert(1)" }} />
+            {/* ambient off: a pulsing window in a persistent app bar reads as a
+                notification badge rather than atmosphere. */}
+            <DluxMark layout="compact" accent="clay" width={backHref ? 200 : 230} ambient={false} />
           </Link>
         </div>
 

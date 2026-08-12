@@ -3,6 +3,7 @@
 import { useState, useEffect, use, useRef, Suspense, type CSSProperties, type ReactNode } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import DluxMark from "@/components/brand/DluxMark";
 import { useSearchParams } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import SiteHeader from "@/components/SiteHeader";
@@ -897,7 +898,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
         {/* SITE HEADER — Guest Header 2c: clean bar, logo + labeled Menu */}
         <div style={{ flex: "none", position: "sticky", top: 0, zIndex: 20, height: 62, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", background: "#FAF7F1", borderBottom: "1px solid #ECE5D4" }}>
           <Link href="/rooms" style={{ display: "flex", alignItems: "center", minWidth: 0, textDecoration: "none", color: "inherit" }}>
-            <Image src="/logo-guest.png" alt="D'Lux Homes" width={1056} height={232} style={{ width: "auto", maxWidth: "100%", height: 30, objectFit: "contain", filter: "invert(1)" }} />
+            <DluxMark layout="compact" accent="clay" width={165} ambient={false} />
           </Link>
           <button onClick={() => setMenuOpen(true)} style={{ display: "inline-flex", alignItems: "center", gap: 9, background: "transparent", border: 0, cursor: "pointer", color: "#1F160E", font: "inherit", fontSize: 14.5, fontWeight: 600 }}>
             Menu

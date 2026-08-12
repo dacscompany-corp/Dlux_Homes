@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import DluxMark from "@/components/brand/DluxMark";
 import SiteHeader from "@/components/SiteHeader";
 import { useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
@@ -548,7 +549,7 @@ export default function BrowsePage() {
         {/* HEADER — Guest Header 2c: clean bar, logo + labeled Menu */}
         <div style={{ position: "sticky", top: 0, zIndex: 20, background: "#FAF7F1", borderBottom: "1px solid #ECE5D4", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <Link href="/rooms" style={{ display: "flex", alignItems: "center", minWidth: 0, textDecoration: "none", color: "inherit" }}>
-            <Image src="/logo-guest.png" alt="D'Lux Homes" width={1056} height={232} style={{ width: "auto", maxWidth: "100%", height: 38, objectFit: "contain", filter: "invert(1)" }} />
+            <DluxMark layout="compact" accent="clay" width={190} ambient={false} />
           </Link>
           <button onClick={() => setMenuOpen(true)} style={{ display: "inline-flex", alignItems: "center", gap: 9, background: "transparent", border: 0, cursor: "pointer", color: "#1F160E", font: "inherit", fontSize: 14.5, fontWeight: 600 }}>
             Menu

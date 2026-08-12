@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="D'Lux Homes">
+  <title>D'Lux Homes</title>
+  <!--
+    Favicon: the roof alone. The full lockup (wordmark, rules, "Since 2026")
+    is illegible below ~64px, so per the logo system only the roof survives to
+    tab size, with a stroke thick enough to hold at 16px.
+
+    Transparent ground so it sits on either tab strip, and the stroke follows
+    the browser theme — clay on light, splash gold on dark, where clay muddies.
+  -->
+  <style>
+    .roof { stroke: #B8754A }
+    @media (prefers-color-scheme: dark) { .roof { stroke: #D4A96A } }
+  </style>
+  <polyline class="roof" points="64,324.8 256,187.2 448,324.8"
+            fill="none" stroke-width="61" stroke-linejoin="miter" stroke-miterlimit="4" />
+</svg>

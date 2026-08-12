@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, Suspense } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import Image from "next/image";
+import DluxMark from "@/components/brand/DluxMark";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import toast from "react-hot-toast";
@@ -1104,7 +1105,7 @@ function CheckoutInner() {
 
           {/* wordmark */}
           <Link href="/rooms" style={{ display: "flex", alignItems: "center", minWidth: 0, textDecoration: "none", color: "inherit" }}>
-            <Image src="/logo-guest.png" alt="D'Lux Homes" width={1056} height={232} style={{ width: "auto", maxWidth: "100%", height: 40, objectFit: "contain", filter: "invert(1)" }} />
+            <DluxMark layout="compact" accent="clay" width={200} ambient={false} />
           </Link>
 
           {/* step indicator */}
