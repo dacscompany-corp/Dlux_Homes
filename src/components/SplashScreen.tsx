@@ -17,8 +17,8 @@ import DluxMark from "@/components/brand/DluxMark";
 const SESSION_KEY = "dlux-splash-shown";
 const HERO = "/images/rooms/1.jpg";
 const GOLD = "#D4A96A";
-// Total visible time ≈ MIN_MS + bar catch-up (~0.5s) + FADE_MS, so ~5s typical.
-const MIN_MS = 3700; // never flash by faster than this
+// Total visible time ≈ MIN_MS + bar catch-up (~0.5s) + FADE_MS, so ~3s typical.
+const MIN_MS = 1800; // never flash by faster than this
 const FADE_MS = 700;
 
 export default function SplashScreen() {
