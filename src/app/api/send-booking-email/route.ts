@@ -233,10 +233,55 @@ export async function POST(request: NextRequest) {
       </html>
     `;
 
+    // Plain-text alternative. An HTML-only body is one of the strongest
+    // "bulk mail" signals there is — filters expect a real multipart/alternative
+    // message, and clients that can't render HTML otherwise show an empty mail.
+    // Keep this in step with the HTML above: it must say the same things.
+    const emailText = [
+      `D'LUX HOMES — BOOKING CONFIRMED`,
+      ``,
+      `Hi ${guestName}, good news — your stay is confirmed.`,
+      `Here's a copy of your booking for your records.`,
+      ``,
+      `Booking ${bookingData.bookingId}`,
+      `${bookingData.roomName}`,
+      ``,
+      `Check-in    ${bookingData.checkInDate} · ${bookingData.checkInTime}`,
+      `Check-out   ${bookingData.checkOutDate} · ${bookingData.checkOutTime}`,
+      `Guests      ${bookingData.guests}`,
+      ``,
+      `PAYMENT`,
+      `Total                          ${peso(totalAmount)}`,
+      `Down payment paid (${paymentMethodLabel})   ${peso(downPayment)}`,
+      `Remaining balance              ${peso(remainingBalance)}`,
+      `Security deposit (refundable)  ${peso(SECURITY_DEPOSIT)}`,
+      `Total to bring at check-in     ${peso(dueAtCheckIn)}`,
+      ``,
+      `The ${peso(SECURITY_DEPOSIT)} deposit is returned to you on the day of check-out.`,
+      ``,
+      `WHAT TO EXPECT`,
+      `1. We'll send you check-in instructions a day before your stay.`,
+      `2. Just show up at check-in time with a valid ID.`,
+      ``,
+      `GOOD TO KNOW`,
+      `- Please bring a valid government-issued ID during check-in.`,
+      `- Early check-in is subject to room availability.`,
+      `- No cancellation policy, but we allow one-time change of date reservation`,
+      `  7 days before the scheduled date. You can choose a date within a month`,
+      `  from your original scheduled date.`,
+      ``,
+      `Questions? Just reply to this email.`,
+      `D'Lux Homes · Tower 4, Grass Residences, QC · homesdlux@gmail.com`,
+    ].join("\n");
+
     const mailOptions = {
       from: `"D'Lux Homes" <${process.env.EMAIL_USER}>`,
       to: bookingData.email,
+      // A reply path that reaches a human reads as legitimate to both filters
+      // and guests; without it, replies vanish into the sending mailbox.
+      replyTo: process.env.DLUX_CONTACT_EMAIL || process.env.EMAIL_USER,
       subject: `Booking Confirmation - ${bookingData.bookingId}`,
+      text: emailText,
       html: emailHtml,
     };
 

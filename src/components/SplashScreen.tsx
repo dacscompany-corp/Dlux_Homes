@@ -17,7 +17,8 @@ import DluxMark from "@/components/brand/DluxMark";
 const SESSION_KEY = "dlux-splash-shown";
 const HERO = "/images/rooms/1.jpg";
 const GOLD = "#D4A96A";
-const MIN_MS = 900; // never flash by faster than this
+// Total visible time ≈ MIN_MS + bar catch-up (~0.5s) + FADE_MS, so ~5s typical.
+const MIN_MS = 3700; // never flash by faster than this
 const FADE_MS = 700;
 
 export default function SplashScreen() {
@@ -108,7 +109,11 @@ export default function SplashScreen() {
       const dt = now - t0;
       const intro = Math.min(1, dt / 900);
       const ei = 1 - Math.pow(1 - intro, 3);
-      p += (target - p) * 0.06;
+      // Readiness usually resolves long before the hold elapses, which would
+      // park the bar at 92% for seconds. Pace it against the hold too — the bar
+      // still never claims more progress than actually happened.
+      const goal = Math.min(target, dt / MIN_MS);
+      p += (goal - p) * 0.06;
       if (target === 1 && p > 0.99) p = 1;
 
       cx += (tx - cx) * 0.07; cy += (ty - cy) * 0.07;
