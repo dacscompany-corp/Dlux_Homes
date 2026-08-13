@@ -607,11 +607,24 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   // needs the availability helpers below. Both moved to just after
   // `maxNightsFrom()` — search for "Nights, clamped".
 
-  // Normalize any date value (DATE column may arrive as a UTC timestamp) to a
-  // local YYYY-MM-DD, then expand ranges into the individual unavailable days.
+  // Normalize any date value to YYYY-MM-DD, then expand ranges into the
+  // individual unavailable days.
+  //
+  // A Postgres DATE column (check_in_date, blocked_dates.from_date/to_date)
+  // serializes as "2026-08-15T00:00:00.000Z" — UTC midnight with no real time
+  // component. Routing that through `new Date(...)` and reading
+  // getFullYear/getMonth/getDate rendered it in the BROWSER's local zone, so
+  // anyone west of UTC read it back as Aug 14: a booking that starts Aug 15
+  // closed Aug 14's Overnight slot because the turnover math thought check-in
+  // was a day earlier than it actually is. The date portion of an ISO string
+  // is already the calendar date Postgres meant — slice it directly instead
+  // of reinterpreting it through a timezone-aware Date.
   const toLocalISO = (v: unknown) => {
-    const d = new Date(String(v));
-    if (isNaN(d.getTime())) return String(v).slice(0, 10);
+    const s = String(v);
+    const m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
+    if (m) return m[1];
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return s.slice(0, 10);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   };
   // ── Availability ─────────────────────────────────────────────────────────
