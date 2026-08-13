@@ -10,6 +10,7 @@ import { fileToCompressedDataUrl } from "@/lib/compressImage";
 import ImageThumb from "@/components/ImageThumb";
 import SiteHeader from "@/components/SiteHeader";
 import type { StoredBooking } from "@/lib/booking-store";
+import { DluxLoaderOverlay, DluxLoaderPage } from "@/components/brand/DluxLoader";
 
 function peso(n: number) { return "₱" + n.toLocaleString("en-PH"); }
 function formatDate(iso: string) {
@@ -659,6 +660,18 @@ function ConfirmedInner() {
 
   return (
     <div style={{ minHeight: "100vh", backgroundColor: "var(--bg)", color: "var(--ink)" }}>
+      {/* Same treatment as the booking submit: this uploads the payment proof
+          photo, so it is long enough that a dimmed button alone let the guest
+          wander off or close the tab mid-upload. Unlike the booking submit this
+          one stays on the page, so `paying` resets in a finally and the overlay
+          clears in place. */}
+      {paying && (
+        <DluxLoaderOverlay
+          label={"Sending\nyour payment"}
+          note="Uploading your payment proof. This can take a moment on a slow connection — please keep this page open."
+        />
+      )}
+
       {/* HEADER */}
       <SiteHeader bookHref="/rooms" bookLabel="Book again" backHref="/rooms" backLabel="Back to home" />
 
@@ -932,7 +945,7 @@ function ConfirmedInner() {
 
 export default function ConfirmedPage() {
   return (
-    <Suspense fallback={<div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--bg)", color: "var(--muted)", fontSize: 14 }}>Loading…</div>}>
+    <Suspense fallback={<DluxLoaderPage />}>
       <ConfirmedInner />
     </Suspense>
   );

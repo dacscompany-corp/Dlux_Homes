@@ -21,7 +21,7 @@ import { IcoZoom, PromoLightbox } from "@/components/PromoLightbox";
 import { havenToRoom } from "@/lib/haven-adapter";
 import { spanHours } from "@/lib/stay-window";
 import { turnoverMs } from "@/lib/turnover";
-import DluxLoader from "@/components/brand/DluxLoader";
+import DluxLoader, { DluxLoaderPage } from "@/components/brand/DluxLoader";
 import { stayTotal, isWeekendOrHoliday, extraPaxFee, bundleNightlyRate, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS, BUNDLE_EXTRA_PAX_SURCHARGE } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import type { Room } from "@/types";
@@ -1806,7 +1806,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
 
 export default function RoomDetailPage({ params }: { params: Promise<{ id: string }> }) {
   return (
-    <Suspense fallback={<div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--bg)", color: "var(--muted)", fontSize: 14 }}>Loading…</div>}>
+    <Suspense fallback={<DluxLoaderPage />}>
       <RoomDetailInner params={params} />
     </Suspense>
   );

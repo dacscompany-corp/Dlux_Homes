@@ -19,7 +19,7 @@ import { stayTotal, isWeekendOrHoliday, addDaysISO, extraPaxFee, bundleNightlyRa
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
 import { autoDiscountAmount, pickAutoPromo } from "@/lib/promo-offer";
-import { DluxLoaderOverlay } from "@/components/brand/DluxLoader";
+import { DluxLoaderOverlay, DluxLoaderPage } from "@/components/brand/DluxLoader";
 
 // ── Helpers ────────────────────────────────────────────────────
 function peso(n: number) { return "₱" + n.toLocaleString("en-PH"); }
@@ -1797,7 +1797,7 @@ function CheckoutInner() {
 
 export default function CheckoutPage() {
   return (
-    <Suspense fallback={<div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--bg)", color: "var(--muted)", fontSize: 14 }}>Loading checkout…</div>}>
+    <Suspense fallback={<DluxLoaderPage label={"Opening\ncheckout"} />}>
       <CheckoutInner />
     </Suspense>
   );

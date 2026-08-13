@@ -4,6 +4,7 @@ import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
 import Link from "next/link";
+import DluxLoader from "@/components/brand/DluxLoader";
 
 function ResetPasswordForm() {
   const params = useSearchParams();
@@ -370,7 +371,10 @@ export default function ResetPasswordPage() {
           <span className="si-top__signup">Trouble?&nbsp;<Link href="/login">Sign in</Link></span>
         </div>
 
-        <Suspense fallback={<div className="si-formwrap"><p className="si-lead">Loading…</p></div>}>
+        {/* Keeps .si-formwrap: this boundary sits inside the sign-in panel,
+            between si-top and si-bottom, so a full-page loader would blow out
+            the surrounding layout. Only the placeholder text changes. */}
+        <Suspense fallback={<div className="si-formwrap" style={{ display: "grid", placeItems: "center", minHeight: 220 }}><DluxLoader width={84} stacked /></div>}>
           <ResetPasswordForm />
         </Suspense>
 

@@ -124,6 +124,27 @@ export default function DluxLoader({
 }
 
 /**
+ * Full-page placeholder for a Suspense boundary that already replaces the whole
+ * page — the `useSearchParams` fallbacks on the checkout, room, confirmation
+ * and reset-password screens. It reproduces exactly the markup those had
+ * (100vh grid, centred, on --bg) and only changes the bare "Loading…" text for
+ * the mark.
+ *
+ * Note it takes its background from --bg rather than the design file's #FAF7F1
+ * canvas: those differ (#F6EFE2 vs #FAF7F1), and hardcoding the design value
+ * puts a visible seam against the rest of the page.
+ *
+ * This is NOT for route transitions — see the note on DluxLoaderOverlay.
+ */
+export function DluxLoaderPage({ label, accent = "clay" }: Pick<DluxLoaderProps, "label" | "accent">) {
+  return (
+    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--bg)" }}>
+      <DluxLoader accent={accent} width={96} label={label} stacked />
+    </div>
+  );
+}
+
+/**
  * Blocking overlay for an operation that must not be interrupted or fired
  * twice — currently the booking submit, which uploads ID photos and can run for
  * many seconds.

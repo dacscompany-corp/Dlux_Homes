@@ -31,6 +31,7 @@ import {
 import HavenWizard from "@/components/admin/owners/HavenWizard";
 import NewBookingWizard from "@/components/admin/NewBookingWizard";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { DluxLoaderOverlay } from "@/components/brand/DluxLoader";
 import {
   LayoutDashboard,
   CalendarDays,
@@ -762,6 +763,19 @@ export default function OwnerDashboard() {
   return (
     <div className="min-h-screen" style={{ backgroundColor: "#ffffff", zoom: "1.1" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist+Mono:wght@400;500&display=swap');`}</style>
+
+      {/* The 4-page guest record is built server-side and takes seconds. The
+          mark doesn't read at button size, so the feedback goes here instead of
+          inside the button. Blocking is deliberate: `downloadGuestRecord`
+          already bails on a second call while one is running, and an overlay
+          makes that guard visible rather than swallowing the click silently. */}
+      {pdfBusy && (
+        <DluxLoaderOverlay
+          label={"Building\nguest record"}
+          note="Assembling the 4-page PDF. Your download will start automatically."
+        />
+      )}
+
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setSidebarOpen(false)} />
