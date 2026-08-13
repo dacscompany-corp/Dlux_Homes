@@ -21,6 +21,7 @@ import { IcoZoom, PromoLightbox } from "@/components/PromoLightbox";
 import { havenToRoom } from "@/lib/haven-adapter";
 import { spanHours } from "@/lib/stay-window";
 import { turnoverMs } from "@/lib/turnover";
+import DluxLoader from "@/components/brand/DluxLoader";
 import { stayTotal, isWeekendOrHoliday, extraPaxFee, bundleNightlyRate, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS, BUNDLE_EXTRA_PAX_SURCHARGE } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import type { Room } from "@/types";
@@ -471,8 +472,14 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   const { data: activePromotions } = useGetActivePromotionsQuery();
 
   // Unavailable days for the date picker: owner-set blocked dates + active bookings.
-  const { data: blockedRes } = useGetBlockedDatesQuery({ haven_id: id }, { skip: !isUuid });
-  const [bookedRanges, setBookedRanges] = useState<{ ci: string; co: string; ciT: string; coT: string }[]>([]);
+  const { data: blockedRes, isLoading: blockedLoading } = useGetBlockedDatesQuery({ haven_id: id }, { skip: !isUuid });
+  // `null` means "not answered yet", distinct from `[]` = "answered, nothing
+  // booked". Until the bookings land EVERY date looks free, so a calendar drawn
+  // against the empty state would offer taken days for a moment and then cross
+  // them out under the guest's cursor. Kept as one nullable value rather than a
+  // separate loaded flag so it can be DERIVED below — the same reason the night
+  // clamp isn't pushed back into state by an effect.
+  const [bookedRanges, setBookedRanges] = useState<{ ci: string; co: string; ciT: string; coT: string }[] | null>(null);
   useEffect(() => {
     if (!isUuid || !id) return;
     let active = true;
@@ -481,6 +488,8 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
       .then((j) => {
         if (!active) return;
         const rows = Array.isArray(j?.data) ? j.data : [];
+        // Resolves on failure too: a failed fetch answers "no ranges", and a
+        // calendar that never opens is worse than one showing owner blocks only.
         setBookedRanges(rows.map((b: Record<string, unknown>) => ({
           ci: String(b.check_in_date ?? ""),
           co: String(b.check_out_date ?? ""),
@@ -490,6 +499,10 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
       });
     return () => { active = false; };
   }, [isUuid, id]);
+
+  // Mock rooms have no bookings endpoint to wait on, so they are never loading.
+  // Both live sources feed `blockedDates`, so the picker waits on the pair.
+  const availabilityLoading = isUuid && (bookedRanges === null || blockedLoading);
 
   const [galleryIdx, setGalleryIdx] = useState(0);
   const [galleryDir, setGalleryDir] = useState<"left" | "right">("right");
@@ -640,7 +653,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   })();
 
   // Existing stays as real timestamps. A '00:00' checkout means end-of-day.
-  const busyIntervals = bookedRanges.flatMap(({ ci, co, ciT, coT }) => {
+  const busyIntervals = (bookedRanges ?? []).flatMap(({ ci, co, ciT, coT }) => {
     const from = toLocalISO(ci);
     const to = toLocalISO(co) || from;
     const s = minutesOf(ciT), e = minutesOf(coT);
@@ -1041,8 +1054,16 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                 </button>
                 {dateOpen && (
                   <div style={{ marginTop: 10, border: "1px solid #E0CEB2", borderRadius: 16, background: "#FAF7F1", padding: 14 }}>
-                    <Calendar selected={date} blocked={blockedDates} onSelect={(d) => { setDate(d); setDateOpen(false); setStayPicked(false); setCardStep(2); }} />
-                    <div style={{ fontSize: 11, color: "#9B8B73", marginTop: 11, display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 9, height: 9, borderRadius: "50%", background: "#1F160E", display: "inline-block" }} />{calendarWindow ? `Crossed-out days can't take a ${calendarWindow.label.toLowerCase()}.` : "Crossed-out days are fully booked."}</div>
+                    {availabilityLoading ? (
+                      <div style={{ minHeight: 300, display: "grid", placeItems: "center" }}>
+                        <DluxLoader width={78} label={"Checking\navailability"} stacked />
+                      </div>
+                    ) : (
+                      <>
+                        <Calendar selected={date} blocked={blockedDates} onSelect={(d) => { setDate(d); setDateOpen(false); setStayPicked(false); setCardStep(2); }} />
+                        <div style={{ fontSize: 11, color: "#9B8B73", marginTop: 11, display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 9, height: 9, borderRadius: "50%", background: "#1F160E", display: "inline-block" }} />{calendarWindow ? `Crossed-out days can't take a ${calendarWindow.label.toLowerCase()}.` : "Crossed-out days are fully booked."}</div>
+                      </>
+                    )}
                   </div>
                 )}
               </CardStep>
@@ -1541,8 +1562,16 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                     </button>
                     {dateOpen && (
                       <div style={{ marginTop: 10, border: "1px solid #E0CEB2", borderRadius: 16, background: "#FAF7F1", padding: 16 }}>
-                        <Calendar selected={date} blocked={blockedDates} onSelect={(d) => { setDate(d); setDateOpen(false); setStayPicked(false); setCardStep(2); }} />
-                        <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: 12, display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 9, height: 9, borderRadius: "50%", background: "#1F160E", display: "inline-block" }} />{calendarWindow ? `Crossed-out days can't take a ${calendarWindow.label.toLowerCase()}.` : "Crossed-out days are fully booked."}</div>
+                        {availabilityLoading ? (
+                          <div style={{ minHeight: 300, display: "grid", placeItems: "center" }}>
+                            <DluxLoader width={78} label={"Checking\navailability"} stacked />
+                          </div>
+                        ) : (
+                          <>
+                            <Calendar selected={date} blocked={blockedDates} onSelect={(d) => { setDate(d); setDateOpen(false); setStayPicked(false); setCardStep(2); }} />
+                            <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: 12, display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 9, height: 9, borderRadius: "50%", background: "#1F160E", display: "inline-block" }} />{calendarWindow ? `Crossed-out days can't take a ${calendarWindow.label.toLowerCase()}.` : "Crossed-out days are fully booked."}</div>
+                          </>
+                        )}
                       </div>
                     )}
                   </CardStep>

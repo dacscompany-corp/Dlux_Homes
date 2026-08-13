@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { accentHex, type BrandAccent } from "./palette";
 
 /**
  * The D'Lux Homes brand mark — roof + lit window, with the wordmark lockup.
@@ -27,7 +28,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
  */
 
 export type DluxMarkLayout = "full" | "compact" | "icon";
-export type DluxMarkAccent = "clay" | "gold" | "cream";
+/** @deprecated Prefer BrandAccent from ./palette — kept so existing imports still resolve. */
+export type DluxMarkAccent = BrandAccent;
 
 export interface DluxMarkProps {
   layout?: DluxMarkLayout;
@@ -41,12 +43,6 @@ export interface DluxMarkProps {
   onClick?: () => void;
   className?: string;
 }
-
-const ACCENT_HEX: Record<DluxMarkAccent, string> = {
-  clay: "#B8754A",
-  gold: "#D4A96A",
-  cream: "#FAF7F1",
-};
 
 const EASE = "cubic-bezier(.2,.8,.2,1)";
 const SERIF = "var(--font-instrument-serif), Georgia, serif";
@@ -86,7 +82,7 @@ export default function DluxMark({
     else replay();
   }, [onClick, replay]);
 
-  const hex = ACCENT_HEX[accent] ?? ACCENT_HEX.clay;
+  const hex = accentHex(accent);
   const isFull = layout === "full";
   const isCompact = layout === "compact";
 

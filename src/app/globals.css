@@ -46,8 +46,21 @@
    reads as occupied. Lives here rather than in the component because the mark
    renders many times per page and a per-instance <style> would duplicate it. */
 @keyframes dlux-glow { 0%, 100% { opacity: .6 } 50% { opacity: 1 } }
+
+/* Loader (components/brand/DluxLoader). The roof draws itself in and out while
+   the four window panes blink in sequence — the same geometry as the mark, so
+   the wait is still recognisably the house. */
+@keyframes dlux-draw { 0% { stroke-dashoffset: 340 } 55% { stroke-dashoffset: 0 } 100% { stroke-dashoffset: -340 } }
+@keyframes dlux-blink { 0%, 100% { opacity: .28 } 50% { opacity: 1 } }
+
 @media (prefers-reduced-motion: reduce) {
   .dlux-mark, .dlux-mark * { animation: none !important; transition: none !important; }
+  /* The loader still has to read as "busy" with motion off, so the roof is
+     pinned drawn (not mid-stroke) and the panes hold at full opacity rather
+     than at the .28 trough the blink would otherwise freeze them on. */
+  .dlux-loader * { animation: none !important; transition: none !important; }
+  .dlux-loader .dlux-loader-roof { stroke-dashoffset: 0 !important; }
+  .dlux-loader .dlux-loader-pane { opacity: 1 !important; }
 }
 .serif      { font-family: var(--font-fraunces), Georgia, serif; font-optical-sizing: auto; }
 

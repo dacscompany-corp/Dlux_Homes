@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import DluxMark, { type DluxMarkAccent } from "@/components/brand/DluxMark";
+import DluxLoader from "@/components/brand/DluxLoader";
 
 /**
  * Brand mark reference sheet — the "Logo System" design file, implemented.
@@ -228,27 +229,9 @@ export default function BrandPage() {
 
         <div className="bp-quad bp-side bp-quad-last">
           <div style={{ ...EYEBROW, color: MUTED }}>Loader</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
-            <svg viewBox="0 0 280 130" style={{ width: 92, height: "auto" }} aria-hidden="true">
-              <polyline
-                points="20,118 140,14 260,118"
-                fill="none"
-                stroke={accentHex}
-                strokeWidth="15"
-                strokeDasharray="340"
-                style={{ animation: "dlux-draw 2.2s cubic-bezier(.5,0,.5,1) infinite" }}
-              />
-              <rect x="121" y="62" width="14" height="14" fill={accentHex} style={{ animation: "dlux-blink 2.2s ease-in-out infinite" }} />
-              <rect x="141" y="62" width="14" height="14" fill={accentHex} style={{ animation: "dlux-blink 2.2s ease-in-out .15s infinite" }} />
-              <rect x="121" y="82" width="14" height="14" fill={accentHex} style={{ animation: "dlux-blink 2.2s ease-in-out .3s infinite" }} />
-              <rect x="141" y="82" width="14" height="14" fill={accentHex} style={{ animation: "dlux-blink 2.2s ease-in-out .45s infinite" }} />
-            </svg>
-            <div style={{ ...EYEBROW, letterSpacing: ".18em", color: MUTED, lineHeight: 1.7 }}>
-              Preparing
-              <br />
-              your stay
-            </div>
-          </div>
+          {/* The real component, not a copy of it — this panel is the spec for
+              what /rooms and /my-bookings actually render while they wait. */}
+          <DluxLoader accent={accent} />
         </div>
       </div>
 
@@ -350,9 +333,6 @@ export default function BrandPage() {
       </div>
 
       <style>{`
-        @keyframes dlux-draw { 0% { stroke-dashoffset: 340 } 55% { stroke-dashoffset: 0 } 100% { stroke-dashoffset: -340 } }
-        @keyframes dlux-blink { 0%,100% { opacity:.28 } 50% { opacity:1 } }
-
         .bp-page { padding: 56px 60px 90px; }
         .bp-page button:hover { filter: brightness(.96); }
         .bp-navlink { cursor: default; }

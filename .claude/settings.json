@@ -22,7 +22,15 @@
       "Bash(curl -s -o /dev/null -w \"status=%{http_code} size=%{size_download}\\\\n\" http://localhost:3000/ --max-time 90)",
       "Bash(curl -s http://localhost:3000/ --max-time 90)",
       "PowerShell(Get-ChildItem -LiteralPath \"C:\\\\Users\\\\John Aerol Tapales\\\\Documents\\\\D'Lux Homes\" -File | Where-Object { $_.Name -match 'success|error|\\\\{|\\\\\\(' } | Select-Object Name, Length, LastWriteTime | Format-List)",
-      "Bash(git ls-tree *)"
+      "Bash(git ls-tree *)",
+      "Bash(tasklist //FI \"PID eq 15120\")",
+      "Bash(taskkill //PID 15120 //F)",
+      "Bash(curl -s -o /dev/null -w \"brand=%{http_code}\\\\n\" http://localhost:3000/brand)",
+      "Bash(grep -o \"dlux-draw.\\\\{0,120\\\\}\" .next/dev/static/chunks/src_app_globals_css_1igg3k2._.single.css)",
+      "Bash(grep -o \"dlux-loader.\\\\{0,90\\\\}\" .next/dev/static/chunks/src_app_globals_css_1igg3k2._.single.css)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill //PID 4088 //F)",
+      "Bash(taskkill //PID 23220 //F)"
     ]
   }
 }

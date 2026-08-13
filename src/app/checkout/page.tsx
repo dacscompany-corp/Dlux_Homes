@@ -19,6 +19,7 @@ import { stayTotal, isWeekendOrHoliday, addDaysISO, extraPaxFee, bundleNightlyRa
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
 import { autoDiscountAmount, pickAutoPromo } from "@/lib/promo-offer";
+import { DluxLoaderOverlay } from "@/components/brand/DluxLoader";
 
 // ── Helpers ────────────────────────────────────────────────────
 function peso(n: number) { return "₱" + n.toLocaleString("en-PH"); }
@@ -1044,6 +1045,19 @@ function CheckoutInner() {
 
   return (
     <div className="page-enter" style={{ backgroundColor: "#F6EFE2", color: "#1F160E", minHeight: "100vh", fontFamily: "'Geist', system-ui, -apple-system, sans-serif" }}>
+      {/* Blocks the page while the request is in flight. The submit uploads
+          every ID photo, so it can run for many seconds — a dimmed button
+          alone let the guest scroll away or close the tab mid-upload. Stays up
+          through the redirect on success: `submitting` is deliberately never
+          reset there, so the overlay hands off to the confirmation page rather
+          than flashing the form back for a frame. */}
+      {submitting && (
+        <DluxLoaderOverlay
+          label={"Sending\nyour request"}
+          note="Uploading your documents. This can take a moment on a slow connection — please keep this page open."
+        />
+      )}
+
       {/* HEADER — checkout step bar */}
       <header className="co-deskhdr" style={{ position: "sticky", top: 0, zIndex: 50, background: "#FAF7F1", borderBottom: "1px solid #ECE5D4", fontFamily: "'Geist', system-ui, -apple-system, sans-serif", color: "#1F160E" }}>
         <style>{`
