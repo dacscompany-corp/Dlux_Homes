@@ -76,6 +76,20 @@ function IcoHeart({ filled }: { filled: boolean }) {
   return <svg width={16} height={16} viewBox="0 0 24 24" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" /></svg>;
 }
 
+// ── Footer social icons ────────────────────────────────────────
+function IcoFacebook({ size = 14 }: { size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M22 12a10 10 0 1 0-11.56 9.88v-6.99H7.9V12h2.54V9.8c0-2.5 1.49-3.89 3.78-3.89 1.1 0 2.24.2 2.24.2v2.46h-1.26c-1.24 0-1.63.77-1.63 1.56V12h2.78l-.44 2.89h-2.34v6.99A10 10 0 0 0 22 12z" /></svg>;
+}
+function IcoTikTok({ size = 14 }: { size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M16.6 5.82c-.9-.9-1.4-2.1-1.4-3.37h-3.05v13.35a2.9 2.9 0 1 1-2.05-2.78V9.9a5.95 5.95 0 1 0 5.1 5.9V9.4a7.5 7.5 0 0 0 4.4 1.4V7.75a4.7 4.7 0 0 1-3-1.93z" /></svg>;
+}
+function IcoInstagram({ size = 14 }: { size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6}><rect x="3" y="3" width="18" height="18" rx="5" /><circle cx="12" cy="12" r="4.2" /><circle cx="17.4" cy="6.6" r="1.1" fill="currentColor" stroke="none" /></svg>;
+}
+function IcoMail({ size = 14 }: { size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><rect x="2.5" y="4.5" width="19" height="15" rx="2.5" /><path d="m3 6 9 6.5L21 6" /></svg>;
+}
+
 // ── Offer-card icons ───────────────────────────────────────────
 // Hand-written inline SVG, matching the rest of the guest pages (no icon
 // library on the storefront). Sizes/strokes come from the design spec.
@@ -911,19 +925,27 @@ export default function BrowsePage() {
               </p>
             </div>
             {[
-              { h: "Stay", items: ["10-Hour Daycation", "10-Hour Nightcation", "22-Hour Full Stay"] },
+              {
+                h: "Stay",
+                items: [
+                  { label: "10-Hour Daycation", href: `/rooms/${room.id}?win=0` },
+                  { label: "10-Hour Nightcation", href: `/rooms/${room.id}?win=1` },
+                  { label: "22-Hour Full Stay", href: `/rooms/${room.id}?win=2` },
+                ],
+              },
               {
                 h: "Social Media",
                 items: [
-                  { label: "Facebook", href: "https://www.facebook.com/profile.php?id=61557644293485" },
-                  { label: "TikTok", href: "https://www.tiktok.com/@dluxhomes2024/video/7631110590492101906" },
+                  { label: "Facebook", href: "https://www.facebook.com/profile.php?id=61557644293485", icon: <IcoFacebook /> },
+                  { label: "TikTok", href: "https://www.tiktok.com/@dluxhomes2024/video/7631110590492101906", icon: <IcoTikTok /> },
+                  { label: "Instagram", href: "https://www.instagram.com/homesdlux/", icon: <IcoInstagram /> },
                 ],
               },
               {
                 h: "Contact",
                 items: [
-                  { label: "homesdlux@gmail.com", href: "mailto:homesdlux@gmail.com" },
-                  { label: "Tower 4, Grass Residences, QC", href: "/location" },
+                  { label: "homesdlux@gmail.com", href: "mailto:homesdlux@gmail.com", icon: <IcoMail /> },
+                  { label: "Tower 4, Grass Residences, QC", href: "/location", icon: <IcoMapPin /> },
                 ],
               },
             ].map((col, i) => (
@@ -935,11 +957,15 @@ export default function BrowsePage() {
                       <li key={item} className="footer-link" style={{ fontSize: 13, color: "var(--ink)" }}>{item}</li>
                     ) : item.href.startsWith("/") ? (
                       <li key={item.label} className="footer-link" style={{ fontSize: 13 }}>
-                        <Link href={item.href} style={{ color: "var(--ink)", textDecoration: "none" }}>{item.label}</Link>
+                        <Link href={item.href} style={{ display: "inline-flex", alignItems: "center", gap: 8, color: "var(--ink)", textDecoration: "none" }}>
+                          {"icon" in item && item.icon}{item.label}
+                        </Link>
                       </li>
                     ) : (
                       <li key={item.label} className="footer-link" style={{ fontSize: 13 }}>
-                        <a href={item.href} target="_blank" rel="noopener noreferrer" style={{ color: "var(--ink)", textDecoration: "none" }}>{item.label}</a>
+                        <a href={item.href} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, color: "var(--ink)", textDecoration: "none" }}>
+                          {"icon" in item && item.icon}{item.label}
+                        </a>
                       </li>
                     )
                   )}
