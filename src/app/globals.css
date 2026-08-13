@@ -47,6 +47,22 @@
    renders many times per page and a per-instance <style> would duplicate it. */
 @keyframes dlux-glow { 0%, 100% { opacity: .6 } 50% { opacity: 1 } }
 
+/* How far the floating Messenger button must sit above the viewport bottom.
+   Pages with a fixed bottom bar (the room, rooms list and checkout CTA bars)
+   set this inside their OWN mobile media query, so it applies only where the
+   bar exists and resets by itself when that page unmounts — no effect to run,
+   nothing to clean up.
+
+   Registered with @property on purpose: an unregistered custom property is
+   handed back by getComputedStyle as the literal "calc(...)" string, which the
+   drag clamp can't parse. Registering it makes the browser resolve it to a
+   real length so the button still can't be dragged off-screen. */
+@property --dlux-bottom-inset {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
 /* Loader (components/brand/DluxLoader). The roof draws itself in and out while
    the four window panes blink in sequence — the same geometry as the mark, so
    the wait is still recognisably the house. */

@@ -901,6 +901,9 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
         @media (max-width: 860px) {
           .rd-deskonly, .rd-deskhdr { display: none !important; }
           .rd-mobile { display: flex !important; flex-direction: column; }
+          /* Height of the fixed book-now bar below, so the floating Messenger
+             button clears it instead of covering the CTA. */
+          :root { --dlux-bottom-inset: calc(92px + env(safe-area-inset-bottom)); }
         }
       `}</style>
 

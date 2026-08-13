@@ -1106,6 +1106,9 @@ function CheckoutInner() {
             .co-stickybar { display: flex !important; }
             /* Clear the fixed bar so it never covers the last of the content. */
             .co-wrap { padding-bottom: 128px !important; }
+            /* Same for the floating Messenger button, which sits above the bar
+               at z-index 1000 and would otherwise cover the Submit action. */
+            :root { --dlux-bottom-inset: calc(92px + env(safe-area-inset-bottom)); }
             .co-deskhdr { display: none !important; }
             .co-back-chip { display: none !important; }
             .co-h1 { font-size: 30px !important; }

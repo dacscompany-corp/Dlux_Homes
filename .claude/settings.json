@@ -30,7 +30,14 @@
       "Bash(grep -o \"dlux-loader.\\\\{0,90\\\\}\" .next/dev/static/chunks/src_app_globals_css_1igg3k2._.single.css)",
       "Bash(netstat -ano)",
       "Bash(taskkill //PID 4088 //F)",
-      "Bash(taskkill //PID 23220 //F)"
+      "Bash(taskkill //PID 23220 //F)",
+      "Bash(awk 'NR>=900 && NR<=975 && \\(/className=\"[^\"]*mob/ || /rm-mob/ || /@media/\\)' \"src/app/rooms/[id]/page.tsx\")",
+      "Bash(awk 'NR>=1090 && NR<=1108' src/app/checkout/page.tsx)",
+      "Bash(awk 'NR<=1106 && /@media/ {n=NR; l=$0} END{}' src/app/checkout/page.tsx)",
+      "Bash(awk -F: '$1<1106')",
+      "Bash(awk 'NR>=590 && NR<=607 {print NR\": \"$0}' src/app/rooms/page.tsx)",
+      "Bash(awk 'NR>=560 && NR<=606 {print NR\": \"$0}' src/app/rooms/page.tsx)",
+      "Bash(awk 'NR>=505 && NR<=545 {print NR\": \"$0}' src/app/rooms/page.tsx)"
     ]
   }
 }

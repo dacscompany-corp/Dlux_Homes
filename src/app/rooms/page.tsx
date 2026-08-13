@@ -508,6 +508,8 @@ export default function BrowsePage() {
         @media (max-width: 860px) {
           .rm-desktop, .rm-deskhdr { display: none !important; }
           .rm-mobile { display: block; }
+          /* Clears the fixed bottom CTA bar for the floating Messenger button. */
+          :root { --dlux-bottom-inset: calc(92px + env(safe-area-inset-bottom)); }
         }
         @media (max-width: 900px) {
           .hm-4col { grid-template-columns: repeat(2,1fr) !important; }
