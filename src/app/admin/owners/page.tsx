@@ -135,11 +135,24 @@ export default function OwnerDashboard() {
   const [teamTab, setTeamTab]         = useState<"staff"|"users"|"partners">("staff");
 
   // ── Live data from the Supabase-backed API (RTK Query) ──
-  const { data: summaryRes }   = useGetAnalyticsSummaryQuery({ period: "30" });
-  const { data: monthlyRes }   = useGetMonthlyRevenueQuery({ months: "6" });
-  const { data: roomRevRes }   = useGetRevenueByRoomQuery({ period: "30" });
+  const REVENUE_RANGES: Record<string, { name: string; label: string; months: string; days: string }> = {
+    weekly:      { name: "Weekly",      label: "Last 4 weeks",     months: "1",  days: "28" },
+    monthly:     { name: "Monthly",     label: "Last 6 months",    months: "6",  days: "180" },
+    quarterly:   { name: "Quarterly",   label: "Last 3 quarters",  months: "9",  days: "270" },
+    semiannual:  { name: "Semi-Annual", label: "Last 2 half-years",months: "12", days: "360" },
+    annual:      { name: "Annual",      label: "Last 2 years",     months: "24", days: "730" },
+  };
+  const [revenueRange, setRevenueRange] = useState<keyof typeof REVENUE_RANGES>("monthly");
+  const [revenueRangeOpen, setRevenueRangeOpen] = useState(false);
+  const { data: summaryRes }   = useGetAnalyticsSummaryQuery({ period: REVENUE_RANGES[revenueRange].days });
+  const { data: monthlyRes }   = useGetMonthlyRevenueQuery({ months: REVENUE_RANGES[revenueRange].months });
+  const { data: roomRevRes }   = useGetRevenueByRoomQuery({ period: REVENUE_RANGES[revenueRange].days });
   const { data: bookingsData, refetch: refetchBookings } = useGetBookingsQuery();
   const [newBookingOpen, setNewBookingOpen] = useState(false);
+  const [statusFilterOpen, setStatusFilterOpen] = useState(false);
+  const [statusFilters, setStatusFilters] = useState<string[]>([]);
+  const [recentStatusFilterOpen, setRecentStatusFilterOpen] = useState(false);
+  const [recentStatusFilters, setRecentStatusFilters] = useState<string[]>([]);
   const { data: havensData }   = useGetHavensQuery({});
   const { data: employeesRes } = useGetEmployeesQuery({});
   const { data: reviewsRes }   = useGetReviewsQuery();
@@ -569,6 +582,12 @@ export default function OwnerDashboard() {
       };
     }),
   }));
+  const filteredAdminBookings = statusFilters.length
+    ? allAdminBookings.filter((b) => statusFilters.includes(b.status))
+    : allAdminBookings;
+  const recentAdminBookings = recentStatusFilters.length
+    ? allAdminBookings.filter((b) => recentStatusFilters.includes(b.status))
+    : allAdminBookings;
 
   // ── Helpers for the redesigned booking detail modal ──
   // (peso formatter is defined above.)
@@ -905,7 +924,37 @@ export default function OwnerDashboard() {
 
           {/* ── Overview ── */}
           {activeNav === "Overview" && (<>
-          {tabBar([{ id: "dashboard", label: "Dashboard", icon: LayoutDashboard }, { id: "analytics", label: "Analytics & Reports", icon: BarChart3 }], overviewTab, (id) => setOverviewTab(id as "dashboard" | "analytics"))}
+          <div className="flex items-center justify-between mb-6 flex-wrap" style={{ gap: 12 }}>
+            <div className="mb-0">
+              {tabBar([{ id: "dashboard", label: "Dashboard", icon: LayoutDashboard }, { id: "analytics", label: "Analytics & Reports", icon: BarChart3 }], overviewTab, (id) => setOverviewTab(id as "dashboard" | "analytics"))}
+            </div>
+            {overviewTab === "dashboard" && (
+              <div style={{ position: "relative" }}>
+                <button type="button" onClick={() => setRevenueRangeOpen((v) => !v)}
+                  className="inline-flex items-center cursor-pointer"
+                  style={{ gap: 8, padding: "9px 16px", fontSize: 13, fontWeight: 500, color: "#5a4a3a", background: "#F7F0E3", border: "1px solid #D4BFA0" }}>
+                  {REVENUE_RANGES[revenueRange].name}
+                  <ChevronDown className="w-3.5 h-3.5" style={{ transform: revenueRangeOpen ? "rotate(180deg)" : "none", transition: "transform .15s ease" }} />
+                </button>
+                {revenueRangeOpen && (
+                  <>
+                    <div onClick={() => setRevenueRangeOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 69 }} />
+                    <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 70, width: 176, background: "#ffffff", border: "1px solid #ece5d4", boxShadow: "0 18px 44px -16px rgba(40,30,18,.30)", borderRadius: 4, overflow: "hidden" }}>
+                      {(Object.keys(REVENUE_RANGES) as (keyof typeof REVENUE_RANGES)[]).map((key) => (
+                        <button key={key} type="button" onClick={() => { setRevenueRange(key); setRevenueRangeOpen(false); }}
+                          className="w-full text-left cursor-pointer"
+                          style={{ display: "block", padding: "9px 14px", fontSize: 13, color: key === revenueRange ? "#1f1b16" : "#5a4a3a", fontWeight: key === revenueRange ? 600 : 400, background: key === revenueRange ? "#F7F0E3" : "transparent", border: "none" }}
+                          onMouseEnter={(e) => { if (key !== revenueRange) (e.currentTarget as HTMLElement).style.backgroundColor = "#faf7f1"; }}
+                          onMouseLeave={(e) => { if (key !== revenueRange) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}>
+                          {REVENUE_RANGES[key].name}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
           {overviewTab === "analytics" && <AnalyticsSection />}
           {overviewTab === "dashboard" && (<>
 
@@ -935,7 +984,7 @@ export default function OwnerDashboard() {
               <div className="flex items-end justify-between" style={{ padding: "22px 24px 0" }}>
                 <div>
                   <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, margin: 0, lineHeight: 1, color: "#1f1b16" }}>Revenue overview</h3>
-                  <p style={{ fontSize: 12, color: "#8a8276", margin: "8px 0 0" }}>Last 6 months</p>
+                  <p style={{ fontSize: 12, color: "#8a8276", margin: "8px 0 0" }}>{REVENUE_RANGES[revenueRange].label}</p>
                 </div>
                 <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 20, fontWeight: 500, letterSpacing: "-0.02em", color: "#1f1b16" }}>{peso(monthly.reduce((t, m) => t + (Number(m.revenue) || 0), 0))}</div>
               </div>
@@ -976,18 +1025,59 @@ export default function OwnerDashboard() {
             <div className="flex items-center justify-between" style={{ padding: "18px 24px", borderBottom: "1px solid #ece5d4" }}>
               <div>
                 <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, margin: 0, lineHeight: 1, color: "#1f1b16" }}>Recent bookings</h3>
-                <p style={{ fontSize: 12, color: "#8a8276", margin: "7px 0 0" }}>{allAdminBookings.length} total records</p>
+                <p style={{ fontSize: 12, color: "#8a8276", margin: "7px 0 0" }}>{recentAdminBookings.length} total records</p>
               </div>
-              <button
-                onClick={() => { setActiveNav("Bookings"); setSidebarOpen(false); }}
-                className="inline-flex items-center transition-colors"
-                style={{ gap: 8, padding: "9px 16px", background: "transparent", border: "1px solid #d9d1c2", fontSize: 13, color: "#1f1b16", cursor: "pointer" }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "#1f1b16"; (e.currentTarget as HTMLElement).style.background = "#f3eee2"; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "#d9d1c2"; (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-              >
-                <span>View all</span>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
-              </button>
+              <div className="flex items-center" style={{ gap: 8 }}>
+                <div style={{ position: "relative" }}>
+                  <button type="button" onClick={() => setRecentStatusFilterOpen((v) => !v)}
+                    className="flex items-center gap-1.5 cursor-pointer"
+                    style={{ gap: 8, padding: "9px 16px", fontSize: 13, fontWeight: 500, color: "#5a4a3a", background: "#F7F0E3", border: "1px solid #D4BFA0" }}>
+                    Status{recentStatusFilters.length > 0 ? ` (${recentStatusFilters.length})` : ""}
+                    <ChevronDown className="w-3.5 h-3.5" style={{ transform: recentStatusFilterOpen ? "rotate(180deg)" : "none", transition: "transform .15s ease" }} />
+                  </button>
+                  {recentStatusFilterOpen && (
+                    <>
+                      <div onClick={() => setRecentStatusFilterOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 69 }} />
+                      <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 70, width: 220, background: "#ffffff", border: "1px solid #ece5d4", boxShadow: "0 18px 44px -16px rgba(40,30,18,.30)", borderRadius: 4, overflow: "hidden" }}>
+                        <div className="px-3 py-2 flex items-center justify-between" style={{ borderBottom: "1px solid #F7F0E3" }}>
+                          <span style={{ fontSize: 11.5, fontWeight: 600, color: "#8B6344", textTransform: "uppercase", letterSpacing: ".06em" }}>Filter by status</span>
+                          {recentStatusFilters.length > 0 && (
+                            <button type="button" onClick={() => setRecentStatusFilters([])} style={{ fontSize: 11.5, color: "#B07848", cursor: "pointer", background: "transparent", border: "none" }}>Clear</button>
+                          )}
+                        </div>
+                        <div style={{ maxHeight: 260, overflowY: "auto" }}>
+                          {Object.entries(statusConfig).map(([key, cfg]) => {
+                            const checked = recentStatusFilters.includes(key);
+                            return (
+                              <label key={key} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer"
+                                style={{ fontSize: 13, color: "#1f1b16" }}
+                                onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#faf7f1"}
+                                onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
+                                <span style={{ width: 16, height: 16, borderRadius: 4, border: `1.5px solid ${checked ? "#1f1b16" : "#D4BFA0"}`, background: checked ? "#1f1b16" : "transparent", display: "grid", placeItems: "center", flex: "none" }}>
+                                  {checked && <Check className="w-3 h-3" style={{ color: "#fff" }} />}
+                                </span>
+                                <input type="checkbox" checked={checked} onChange={() => setRecentStatusFilters((prev) => checked ? prev.filter((s) => s !== key) : [...prev, key])} style={{ display: "none" }} />
+                                <span style={{ width: 6, height: 6, borderRadius: "50%", background: cfg.dot, flex: "none" }} />
+                                {cfg.label}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+                <button
+                  onClick={() => { setActiveNav("Bookings"); setSidebarOpen(false); }}
+                  className="inline-flex items-center transition-colors"
+                  style={{ gap: 8, padding: "9px 16px", background: "transparent", border: "1px solid #d9d1c2", fontSize: 13, color: "#1f1b16", cursor: "pointer" }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "#1f1b16"; (e.currentTarget as HTMLElement).style.background = "#f3eee2"; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "#d9d1c2"; (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                >
+                  <span>View all</span>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
+                </button>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full">
@@ -1007,7 +1097,7 @@ export default function OwnerDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {allAdminBookings.map((booking, idx) => {
+                  {recentAdminBookings.map((booking, idx) => {
                     const st = statusConfig[booking.status] || statusConfig.pending;
                     return (
                       <tr
@@ -1143,6 +1233,32 @@ export default function OwnerDashboard() {
                       </tr>
                     );
                   })}
+                  {recentAdminBookings.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="px-4 py-14 text-center">
+                        <div style={{ width: 44, height: 44, borderRadius: "50%", background: "#F7F0E3", display: "grid", placeItems: "center", margin: "0 auto 12px" }}>
+                          {allAdminBookings.length === 0
+                            ? <CalendarDays className="w-5 h-5" style={{ color: "#B07848" }} />
+                            : <Search className="w-5 h-5" style={{ color: "#B07848" }} />}
+                        </div>
+                        <p style={{ fontSize: 14, fontWeight: 500, color: "#5a4a3a" }}>
+                          {allAdminBookings.length === 0 ? "No bookings yet" : "No bookings match this filter"}
+                        </p>
+                        <p style={{ fontSize: 12.5, color: "#8B6344", marginTop: 4 }}>
+                          {allAdminBookings.length === 0
+                            ? "New bookings will show up here."
+                            : "Try clearing or changing the status filter."}
+                        </p>
+                        {recentStatusFilters.length > 0 && (
+                          <button type="button" onClick={() => setRecentStatusFilters([])}
+                            className="cursor-pointer"
+                            style={{ marginTop: 14, fontSize: 12.5, fontWeight: 500, color: "#5a4a3a", background: "#F7F0E3", border: "1px solid #D4BFA0", borderRadius: 4, padding: "7px 14px" }}>
+                            Clear status filter
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1249,11 +1365,52 @@ export default function OwnerDashboard() {
             <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: "#ece5d4" }}>
               <div>
                 <h3 className="font-bold" style={{ color: "#1a1a1a" }}>All Bookings</h3>
-                <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{allAdminBookings.length} total records</p>
+                <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{filteredAdminBookings.length} total records</p>
               </div>
-              <button onClick={() => setNewBookingOpen(true)} className="flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-white cursor-pointer" style={{ backgroundColor: "#1f1b16" }}>
-                <Plus className="w-4 h-4" /> New Booking
-              </button>
+              <div className="flex items-center gap-2">
+                <div style={{ position: "relative" }}>
+                  <button type="button" onClick={() => setStatusFilterOpen((v) => !v)}
+                    className="flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium cursor-pointer"
+                    style={{ backgroundColor: "#F7F0E3", color: "#5a4a3a", border: "1px solid #D4BFA0" }}>
+                    Status{statusFilters.length > 0 ? ` (${statusFilters.length})` : ""}
+                    <ChevronDown className="w-3.5 h-3.5" style={{ transform: statusFilterOpen ? "rotate(180deg)" : "none", transition: "transform .15s ease" }} />
+                  </button>
+                  {statusFilterOpen && (
+                    <>
+                      <div onClick={() => setStatusFilterOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 69 }} />
+                      <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 70, width: 220, background: "#ffffff", border: "1px solid #ece5d4", boxShadow: "0 18px 44px -16px rgba(40,30,18,.30)", borderRadius: 4, overflow: "hidden" }}>
+                        <div className="px-3 py-2 flex items-center justify-between" style={{ borderBottom: "1px solid #F7F0E3" }}>
+                          <span style={{ fontSize: 11.5, fontWeight: 600, color: "#8B6344", textTransform: "uppercase", letterSpacing: ".06em" }}>Filter by status</span>
+                          {statusFilters.length > 0 && (
+                            <button type="button" onClick={() => setStatusFilters([])} style={{ fontSize: 11.5, color: "#B07848", cursor: "pointer", background: "transparent", border: "none" }}>Clear</button>
+                          )}
+                        </div>
+                        <div style={{ maxHeight: 260, overflowY: "auto" }}>
+                          {Object.entries(statusConfig).map(([key, cfg]) => {
+                            const checked = statusFilters.includes(key);
+                            return (
+                              <label key={key} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer"
+                                style={{ fontSize: 13, color: "#1f1b16" }}
+                                onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#faf7f1"}
+                                onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
+                                <span style={{ width: 16, height: 16, borderRadius: 4, border: `1.5px solid ${checked ? "#1f1b16" : "#D4BFA0"}`, background: checked ? "#1f1b16" : "transparent", display: "grid", placeItems: "center", flex: "none" }}>
+                                  {checked && <Check className="w-3 h-3" style={{ color: "#fff" }} />}
+                                </span>
+                                <input type="checkbox" checked={checked} onChange={() => setStatusFilters((prev) => checked ? prev.filter((s) => s !== key) : [...prev, key])} style={{ display: "none" }} />
+                                <span style={{ width: 6, height: 6, borderRadius: "50%", background: cfg.dot, flex: "none" }} />
+                                {cfg.label}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+                <button onClick={() => setNewBookingOpen(true)} className="flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-white cursor-pointer" style={{ backgroundColor: "#1f1b16" }}>
+                  <Plus className="w-4 h-4" /> New Booking
+                </button>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full">
@@ -1265,7 +1422,7 @@ export default function OwnerDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {allAdminBookings.map((booking, idx) => {
+                  {filteredAdminBookings.map((booking, idx) => {
                     const st = statusConfig[booking.status] || statusConfig.pending;
                     return (
                       <tr key={booking.id} className="transition-colors" style={{ borderTop: idx > 0 ? "1px solid #F7F0E3" : "none" }}
@@ -1367,6 +1524,32 @@ export default function OwnerDashboard() {
                       </tr>
                     );
                   })}
+                  {filteredAdminBookings.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="px-4 py-14 text-center">
+                        <div style={{ width: 44, height: 44, borderRadius: "50%", background: "#F7F0E3", display: "grid", placeItems: "center", margin: "0 auto 12px" }}>
+                          {allAdminBookings.length === 0
+                            ? <CalendarDays className="w-5 h-5" style={{ color: "#B07848" }} />
+                            : <Search className="w-5 h-5" style={{ color: "#B07848" }} />}
+                        </div>
+                        <p style={{ fontSize: 14, fontWeight: 500, color: "#5a4a3a" }}>
+                          {allAdminBookings.length === 0 ? "No bookings yet" : "No bookings match this filter"}
+                        </p>
+                        <p style={{ fontSize: 12.5, color: "#8B6344", marginTop: 4 }}>
+                          {allAdminBookings.length === 0
+                            ? "New bookings will show up here."
+                            : "Try clearing or changing the status filter."}
+                        </p>
+                        {statusFilters.length > 0 && (
+                          <button type="button" onClick={() => setStatusFilters([])}
+                            className="cursor-pointer"
+                            style={{ marginTop: 14, fontSize: 12.5, fontWeight: 500, color: "#5a4a3a", background: "#F7F0E3", border: "1px solid #D4BFA0", borderRadius: 4, padding: "7px 14px" }}>
+                            Clear status filter
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
