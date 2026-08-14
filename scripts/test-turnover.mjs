@@ -5,8 +5,8 @@
 // fixture instead of the live `booking` table, so the expected results never
 // drift when real bookings come and go.
 //
-// The rule under test — a stay of 20h or more needs 2 hours of cleaning after
-// it, anything shorter needs 1 hour:
+// The rule under test — every stay, regardless of length, needs 1 hour of
+// cleaning after it:
 //
 //   existing check-in                      <  new check-out + new turnover
 //   existing check-out + existing turnover >  new check-in
@@ -46,8 +46,8 @@ const cases = [
     ["2026-08-10", "07:00", "2026-08-10", "17:00"], ["2026-08-10", "17:30", "2026-08-11", "16:00"], false],
   ["nightcation 3h after an overnight checks out",
     ["2026-08-15", "19:00", "2026-08-16", "16:00"], ["2026-08-16", "19:00", "2026-08-17", "05:00"], true],
-  ["nightcation 1h after an overnight checks out (inside turnover)",
-    ["2026-08-15", "19:00", "2026-08-16", "16:00"], ["2026-08-16", "17:00", "2026-08-17", "05:00"], false],
+  ["nightcation 30min after an overnight checks out (inside turnover)",
+    ["2026-08-15", "19:00", "2026-08-16", "16:00"], ["2026-08-16", "16:30", "2026-08-17", "05:00"], false],
   ["back-to-back overnights (4PM out, 7PM in)",
     ["2026-08-20", "19:00", "2026-08-21", "16:00"], ["2026-08-21", "19:00", "2026-08-22", "16:00"], true],
   ["two daycations on the same day",
