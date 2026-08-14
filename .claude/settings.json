@@ -37,7 +37,11 @@
       "Bash(awk -F: '$1<1106')",
       "Bash(awk 'NR>=590 && NR<=607 {print NR\": \"$0}' src/app/rooms/page.tsx)",
       "Bash(awk 'NR>=560 && NR<=606 {print NR\": \"$0}' src/app/rooms/page.tsx)",
-      "Bash(awk 'NR>=505 && NR<=545 {print NR\": \"$0}' src/app/rooms/page.tsx)"
+      "Bash(awk 'NR>=505 && NR<=545 {print NR\": \"$0}' src/app/rooms/page.tsx)",
+      "Bash(node --env-file=.env scripts/test-turnover.mjs)",
+      "Bash(node --env-file=.env \"C:/Users/JOHNAE~1/AppData/Local/Temp/claude/c--Users-John-Aerol-Tapales-Documents-D-Lux-Homes/3b7f836f-4f55-4763-b17f-a1dd559ec11e/scratchpad/verify-commit.mjs\")",
+      "Bash(grep -vE \"^[+-]\\\\s*\\(//|\\\\*|/\\\\*\\)\")",
+      "Bash(grep -vE \"^[+-]\\\\s*$\")"
     ]
   }
 }
