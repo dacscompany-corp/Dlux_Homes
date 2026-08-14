@@ -12,13 +12,14 @@
 // daycation plus 2h reached 7PM, so a 6PM check-in swallowed the whole slot.
 // Owner set it to 1h to keep those daycations sellable.
 //
-// Long buffer lowered 3h -> 2h (2026-08-14): the live Overnight window is
-// 7PM-5PM (22h, not the 21h/4PM the storefront's fallback windows assume), so
-// back-to-back Overnight stays only 3h apart never closed once. Two clears
-// same-day now: a 7PM Aug N checkout + 2h reaches 7PM Aug N+1, exactly meeting
-// the next Overnight's 7PM check-in.
+// Long buffer lowered 3h -> 1h (2026-08-14, flattened to match the short
+// buffer): with the live Overnight window at 7PM-5PM (22h, not the 21h/4PM
+// the storefront's fallback windows assume) and some bookings checking in
+// earlier than the standard 7PM/6PM slots, any long buffer above 1h kept
+// producing dates that were greyed out despite no real double-booking risk.
+// Every stay type now clears on the same 1h buffer.
 export const LONG_STAY_HOURS = 20;
-export const TURNOVER_LONG_HOURS = 2;
+export const TURNOVER_LONG_HOURS = 1;
 export const TURNOVER_SHORT_HOURS = 1;
 
 /** Turnover owed after a stay of `ms` milliseconds, in hours. */
