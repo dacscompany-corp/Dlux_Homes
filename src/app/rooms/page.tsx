@@ -128,12 +128,12 @@ function DiscountBadge({ promo, fontSize = 12, padding = "4px 9px" }: { promo: A
   const text = discountBadgeText(promo.discount_type, promo.discount_value);
   if (!text) return null;
   return (
-    <span style={{ flex: "none", padding, fontSize, fontWeight: 600, color: "#FFFCF4", background: "#B07848", whiteSpace: "nowrap" }}>{text}</span>
+    <span className="promo-badge" style={{ flex: "none", padding, fontSize, fontWeight: 600, color: "#FFFCF4", background: "#B07848", whiteSpace: "nowrap" }}>{text}</span>
   );
 }
 function SavingsPill({ amount, fontSize = 12, padding = "6px 11px" }: { amount: number; fontSize?: number; padding?: string }) {
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#E4F3E4", color: "#15803D", borderRadius: 999, padding, fontSize, fontWeight: 600, whiteSpace: "nowrap" }}>
+    <span className="promo-savings" style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#E4F3E4", color: "#15803D", borderRadius: 999, padding, fontSize, fontWeight: 600, whiteSpace: "nowrap" }}>
       <IcoCheckBold size={11} stroke={2.4} /> You save {pesoAmount(amount)}
     </span>
   );
@@ -163,11 +163,16 @@ type OfferRates = { price10hr: number; price21hr: number };
 // "Save 20%" — guests couldn't tell what they'd actually pay, whether the offer
 // covered their stay type, or how to claim it. Reading order is fixed:
 // what it is → what it costs → where it works → what to do.
-function PromoBanner({ promotions, roomId, rates, variant }: {
+function PromoBanner({ promotions, roomId, rates, variant, visible = true }: {
   promotions: ActivePromotion[] | undefined;
   roomId: string;
   rates: OfferRates;
   variant: "mobile" | "desktop";
+  // Desktop only: gates the entrance/sheen/pulse animation behind scroll
+  // visibility (see promoRef in BrowsePage) instead of firing on mount, where
+  // it raced the splash screen and finished unseen. Mobile ignores this — no
+  // scroll observer wired for that variant, so it keeps its old always-on card.
+  visible?: boolean;
 }) {
   // First promo expanded, the rest collapsed (design 2b / 3a).
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -270,7 +275,7 @@ function PromoBanner({ promotions, roomId, rates, variant }: {
   if (variant === "mobile") {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 14, background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 18, padding: 14, boxShadow: "0 4px 16px rgba(31,22,14,.05)", overflow: "hidden" }}>
+        <div className="promo-card--mobile" style={{ display: "flex", flexDirection: "column", gap: 14, background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 18, padding: 14, boxShadow: "0 4px 16px rgba(31,22,14,.05)", overflow: "hidden" }}>
 
           {/* Artwork bleeds past the card padding and keeps its real aspect
               ratio — the old 76px square cropped a banner that carries its
@@ -346,10 +351,12 @@ function PromoBanner({ promotions, roomId, rates, variant }: {
         </p>
       </div>
 
-      <div className="promo-card" style={{ display: "grid", gridTemplateColumns: "340px minmax(0, 1fr) auto", gap: 36, alignItems: "center", background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 22, padding: 22, boxShadow: "0 4px 16px rgba(31,22,14,.05)" }}>
+      <div className={`promo-card${visible ? " promo-card--in" : ""}`} style={{ display: "grid", gridTemplateColumns: "340px minmax(0, 1fr) auto", gap: 36, alignItems: "center", background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 22, padding: 22, boxShadow: "0 4px 16px rgba(31,22,14,.05)" }}>
         {expanded.image_url && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img className="promo-card__photo" src={expanded.image_url} alt="" style={{ width: "100%", height: "auto", maxHeight: 240, borderRadius: 16, objectFit: "contain", alignSelf: "center", background: "#2C2218", border: "1px solid #E0CEB2" }} />
+          <div className="promo-card__frame" style={{ width: "100%", maxHeight: 240, borderRadius: 16, alignSelf: "center", background: "#2C2218", border: "1px solid #E0CEB2", overflow: "hidden" }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img className="promo-card__photo" src={expanded.image_url} alt="" style={{ display: "block", width: "100%", height: "auto", maxHeight: 240, objectFit: "contain" }} />
+          </div>
         )}
         <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -443,6 +450,13 @@ export default function BrowsePage() {
   const stayCardsRef = useRef<HTMLDivElement>(null);
   const [stayCardsVisible, setStayCardsVisible] = useState(false);
 
+  // Reveal the offer card once it scrolls into view. Firing on mount instead
+  // raced the splash screen (~3s visible) — the card's entrance/sheen/pulse
+  // finished playing behind it, so guests never saw them. Scroll-triggered
+  // like every other section here, and replays each time it re-enters.
+  const promoRef = useRef<HTMLDivElement>(null);
+  const [promoVisible, setPromoVisible] = useState(false);
+
   // Reveal the "About this home" editorial section on scroll
   const aboutRef = useRef<HTMLDivElement>(null);
   const [aboutVisible, setAboutVisible] = useState(false);
@@ -499,6 +513,7 @@ export default function BrowsePage() {
     };
     const cleanups = [
       reveal(stayCardsRef.current, setStayCardsVisible),
+      reveal(promoRef.current, setPromoVisible),
       reveal(aboutRef.current, setAboutVisible),
       reveal(amenitiesRef.current, setAmenitiesVisible),
       reveal(reviewsRef.current, setReviewsVisible),
@@ -841,8 +856,8 @@ export default function BrowsePage() {
       </section>
 
       {/* PROMOTIONS */}
-      <section style={{ maxWidth: 1320, margin: "0 auto", padding: "64px 28px 72px" }}>
-        <PromoBanner promotions={activePromotions} roomId={room.id} rates={room} variant="desktop" />
+      <section ref={promoRef} style={{ maxWidth: 1320, margin: "0 auto", padding: "64px 28px 72px" }}>
+        <PromoBanner promotions={activePromotions} roomId={room.id} rates={room} variant="desktop" visible={promoVisible} />
       </section>
 
       {/* AMENITIES */}
