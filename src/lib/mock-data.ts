@@ -1,6 +1,11 @@
 export const mockRooms = [
   {
-    id: "00000000-0000-0000-0000-000000000001",
+    // Deliberately NOT uuid-shaped. The room page decides "is this a live
+    // property?" by testing the id against a uuid regex, so a mock with a
+    // well-formed uuid was treated as live: it queried the real availability
+    // endpoints with an id no haven has, got a 404, and drew a calendar with
+    // nothing crossed out — offering days that were already booked.
+    id: "mock-1",
     name: "D'Lux Homes — Tower 4 Grass Residences",
     description: "Cozy 1-bedroom unit with balcony and city view at Tower 4 Grass Residences. Perfect for couples, families, or solo travelers. Comes with a complimentary welcome pack and everything you need for a relaxing staycation.",
     size: "1 Bedroom",

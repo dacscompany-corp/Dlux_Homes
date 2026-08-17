@@ -472,37 +472,61 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   const { data: activePromotions } = useGetActivePromotionsQuery();
 
   // Unavailable days for the date picker: owner-set blocked dates + active bookings.
-  const { data: blockedRes, isLoading: blockedLoading } = useGetBlockedDatesQuery({ haven_id: id }, { skip: !isUuid });
+  const { data: blockedRes, isLoading: blockedLoading, isError: blockedError } = useGetBlockedDatesQuery({ haven_id: id }, { skip: !isUuid });
   // `null` means "not answered yet", distinct from `[]` = "answered, nothing
   // booked". Until the bookings land EVERY date looks free, so a calendar drawn
   // against the empty state would offer taken days for a moment and then cross
   // them out under the guest's cursor. Kept as one nullable value rather than a
   // separate loaded flag so it can be DERIVED below — the same reason the night
   // clamp isn't pushed back into state by an effect.
-  const [bookedRanges, setBookedRanges] = useState<{ ci: string; co: string; ciT: string; coT: string }[] | null>(null);
+  //
+  // A lookup that FAILED is not a lookup that found nothing. The error path used
+  // to resolve to `[]`, which is indistinguishable from "no stays booked" — so a
+  // 404 or a dropped connection drew a wide-open calendar offering days that sat
+  // in the middle of an existing booking. Availability fails CLOSED instead:
+  // `ranges: null` marks an answer we couldn't get, and the picker refuses to
+  // draw rather than guess. The answer is TAGGED with the id it was fetched for,
+  // so switching properties reads as "not answered yet" by derivation — resetting
+  // it with a setState at the top of the effect would trigger exactly the
+  // cascading re-render this file avoids everywhere else.
+  type Range = { ci: string; co: string; ciT: string; coT: string };
+  const [bookedResult, setBookedResult] = useState<{ forId: string; ranges: Range[] | null } | null>(null);
   useEffect(() => {
     if (!isUuid || !id) return;
     let active = true;
     fetch(`/api/bookings/room/${encodeURIComponent(id)}`)
-      .then((r) => (r.ok ? r.json() : null)).catch(() => null)
+      .then((r) => {
+        if (!r.ok) throw new Error(`availability lookup failed (${r.status})`);
+        return r.json();
+      })
       .then((j) => {
         if (!active) return;
         const rows = Array.isArray(j?.data) ? j.data : [];
-        // Resolves on failure too: a failed fetch answers "no ranges", and a
-        // calendar that never opens is worse than one showing owner blocks only.
-        setBookedRanges(rows.map((b: Record<string, unknown>) => ({
-          ci: String(b.check_in_date ?? ""),
-          co: String(b.check_out_date ?? ""),
-          ciT: String(b.check_in_time ?? "").slice(0, 5),
-          coT: String(b.check_out_time ?? "").slice(0, 5),
-        })));
-      });
+        setBookedResult({
+          forId: id,
+          ranges: rows.map((b: Record<string, unknown>) => ({
+            ci: String(b.check_in_date ?? ""),
+            co: String(b.check_out_date ?? ""),
+            ciT: String(b.check_in_time ?? "").slice(0, 5),
+            coT: String(b.check_out_time ?? "").slice(0, 5),
+          })),
+        });
+      })
+      .catch(() => { if (active) setBookedResult({ forId: id, ranges: null }); });
     return () => { active = false; };
   }, [isUuid, id]);
 
+  // An answer for a DIFFERENT id is no answer at all — back to "still loading".
+  const bookedForThisId = bookedResult?.forId === id ? bookedResult : null;
+  const bookedRanges = bookedForThisId?.ranges ?? null;
+  // Either live source going missing leaves the picker unable to tell a free
+  // day from a taken one, so both close it rather than silently narrowing what
+  // it knows: owner blocks vanishing is as wrong as bookings vanishing.
+  const availabilityFailed = isUuid && ((bookedForThisId != null && bookedForThisId.ranges === null) || blockedError);
   // Mock rooms have no bookings endpoint to wait on, so they are never loading.
-  // Both live sources feed `blockedDates`, so the picker waits on the pair.
-  const availabilityLoading = isUuid && (bookedRanges === null || blockedLoading);
+  // Both live sources feed `blockedDates`, so the picker waits on the pair — but
+  // a failure ends the wait, otherwise the loader would spin forever.
+  const availabilityLoading = isUuid && !availabilityFailed && (bookedRanges === null || blockedLoading);
 
   const [galleryIdx, setGalleryIdx] = useState(0);
   const [galleryDir, setGalleryDir] = useState<"left" | "right">("right");
@@ -1074,6 +1098,13 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                       <div style={{ minHeight: 300, display: "grid", placeItems: "center" }}>
                         <DluxLoader width={78} label={"Checking\navailability"} stacked />
                       </div>
+                    ) : availabilityFailed ? (
+                      <div style={{ minHeight: 160, display: "grid", placeItems: "center", textAlign: "center", padding: "18px 10px" }}>
+                        <div>
+                          <div style={{ fontSize: 13.5, fontWeight: 600, color: "#A8492F", marginBottom: 6 }}>We couldn&rsquo;t load availability</div>
+                          <div style={{ fontSize: 12.5, color: "#8B7458", lineHeight: 1.6 }}>Rather than show you dates we can&rsquo;t confirm are free, we&rsquo;ve hidden the calendar. Please refresh, or message us and we&rsquo;ll book you in.</div>
+                        </div>
+                      </div>
                     ) : (
                       <>
                         <Calendar selected={date} blocked={blockedDates} onSelect={(d) => { setDate(d); setDateOpen(false); setStayPicked(false); setCardStep(2); }} />
@@ -1581,6 +1612,13 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                         {availabilityLoading ? (
                           <div style={{ minHeight: 300, display: "grid", placeItems: "center" }}>
                             <DluxLoader width={78} label={"Checking\navailability"} stacked />
+                          </div>
+                        ) : availabilityFailed ? (
+                          <div style={{ minHeight: 160, display: "grid", placeItems: "center", textAlign: "center", padding: "18px 10px" }}>
+                            <div>
+                              <div style={{ fontSize: 14, fontWeight: 600, color: "#A8492F", marginBottom: 6 }}>We couldn&rsquo;t load availability</div>
+                              <div style={{ fontSize: 13, color: "#8B7458", lineHeight: 1.6 }}>Rather than show you dates we can&rsquo;t confirm are free, we&rsquo;ve hidden the calendar. Please refresh, or message us and we&rsquo;ll book you in.</div>
+                            </div>
                           </div>
                         ) : (
                           <>
