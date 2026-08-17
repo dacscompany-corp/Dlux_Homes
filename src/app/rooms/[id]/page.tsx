@@ -320,6 +320,34 @@ function PromoBanner({ promotions, rates, variant, promoCode = "" }: {
   // Declared before the early return below: a hook after a conditional return
   // breaks the rules of hooks.
   const [lightbox, setLightbox] = useState<string | null>(null);
+  // `.promo-card` ships at opacity:0 and only becomes visible once
+  // `.promo-card--in` is set. The browse page drives that from its own
+  // IntersectionObserver (promoRef in rooms/page.tsx) — but this card lives on
+  // the room page, which has no such observer, so the class was never applied
+  // and the offer sat permanently invisible in the gap under the carousel.
+  // Owning the observer HERE makes the component self-revealing wherever it is
+  // mounted, instead of silently depending on a parent that happens to wire a
+  // ref to it.
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el) return; // mobile variant never attaches the ref
+    // Without observer support, reveal it outright rather than leave a live
+    // offer invisible — failing open costs only an entrance animation. Deferred
+    // by a tick because setting state synchronously inside an effect is the
+    // cascading-render pattern this file avoids everywhere else.
+    if (typeof IntersectionObserver === "undefined") {
+      const t = setTimeout(() => setShown(true), 0);
+      return () => clearTimeout(t);
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => setShown(entry.isIntersecting),
+      { threshold: 0, rootMargin: "0px 0px -10% 0px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [promotions]);
   if (!promotions || promotions.length === 0) return null;
   const p = promotions[0];
   const { base, unitLabel } = baseRateFor(p, rates);
@@ -388,7 +416,7 @@ function PromoBanner({ promotions, rates, variant, promoCode = "" }: {
   }
 
   return (
-    <div className="promo-card" style={{ marginTop: 20, background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 20, overflow: "hidden", boxShadow: "0 4px 16px rgba(31,22,14,.05)" }}>
+    <div ref={cardRef} className={`promo-card${shown ? " promo-card--in" : ""}`} style={{ marginTop: 20, background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 20, overflow: "hidden", boxShadow: "0 4px 16px rgba(31,22,14,.05)" }}>
 
       {/* Artwork leads the card at full width. There is no CTA here — the
           booking panel alongside is the action — so the art plus the price
