@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
 import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
 import DluxMark from "@/components/brand/DluxMark";
@@ -80,6 +81,8 @@ import {
   Send,
   ChevronDown,
   Info,
+  SlidersHorizontal,
+  Bookmark,
 } from "lucide-react";
 
 // PromotionRecord types start_date/end_date as string, but server actions return
@@ -112,6 +115,25 @@ const statusConfig: Record<string, { label: string; color: string; bg: string; d
   rejected:     { label: "Rejected",   color: "#991b1b", bg: "#fee2e2", dot: "#ef4444" },
   expired:      { label: "Expired",    color: "#6b7280", bg: "#f3f4f6", dot: "#9ca3af" },
 };
+
+// The status filter groups the eight statuses by what the owner has to DO about
+// them, rather than listing them flat — the old panel was an alphabetical-ish
+// scroll where "Pending" (needs action now) sat next to "Expired" (needs
+// nothing). "Closed" spans both columns because it is the row nobody is
+// looking for and shouldn't take a whole column of prime space.
+//
+// Keys must exist in statusConfig above; STATUS_FILTER_KEYS is derived from
+// these groups so "Select all" can never fall out of sync with what is shown.
+const STATUS_GROUPS: { title: string; keys: string[]; span: number }[] = [
+  { title: "Needs your action", keys: ["pending", "awaiting-payment"], span: 1 },
+  { title: "In progress", keys: ["down-paid", "confirmed", "checked-in"], span: 1 },
+  { title: "Closed", keys: ["checked-out", "rejected", "expired"], span: 2 },
+];
+const STATUS_FILTER_KEYS = STATUS_GROUPS.flatMap((g) => g.keys);
+
+// Remembered across visits — the owner works the same queue every day, and
+// re-picking "Pending + Awaiting Payment" on every page load was pure friction.
+const STATUS_FILTER_KEY = "dlux-admin-status-filters";
 
 // Normalize an RTK/fetch result to an array of rows, whether it arrives as a
 // bare array, a { data: [...] } envelope, or undefined/error object.
@@ -151,7 +173,57 @@ export default function OwnerDashboard() {
   const { data: bookingsData, refetch: refetchBookings } = useGetBookingsQuery();
   const [newBookingOpen, setNewBookingOpen] = useState(false);
   const [statusFilterOpen, setStatusFilterOpen] = useState(false);
+  // The panel is rendered through a PORTAL rather than inline, because the
+  // bookings card it sits in is `overflow-hidden` (it needs to be, to clip the
+  // table against its own border) — which silently cut the panel off at the
+  // card's bottom edge. No amount of flipping or max-height fixes a clipping
+  // ancestor; the panel has to leave the subtree entirely.
+  //
+  // Portalling means position:fixed in viewport coordinates, so this tracks the
+  // button's rect and re-reads it whenever the page moves under it.
+  const statusFilterBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [statusBtnRect, setStatusBtnRect] = useState<DOMRect | null>(null);
+  useLayoutEffect(() => {
+    if (!statusFilterOpen) return;
+    const measure = () => {
+      const r = statusFilterBtnRef.current?.getBoundingClientRect();
+      if (r) setStatusBtnRect(r);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    // Capture phase: the dashboard scrolls in an inner container, not the
+    // window, so a bubbling listener would never hear it.
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
+  }, [statusFilterOpen]);
+  // Estimated height — enough to choose a side. Measuring the real node would
+  // need a first paint to size against, which shows as a visible jump.
+  const STATUS_PANEL_H = 430;
+  const statusFilterUp = !!statusBtnRect
+    && window.innerHeight - statusBtnRect.bottom < STATUS_PANEL_H
+    && statusBtnRect.top > window.innerHeight - statusBtnRect.bottom;
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
+  // Restore in an effect rather than in useState's initialiser: reading
+  // localStorage during the first render makes the server and client markup
+  // disagree and React throws a hydration mismatch.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(STATUS_FILTER_KEY);
+      if (!saved) return;
+      const parsed = JSON.parse(saved);
+      // Drop anything no longer in the group list, so a renamed or retired
+      // status can't leave the owner with an invisible filter that silently
+      // hides every booking.
+      if (Array.isArray(parsed)) setStatusFilters(parsed.filter((k) => STATUS_FILTER_KEYS.includes(k)));
+    } catch { /* ignore malformed/unavailable storage */ }
+  }, []);
+  const applyStatusFilters = useCallback((next: string[]) => {
+    setStatusFilters(next);
+    try { localStorage.setItem(STATUS_FILTER_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  }, []);
   const [recentStatusFilterOpen, setRecentStatusFilterOpen] = useState(false);
   const [recentStatusFilters, setRecentStatusFilters] = useState<string[]>([]);
   const { data: havensData }   = useGetHavensQuery({});
@@ -586,6 +658,14 @@ export default function OwnerDashboard() {
   const filteredAdminBookings = statusFilters.length
     ? allAdminBookings.filter((b) => statusFilters.includes(b.status))
     : allAdminBookings;
+  // Counts come from the UNFILTERED list on purpose: they tell the owner how
+  // much is in each status, so counting only what survives the current filter
+  // would show 0 against every box they haven't ticked.
+  const statusCounts = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const b of allAdminBookings) out[b.status] = (out[b.status] ?? 0) + 1;
+    return out;
+  }, [allAdminBookings]);
   const recentAdminBookings = recentStatusFilters.length
     ? allAdminBookings.filter((b) => recentStatusFilters.includes(b.status))
     : allAdminBookings;
@@ -1228,7 +1308,24 @@ export default function OwnerDashboard() {
                                 <LogIn className="w-3.5 h-3.5" />
                               </button>
                             )}
-                            {booking.status === "checked-in" && (
+                            {booking.status === "checked-in" && booking.balance > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => openCheckIn({ id: booking.id, displayId: booking.displayId, guest: booking.guest, remaining: booking.balance })}
+                                disabled={bookingUpdating}
+                                title="Collect remaining balance + deposit (sends the house rules)"
+                                className="p-1.5 rounded-lg transition-colors disabled:opacity-50"
+                                style={{ color: "#6b7280" }}
+                                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "#fef3c7"; (e.currentTarget as HTMLElement).style.color = "#b45309"; }}
+                                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; (e.currentTarget as HTMLElement).style.color = "#6b7280"; }}
+                              >
+                                <Wallet className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            {/* Check-out only opens once the balance is settled —
+                                Collect has to happen first, so the two never
+                                show side by side. */}
+                            {booking.status === "checked-in" && booking.balance <= 0 && (
                               <button
                                 type="button"
                                 onClick={() => handleCheckOut(booking.id)}
@@ -1379,46 +1476,101 @@ export default function OwnerDashboard() {
             <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: "#ece5d4" }}>
               <div>
                 <h3 className="font-bold" style={{ color: "#1a1a1a" }}>All Bookings</h3>
-                <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{filteredAdminBookings.length} total records</p>
+                <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>
+                  {statusFilters.length
+                    ? `${filteredAdminBookings.length} of ${allAdminBookings.length} records`
+                    : `${allAdminBookings.length} total records`}
+                </p>
               </div>
               <div className="flex items-center gap-2">
                 <div style={{ position: "relative" }}>
-                  <button type="button" onClick={() => setStatusFilterOpen((v) => !v)}
-                    className="flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium cursor-pointer"
+                  <button type="button" ref={statusFilterBtnRef} onClick={() => setStatusFilterOpen((v) => !v)}
+                    className="flex items-center gap-2 px-3.5 py-2 text-sm font-medium cursor-pointer"
                     style={{ backgroundColor: "#F7F0E3", color: "#5a4a3a", border: "1px solid #D4BFA0" }}>
-                    Status{statusFilters.length > 0 ? ` (${statusFilters.length})` : ""}
+                    <SlidersHorizontal className="w-3.5 h-3.5" />
+                    Status
+                    {statusFilters.length > 0 && (
+                      <span style={{ fontFamily: "var(--font-geist-mono), ui-monospace, monospace", fontSize: 11, padding: "1px 6px", background: "#1f1b16", color: "#faf7f1" }}>{statusFilters.length}</span>
+                    )}
                     <ChevronDown className="w-3.5 h-3.5" style={{ transform: statusFilterOpen ? "rotate(180deg)" : "none", transition: "transform .15s ease" }} />
                   </button>
-                  {statusFilterOpen && (
+                  {statusFilterOpen && statusBtnRect && typeof document !== "undefined" && createPortal(
                     <>
                       <div onClick={() => setStatusFilterOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 69 }} />
-                      <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 70, width: 220, background: "#ffffff", border: "1px solid #ece5d4", boxShadow: "0 18px 44px -16px rgba(40,30,18,.30)", borderRadius: 4, overflow: "hidden" }}>
-                        <div className="px-3 py-2 flex items-center justify-between" style={{ borderBottom: "1px solid #F7F0E3" }}>
-                          <span style={{ fontSize: 11.5, fontWeight: 600, color: "#8B6344", textTransform: "uppercase", letterSpacing: ".06em" }}>Filter by status</span>
-                          {statusFilters.length > 0 && (
-                            <button type="button" onClick={() => setStatusFilters([])} style={{ fontSize: 11.5, color: "#B07848", cursor: "pointer", background: "transparent", border: "none" }}>Clear</button>
-                          )}
+                      {/* Wide enough to show all eight statuses at once — the old
+                          220px panel scrolled, so half the statuses were hidden
+                          behind a scrollbar the owner had to discover. Capped
+                          against the viewport so it can't overflow a narrow window. */}
+                      <div style={{
+                        position: "fixed",
+                        // Right-aligned to the button, in viewport coordinates.
+                        right: Math.max(16, window.innerWidth - statusBtnRect.right),
+                        ...(statusFilterUp
+                          ? { bottom: window.innerHeight - statusBtnRect.top + 8 }
+                          : { top: statusBtnRect.bottom + 8 }),
+                        zIndex: 70, width: 520, maxWidth: "calc(100vw - 32px)",
+                        // Last-resort clamp: on a genuinely short window neither
+                        // side fits, and an unreachable footer is worse than a
+                        // scrollbar the design would rather not have.
+                        maxHeight: "calc(100vh - 32px)", overflowY: "auto",
+                        background: "#ffffff", border: "1px solid #e4dac5", boxShadow: "0 24px 56px -18px rgba(40,30,18,.34)", borderRadius: 6,
+                      }}>
+                        <div style={{ padding: "13px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #F2EADA", background: "#FCFAF5" }}>
+                          <span style={{ flex: "none", whiteSpace: "nowrap", fontSize: 11.5, fontWeight: 600, color: "#8B6344", textTransform: "uppercase", letterSpacing: ".06em" }}>Filter by status</span>
+                          <div style={{ display: "flex", flex: "none", alignItems: "center", gap: 14, whiteSpace: "nowrap" }}>
+                            <button type="button" onClick={() => applyStatusFilters(STATUS_FILTER_KEYS)} style={{ fontFamily: "inherit", fontSize: 12.5, color: "#5a4a3a", background: "transparent", border: 0, cursor: "pointer" }}>Select all</button>
+                            <span style={{ width: 1, height: 12, background: "#e4dac5" }} />
+                            <button type="button" onClick={() => applyStatusFilters([])} style={{ fontFamily: "inherit", fontSize: 12.5, color: "#B07848", background: "transparent", border: 0, cursor: "pointer" }}>Clear</button>
+                          </div>
                         </div>
-                        <div style={{ maxHeight: 260, overflowY: "auto" }}>
-                          {Object.entries(statusConfig).map(([key, cfg]) => {
-                            const checked = statusFilters.includes(key);
-                            return (
-                              <label key={key} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer"
-                                style={{ fontSize: 13, color: "#1f1b16" }}
-                                onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#faf7f1"}
-                                onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
-                                <span style={{ width: 16, height: 16, borderRadius: 4, border: `1.5px solid ${checked ? "#1f1b16" : "#D4BFA0"}`, background: checked ? "#1f1b16" : "transparent", display: "grid", placeItems: "center", flex: "none" }}>
-                                  {checked && <Check className="w-3 h-3" style={{ color: "#fff" }} />}
-                                </span>
-                                <input type="checkbox" checked={checked} onChange={() => setStatusFilters((prev) => checked ? prev.filter((s) => s !== key) : [...prev, key])} style={{ display: "none" }} />
-                                <span style={{ width: 6, height: 6, borderRadius: "50%", background: cfg.dot, flex: "none" }} />
-                                {cfg.label}
-                              </label>
-                            );
-                          })}
+                        {/* The 1px gap over a sand background is what draws the
+                            dividers between groups — no borders to keep aligned. */}
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 1px", background: "#F2EADA" }}>
+                          {STATUS_GROUPS.map((g) => (
+                            <div key={g.title} style={{ background: "#fff", padding: "14px 8px 14px 14px", gridColumn: `span ${g.span}` }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 6px 9px" }}>
+                                <span style={{ fontFamily: "var(--font-geist-mono), ui-monospace, monospace", fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".1em", color: "#a2957f" }}>{g.title}</span>
+                                <span style={{ flex: 1, height: 1, background: "#F2EADA" }} />
+                              </div>
+                              <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                                {g.keys.map((key) => {
+                                  const cfg = statusConfig[key];
+                                  if (!cfg) return null;
+                                  const checked = statusFilters.includes(key);
+                                  return (
+                                    <label key={key}
+                                      onClick={() => applyStatusFilters(checked ? statusFilters.filter((s) => s !== key) : [...statusFilters, key])}
+                                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 4, fontSize: 13.5, color: "#1f1b16", cursor: "pointer", background: checked ? "#FAF6EE" : "transparent" }}
+                                      onMouseEnter={(e) => { if (!checked) (e.currentTarget as HTMLElement).style.background = "#FAF6EE"; }}
+                                      onMouseLeave={(e) => { if (!checked) (e.currentTarget as HTMLElement).style.background = "transparent"; }}>
+                                      <span style={{ width: 16, height: 16, flex: "none", borderRadius: 4, display: "grid", placeItems: "center", border: `1.5px solid ${checked ? "#1f1b16" : "#D4BFA0"}`, background: checked ? "#1f1b16" : "transparent" }}>
+                                        {checked && <Check className="w-[11px] h-[11px]" style={{ color: "#fff" }} />}
+                                      </span>
+                                      <span style={{ width: 7, height: 7, flex: "none", borderRadius: "50%", background: cfg.dot }} />
+                                      <span style={{ flex: 1, whiteSpace: "nowrap" }}>{cfg.label}</span>
+                                      {statusFilters.length > 0 && (
+                                        <span style={{ fontFamily: "var(--font-geist-mono), ui-monospace, monospace", fontSize: 11.5, color: "#a2957f" }}>{statusCounts[key] ?? 0}</span>
+                                      )}
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div style={{ padding: "11px 18px", borderTop: "1px solid #F2EADA", background: "#FCFAF5", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <span style={{ fontSize: 12.5, color: "#8a8276" }}>
+                            {statusFilters.length
+                              ? `${statusFilters.length} selected · ${filteredAdminBookings.length} bookings`
+                              : "Nothing selected — showing everything"}
+                          </span>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#a2957f" }}>
+                            <Bookmark className="w-3 h-3" /> Filter is remembered
+                          </span>
                         </div>
                       </div>
-                    </>
+                    </>,
+                    document.body,
                   )}
                 </div>
                 <button onClick={() => setNewBookingOpen(true)} className="flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-white cursor-pointer" style={{ backgroundColor: "#1f1b16" }}>
@@ -1426,6 +1578,29 @@ export default function OwnerDashboard() {
                 </button>
               </div>
             </div>
+            {/* Active filters, restated outside the panel. Once the dropdown
+                closes the only trace of a filter was a number on the button —
+                so a remembered filter from a previous visit looked like
+                "the bookings have disappeared". */}
+            {statusFilters.length > 0 && (
+              <div style={{ padding: "11px 24px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", borderBottom: "1px solid #F2EADA", background: "#FCFAF5" }}>
+                <span style={{ fontSize: 12, color: "#8a8276", marginRight: 2 }}>Showing</span>
+                {statusFilters.map((key) => {
+                  const cfg = statusConfig[key];
+                  if (!cfg) return null;
+                  return (
+                    <span key={key} onClick={() => applyStatusFilters(statusFilters.filter((s) => s !== key))}
+                      style={{ display: "inline-flex", flex: "none", whiteSpace: "nowrap", alignItems: "center", gap: 7, padding: "4px 8px 4px 9px", borderRadius: 999, fontSize: 12.5, color: "#4a4034", background: "#fff", border: "1px solid #e4dac5", cursor: "pointer" }}>
+                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: cfg.dot }} />
+                      {cfg.label}
+                      <X className="w-[11px] h-[11px]" style={{ color: "#a2957f" }} />
+                    </span>
+                  );
+                })}
+                <button type="button" onClick={() => applyStatusFilters([])} style={{ fontFamily: "inherit", fontSize: 12.5, color: "#B07848", background: "transparent", border: 0, cursor: "pointer", padding: "4px 2px" }}>Clear all</button>
+              </div>
+            )}
+
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
@@ -1520,7 +1695,10 @@ export default function OwnerDashboard() {
                                 onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#fef3c7";(e.currentTarget as HTMLElement).style.color="#b45309";}}
                                 onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><Wallet className="w-3.5 h-3.5"/></button>
                             )}
-                            {booking.status === "checked-in" && (
+                            {/* Check-out only opens once the balance is settled —
+                                Collect has to happen first, so the two never
+                                show side by side. */}
+                            {booking.status === "checked-in" && booking.balance <= 0 && (
                               <button type="button" onClick={() => handleCheckOut(booking.id)} disabled={bookingUpdating} title="Check out (complete booking)" className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#6b7280" }}
                                 onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#f3f4f6";(e.currentTarget as HTMLElement).style.color="#374151";}}
                                 onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><LogOut className="w-3.5 h-3.5"/></button>
@@ -1555,7 +1733,7 @@ export default function OwnerDashboard() {
                             : "Try clearing or changing the status filter."}
                         </p>
                         {statusFilters.length > 0 && (
-                          <button type="button" onClick={() => setStatusFilters([])}
+                          <button type="button" onClick={() => applyStatusFilters([])}
                             className="cursor-pointer"
                             style={{ marginTop: 14, fontSize: 12.5, fontWeight: 500, color: "#5a4a3a", background: "#F7F0E3", border: "1px solid #D4BFA0", borderRadius: 4, padding: "7px 14px" }}>
                             Clear status filter

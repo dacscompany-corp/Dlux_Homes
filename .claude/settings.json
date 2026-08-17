@@ -41,7 +41,18 @@
       "Bash(node --env-file=.env scripts/test-turnover.mjs)",
       "Bash(node --env-file=.env \"C:/Users/JOHNAE~1/AppData/Local/Temp/claude/c--Users-John-Aerol-Tapales-Documents-D-Lux-Homes/3b7f836f-4f55-4763-b17f-a1dd559ec11e/scratchpad/verify-commit.mjs\")",
       "Bash(grep -vE \"^[+-]\\\\s*\\(//|\\\\*|/\\\\*\\)\")",
-      "Bash(grep -vE \"^[+-]\\\\s*$\")"
+      "Bash(grep -vE \"^[+-]\\\\s*$\")",
+      "Bash(grep -rn \"DL-BK\\\\|BK\\\\${\" src/lib/booking-store.ts src/app/checkout/page.tsx)",
+      "Bash(sed 's/process.env.//')",
+      "Bash(grep -oE \"status: \\\\\"[a-z-]+\\\\\"|// [A-Z][^\\\\n]{0,60}\")",
+      "Bash(xargs -n1 basename)",
+      "Bash(awk '/^import \\\\{$/,/from \"lucide-react\"/' src/app/admin/owners/page.tsx)",
+      "Bash(grep -iE \"^\\(Check|ChevronDown|X|Bookmark|SlidersHorizontal|Plus\\)$\")",
+      "Bash(grep -A20 \"admin.owners.page.tsx$\")",
+      "Bash(awk 'NR>=1478 && NR<=1560 && /^\\\\s*<\\\\/>\\\\s*$|^\\\\s*\\\\\\)\\\\}\\\\s*$/ {print NR\": \"$0}' src/app/admin/owners/page.tsx)",
+      "Bash(cp \"C:/Users/JOHNAE~1/AppData/Local/Temp/claude/c--Users-John-Aerol-Tapales-Documents-D-Lux-Homes/b9593ce0-5647-4c44-8bc2-fd92803079a8/scratchpad/q.js\" ./_q.cjs)",
+      "Bash(node ./_q.cjs)",
+      "Bash(rm -f ./_q.cjs)"
     ]
   }
 }
