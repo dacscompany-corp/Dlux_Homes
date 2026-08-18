@@ -19,10 +19,10 @@ import {
 } from "@/lib/promo-offer";
 import { IcoZoom, PromoLightbox } from "@/components/PromoLightbox";
 import { havenToRoom } from "@/lib/haven-adapter";
-import { spanHours } from "@/lib/stay-window";
+import { fmtClock, spanHours } from "@/lib/stay-window";
 import { turnoverMs } from "@/lib/turnover";
 import DluxLoader, { DluxLoaderPage } from "@/components/brand/DluxLoader";
-import { stayTotal, isWeekendOrHoliday, extraPaxFee, bundleNightlyRate, bundleExtraPaxFee } from "@/lib/pricing";
+import { stayTotal, isWeekendOrHoliday, extraPaxFee, bundleNightlyRate, bundleExtraPaxFee, addDaysISO } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import type { Room } from "@/types";
 
@@ -81,6 +81,13 @@ function formatDateLong(iso: string) {
   if (!iso) return "";
   const d = new Date(iso + "T00:00:00");
   return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+}
+
+/** "Wed, Aug 26" — the year is already stated by the arrival date above it. */
+function formatDateMedium(iso: string) {
+  if (!iso) return "";
+  const d = new Date(iso + "T00:00:00");
+  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 }
 
 // ── Calendar ──────────────────────────────────────────────────
@@ -775,6 +782,22 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   const stayNights = isOvernight ? Math.min(Math.max(1, nights), Math.max(1, maxNights)) : 1;
   const nightsCapped = isOvernight && !!date && maxNights > 0 && nights > maxNights;
 
+  // The date the guest actually leaves. "6 nights" alone doesn't answer it, and
+  // the guest shouldn't have to count forward from the arrival date to find out
+  // when they have to be out.
+  //
+  // Mirrors the rule in checkout's handleSubmit — it is the only place the real
+  // check_out_date is computed, and a stay panel quoting a different one would
+  // be worse than quoting none. A 10h session that ends earlier on the clock
+  // than it starts (Nightcation, 7 PM → 5 AM) rolls into the next day.
+  const checkOutDate = !date
+    ? ""
+    : isOvernight
+      ? addDaysISO(date, stayNights)
+      : fmtClock(selectedWindow.checkOut) <= fmtClock(selectedWindow.checkIn)
+        ? addDaysISO(date, 1)
+        : date;
+
   // D'Lux: rate depends on stay type + whether each night is a weekend/holiday.
   // Base rate covers the first `basePax` (2) guests; each guest beyond that adds
   // a per-pax fee CHARGED PER NIGHT. Only adults + young adults are chargeable —
@@ -1208,6 +1231,9 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                     <div>
                       <div style={{ fontSize: 14, fontWeight: 600 }}>How many nights?</div>
                       <div style={{ fontSize: 11.5, color: "#8B7458", marginTop: 1 }}>{peso(selectedWindow.stayType === "10" ? room.price10hr : room.price21hr)} × {stayNights} night{stayNights > 1 ? "s" : ""}</div>
+                      {/* A night count alone leaves the guest counting forward on
+                          a calendar to find out when they have to be out. */}
+                      <div style={{ fontSize: 11.5, color: "#1F160E", fontWeight: 600, marginTop: 3 }}>Check-out {formatDateMedium(checkOutDate)}</div>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
                       <button aria-label="Fewer nights" onClick={() => setNights(Math.max(1, stayNights - 1))} style={{ width: 34, height: 34, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: stayNights > 1 ? "pointer" : "not-allowed", opacity: stayNights > 1 ? 1 : 0.4 }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
@@ -1281,6 +1307,9 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
               {date && stayChosen && (
                 <div style={{ borderTop: "1px solid #EFE4CE", paddingTop: 15, display: "flex", flexDirection: "column", gap: 8, fontSize: 13.5 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#4A3A2A" }}><span style={{ whiteSpace: "nowrap" }}>{selectedWindow.label} · {isOvernight ? `${stayNights} night${stayNights > 1 ? "s" : ""}${bundleLabel ? ` · ${bundleLabel}` : ""}` : (isWeekendRate ? "Weekend/Holiday" : "Weekday")}</span><span>{peso(basePrice)}</span></div>
+                  {/* The stay in dates, not just a night count — this block is the
+                      last thing read before Reserve. */}
+                  {date && <div style={{ fontSize: 12, color: "#8B7458", marginTop: -2 }}>{formatDateMedium(date)} &rarr; {formatDateMedium(checkOutDate)}</div>}
                   {/* Bundle stays quote one flat nightly rate, so show it —
                       otherwise a guest can't tell why the room total moved when
                       they added a 3rd guest. */}
@@ -1717,6 +1746,9 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                         <div>
                           <div style={{ fontSize: 14, fontWeight: 600 }}>How many nights?</div>
                           <div style={{ fontSize: 12, color: "#8B7458", marginTop: 1 }}>{peso(selectedWindow.stayType === "10" ? room.price10hr : room.price21hr)} × {stayNights} night{stayNights > 1 ? "s" : ""}</div>
+                          {/* A night count alone leaves the guest counting forward on
+                              a calendar to find out when they have to be out. */}
+                          <div style={{ fontSize: 12, color: "#1F160E", fontWeight: 600, marginTop: 3 }}>Check-out {formatDateMedium(checkOutDate)}</div>
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
                           <button aria-label="Fewer nights" onClick={() => setNights(Math.max(1, stayNights - 1))} style={{ width: 32, height: 32, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: stayNights > 1 ? "pointer" : "not-allowed", opacity: stayNights > 1 ? 1 : 0.4 }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
@@ -1788,6 +1820,9 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                   {date && stayChosen && (
                     <div style={{ borderTop: "1px solid #EFE4CE", paddingTop: 16, display: "flex", flexDirection: "column", gap: 8, fontSize: 13.5 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#4A3A2A" }}><span style={{ whiteSpace: "nowrap" }}>{selectedWindow.label} · {isOvernight ? `${stayNights} night${stayNights > 1 ? "s" : ""}${bundleLabel ? ` · ${bundleLabel}` : ""}` : (isWeekendRate ? "Weekend/Holiday" : "Weekday")}</span><span>{peso(basePrice)}</span></div>
+                      {/* The stay in dates, not just a night count — this block is the
+                          last thing read before Reserve. */}
+                      {date && <div style={{ fontSize: 12, color: "#8B7458", marginTop: -2 }}>{formatDateMedium(date)} &rarr; {formatDateMedium(checkOutDate)}</div>}
                   {/* Bundle stays quote one flat nightly rate, so show it —
                       otherwise a guest can't tell why the room total moved when
                       they added a 3rd guest. */}
