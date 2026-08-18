@@ -294,6 +294,9 @@ function IcoCheckBold({ size = 12, stroke = 2.6 }: { size?: number; stroke?: num
 function IcoCross() {
   return <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>;
 }
+function IcoCopySm() {
+  return <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>;
+}
 
 // "Works on" chips — the excluded stay types stay visible (dashed) because the
 // guest's question is "does this work for me?", which needs the no as much as
@@ -337,6 +340,14 @@ function PromoBanner({ promotions, rates, variant, promoCode = "" }: {
   // ref to it.
   const cardRef = useRef<HTMLDivElement>(null);
   const [shown, setShown] = useState(false);
+  // Copy confirmation for the voucher stub below. Reverts on its own so the
+  // button doesn't sit on "Copied" forever and stop reading as a control.
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1600);
+    return () => clearTimeout(t);
+  }, [copied]);
   useEffect(() => {
     const el = cardRef.current;
     if (!el) return; // mobile variant never attaches the ref
@@ -357,7 +368,7 @@ function PromoBanner({ promotions, rates, variant, promoCode = "" }: {
   }, [promotions]);
   if (!promotions || promotions.length === 0) return null;
   const p = promotions[0];
-  const { base, unitLabel } = baseRateFor(p, rates);
+  const { base } = baseRateFor(p, rates);
   const price = offerPriceFor(base, p);
   const savings = Math.max(0, base - price);
   // A promotion with no real discount is an announcement and makes no price
@@ -442,44 +453,77 @@ function PromoBanner({ promotions, rates, variant, promoCode = "" }: {
         </button>
       )}
 
-      <div className="promo-card__body" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 24, alignItems: "center", padding: 20 }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 11, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            {!p.image_url && (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 7, background: "#F3E4CB", color: "#8C5A2E", borderRadius: 999, padding: "5px 11px", fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 10.5, letterSpacing: ".14em", whiteSpace: "nowrap" }}>
-                <IcoTagSm /> SPECIAL OFFER
-              </span>
-            )}
-            <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 26, fontWeight: 500, lineHeight: 1.05, letterSpacing: "-.02em", color: "#1F160E", margin: 0 }}>{p.title}</h3>
-            {discounted && badgeText && <span style={{ padding: "5px 11px", fontSize: 12, fontWeight: 600, color: "#FFFCF4", background: "#B07848", whiteSpace: "nowrap" }}>{badgeText}</span>}
-          </div>
-          {p.description && <p style={{ fontSize: 14, lineHeight: 1.5, color: "#4A3A2A", margin: 0, maxWidth: "52ch" }}>{p.description}</p>}
-          {scope && <StayTypeChips scope={scope} />}
-          <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-            <span style={{ color: "#15803D", flex: "none", display: "inline-flex" }}><IcoCheckBold size={15} stroke={2.4} /></span>
-            <span style={{ fontSize: 13, color: "#4A3A2A" }}>
-              {!discounted
-                ? "Pick your dates on the right to book this home."
-                : appliedNow
-                  ? isVoucherPromo
-                    ? `Code ${p.discount_code} applied — it's in the price on the right.`
-                    : "Already applied to the price on the right. No code needed."
-                  : `Enter code ${p.discount_code} at checkout to get this price.`}
+      {/* A plain stack since the price panel came out. Everything used to hug
+          the left of a full-width card because each row was only as wide as
+          its own content; the chips and the claim line now share one row (see
+          below) so the block spans the card rather than trailing off at 55%. */}
+      <div className="promo-card__body" style={{ display: "flex", flexDirection: "column", gap: 11, padding: 20, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          {!p.image_url && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 7, background: "#F3E4CB", color: "#8C5A2E", borderRadius: 999, padding: "5px 11px", fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 10.5, letterSpacing: ".14em", whiteSpace: "nowrap" }}>
+              <IcoTagSm /> SPECIAL OFFER
             </span>
-          </div>
+          )}
+          <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 26, fontWeight: 500, lineHeight: 1.05, letterSpacing: "-.02em", color: "#1F160E", margin: 0 }}>{p.title}</h3>
+          {discounted && badgeText && <span style={{ padding: "5px 11px", fontSize: 12, fontWeight: 600, color: "#FFFCF4", background: "#B07848", whiteSpace: "nowrap" }}>{badgeText}</span>}
         </div>
-        {discounted && (
-          <div className="promo-card__price" style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, paddingLeft: 24, borderLeft: "1px solid #EFE4CE" }}>
-            <span style={{ fontSize: 12.5, color: "#8B7458", textDecoration: "line-through", whiteSpace: "nowrap" }}>{pesoAmount(base)}</span>
-            <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-              <span style={{ fontFamily: "'Fraunces', serif", fontSize: 34, fontWeight: 500, lineHeight: 1, color: "#1F160E" }}>{pesoAmount(price)}</span>
-              <span style={{ fontSize: 12.5, color: "#8B7458", whiteSpace: "nowrap" }}>{unitLabel}</span>
-            </span>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#E4F3E4", color: "#15803D", borderRadius: 999, padding: "6px 11px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}>
-              <IcoCheckBold size={11} stroke={2.4} /> You save {pesoAmount(savings)}
-            </span>
-          </div>
-        )}
+        {p.description && <p style={{ fontSize: 14, lineHeight: 1.5, color: "#4A3A2A", margin: 0, maxWidth: "52ch" }}>{p.description}</p>}
+        {/* What the offer covers, and how to get it — one row, pushed to
+            opposite edges so the pair spans the card. `space-between` does
+            the right thing at both ends: with no stay-type scope the claim
+            line is the only child and sits left, and when the row wraps on a
+            narrow screen each line starts at the left edge. No offer price
+            here — it quoted one stay type's rate while the promo covered
+            several priced differently, so guests read "₱1,299 / session" as
+            the rate for all of them. The booking panel quotes the real price
+            for the stay type actually chosen. */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginTop: 2 }}>
+          {scope && <StayTypeChips scope={scope} />}
+          {/* Three states, three shapes — the shape is the message.
+              A code the guest still has to carry to checkout is a THING, so it
+              gets a voucher stub: dashed rules, the code in mono, and a Copy
+              button. Set as a sentence it read as the weakest element in the
+              row, and left the guest to select 10 characters by hand.
+              An offer already applied is a STATE, not an action, so it stays a
+              quiet green line with nothing to press. */}
+          {isVoucherPromo && discounted && !appliedNow ? (
+            <div style={{ display: "inline-flex", alignItems: "stretch", border: "1px solid #E0CEB2", borderRadius: 12, background: "#FFFCF4", overflow: "hidden", maxWidth: "100%", boxShadow: "0 1px 2px rgba(31,22,14,.05)" }}>
+              {/* Tinted to the same #F3E4CB as the SPECIAL OFFER pill above —
+                  the label is the quietest part and should sit back. */}
+              <span style={{ display: "inline-flex", alignItems: "center", padding: "0 13px", background: "#F3E4CB", color: "#8C5A2E", fontSize: 10, fontWeight: 700, letterSpacing: ".12em", textTransform: "uppercase", whiteSpace: "nowrap" }}>
+                Use at checkout
+              </span>
+              {/* The code is the reason this element exists, so it gets the
+                  size, the darkest ink and the widest chamber. */}
+              <span style={{ display: "inline-flex", alignItems: "center", padding: "10px 16px", fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 16, fontWeight: 500, letterSpacing: ".12em", color: "#1F160E", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {p.discount_code}
+              </span>
+              {/* The tear line. Dashes belong HERE, not around the outside —
+                  a perforation runs where a stub is meant to come apart, and
+                  a dashed outer border just made the whole element look
+                  provisional. Drawn as a repeating gradient so it stays a
+                  crisp 1px column instead of a border that frays at the
+                  rounded corners. */}
+              <span aria-hidden="true" style={{ width: 1, flex: "none", backgroundImage: "linear-gradient(to bottom, #C9A46B 0 4px, transparent 4px 8px)", backgroundSize: "1px 8px" }} />
+              <button type="button" aria-label={`Copy promo code ${p.discount_code}`}
+                onClick={() => { navigator.clipboard?.writeText(p.discount_code!).then(() => setCopied(true), () => {}); }}
+                style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "0 15px", background: copied ? "#15803D" : "#1F160E", border: "none", color: "#FFFCF4", font: "inherit", fontSize: 12.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", transition: "background .18s" }}>
+                {copied ? <IcoCheckBold size={12} stroke={2.6} /> : <IcoCopySm />}{copied ? "Copied" : "Copy"}
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
+              <span style={{ color: discounted ? "#15803D" : "#8B7458", flex: "none", display: "inline-flex" }}><IcoCheckBold size={15} stroke={2.4} /></span>
+              <span style={{ fontSize: 13, color: "#4A3A2A" }}>
+                {!discounted
+                  ? "Pick your dates on the right to book this home."
+                  : isVoucherPromo
+                    ? `Code ${p.discount_code} applied — it's in the price on the right.`
+                    : "Already applied to the price on the right. No code needed."}
+              </span>
+            </div>
+          )}
+        </div>
       </div>
       <PromoLightbox src={lightbox} onClose={() => setLightbox(null)} />
     </div>
@@ -1438,10 +1482,8 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
             .rd-book { position: static !important; top: auto !important; margin-top: 28px; }
             .rd-3col { grid-template-columns: 1fr !important; }
             .rd-2col { grid-template-columns: 1fr !important; }
-            /* Offer card stacks: photo full width, then copy, then the price
-               column left-aligned with its divider removed. */
-            .promo-card__body { grid-template-columns: 1fr !important; gap: 18px !important; }
-            .promo-card__price { align-items: flex-start !important; padding-left: 0 !important; border-left: none !important; }
+            /* Offer card stacks: photo full width, then the copy. */
+            .promo-card__body { gap: 14px !important; }
           }
           .promo-card__photo { transition: transform .6s cubic-bezier(.2,.7,.3,1); }
           .promo-card:hover .promo-card__photo { transform: scale(1.03); }

@@ -131,13 +131,6 @@ function DiscountBadge({ promo, fontSize = 12, padding = "4px 9px" }: { promo: A
     <span className="promo-badge" style={{ flex: "none", padding, fontSize, fontWeight: 600, color: "#FFFCF4", background: "#B07848", whiteSpace: "nowrap" }}>{text}</span>
   );
 }
-function SavingsPill({ amount, fontSize = 12, padding = "6px 11px" }: { amount: number; fontSize?: number; padding?: string }) {
-  return (
-    <span className="promo-savings" style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#E4F3E4", color: "#15803D", borderRadius: 999, padding, fontSize, fontWeight: 600, whiteSpace: "nowrap" }}>
-      <IcoCheckBold size={11} stroke={2.4} /> You save {pesoAmount(amount)}
-    </span>
-  );
-}
 // "Works on" chips. Included chips are solid-bordered; the stay types the offer
 // does NOT cover are shown dashed rather than hidden — the guest's question is
 // "does this work for me?", which needs the no as much as the yes.
@@ -236,7 +229,7 @@ function PromoBanner({ promotions, roomId, rates, variant, visible = true }: {
     );
   };
 
-  const { base, unitLabel, price, savings, discounted } = offerOf(expanded);
+  const { discounted } = offerOf(expanded);
   const scope = scopedStayTypes(expanded);
   const note = expiryNote(expanded.end_date);
   const code = expanded.discount_code;
@@ -306,18 +299,12 @@ function PromoBanner({ promotions, roomId, rates, variant, visible = true }: {
 
           {expanded.description && <p style={{ fontSize: 13, lineHeight: 1.5, color: "#4A3A2A", margin: 0 }}>{expanded.description}</p>}
 
-          {discounted && (
-            <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, paddingTop: 14, borderTop: "1px solid #EFE4CE" }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <span style={{ fontSize: 12, color: "#8B7458", whiteSpace: "nowrap" }}>Usual price <span style={{ textDecoration: "line-through" }}>{pesoAmount(base)}</span></span>
-                <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-                  <span className="serif" style={{ fontSize: 32, fontWeight: 500, letterSpacing: "-.02em", color: "#1F160E" }}>{pesoAmount(price)}</span>
-                  <span style={{ fontSize: 12.5, color: "#8B7458", whiteSpace: "nowrap" }}>{unitLabel}</span>
-                </span>
-              </div>
-              <SavingsPill amount={savings} />
-            </div>
-          )}
+          {/* No offer price here. The card advertises one figure but the promo
+              can span stay types priced differently (₱1,499 session vs ₱1,899
+              night), so a single "₱1,299 / session" read as the rate for all of
+              them. The badge states the discount itself, which is true for
+              every stay type; the real price is quoted on the room page once a
+              stay type is actually chosen. */}
 
           {scope && (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -351,7 +338,19 @@ function PromoBanner({ promotions, roomId, rates, variant, visible = true }: {
         </p>
       </div>
 
-      <div className={`promo-card${visible ? " promo-card--in" : ""}`} style={{ display: "grid", gridTemplateColumns: "340px minmax(0, 1fr) auto", gap: 36, alignItems: "center", background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 22, padding: 22, boxShadow: "0 4px 16px rgba(31,22,14,.05)" }}>
+      {/* Three columns, and each one answers a different question: what it
+          looks like, what the offer is, how you claim it. The third used to be
+          a price stack; with the price gone it holds the claim panel, which is
+          where the code and the button belonged anyway — they were previously
+          split across the middle column and the far edge. */}
+      {/* Inner width is 1220px (1320 section − 56 − 44 card padding), split
+          340 / 536 / 280 with 32px gaps. The copy leads the card, so the
+          middle column takes the width and the artwork and claim panel are
+          sized to what they need rather than to what's left over.
+          The text measure below is set with this column — a wider column and
+          an unchanged measure would only move the trailing slack, not close
+          it. */}
+      <div className={`promo-card${visible ? " promo-card--in" : ""}`} style={{ display: "grid", gridTemplateColumns: "340px minmax(0, 1fr) 280px", gap: 32, alignItems: "center", background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 22, padding: 22, boxShadow: "0 4px 16px rgba(31,22,14,.05)" }}>
         {expanded.image_url && (
           <div className="promo-card__frame" style={{ width: "100%", maxHeight: 240, borderRadius: 16, alignSelf: "center", background: "#2C2218", border: "1px solid #E0CEB2", overflow: "hidden" }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -362,40 +361,49 @@ function PromoBanner({ promotions, roomId, rates, variant, visible = true }: {
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <OfferLabelPill padding="6px 12px" />
             {discounted && <DiscountBadge promo={expanded} fontSize={12.5} padding="5px 11px" />}
-            {note && <span style={{ fontSize: 12.5, fontWeight: 600, color: "#8C5A2E", whiteSpace: "nowrap" }}>{note}</span>}
+            {/* The deadline moved to the claim panel — it's a fact about
+                acting on the offer, not about what the offer is. */}
           </div>
           <h3 className="serif" style={{ fontSize: 34, lineHeight: 1.02, letterSpacing: "-.025em", color: "#1F160E", margin: 0, fontWeight: 500 }}>{expanded.title}</h3>
-          {expanded.description && <p style={{ fontSize: 15, lineHeight: 1.6, color: "#4A3A2A", maxWidth: "52ch", margin: 0 }}>{expanded.description}</p>}
+          {/* 64ch (~480px) fills the 536px column with a normal right rag.
+              Still inside the 45–75ch range a line stays easy to track, so the
+              column gets its width without the copy getting harder to read. */}
+          {expanded.description && <p style={{ fontSize: 15, lineHeight: 1.6, color: "#4A3A2A", maxWidth: "64ch", margin: 0 }}>{expanded.description}</p>}
           {scope && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", color: "#8B7458" }}>Works on</span>
               <StayTypeChips scope={scope} fontSize={13} padding="7px 13px" />
             </div>
           )}
-          <div style={{ background: "#F6EFE2", borderRadius: 12, padding: "12px 14px", maxWidth: "52ch", display: "flex", gap: 10 }}>
-            <span style={{ color: "#8C5A2E", flex: "none", marginTop: 1, display: "inline-flex" }}><IcoInfo /></span>
-            <p style={{ fontSize: 13, lineHeight: 1.5, color: "#4A3A2A", margin: 0 }}>
-              {code
-                ? <>Use code <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", letterSpacing: ".06em", color: "#1F160E" }}>{code}</span> at checkout — or just follow the button and it&rsquo;s applied for you.</>
-                : discounted
-                  ? <>Nothing to type. Pick your date and the lower price is already there when you pay.</>
-                  : <>Follow the button to see this home and pick your dates.</>}
-            </p>
-          </div>
         </div>
-        <div className="promo-card__price" style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 14, paddingLeft: 36, borderLeft: "1px solid #EFE4CE" }}>
-          {discounted && (
-            <>
-              <span style={{ fontSize: 13, color: "#8B7458", whiteSpace: "nowrap" }}>Usual price <span style={{ textDecoration: "line-through" }}>{pesoAmount(base)}</span></span>
-              <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-                <span className="serif" style={{ fontSize: 46, fontWeight: 500, letterSpacing: "-.025em", lineHeight: 1, color: "#1F160E" }}>{pesoAmount(price)}</span>
-                <span style={{ fontSize: 13, color: "#8B7458", whiteSpace: "nowrap" }}>{unitLabel}</span>
-              </span>
-              <SavingsPill amount={savings} fontSize={13} padding="7px 12px" />
-            </>
+        {/* Claim panel. Stretches to the card's full height and pushes the
+            deadline to the top and the button to the bottom, so the column
+            reads as a panel rather than a button adrift in whitespace — which
+            is what was left once the price stack came out. */}
+        <div className="promo-card__claim" style={{ alignSelf: "stretch", display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 16, background: "#F6EFE2", border: "1px solid #EFE0C8", borderRadius: 16, padding: 18 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "#8C5A2E" }}>
+            {note ?? "How to claim"}
+          </div>
+
+          {code ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <span style={{ fontSize: 12, color: "#6B6358" }}>Your code</span>
+              <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 16, letterSpacing: ".1em", color: "#1F160E", background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 10, padding: "11px 12px", textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{code}</span>
+              <button type="button" onClick={() => copyCode(code)}
+                style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, background: "transparent", color: "#8C5A2E", border: "1px solid #D4BE9A", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", font: "inherit" }}>
+                <IcoCopy />{copiedCode === code ? "Copied" : "Copy code"}
+              </button>
+            </div>
+          ) : (
+            <p style={{ fontSize: 13, lineHeight: 1.5, color: "#4A3A2A", margin: 0 }}>
+              {discounted
+                ? "Nothing to type. Pick your date and the lower price is already there when you pay."
+                : "Follow the button to see this home and pick your dates."}
+            </p>
           )}
+
           <Link href={hrefFor(expanded)} className="promo-cta"
-            style={{ display: "inline-flex", alignItems: "center", gap: 9, background: "#B07848", color: "#FFFCF4", borderRadius: 999, padding: "15px 26px", fontSize: 15, fontWeight: 600, textDecoration: "none", marginTop: 6, whiteSpace: "nowrap" }}>
+            style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 9, background: "#B07848", color: "#FFFCF4", borderRadius: 999, padding: "14px 22px", fontSize: 15, fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap" }}>
             Use this offer <IcoArrowRight size={17} />
           </Link>
         </div>
@@ -416,13 +424,10 @@ function PromoBanner({ promotions, roomId, rates, variant, visible = true }: {
                 {p.discount_code && <> · code <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", letterSpacing: ".06em", color: "#1F160E" }}>{p.discount_code}</span></>}
               </p>
             </div>
+            {/* Same reason the expanded card no longer quotes one: the price
+                belongs to a single stay type, the offer usually doesn't. The
+                "Save ₱x" line above holds regardless of which rate is booked. */}
             <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-              {o.discounted && (
-                <span style={{ display: "flex", alignItems: "baseline", gap: 8, whiteSpace: "nowrap" }}>
-                  <span style={{ fontSize: 13, color: "#8B7458", textDecoration: "line-through" }}>{pesoAmount(o.base)}</span>
-                  <span className="serif" style={{ fontSize: 26, fontWeight: 500, color: "#1F160E" }}>{pesoAmount(o.price)}</span>
-                </span>
-              )}
               <button type="button" onClick={() => setExpandedId(p.id)} className="promo-outline"
                 style={{ display: "inline-flex", alignItems: "center", gap: 7, border: "1px solid #D4BE9A", background: "#FFFCF4", color: "#1F160E", borderRadius: 999, padding: "12px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", font: "inherit" }}>
                 See this offer <IcoChevronRight size={15} stroke={1.9} />
@@ -563,11 +568,12 @@ export default function BrowsePage() {
         /* Lightbox fade — the mobile card still opens the artwork full-screen. */
         @keyframes promoLbIn { from { opacity: 0 } to { opacity: 1 } }
         @media (max-width: 900px) {
-          /* Stack the offer card: photo, copy, then the price column
-             left-aligned with its divider removed. */
+          /* Stack the offer card: photo, copy, then the claim panel. Stacked,
+             the panel has no height to fill, so drop the stretch spacing and
+             let it size to its contents. */
           .promo-head { flex-direction: column; align-items: flex-start !important; gap: 16px !important; }
           .promo-card { grid-template-columns: 1fr !important; gap: 22px !important; }
-          .promo-card__price { align-items: flex-start !important; padding-left: 0 !important; border-left: none !important; }
+          .promo-card__claim { justify-content: flex-start !important; gap: 14px !important; }
           .promo-row { grid-template-columns: 84px minmax(0, 1fr) !important; gap: 16px !important; }
           .promo-row > div:last-child { grid-column: 1 / -1; justify-content: space-between; }
         }
