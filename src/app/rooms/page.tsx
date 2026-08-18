@@ -442,6 +442,11 @@ function PromoBanner({ promotions, roomId, rates, variant, visible = true }: {
 
 export default function BrowsePage() {
   const [heroImg, setHeroImg] = useState(0);
+  // Mobile "Choose your stay" rate switch. D'Lux charges a different rate for a
+  // Friday/Saturday or PH-holiday check-in (see src/lib/pricing.ts), so the list
+  // asks which kind of day the guest means instead of showing one price and
+  // surprising them at checkout.
+  const [weekendRates, setWeekendRates] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [bookingCount, setBookingCount] = useState(0);
   const router = useRouter();
@@ -493,6 +498,13 @@ export default function BrowsePage() {
     checkIn: liveWindows?.[i]?.checkIn ?? w.checkIn,
     checkOut: liveWindows?.[i]?.checkOut ?? w.checkOut,
   }));
+
+  // Rate for a stay window under the currently selected day type. Weekend
+  // columns fall back to the weekday rate when the owner hasn't set one.
+  const rateFor = (stayType: string) =>
+    stayType === "10"
+      ? (weekendRates ? room.price10hrWeekend || room.price10hr : room.price10hr)
+      : (weekendRates ? room.price21hrWeekend || room.price21hr : room.price21hr);
 
   useEffect(() => {
     const id = setInterval(() => setHeroImg((i) => (i + 1) % room.images.length), 5500);
@@ -674,11 +686,49 @@ export default function BrowsePage() {
             <h2 style={{ fontFamily: "'Fraunces', serif", fontWeight: 500, fontSize: 23, margin: 0, letterSpacing: "-.01em" }}>Choose your stay</h2>
             <span style={{ fontSize: 12, color: "#8B7458" }}>from ₱{room.price10hr.toLocaleString()}</span>
           </div>
-          <div style={{ marginTop: 14, borderTop: "1px solid #E0CEB2" }}>
+          <p style={{ fontSize: 13.5, lineHeight: 1.5, color: "#6B5C4A", margin: "10px 0 0" }}>
+            Prices below depend on which day you check in. Tell us which kind of day, and we&rsquo;ll show the right price.
+          </p>
+
+          {/* Day-type switch — weekday vs weekend/holiday rate card */}
+          <div role="group" aria-label="Rate type" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, marginTop: 16, padding: 4, borderRadius: 16, background: "#E9DAC0" }}>
+            {[
+              { on: false, title: "Weekday", sub: "Sun – Thu" },
+              { on: true, title: "Weekend & Holiday", sub: "Fri – Sat" },
+            ].map((opt) => {
+              const active = weekendRates === opt.on;
+              return (
+                <button
+                  key={opt.title}
+                  type="button"
+                  onClick={() => setWeekendRates(opt.on)}
+                  aria-pressed={active}
+                  style={{
+                    border: "none", cursor: "pointer", font: "inherit", padding: "11px 8px", borderRadius: 12,
+                    background: active ? "#B0754A" : "transparent",
+                    color: active ? "#FFFCF4" : "#1F160E",
+                    boxShadow: active ? "0 6px 16px -10px rgba(31,22,14,.7)" : "none",
+                    transition: "background .18s ease, color .18s ease",
+                  }}
+                >
+                  <span style={{ display: "block", fontSize: 14.5, fontWeight: 600, letterSpacing: "-.005em" }}>{opt.title}</span>
+                  <span style={{ display: "block", fontSize: 11.5, marginTop: 2, color: active ? "rgba(255,252,244,.78)" : "#8B7458" }}>{opt.sub}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ marginTop: 18, borderTop: "1px solid #E0CEB2" }}>
             {displayWindows.map((w, i) => (
-              <Link key={i} href={`/rooms/${room.id}?win=${i}`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", padding: "17px 0", borderBottom: "1px solid #E0CEB2", textDecoration: "none", color: "inherit" }}>
+              <Link key={i} href={`/rooms/${room.id}?win=${i}`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, width: "100%", padding: "17px 0", borderBottom: "1px solid #E0CEB2", textDecoration: "none", color: "inherit" }}>
                 <span><span style={{ display: "block", fontFamily: "'Fraunces', serif", fontSize: 18, color: "#1F160E" }}>{w.label}</span><span style={{ display: "block", fontSize: 12, color: "#8B7458", marginTop: 3 }}>{w.checkIn} → {w.checkOut}</span></span>
-                <span style={{ display: "flex", alignItems: "center", gap: 12 }}><span style={{ fontSize: 15, fontWeight: 700, color: "#1F160E" }}>₱{(w.stayType === "10" ? room.price10hr : room.price21hr).toLocaleString()}</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#B07848" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg></span>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ textAlign: "right" }}>
+                    <span style={{ display: "block", fontSize: 16, fontWeight: 700, color: "#1F160E", letterSpacing: "-.01em" }}>₱{rateFor(w.stayType).toLocaleString()}</span>
+                    <span style={{ display: "block", fontSize: 11.5, color: "#8C5A2E", marginTop: 3 }}>{weekendRates ? "Weekend / holiday" : "Weekday rate"}</span>
+                  </span>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#B07848" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
+                </span>
               </Link>
             ))}
           </div>
