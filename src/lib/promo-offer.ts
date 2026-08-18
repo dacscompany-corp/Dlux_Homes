@@ -49,21 +49,56 @@ export function isVoucher(promo: ActivePromotion): boolean {
  * Percentage promos are rounded to the peso, matching offerPriceFor, so the
  * headline on the offer card and the checkout line agree.
  */
-export function autoDiscountAmount(promo: ActivePromotion, amount: number): number {
+export function autoDiscountAmount(promo: ActivePromotion, amount: number, nights = 1): number {
   if (promo.redemption !== "automatic") return 0;
-  return promoDiscountOn(promo, amount);
+  return promoDiscountOn(promo, amount, nights);
 }
 
 /**
  * Peso amount a promotion takes off `amount`, regardless of how it's delivered.
  * Used where the delivery method has already been checked (a voucher whose code
  * is in play, say) and only the arithmetic is needed.
+ *
+ * `nights` only matters for a per-night fixed amount — a percentage is taken on
+ * a total that already grew with the night count, so multiplying it again would
+ * charge the stay length twice. Daycation/Nightcation is one session, i.e.
+ * nights = 1, so the multiplication is a no-op there.
+ *
+ * MUST stay in step with validateDiscount() on the server, which prices the
+ * voucher path from the `discounts` row: if this returns more than the server
+ * does, createBooking rejects the whole booking as an overstated discount.
  */
-export function promoDiscountOn(promo: ActivePromotion, amount: number): number {
+export function promoDiscountOn(promo: ActivePromotion, amount: number, nights = 1): number {
   if (!isEnforceable(promo)) return 0;
-  const value = Number(promo.discount_value);
-  const off = promo.discount_type === "percentage" ? Math.round((amount * value) / 100) : value;
-  return Math.max(0, Math.min(amount, off));
+  return capDiscount(
+    promo.discount_type === "percentage"
+      ? Math.round((amount * Number(promo.discount_value)) / 100)
+      : fixedAmountOver(Number(promo.discount_value), promo.per_night, nights),
+    promo.max_discount,
+    amount,
+  );
+}
+
+/**
+ * A fixed peso amount spread over the stay: once for a whole-stay discount,
+ * once per night for a per-night one.
+ *
+ * Shared with the server (validateDiscount imports it) so the two can't drift —
+ * the client computing a larger figure than the server is precisely what turns
+ * into a rejected booking at submit.
+ */
+export function fixedAmountOver(value: number, perNight: boolean, nights: number): number {
+  return value * (perNight ? Math.max(1, Math.floor(nights || 1)) : 1);
+}
+
+/**
+ * Apply the offer's ceiling, then clamp to what's actually being charged.
+ * A per-night amount is unbounded by nature (₱200 × 30 nights), so the ceiling
+ * is what keeps a long stay from giving away more than the owner intended.
+ */
+export function capDiscount(raw: number, maxDiscount: number | null | undefined, amount: number): number {
+  const capped = maxDiscount != null && maxDiscount > 0 ? Math.min(raw, Number(maxDiscount)) : raw;
+  return Math.max(0, Math.min(amount, capped));
 }
 
 /**
@@ -81,23 +116,49 @@ export function pickAutoPromo(
 }
 
 /**
- * Offer price for a base rate. Percentage promos round to the peso; fixed
- * promos subtract directly. Never returns below zero — a misconfigured
- * discount larger than the rate would otherwise render a negative price.
+ * Price of ONE night/session under the offer — the advertising figure on the
+ * banner, where the guest hasn't picked a stay length yet.
+ *
+ * Defined as the discount on a single unit so it can't drift from what checkout
+ * charges: it used to round the *price* (`base × (1 − v/100)`) while every other
+ * path rounded the *discount*, which put the card and the checkout line a peso
+ * apart whenever the percentage landed on an exact half.
+ *
+ * Never returns below zero — a misconfigured discount larger than the rate would
+ * otherwise render a negative price.
  */
 export function offerPriceFor(base: number, promo: ActivePromotion): number {
   const value = promo.discount_value;
   if (value == null || !promo.discount_type) return base;
-  const raw =
-    promo.discount_type === "percentage"
-      ? Math.round(base * (1 - value / 100))
-      : base - value;
-  return Math.max(0, raw);
+  return Math.max(0, base - promoDiscountOn(promo, base, 1));
 }
 
 /** Peso savings — always computed, including for percentage promos. */
 export function savingsFor(base: number, promo: ActivePromotion): number {
   return Math.max(0, base - offerPriceFor(base, promo));
+}
+
+/**
+ * The nightly price to headline once the guest HAS picked a stay, derived from
+ * the discount actually applied to that stay so the headline and the total can
+ * never tell different stories.
+ *
+ * The exception is a whole-stay peso amount on a multi-night booking: ₱200 off
+ * the stay is not ₱67 off each of three nights, and showing it that way is the
+ * mismatch this whole change exists to remove. Such an offer leaves the nightly
+ * rate alone and appears only on the total line.
+ */
+export function headlineUnitPrice(
+  base: number,
+  promo: ActivePromotion | null | undefined,
+  totalDiscount: number,
+  nights: number,
+): number {
+  if (!promo || totalDiscount <= 0) return base;
+  const n = Math.max(1, Math.floor(nights || 1));
+  const wholeStayPeso = promo.discount_type === "fixed" && !promo.per_night;
+  if (wholeStayPeso && n > 1) return base;
+  return Math.max(0, base - Math.round(totalDiscount / n));
 }
 
 /**
@@ -185,8 +246,12 @@ export const pesoAmount = (n: number) => `₱${Math.round(n).toLocaleString("en-
 export function discountBadgeText(
   discountType: "percentage" | "fixed" | null | undefined,
   discountValue: number | string | null | undefined,
+  perNight = false,
 ): string | null {
   const value = Number(discountValue);
   if (!discountType || !(value > 0)) return null;
-  return discountType === "percentage" ? `${value}% off` : `${pesoAmount(value)} off`;
+  if (discountType === "percentage") return `${value}% off`;
+  // "₱200 off" and "₱200 off per night" are different offers on a 3-night stay,
+  // so the badge has to say which one it is.
+  return perNight ? `${pesoAmount(value)} off per night` : `${pesoAmount(value)} off`;
 }

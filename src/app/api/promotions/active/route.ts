@@ -20,6 +20,7 @@ export async function GET() {
     const result = await pool.query(
       `SELECT p.id, p.title, p.description, p.image_url, p.discount_type, p.discount_value,
               p.discount_id, p.start_date, p.end_date, p.applies_to, p.redemption,
+              p.per_night, p.max_discount,
               d.code AS discount_code
        FROM promotions p
        LEFT JOIN discounts d ON d.id = p.discount_id
@@ -37,9 +38,12 @@ export async function GET() {
       [userId]
     );
 
+    // NUMERIC comes back from pg as a string; the pricing helpers all do
+    // arithmetic on these, so parse once here rather than at every call site.
     const promotions = result.rows.map((row) => ({
       ...row,
       discount_value: row.discount_value != null ? parseFloat(row.discount_value) : null,
+      max_discount: row.max_discount != null ? parseFloat(row.max_discount) : null,
     }));
 
     return NextResponse.json({ success: true, data: promotions });

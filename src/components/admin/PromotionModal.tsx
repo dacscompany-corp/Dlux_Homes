@@ -23,7 +23,19 @@ export type PromotionFormState = {
   applies_to: PromoStayType[];
   redemption: PromotionRedemption;
   discount_code: string;
+  // Peso amounts only — "off each night" vs "off the stay, once".
+  per_night: boolean;
+  // Ceiling on the total given away, as a string because it's an input value.
+  // Blank = no ceiling.
+  max_discount: string;
 };
+
+// Only offered for a peso amount: a percentage is taken on the stay total, so
+// it already grows with the night count.
+const SPREAD_OPTIONS: { key: "stay" | "night"; label: string; hint: string }[] = [
+  { key: "stay", label: "Off the whole stay", hint: "₱200 off, once, however many nights." },
+  { key: "night", label: "Off every night", hint: "3 nights × ₱200 = ₱600 off." },
+];
 
 const REDEMPTION_OPTIONS: { key: PromotionRedemption; label: string; hint: string }[] = [
   { key: "automatic", label: "Applied automatically", hint: "Guests just book — the lower price is already there." },
@@ -138,7 +150,10 @@ export default function PromotionModal({
   const pct = form.discount_type === "percentage";
   const amountNum = Number(form.discount_value);
   const hasDiscount = !none && !!form.discount_value && amountNum > 0;
-  const badge = discountBadgeText(form.discount_type || null, form.discount_value) ?? "";
+  // Peso-only: a percentage can't be per-night (it's taken on the stay total,
+  // so it already scales), and the DB CHECK rejects the combination outright.
+  const perNight = form.discount_type === "fixed" && form.per_night;
+  const badge = discountBadgeText(form.discount_type || null, form.discount_value, perNight) ?? "";
   const start = fmtDay(form.start_date);
   const end = fmtDay(form.end_date);
   const isVoucher = !none && form.redemption === "voucher";
@@ -152,7 +167,11 @@ export default function PromotionModal({
     ? "Not needed for an announcement."
     : pct
       ? `A ₱3,000 night becomes ₱${(3000 - Math.round((3000 * (amountNum || 0)) / 100)).toLocaleString()}.`
-      : "";
+      : perNight && amountNum > 0
+        // Spell the multiplication out — "off every night" is the setting most
+        // likely to give away more than the owner pictured.
+        ? `A 3-night stay saves ₱${(amountNum * 3).toLocaleString()}.`
+        : "";
 
   return (
     // p-4 rather than the design's 24px gutter: the admin shell renders at
@@ -251,7 +270,14 @@ export default function PromotionModal({
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
                   {DISCOUNT_OPTIONS.map((o) => (
                     <button key={o.key || "none"} type="button" aria-pressed={form.discount_type === o.key}
-                      onClick={() => setForm((f) => ({ ...f, discount_type: o.key }))}
+                      // Leaving a stale per_night behind on a percentage would
+                      // be rejected by the DB CHECK at save time, which the
+                      // owner would see as an unexplained failure.
+                      onClick={() => setForm((f) => ({
+                        ...f,
+                        discount_type: o.key,
+                        ...(o.key === "fixed" ? {} : { per_night: false, max_discount: "" }),
+                      }))}
                       style={form.discount_type === o.key ? cardOn : cardBase}>
                       <div style={{ fontSize: 14, fontWeight: 600 }}>{o.label}</div>
                       <div style={{ fontSize: 12, marginTop: 3, opacity: 0.75 }}>{o.hint}</div>
@@ -267,9 +293,49 @@ export default function PromotionModal({
                       style={{ width: 96, padding: "11px 12px 11px 0", fontFamily: "inherit", fontSize: 15, color: "#1f1b16", border: 0, outline: "none", background: "transparent" }} />
                   </div>
                   <div style={{ fontSize: 12.5, color: "#8a8276", lineHeight: 1.45, flex: 1, minWidth: 180 }}>
-                    {none ? "" : pct ? "off the nightly rate." : "off the booking total."} {amountHelp}
+                    {none ? "" : pct ? "off the nightly rate." : perNight ? "off every night." : "off the booking total."} {amountHelp}
                   </div>
                 </div>
+
+                {/* How a peso amount spreads across a multi-night stay. Only
+                    asked for a fixed amount — a percentage is taken on the stay
+                    total, so it already grows with the night count, and the DB
+                    rejects per_night on a percentage. */}
+                {form.discount_type === "fixed" && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500, color: "#4a443c" }}>How does it spread over a multi-night stay?</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
+                      {SPREAD_OPTIONS.map((o) => {
+                        const on = (o.key === "night") === form.per_night;
+                        return (
+                          <button key={o.key} type="button" aria-pressed={on}
+                            onClick={() => setForm((f) => ({ ...f, per_night: o.key === "night" }))}
+                            style={on ? cardOn : cardBase}>
+                            <div style={{ fontSize: 14, fontWeight: 600 }}>{o.label}</div>
+                            <div style={{ fontSize: 12, marginTop: 3, opacity: 0.75 }}>{o.hint}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {/* Per-night is unbounded by nature — ₱200 × 30 nights is
+                        ₱6,000 off a stay already on the monthly bundle rate. */}
+                    {form.per_night && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                        <div style={{ fontSize: 13, fontWeight: 500, color: "#4a443c", width: 96 }}>Most it can give</div>
+                        <div style={{ display: "flex", alignItems: "center", border: "1px solid #ddd4c0", background: "#fff" }}>
+                          <span style={{ padding: "0 10px", fontSize: 15, color: "#8a8276" }}>₱</span>
+                          <input aria-label="Maximum total discount" type="number" min="0" value={form.max_discount}
+                            onChange={(e) => setForm((f) => ({ ...f, max_discount: e.target.value }))} placeholder="No limit"
+                            style={{ width: 96, padding: "11px 12px 11px 0", fontFamily: "inherit", fontSize: 15, color: "#1f1b16", border: 0, outline: "none", background: "transparent" }} />
+                        </div>
+                        <div style={{ fontSize: 12.5, color: "#8a8276", lineHeight: 1.45, flex: 1, minWidth: 180 }}>
+                          in total, however long the stay. Leave blank for no limit — a month-long booking would then take{" "}
+                          {amountNum > 0 ? `₱${(amountNum * 30).toLocaleString()}` : "₱200 × 30"} off.
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Delivery method — only meaningful once there's a discount to
                     deliver. An announcement has nothing to redeem. */}

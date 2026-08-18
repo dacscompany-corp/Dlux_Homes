@@ -15,7 +15,7 @@ import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
 import type { ActivePromotion, PromoStayType } from "@/redux/api/promotionsApi";
 import {
   ALL_STAY_TYPES, STAY_TYPE_LABELS, baseRateFor, expiryNoteShort, isEnforceable,
-  discountBadgeText, offerPriceFor, pesoAmount, promoCoversStay, promoDiscountOn, scopedStayTypes,
+  discountBadgeText, headlineUnitPrice, offerPriceFor, pesoAmount, promoCoversStay, promoDiscountOn, scopedStayTypes,
 } from "@/lib/promo-offer";
 import { IcoZoom, PromoLightbox } from "@/components/PromoLightbox";
 import { havenToRoom } from "@/lib/haven-adapter";
@@ -363,7 +363,7 @@ function PromoBanner({ promotions, rates, variant, promoCode = "" }: {
   const appliedNow = discounted && (!isVoucherPromo || codeInPlay);
   const scope = scopedStayTypes(p);
   const note = expiryNoteShort(p.end_date);
-  const badgeText = discountBadgeText(p.discount_type, p.discount_value);
+  const badgeText = discountBadgeText(p.discount_type, p.discount_value, p.per_night);
 
   if (variant === "mobile") {
     return (
@@ -877,9 +877,6 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
           && (p.redemption === "automatic" || voucherActive(p)),
       )
     : undefined;
-  const offerRate = livePromo ? offerPriceFor(stayRate, livePromo) : stayRate;
-  const offerSaving = stayRate - offerRate;
-  const headlinePrice = stayChosen ? offerRate : fromPrice;
 
   // ── Promo code entry ──────────────────────────────────────────────────
   // Checkout owns the authoritative apply (it re-validates with the session and
@@ -901,7 +898,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
       const res = await fetch("/api/discounts/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, haven_id: isUuid ? id : null, amount: total, user_id: sessionUserId }),
+        body: JSON.stringify({ code, haven_id: isUuid ? id : null, amount: total, nights: stayNights, user_id: sessionUserId }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json?.success) {
@@ -931,10 +928,19 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   const promoDiscount = enteredPromo
     ? Math.min(total, enteredPromo.discount_amount)
     : livePromo
-      ? promoDiscountOn(livePromo, total)
+      ? promoDiscountOn(livePromo, total, stayNights)
       : 0;
   const payableTotal = Math.max(0, total - promoDiscount);
   const promoLabel = enteredPromo ? enteredPromo.code : livePromo?.title ?? "";
+
+  // The nightly headline, derived from the discount actually applied to this
+  // stay rather than computed independently — the two doing their own
+  // arithmetic is what let the card advertise ₱1,699/night while the total
+  // moved by a single ₱200. A whole-stay peso amount deliberately leaves the
+  // nightly rate alone (see headlineUnitPrice) and shows on the total instead.
+  const offerRate = headlineUnitPrice(stayRate, livePromo ?? null, livePromo ? promoDiscount : 0, stayNights);
+  const offerSaving = stayRate - offerRate;
+  const headlinePrice = stayChosen ? offerRate : fromPrice;
 
   const handleReserve = () => {
     const params = new URLSearchParams({

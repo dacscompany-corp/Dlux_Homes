@@ -406,7 +406,7 @@ export default function CSRDashboard() {
   const [promotionModal, setPromotionModal] = useState(false);
   const [promotionSaving, setPromotionSaving] = useState(false);
   const [editingPromotionId, setEditingPromotionId] = useState<string | null>(null);
-  const emptyPromotion: PromotionFormState = { title: "", description: "", discount_type: "", discount_value: "", start_date: "", end_date: "", applies_to: [], redemption: "automatic", discount_code: "" };
+  const emptyPromotion: PromotionFormState = { title: "", description: "", discount_type: "", discount_value: "", start_date: "", end_date: "", applies_to: [], redemption: "automatic", discount_code: "", per_night: false, max_discount: "" };
   const [promotionForm, setPromotionForm] = useState<PromotionFormState>(emptyPromotion);
   const [promotionImage, setPromotionImage] = useState<File | null>(null);
   const openCreatePromotion = () => { setEditingPromotionId(null); setPromotionForm(emptyPromotion); setPromotionImage(null); setPromotionModal(true); };
@@ -419,6 +419,8 @@ export default function CSRDashboard() {
       applies_to: p.applies_to ?? [],
       redemption: p.redemption ?? "automatic",
       discount_code: p.discount_code ?? "",
+      per_night: p.per_night ?? false,
+      max_discount: p.max_discount != null ? String(p.max_discount) : "",
     });
     setPromotionImage(null);
     setPromotionModal(true);
@@ -444,6 +446,8 @@ export default function CSRDashboard() {
       promotionForm.applies_to.forEach((t) => fd.append("applies_to", t));
       fd.set("redemption", promotionForm.redemption);
       fd.set("discount_code", promotionForm.discount_code);
+      fd.set("per_night", promotionForm.per_night ? "true" : "false");
+      fd.set("max_discount", promotionForm.max_discount);
       if (promotionImage) fd.set("image", promotionImage);
 
       if (editingPromotionId) await updatePromotion(editingPromotionId, fd);

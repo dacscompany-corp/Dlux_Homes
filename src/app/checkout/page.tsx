@@ -686,7 +686,9 @@ function CheckoutInner() {
       const res = await fetch("/api/discounts/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, haven_id: isUuid ? roomId : null, amount: subtotal, user_id: session?.user?.id ?? null }),
+        // `nights` lets a per-night code quote its real value here; the server
+        // re-derives it from the dates at submit, so this is a preview figure.
+        body: JSON.stringify({ code, haven_id: isUuid ? roomId : null, amount: subtotal, nights, user_id: session?.user?.id ?? null }),
       });
       const json = await res.json();
       if (!res.ok || !json.success) {
@@ -726,7 +728,7 @@ function CheckoutInner() {
   const autoPromo = pickAutoPromo(activePromotions, stayType === "10" ? "10" : "21");
   // Never stack: a code the guest entered wins over the automatic offer, since
   // they took a deliberate action to use it.
-  const autoDiscount = appliedDiscount || !autoPromo ? 0 : autoDiscountAmount(autoPromo, subtotal);
+  const autoDiscount = appliedDiscount || !autoPromo ? 0 : autoDiscountAmount(autoPromo, subtotal, nights);
 
   const discountAmount = (appliedDiscount?.discount_amount ?? 0) + autoDiscount;
   const total = Math.max(0, subtotal - discountAmount);

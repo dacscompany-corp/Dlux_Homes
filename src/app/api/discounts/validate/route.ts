@@ -15,6 +15,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       havenId: (body?.haven_id as string) || null,
       userId: (body?.user_id as string) || null,
       amount: Number(body?.amount) || 0,
+      // Preview only — nothing is charged off this endpoint, so taking the
+      // guest's night count at face value here is harmless. createBooking
+      // derives its own from the dates before any money is committed.
+      nights: Number(body?.nights) || 1,
     });
 
     if (!result.ok) {

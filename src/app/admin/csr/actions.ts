@@ -2164,6 +2164,10 @@ export interface PromotionRecord {
   // 'voucher' → backed by a `discounts` code applied at checkout.
   // 'automatic' → the discount is applied directly, no code to enter.
   redemption: PromotionRedemption;
+  // Fixed peso amounts only: true = off each night, false = off the stay once.
+  per_night: boolean;
+  // Ceiling on the total the offer can give away; null = no ceiling.
+  max_discount: number | null;
   discount_code: string | null;
   status: 'Active' | 'Scheduled' | 'Expired' | 'Disabled';
   created_at: string;
@@ -2207,6 +2211,11 @@ async function syncVoucherDiscount(
     discount_value: string | null;
     start_date: string;
     end_date: string;
+    // Carried onto the discounts row because validateDiscount() prices the
+    // voucher from THERE, not from the promotion — leaving these behind would
+    // make the banner promise per-night and the code pay out once.
+    per_night: boolean;
+    max_discount: number | null;
   },
 ): Promise<{ id: string; code: string } | null> {
   const { redemption, discount_type, discount_value } = opts;
@@ -2228,19 +2237,23 @@ async function syncVoucherDiscount(
       `UPDATE discounts
          SET name = $2, code = $3, description = $4, discount_type = $5,
              discount_value = $6, start_date = $7, end_date = $8,
+             per_night = $9, max_discount = $10,
              active = true, updated_at = NOW()
        WHERE id = $1`,
-      [targetId, opts.title, code, opts.description, discount_type, value, opts.start_date, opts.end_date],
+      [targetId, opts.title, code, opts.description, discount_type, value, opts.start_date, opts.end_date,
+       opts.per_night, opts.max_discount],
     );
     return { id: targetId, code };
   }
 
   const inserted = await client.query(
     `INSERT INTO discounts (name, code, description, discount_type, discount_value,
-                            start_date, end_date, active, used_count, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, true, 0, NOW())
+                            start_date, end_date, per_night, max_discount,
+                            active, used_count, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, 0, NOW())
      RETURNING id`,
-    [opts.title, code, opts.description, discount_type, value, opts.start_date, opts.end_date],
+    [opts.title, code, opts.description, discount_type, value, opts.start_date, opts.end_date,
+     opts.per_night, opts.max_discount],
   );
   return { id: inserted.rows[0].id, code };
 }
@@ -2261,6 +2274,24 @@ function readAppliesTo(formData: FormData): PromoStayType[] | null {
   return picked.length > 0 ? Array.from(new Set(picked)) : null;
 }
 
+/**
+ * Per-night is only meaningful for a fixed peso amount — a percentage is taken
+ * on the stay total and already grows with the night count. Forced to false for
+ * every other discount type so a stale checkbox can't trip the
+ * promotions_per_night_fixed_only CHECK on save.
+ */
+function readPerNight(formData: FormData, discountType: string): boolean {
+  return discountType === 'fixed' && String(formData.get('per_night') ?? '') === 'true';
+}
+
+/** Ceiling on the total discount, or null for no ceiling. */
+function readMaxDiscount(formData: FormData): number | null {
+  const raw = String(formData.get('max_discount') ?? '').trim();
+  if (!raw) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 function derivePromotionStatus(row: { start_date: string | Date; end_date: string | Date; active: boolean }): PromotionRecord['status'] {
   const now = Date.now();
   const start = new Date(row.start_date).getTime();
@@ -2279,7 +2310,7 @@ export async function getPromotions(): Promise<PromotionRecord[]> {
     const result = await client.query(
       `SELECT p.id, p.title, p.description, p.image_url, p.discount_type, p.discount_value,
               p.discount_id, p.start_date, p.end_date, p.active, p.applies_to,
-              p.redemption, d.code AS discount_code, p.created_at
+              p.redemption, p.per_night, p.max_discount, d.code AS discount_code, p.created_at
        FROM promotions p
        LEFT JOIN discounts d ON d.id = p.discount_id
        ORDER BY p.created_at DESC`
@@ -2287,6 +2318,7 @@ export async function getPromotions(): Promise<PromotionRecord[]> {
     return result.rows.map((row) => ({
       ...row,
       discount_value: row.discount_value != null ? parseFloat(row.discount_value) : null,
+      max_discount: row.max_discount != null ? parseFloat(row.max_discount) : null,
       status: derivePromotionStatus(row),
     }));
   } catch (error) {
@@ -2313,6 +2345,8 @@ export async function createPromotion(formData: FormData): Promise<PromotionReco
   const redemption: PromotionRedemption =
     (formData.get('redemption') as string) === 'voucher' ? 'voucher' : 'automatic';
   const codeInput = (formData.get('discount_code') as string || '').trim();
+  const per_night = readPerNight(formData, discount_type);
+  const max_discount = readMaxDiscount(formData);
   const image = formData.get('image') as File | null;
 
   if (!title || !start_date || !end_date) {
@@ -2339,15 +2373,16 @@ export async function createPromotion(formData: FormData): Promise<PromotionReco
     const voucherId = await syncVoucherDiscount(client, {
       existingDiscountId: discount_id || null,
       redemption, title, description: description || null, code: codeInput,
-      discount_type, discount_value, start_date, end_date,
+      discount_type, discount_value, start_date, end_date, per_night, max_discount,
     });
 
     const result = await client.query(
       `INSERT INTO promotions (
          title, description, image_url, discount_type, discount_value,
-         discount_id, start_date, end_date, applies_to, redemption, active, created_by, created_at
+         discount_id, start_date, end_date, applies_to, redemption,
+         per_night, max_discount, active, created_by, created_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, $11, NOW() AT TIME ZONE 'Asia/Manila')
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true, $13, NOW() AT TIME ZONE 'Asia/Manila')
        RETURNING *`,
       [
         title,
@@ -2360,6 +2395,8 @@ export async function createPromotion(formData: FormData): Promise<PromotionReco
         end_date,
         applies_to,
         redemption,
+        per_night,
+        max_discount,
         employeeId || null,
       ]
     );
@@ -2376,6 +2413,7 @@ export async function createPromotion(formData: FormData): Promise<PromotionReco
     return {
       ...newPromo,
       discount_value: newPromo.discount_value != null ? parseFloat(newPromo.discount_value) : null,
+      max_discount: newPromo.max_discount != null ? parseFloat(newPromo.max_discount) : null,
       discount_code: voucherId?.code ?? null,
       status: derivePromotionStatus(newPromo),
     };
@@ -2407,6 +2445,8 @@ export async function updatePromotion(id: string, formData: FormData): Promise<P
   const redemption: PromotionRedemption =
     (formData.get('redemption') as string) === 'voucher' ? 'voucher' : 'automatic';
   const codeInput = (formData.get('discount_code') as string || '').trim();
+  const per_night = readPerNight(formData, discount_type);
+  const max_discount = readMaxDiscount(formData);
   const image = formData.get('image') as File | null;
 
   if (redemption === 'voucher' && (!discount_type || !(Number(discount_value) > 0))) {
@@ -2439,6 +2479,8 @@ export async function updatePromotion(id: string, formData: FormData): Promise<P
       discount_value,
       start_date: start_date || prior.rows[0].start_date,
       end_date: end_date || prior.rows[0].end_date,
+      per_night,
+      max_discount,
     });
 
     const result = await client.query(
@@ -2453,6 +2495,8 @@ export async function updatePromotion(id: string, formData: FormData): Promise<P
            end_date = COALESCE($9, end_date),
            applies_to = $10,
            redemption = $11,
+           per_night = $12,
+           max_discount = $13,
            updated_at = NOW()
        WHERE id = $1
        RETURNING *`,
@@ -2470,6 +2514,8 @@ export async function updatePromotion(id: string, formData: FormData): Promise<P
         end_date || null,
         applies_to,
         redemption,
+        per_night,
+        max_discount,
       ]
     );
 
@@ -2486,6 +2532,7 @@ export async function updatePromotion(id: string, formData: FormData): Promise<P
     return {
       ...updated,
       discount_value: updated.discount_value != null ? parseFloat(updated.discount_value) : null,
+      max_discount: updated.max_discount != null ? parseFloat(updated.max_discount) : null,
       discount_code: voucher?.code ?? null,
       status: derivePromotionStatus(updated),
     };

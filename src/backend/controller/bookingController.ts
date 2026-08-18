@@ -107,6 +107,23 @@ const CALENDAR_BOOKING_SELECT = `
   LEFT JOIN booking_payments bp ON b.id = bp.booking_id
 `;
 
+/**
+ * Nights in a stay, from the dates being booked. The authoritative count for
+ * anything that multiplies by stay length — the browser sends a `nights` figure
+ * too, but a per-night discount reads this, and a payload-supplied count would
+ * be a direct multiplier on what the guest is given.
+ *
+ * Floors at 1 so a Daycation/Nightcation (a single same-day session, where the
+ * two dates match) counts as one unit rather than zero.
+ */
+function bookedNights(checkInISO?: string | null, checkOutISO?: string | null): number {
+  if (!checkInISO || !checkOutISO) return 1;
+  const start = new Date(`${String(checkInISO).slice(0, 10)}T00:00:00`);
+  const end = new Date(`${String(checkOutISO).slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 1;
+  return Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000));
+}
+
 const toCalendarEventData = (row: any): CalendarEventData => ({
   room_name: row.room_name,
   check_in_date: row.check_in_date,
@@ -1035,6 +1052,10 @@ export const createBooking = async (
         havenId: haven_id || null,
         userId: user_id || null,
         amount: preDiscount,
+        // Derived from the dates being booked, never taken from the payload — a
+        // per-night code multiplies by this, so a client-supplied night count
+        // would be a direct lever on the discount.
+        nights: bookedNights(check_in_date, check_out_date),
       });
       if (!check.ok) {
         await client.query("ROLLBACK");

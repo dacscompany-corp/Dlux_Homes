@@ -21,6 +21,12 @@ export interface ActivePromotion {
   end_date: string;
   applies_to: PromoStayType[] | null;
   redemption: PromotionRedemption;
+  // Fixed peso amounts only: true = taken off EACH night, false = off the stay
+  // once. A percentage already scales with the stay, so it is always false.
+  per_night: boolean;
+  // Ceiling on the total peso amount this offer can give away, or null for no
+  // ceiling. Exists mainly to bound per_night on a long stay.
+  max_discount: number | null;
 }
 
 export interface ActivePromotionsResponse {

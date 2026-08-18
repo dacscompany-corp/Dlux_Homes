@@ -125,7 +125,7 @@ function OfferLabelPill({ padding = "5px 11px" }: { padding?: string }) {
 // that was the point of the redesign — but the percentage is what owners
 // advertise, so it rides alongside rather than replacing it.
 function DiscountBadge({ promo, fontSize = 12, padding = "4px 9px" }: { promo: ActivePromotion; fontSize?: number; padding?: string }) {
-  const text = discountBadgeText(promo.discount_type, promo.discount_value);
+  const text = discountBadgeText(promo.discount_type, promo.discount_value, promo.per_night);
   if (!text) return null;
   return (
     <span className="promo-badge" style={{ flex: "none", padding, fontSize, fontWeight: 600, color: "#FFFCF4", background: "#B07848", whiteSpace: "nowrap" }}>{text}</span>

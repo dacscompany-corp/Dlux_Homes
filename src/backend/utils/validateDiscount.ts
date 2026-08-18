@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from "pg";
+import { capDiscount, fixedAmountOver } from "@/lib/promo-offer";
 
 // Single source of truth for "may this promo code be used right now, and what
 // is it worth". Both the checkout input box (/api/discounts/validate) and the
@@ -33,9 +34,18 @@ type Args = {
   userId?: string | null;
   /** The amount the discount applies to, BEFORE this discount is subtracted. */
   amount: number;
+  /**
+   * Nights in the stay — only consumed by a per-night fixed amount. Defaults to
+   * 1, which is also the right answer for a Daycation/Nightcation (one session).
+   *
+   * createBooking DERIVES this from check_in_date/check_out_date rather than
+   * accepting it from the payload: a client-supplied night count would just be a
+   * new way to multiply the discount.
+   */
+  nights?: number;
 };
 
-export async function validateDiscount({ db, code, discountId, havenId, userId, amount }: Args): Promise<DiscountResult> {
+export async function validateDiscount({ db, code, discountId, havenId, userId, amount, nights = 1 }: Args): Promise<DiscountResult> {
   const trimmed = (code ?? "").trim();
   if (!trimmed && !discountId) {
     return { ok: false, error: "Enter a promo code.", status: 400 };
@@ -43,7 +53,7 @@ export async function validateDiscount({ db, code, discountId, havenId, userId, 
 
   const result = await db.query(
     `SELECT d.id, d.code, d.name, d.discount_type, d.discount_value, d.min_booking_amount,
-            d.max_uses, d.used_count
+            d.max_uses, d.used_count, d.per_night, d.max_discount
      FROM discounts d
      WHERE ($1::text IS NULL OR UPPER(d.code) = UPPER($1))
        AND ($2::uuid IS NULL OR d.id = $2)
@@ -96,9 +106,18 @@ export async function validateDiscount({ db, code, discountId, havenId, userId, 
   }
 
   const discountValue = parseFloat(d.discount_value);
-  const discountAmount = d.discount_type === "percentage"
-    ? Math.round(amount * (discountValue / 100))
-    : Math.min(Math.round(discountValue), amount);
+  const maxDiscount = d.max_discount != null ? parseFloat(d.max_discount) : null;
+  // A percentage is taken on a total that already grew with the night count;
+  // only a fixed peso amount needs spreading across the stay. Mirrors
+  // promoDiscountOn() on the storefront — the two disagreeing is what makes a
+  // booking bounce at submit with DISCOUNT_INVALID.
+  const discountAmount = capDiscount(
+    d.discount_type === "percentage"
+      ? Math.round(amount * (discountValue / 100))
+      : fixedAmountOver(Math.round(discountValue), d.per_night === true, nights),
+    maxDiscount,
+    amount,
+  );
 
   return {
     ok: true,
