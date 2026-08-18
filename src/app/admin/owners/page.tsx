@@ -21,7 +21,7 @@ import { useGetReviewsQuery } from "@/redux/api/reviewsApi";
 import { useGetReportsQuery } from "@/redux/api/reportApi";
 import { useGetConversationsQuery } from "@/redux/api/messagesApi";
 import { fmtWindow, fmtSpan } from "@/lib/stay-window";
-import { BUNDLE_WEEK_LABEL, BUNDLE_TWOWEEK_LABEL, BUNDLE_MONTH_LABEL } from "@/lib/pricing";
+import { BUNDLE_TIER1_LABEL, BUNDLE_TIER2_LABEL, BUNDLE_TIER3_LABEL, BUNDLE_TIER4_LABEL } from "@/lib/pricing";
 import PromotionModal, { type PromotionFormState } from "@/components/admin/PromotionModal";
 import { checkInOpensLabel, isCheckInOpen } from "@/lib/checkin-window";
 import {
@@ -786,13 +786,15 @@ export default function OwnerDashboard() {
   // drifting config). Three D'Lux stay types per the rate card.
   const h0 = (havensList[0] as Record<string, unknown>) || {};
   const rnum = (v: unknown) => Number(v ?? 0);
-  // Overnight-only length-of-stay bundle tiers — null entries mean that tier
-  // isn't configured yet (see System → Settings → Pricing Calendar below).
+  // Overnight-only long-term stay tiers — flat rate, no weekday/weekend
+  // split. null entries mean that tier isn't configured yet.
   const rnumOrNull = (v: unknown) => (v == null || v === "" ? null : Number(v));
+  const longtermActive = h0.longterm_active !== false;
   const overnightBundles = [
-    { label: `1 week (${BUNDLE_WEEK_LABEL})`, weekday: rnumOrNull(h0.weekday_week_rate), weekend: rnumOrNull(h0.weekend_week_rate), active: h0.week_bundle_active !== false },
-    { label: `2 weeks (${BUNDLE_TWOWEEK_LABEL})`, weekday: rnumOrNull(h0.weekday_twoweek_rate), weekend: rnumOrNull(h0.weekend_twoweek_rate), active: h0.twoweek_bundle_active !== false },
-    { label: `1 month (${BUNDLE_MONTH_LABEL})`, weekday: rnumOrNull(h0.weekday_month_rate), weekend: rnumOrNull(h0.weekend_month_rate), active: h0.month_bundle_active !== false },
+    { label: `Tier 1 (${BUNDLE_TIER1_LABEL})`, rate: rnumOrNull(h0.longterm_tier1_rate) },
+    { label: `Tier 2 (${BUNDLE_TIER2_LABEL})`, rate: rnumOrNull(h0.longterm_tier2_rate) },
+    { label: `Tier 3 (${BUNDLE_TIER3_LABEL})`, rate: rnumOrNull(h0.longterm_tier3_rate) },
+    { label: `Tier 4 (${BUNDLE_TIER4_LABEL})`, rate: rnumOrNull(h0.longterm_tier4_rate) },
   ];
   const stayRates = [
     // Name, window and length all come from the haven row. These were literal
@@ -2191,15 +2193,15 @@ export default function OwnerDashboard() {
                         </div>
                         {rate.key === "overnight" && (
                           <div style={{ marginTop: 6, paddingTop: 10, borderTop: "1px dashed #f3eee2", display: "flex", flexDirection: "column", gap: 8 }}>
-                            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".07em", color: "#c2ad88" }}>Length-of-stay bundles</div>
+                            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".07em", color: "#c2ad88" }}>
+                              Long-term stay pricing
+                              {!longtermActive && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", color: "#a0632f", backgroundColor: "#f6e9d9", padding: "1px 6px", borderRadius: 999 }}>Off</span>}
+                            </div>
                             {overnightBundles.map((b) => (
-                              <div key={b.label} className="flex items-center justify-between" style={{ fontSize: 12.5, opacity: b.active ? 1 : 0.55 }}>
-                                <span style={{ color: "#8a8276", display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                  {b.label}
-                                  {!b.active && <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", color: "#a0632f", backgroundColor: "#f6e9d9", padding: "1px 6px", borderRadius: 999 }}>Off</span>}
-                                </span>
-                                <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", color: "#4a4034", textDecoration: b.active ? "none" : "line-through" }}>
-                                  {b.weekday != null ? peso(b.weekday) : "—"} <span style={{ color: "#c2ad88" }}>/</span> {b.weekend != null ? peso(b.weekend) : "—"}
+                              <div key={b.label} className="flex items-center justify-between" style={{ fontSize: 12.5, opacity: longtermActive ? 1 : 0.55 }}>
+                                <span style={{ color: "#8a8276" }}>{b.label}</span>
+                                <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", color: "#4a4034", textDecoration: longtermActive ? "none" : "line-through" }}>
+                                  {b.rate != null ? `${peso(b.rate)}/night` : "—"}
                                 </span>
                               </div>
                             ))}

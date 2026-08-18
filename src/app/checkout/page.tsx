@@ -15,7 +15,7 @@ import { mockRooms } from "@/lib/mock-data";
 import { generateBookingId, addMyBookingId } from "@/lib/booking-store";
 import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
 import { havenToRoom } from "@/lib/haven-adapter";
-import { stayTotal, isWeekendOrHoliday, addDaysISO, extraPaxFee, bundleNightlyRate, seniorPwdDiscount, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS, BUNDLE_EXTRA_PAX_SURCHARGE } from "@/lib/pricing";
+import { stayTotal, isWeekendOrHoliday, addDaysISO, extraPaxFee, bundleNightlyRate, bundleExtraPaxFee, seniorPwdDiscount } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
 import { autoDiscountAmount, pickAutoPromo } from "@/lib/promo-offer";
@@ -647,21 +647,23 @@ function CheckoutInner() {
   const isWeekendRate = isWeekendOrHoliday(date, calendarRules);
   // D'Lux pricing: base rate covers 2 pax; each extra adult/young adult adds a
   // per-pax fee CHARGED PER NIGHT. "Children (7 under)" are exempt from the fee.
-  // No cleaning or service fee. Resolved BEFORE the price because on a bundle
-  // stay, extra pax also raise the nightly bundle rate itself.
+  // No cleaning or service fee.
   const feePax = adults + children; // adults + young adults; excludes 7-under
   const extraPaxCount = Math.max(0, feePax - room.basePax);
-  const hasExtraPax = extraPaxCount > 0;
   // Stay price: 10h single session, or 21h × nights (each night priced by its
-  // own date) — UNLESS the stay is long enough to qualify for a length-of-stay
-  // bundle discount (5/12/20+ nights), in which case a flat nightly rate applies.
-  const basePrice = stayTotal(stayType, date, nights, room, calendarRules, hasExtraPax);
-  const bundleRate = stayType === "10" ? undefined : bundleNightlyRate(nights, date, room, calendarRules, hasExtraPax);
-  const bundleLabel = bundleRate == null ? null
-    : nights >= BUNDLE_MONTH_NIGHTS ? "Monthly rate"
-    : nights >= BUNDLE_TWOWEEK_NIGHTS ? "Two-week rate"
-    : "Weekly rate";
-  const paxFee = extraPaxFee(feePax, room.basePax, room.additionalPaxFee, nights);
+  // own date) — UNLESS the stay is long enough to qualify for a long-term tier
+  // (3/11/18/26+ nights), in which case a flat nightly rate applies (no
+  // weekday/weekend split).
+  const basePrice = stayTotal(stayType, date, nights, room, calendarRules);
+  const bundleRate = stayType === "10" ? undefined : bundleNightlyRate(nights, date, room, calendarRules);
+  const bundleLabel = bundleRate == null ? null : "Long-term rate";
+  // A long-term stay charges its own per-pax-per-night fee INSTEAD of the
+  // normal extraPaxFee() — the two must never both apply, or an extra guest
+  // gets charged twice.
+  const paxFeeRate = bundleRate != null ? ((room as { longtermExtraPaxFee?: number }).longtermExtraPaxFee ?? 100) : room.additionalPaxFee;
+  const paxFee = bundleRate != null
+    ? bundleExtraPaxFee(feePax, room.basePax, nights, room)
+    : extraPaxFee(feePax, room.basePax, room.additionalPaxFee, nights);
   // Senior citizen / PWD: 20% off each qualifying guest's share of the ROOM
   // (basePrice), never the pax fee. Comes off before any promo code, so a promo
   // lands on the already-reduced subtotal — the statutory discount is protected.
@@ -1691,10 +1693,9 @@ function CheckoutInner() {
                 </div>
                 <div style={{ padding: "16px 0 0", fontSize: 13, display: "flex", flexDirection: "column", gap: 6 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>{stayType === "10" ? `10-hour stay · ${isWeekendRate ? "Weekend/Holiday" : "Weekday"}` : `Overnight · ${nights} night${nights > 1 ? "s" : ""}${bundleLabel ? ` · ${bundleLabel}` : ""}`}</span><span>{peso(basePrice)}</span></div>
-                  {/* Bundle stays quote one flat nightly rate — show it, so the
-                      extra-guest bump on the rate isn't invisible. */}
-                  {bundleRate != null && <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: -4 }}>{peso(bundleRate)}/night{hasExtraPax ? ` · includes ${peso(BUNDLE_EXTRA_PAX_SURCHARGE)} extra-guest rate` : ""}</div>}
-                  {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra pax · {extraPaxCount} × {peso(room.additionalPaxFee)}{nights > 1 ? ` × ${nights} nights` : ""}</span><span>{peso(paxFee)}</span></div>}
+                  {/* Long-term stays quote one flat nightly rate — show it. */}
+                  {bundleRate != null && <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: -4 }}>{peso(bundleRate)}/night</div>}
+                  {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra pax · {extraPaxCount} × {peso(paxFeeRate)}{nights > 1 ? ` × ${nights} nights` : ""}</span><span>{peso(paxFee)}</span></div>}
                   {seniorDiscount > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span>Senior/PWD discount · {seniorCount} guest{seniorCount > 1 ? "s" : ""}</span><span>−{peso(seniorDiscount)}</span></div>}
                   {appliedDiscount && (
                     <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span>Promo · {appliedDiscount.code}</span><span>−{peso(appliedDiscount.discount_amount)}</span></div>
