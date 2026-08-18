@@ -9,9 +9,8 @@ import {
 } from "lucide-react";
 import { fileToCompressedDataUrl, GALLERY_PRESET } from "@/lib/compressImage";
 import {
-  BUNDLE_WEEK_NIGHTS, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS,
-  BUNDLE_WEEK_LABEL, BUNDLE_TWOWEEK_LABEL, BUNDLE_MONTH_LABEL,
-  BUNDLE_EXTRA_PAX_SURCHARGE,
+  BUNDLE_TIER1_NIGHTS, BUNDLE_TIER2_NIGHTS, BUNDLE_TIER3_NIGHTS, BUNDLE_TIER4_NIGHTS,
+  BUNDLE_TIER1_LABEL, BUNDLE_TIER2_LABEL, BUNDLE_TIER3_LABEL, BUNDLE_TIER4_LABEL,
 } from "@/lib/pricing";
 
 // ── Static option lists (mirrors the Staycation haven builder) ──
@@ -63,13 +62,14 @@ const empty = {
   haven_name: "", property_type: "Studio", tower: "", floor: "", view_type: "", description: "", google_map_address: "",
   // pricing
   six_hour_rate: "", ten_hour_rate: "", weekday_rate: "", weekend_rate: "",
-  // Overnight length-of-stay bundle discounts — flat per-night rate once
-  // a stay reaches 5/12/20 nights. Blank = not configured for that tier.
-  weekday_week_rate: "", weekday_twoweek_rate: "", weekday_month_rate: "",
-  weekend_week_rate: "", weekend_twoweek_rate: "", weekend_month_rate: "",
-  // Per-tier activate/deactivate — a deactivated tier keeps its configured rates
-  // but won't apply the discount until re-activated.
-  week_bundle_active: true, twoweek_bundle_active: true, month_bundle_active: true,
+  // Long-term stay pricing (Overnight only) — flat per-night rate, no
+  // weekday/weekend split, once a stay reaches 3/11/18/26 nights. Blank = not
+  // configured for that tier.
+  longterm_tier1_rate: "", longterm_tier2_rate: "", longterm_tier3_rate: "", longterm_tier4_rate: "",
+  longterm_extra_pax_fee: "",
+  // Whole-feature on/off — off keeps the configured rates but a stay of any
+  // length prices per-night as normal until re-activated.
+  longterm_active: true,
   cleaning_fee: "", security_deposit: "", extra_pax_fee: "",
   // check-in
   six_hour_check_in: "09:00", six_hour_check_out: "15:00",
@@ -123,9 +123,10 @@ function havenToForm(h: Record<string, unknown>): { form: Form; images: ImgRef[]
       description: s(h.description), google_map_address: s(h.google_map_address),
       six_hour_rate: s(h.six_hour_rate), ten_hour_rate: s(h.ten_hour_rate),
       weekday_rate: s(h.weekday_rate), weekend_rate: s(h.weekend_rate),
-      weekday_week_rate: s(h.weekday_week_rate), weekday_twoweek_rate: s(h.weekday_twoweek_rate), weekday_month_rate: s(h.weekday_month_rate),
-      weekend_week_rate: s(h.weekend_week_rate), weekend_twoweek_rate: s(h.weekend_twoweek_rate), weekend_month_rate: s(h.weekend_month_rate),
-      week_bundle_active: h.week_bundle_active !== false, twoweek_bundle_active: h.twoweek_bundle_active !== false, month_bundle_active: h.month_bundle_active !== false,
+      longterm_tier1_rate: s(h.longterm_tier1_rate), longterm_tier2_rate: s(h.longterm_tier2_rate),
+      longterm_tier3_rate: s(h.longterm_tier3_rate), longterm_tier4_rate: s(h.longterm_tier4_rate),
+      longterm_extra_pax_fee: s(h.longterm_extra_pax_fee),
+      longterm_active: h.longterm_active !== false,
       cleaning_fee: s(h.cleaning_fee), security_deposit: s(h.security_deposit), extra_pax_fee: s(h.extra_pax_fee),
       six_hour_check_in: s(h.six_hour_check_in) || empty.six_hour_check_in, six_hour_check_out: s(h.six_hour_check_out) || empty.six_hour_check_out,
       ten_hour_check_in: s(h.ten_hour_check_in) || empty.ten_hour_check_in, ten_hour_check_out: s(h.ten_hour_check_out) || empty.ten_hour_check_out,
@@ -222,9 +223,10 @@ export default function HavenWizard({
         bathrooms: form.bathrooms || undefined,
         six_hour_rate: num(form.six_hour_rate), ten_hour_rate: num(form.ten_hour_rate),
         weekday_rate: num(form.weekday_rate), weekend_rate: num(form.weekend_rate),
-        weekday_week_rate: num(form.weekday_week_rate), weekday_twoweek_rate: num(form.weekday_twoweek_rate), weekday_month_rate: num(form.weekday_month_rate),
-        weekend_week_rate: num(form.weekend_week_rate), weekend_twoweek_rate: num(form.weekend_twoweek_rate), weekend_month_rate: num(form.weekend_month_rate),
-        week_bundle_active: form.week_bundle_active, twoweek_bundle_active: form.twoweek_bundle_active, month_bundle_active: form.month_bundle_active,
+        longterm_tier1_rate: num(form.longterm_tier1_rate), longterm_tier2_rate: num(form.longterm_tier2_rate),
+        longterm_tier3_rate: num(form.longterm_tier3_rate), longterm_tier4_rate: num(form.longterm_tier4_rate),
+        longterm_extra_pax_fee: form.longterm_extra_pax_fee || undefined,
+        longterm_active: form.longterm_active,
         cleaning_fee: form.cleaning_fee || undefined, security_deposit: form.security_deposit || undefined,
         extra_pax_fee: form.extra_pax_fee || undefined,
         six_hour_check_in: form.six_hour_check_in, six_hour_check_out: form.six_hour_check_out,
@@ -347,40 +349,32 @@ export default function HavenWizard({
                 ))}
               </div>
               <div className="pt-2">
-                <p className="text-xs font-semibold" style={{ color: "#8B6344" }}>Overnight{nightLen ? ` (${nightLen})` : ""} length-of-stay bundle discounts <span className="font-normal" style={{ color: "#C9B79E" }}>· optional</span></p>
-                <p className="text-xs mt-1" style={{ color: "#C9B79E" }}>Flat nightly rate once a stay reaches {BUNDLE_WEEK_NIGHTS} / {BUNDLE_TWOWEEK_NIGHTS} / {BUNDLE_MONTH_NIGHTS} nights, based on the check-in day (weekday vs weekend/holiday). A bundle stay with extra pax (3–4 guests) charges ₱{BUNDLE_EXTRA_PAX_SURCHARGE} more per night than the rates below, on top of the normal per-pax fee. Toggle a tier off to pause its discount without clearing the rates.</p>
-                <div className="space-y-2 mt-2">
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-xs font-semibold" style={{ color: "#8B6344" }}>Overnight{nightLen ? ` (${nightLen})` : ""} long-term stay pricing <span className="font-normal" style={{ color: "#C9B79E" }}>· optional</span></p>
+                  <button type="button" role="switch" aria-checked={form.longterm_active ? "true" : "false"} aria-label="Long-term pricing active"
+                    onClick={() => set({ longterm_active: !form.longterm_active })}
+                    className="relative inline-flex items-center rounded-full transition-colors cursor-pointer flex-shrink-0"
+                    style={{ width: 40, height: 22, backgroundColor: form.longterm_active ? "#059669" : "#D4BFA0" }}>
+                    <span className="inline-block rounded-full bg-white transition-transform" style={{ width: 16, height: 16, transform: form.longterm_active ? "translateX(21px)" : "translateX(3px)" }} />
+                  </button>
+                </div>
+                <p className="text-xs mt-1" style={{ color: "#C9B79E" }}>Flat nightly rate once a stay reaches {BUNDLE_TIER1_NIGHTS}/{BUNDLE_TIER2_NIGHTS}/{BUNDLE_TIER3_NIGHTS}/{BUNDLE_TIER4_NIGHTS} nights — same rate every day of the week, no weekday/holiday split. Extra guests (3–4 pax) pay the fee below per guest per night INSTEAD of the normal extra-pax fee. Turn this off to pause long-term pricing entirely without clearing the rates.</p>
+                <div className="space-y-2 mt-2" style={{ opacity: form.longterm_active ? 1 : 0.5 }}>
                   {[
-                    { label: "1 week", nights: BUNDLE_WEEK_LABEL, activeKey: "week_bundle_active", weekday: "weekday_week_rate", weekend: "weekend_week_rate" },
-                    { label: "2 weeks", nights: BUNDLE_TWOWEEK_LABEL, activeKey: "twoweek_bundle_active", weekday: "weekday_twoweek_rate", weekend: "weekend_twoweek_rate" },
-                    { label: "1 month", nights: BUNDLE_MONTH_LABEL, activeKey: "month_bundle_active", weekday: "weekday_month_rate", weekend: "weekend_month_rate" },
-                  ].map((tier) => {
-                    const active = form[tier.activeKey as keyof Form] as boolean;
-                    return (
-                      <div key={tier.activeKey} className="rounded-xl border p-3" style={{ borderColor: "#EDE3D2", backgroundColor: active ? "#FFFFFF" : "#FAF7F1" }}>
-                        <div className="flex items-center justify-between mb-2">
-                          <p className="text-xs font-semibold" style={{ color: "#B07848" }}>{tier.label} <span className="font-normal" style={{ color: "#C9B79E" }}>· {tier.nights}</span></p>
-                          <button type="button" role="switch" aria-checked={active ? "true" : "false"} aria-label={`${tier.label} bundle active`}
-                            onClick={() => set({ [tier.activeKey]: !active } as Partial<Form>)}
-                            className="relative inline-flex items-center rounded-full transition-colors cursor-pointer flex-shrink-0"
-                            style={{ width: 40, height: 22, backgroundColor: active ? "#059669" : "#D4BFA0" }}>
-                            <span className="inline-block rounded-full bg-white transition-transform" style={{ width: 16, height: 16, transform: active ? "translateX(21px)" : "translateX(3px)" }} />
-                          </button>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3" style={{ opacity: active ? 1 : 0.5 }}>
-                          <div>
-                            <label className={labelCls} style={labelStyle}>Weekday (₱/night)</label>
-                            <input type="number" placeholder="—" disabled={!active} value={form[tier.weekday as keyof Form] as string} onChange={(e) => set({ [tier.weekday]: e.target.value } as Partial<Form>)} className={`${field} mt-1`} style={fieldStyle} />
-                          </div>
-                          <div>
-                            <label className={labelCls} style={labelStyle}>Weekend (₱/night)</label>
-                            <input type="number" placeholder="—" disabled={!active} value={form[tier.weekend as keyof Form] as string} onChange={(e) => set({ [tier.weekend]: e.target.value } as Partial<Form>)} className={`${field} mt-1`} style={fieldStyle} />
-                          </div>
-                        </div>
-                        {!active && <p className="text-xs mt-2" style={{ color: "#B0A187" }}>Deactivated — normal nightly pricing applies for stays of this length.</p>}
-                      </div>
-                    );
-                  })}
+                    { label: "Tier 1", nights: BUNDLE_TIER1_LABEL, key: "longterm_tier1_rate" },
+                    { label: "Tier 2", nights: BUNDLE_TIER2_LABEL, key: "longterm_tier2_rate" },
+                    { label: "Tier 3", nights: BUNDLE_TIER3_LABEL, key: "longterm_tier3_rate" },
+                    { label: "Tier 4", nights: BUNDLE_TIER4_LABEL, key: "longterm_tier4_rate" },
+                  ].map((tier) => (
+                    <div key={tier.key} className="rounded-xl border p-3 flex items-center justify-between gap-3" style={{ borderColor: "#EDE3D2", backgroundColor: "#FFFFFF" }}>
+                      <p className="text-xs font-semibold" style={{ color: "#B07848" }}>{tier.label} <span className="font-normal" style={{ color: "#C9B79E" }}>· {tier.nights}</span></p>
+                      <input type="number" placeholder="—" disabled={!form.longterm_active} value={form[tier.key as keyof Form] as string} onChange={(e) => set({ [tier.key]: e.target.value } as Partial<Form>)} className={field} style={{ ...fieldStyle, width: 140 }} />
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-2">
+                  <label className={labelCls} style={labelStyle}>Long-term extra-pax fee (₱ / pax / night)</label>
+                  <input type="number" placeholder="100" disabled={!form.longterm_active} value={form.longterm_extra_pax_fee} onChange={(e) => set({ longterm_extra_pax_fee: e.target.value })} className={`${field} mt-1`} style={fieldStyle} />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3 pt-1">

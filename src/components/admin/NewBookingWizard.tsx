@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import { generateBookingId } from "@/lib/booking-store";
 import { fileToCompressedDataUrl } from "@/lib/compressImage";
-import { stayTotal, pickRate, isWeekendOrHoliday, addDaysISO, extraPaxFee } from "@/lib/pricing";
+import { stayTotal, pickRate, isWeekendOrHoliday, addDaysISO, extraPaxFee, bundleNightlyRate, bundleExtraPaxFee } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import { havenToRoom } from "@/lib/haven-adapter";
 
@@ -195,21 +195,21 @@ export default function NewBookingWizard({
     const overCap = counted > MAX_COUNTED;
     const basePax = room?.basePax ?? BASE_PAX_FALLBACK;
     const perPax = room?.additionalPaxFee ?? 200;
-    // On a bundle stay, extra pax also step the nightly bundle rate up — so the
-    // flag has to reach stayTotal(), not just the pax line below.
-    // `!overCap` keeps the whole quote consistent while the party is too big to
-    // book: paxFee is zeroed there, so the rate must not show the bump either.
-    const hasExtraPax = !overCap && counted > basePax;
-    const base = room && stay && form.ci ? stayTotal(stay.group, form.ci, nights, room, rules, hasExtraPax) : 0;
-    // Fee is charged PER NIGHT and tops out at the max counted pax. Shares
-    // extraPaxFee() with the guest-facing pages so an admin-made booking can
-    // never be priced differently from the same booking made on the site.
+    const base = room && stay && form.ci ? stayTotal(stay.group, form.ci, nights, room, rules) : 0;
+    // Long-term (bundle) stays charge their own per-pax-per-night fee INSTEAD
+    // of extraPaxFee() — the two must never both apply. Shares the same
+    // pricing functions as the guest-facing pages so an admin-made booking is
+    // never priced differently from the same booking made on the site.
+    const bundleRate = room && stay && form.ci && stay.group !== "10" ? bundleNightlyRate(nights, form.ci, room, rules) : undefined;
     const extraCount = Math.min(Math.max(0, counted - basePax), MAX_COUNTED - basePax);
-    const paxFee = overCap ? 0 : extraPaxFee(basePax + extraCount, basePax, perPax, nights);
+    const paxFeeRate = bundleRate != null ? (room?.longtermExtraPaxFee ?? 100) : perPax;
+    const paxFee = overCap ? 0 : bundleRate != null
+      ? bundleExtraPaxFee(basePax + extraCount, basePax, nights, room!)
+      : extraPaxFee(basePax + extraCount, basePax, perPax, nights);
     const total = base + paxFee;
     const down = form.downMode === "full" ? total : Math.round(total * 0.5);
     const balance = total - down;
-    return { nights, adults, young, kids, counted, overCap, base, extraCount, perPax, paxFee, total, down, balance, atCheckin: balance + SECURITY_DEPOSIT, weekend: isWeekendOrHoliday(form.ci, rules) };
+    return { nights, adults, young, kids, counted, overCap, base, extraCount, perPax: paxFeeRate, paxFee, total, down, balance, atCheckin: balance + SECURITY_DEPOSIT, weekend: isWeekendOrHoliday(form.ci, rules), bundleRate };
   }, [entry, stay, form, rules]);
 
   // The main guest is "Adult 1"; every other head gets its own record for

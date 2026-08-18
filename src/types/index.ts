@@ -18,14 +18,15 @@ export interface Room {
   price10hrWeekend: number;
   price21hr: number;
   price21hrWeekend: number;
-  // Length-of-stay bundle discounts for Overnight (21h) — flat per-night rate
-  // once a stay reaches 5/12/20 nights. undefined = tier not configured.
-  weekdayWeekRate?: number;
-  weekdayTwoWeekRate?: number;
-  weekdayMonthRate?: number;
-  weekendWeekRate?: number;
-  weekendTwoWeekRate?: number;
-  weekendMonthRate?: number;
+  // Long-term stay pricing for Overnight (21h) — flat per-night rate, no
+  // weekday/weekend split, once a stay reaches 3/11/18/26 nights. undefined =
+  // tier not configured; longtermActive false = long-term pricing off entirely.
+  longtermTier1Rate?: number;
+  longtermTier2Rate?: number;
+  longtermTier3Rate?: number;
+  longtermTier4Rate?: number;
+  longtermActive?: boolean;
+  longtermExtraPaxFee?: number;
   additionalPaxFee: number;
   basePax: number;
   maxPax: number;

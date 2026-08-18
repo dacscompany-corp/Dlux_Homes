@@ -22,7 +22,7 @@ import { havenToRoom } from "@/lib/haven-adapter";
 import { spanHours } from "@/lib/stay-window";
 import { turnoverMs } from "@/lib/turnover";
 import DluxLoader, { DluxLoaderPage } from "@/components/brand/DluxLoader";
-import { stayTotal, isWeekendOrHoliday, extraPaxFee, bundleNightlyRate, BUNDLE_TWOWEEK_NIGHTS, BUNDLE_MONTH_NIGHTS, BUNDLE_EXTRA_PAX_SURCHARGE } from "@/lib/pricing";
+import { stayTotal, isWeekendOrHoliday, extraPaxFee, bundleNightlyRate, bundleExtraPaxFee } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import type { Room } from "@/types";
 
@@ -784,21 +784,20 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   // portal); falls back to Fri/Sat + built-in PH holidays if unreachable.
   const calendarRules = useCalendarRules();
   const isWeekendRate = isWeekendOrHoliday(date, calendarRules);
-  // Counted pax must be resolved BEFORE the price: on a bundle stay, having any
-  // extra pax raises the nightly bundle rate itself (not just the pax line).
   const feePax = guests.adults + guests.children; // adults + young adults; excludes 7-under
+  const basePrice = stayTotal(selectedWindow.stayType, date, stayNights, room, calendarRules);
+  // Long-term tier (3/11/18/26+ nights, Overnight only) — null if this stay
+  // doesn't qualify or the haven's long-term pricing is off/unconfigured.
+  const bundleRate = selectedWindow.stayType === "10" ? undefined : bundleNightlyRate(stayNights, date, room, calendarRules);
+  const bundleLabel = bundleRate == null ? null : "Long-term rate";
   const extraPaxCount = Math.max(0, feePax - room.basePax);
-  const hasExtraPax = extraPaxCount > 0;
-  const basePrice = stayTotal(selectedWindow.stayType, date, stayNights, room, calendarRules, hasExtraPax);
-  // Length-of-stay bundle discount (5/12/20+ nights, Overnight only) — null if
-  // this stay doesn't qualify or the haven hasn't configured that tier. Already
-  // includes the extra-pax bump, so it's the rate actually charged.
-  const bundleRate = selectedWindow.stayType === "10" ? undefined : bundleNightlyRate(stayNights, date, room, calendarRules, hasExtraPax);
-  const bundleLabel = bundleRate == null ? null
-    : stayNights >= BUNDLE_MONTH_NIGHTS ? "Monthly rate"
-    : stayNights >= BUNDLE_TWOWEEK_NIGHTS ? "Two-week rate"
-    : "Weekly rate";
-  const paxFee = extraPaxFee(feePax, room.basePax, room.additionalPaxFee, stayNights);
+  // A long-term stay charges its own per-pax-per-night fee INSTEAD of the
+  // normal extraPaxFee() — the two must never both apply, or an extra guest
+  // gets charged twice.
+  const paxFeeRate = bundleRate != null ? ((room as { longtermExtraPaxFee?: number }).longtermExtraPaxFee ?? 100) : room.additionalPaxFee;
+  const paxFee = bundleRate != null
+    ? bundleExtraPaxFee(feePax, room.basePax, stayNights, room)
+    : extraPaxFee(feePax, room.basePax, room.additionalPaxFee, stayNights);
   const total = basePrice + paxFee;
 
   // What the calendar greys out depends on whether a rate is already in play.
@@ -1279,8 +1278,8 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                   {/* Bundle stays quote one flat nightly rate, so show it —
                       otherwise a guest can't tell why the room total moved when
                       they added a 3rd guest. */}
-                  {bundleRate != null && <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: -4 }}>{peso(bundleRate)}/night{hasExtraPax ? ` · includes ${peso(BUNDLE_EXTRA_PAX_SURCHARGE)} extra-guest rate` : ""}</div>}
-                  {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra guests · {extraPaxCount} × {peso(room.additionalPaxFee)}{stayNights > 1 ? ` × ${stayNights} nights` : ""}</span><span>{peso(paxFee)}</span></div>}
+                  {bundleRate != null && <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: -4 }}>{peso(bundleRate)}/night</div>}
+                  {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra guests · {extraPaxCount} × {peso(paxFeeRate)}{stayNights > 1 ? ` × ${stayNights} nights` : ""}</span><span>{peso(paxFee)}</span></div>}
                   {promoDiscount > 0 && (
                     <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{promoLabel}</span><span style={{ flex: "none" }}>&minus;{peso(promoDiscount)}</span></div>
                   )}
@@ -1786,8 +1785,8 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                   {/* Bundle stays quote one flat nightly rate, so show it —
                       otherwise a guest can't tell why the room total moved when
                       they added a 3rd guest. */}
-                  {bundleRate != null && <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: -4 }}>{peso(bundleRate)}/night{hasExtraPax ? ` · includes ${peso(BUNDLE_EXTRA_PAX_SURCHARGE)} extra-guest rate` : ""}</div>}
-                      {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra guests · {extraPaxCount} × {peso(room.additionalPaxFee)}{stayNights > 1 ? ` × ${stayNights} nights` : ""}</span><span>{peso(paxFee)}</span></div>}
+                  {bundleRate != null && <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: -4 }}>{peso(bundleRate)}/night</div>}
+                      {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra guests · {extraPaxCount} × {peso(paxFeeRate)}{stayNights > 1 ? ` × ${stayNights} nights` : ""}</span><span>{peso(paxFee)}</span></div>}
                       {promoDiscount > 0 && (
                     <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{promoLabel}</span><span style={{ flex: "none" }}>&minus;{peso(promoDiscount)}</span></div>
                   )}
