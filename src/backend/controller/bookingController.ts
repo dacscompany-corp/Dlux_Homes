@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse, after } from "next/server";
+import type { PoolClient } from "pg";
 import pool from "../config/db";
 import { upload_file } from "../utils/cloudinary";
 import { validateImageDataUrl } from "../utils/imageGuard";
@@ -14,6 +15,33 @@ const EXISTING_START_SQL = `(b.check_in_date::DATE + b.check_in_time::TIME)::TIM
 const EXISTING_END_SQL = `(CASE WHEN b.check_out_time = '00:00'
         THEN (b.check_out_date::DATE + INTERVAL '1 day')::TIMESTAMP
         ELSE (b.check_out_date::DATE + b.check_out_time::TIME)::TIMESTAMP END)`;
+
+// Run bookkeeping that is allowed to fail without taking the booking with it.
+//
+// Catching an error is NOT the same as containing it inside a Postgres
+// transaction: once any statement fails, the transaction is poisoned and every
+// statement after it returns 25P02 ("current transaction is aborted, commands
+// ignored until end of transaction block"). A guest lost a booking to exactly
+// that — a failed discount-redemption write was swallowed as "best effort", the
+// security-deposit insert two lines later died with 25P02, and the guest was
+// shown that raw text for an error that had nothing to do with them.
+//
+// The savepoint is what actually makes a block best-effort: rolling back to it
+// clears the failure and leaves the rest of the transaction committable.
+async function bestEffort(
+  client: PoolClient,
+  savepoint: string,
+  work: () => Promise<void>,
+): Promise<void> {
+  await client.query(`SAVEPOINT ${savepoint}`);
+  try {
+    await work();
+    await client.query(`RELEASE SAVEPOINT ${savepoint}`);
+  } catch (err) {
+    await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+    console.error(`⚠️ [BOOKING] ${savepoint} failed — booking continues without it:`, err);
+  }
+}
 
 // A guest may attach several ID photos. We persist them in the single
 // `valid_id_url` TEXT column as newline-separated Cloudinary URLs — a single
@@ -705,47 +733,49 @@ export const createBooking = async (
     // --- BOOKING WINDOW VALIDATION ---
     const { stay_type, haven_id } = body;
     if (stay_type && haven_id) {
-      try {
+      // Only the lookup is best-effort. The checks below it are pure JS and
+      // must keep the ability to reject the booking outright — wrapping them
+      // too would swallow a 400 the guest needs to see.
+      let windowTypes: Array<{
+        name: string; duration: number; available_days: string[];
+        first_check_in: string; last_check_in: string;
+      }> = [];
+      await bestEffort(client, "booking_window_lookup", async () => {
         const bwResult = await client.query(
           `SELECT booking_windows FROM havens WHERE uuid_id = $1 LIMIT 1`,
           [haven_id]
         );
-        const bw = bwResult.rows[0]?.booking_windows;
-        const types: Array<{
-          name: string; duration: number; available_days: string[];
-          first_check_in: string; last_check_in: string;
-        }> = bw?.types ?? [];
-        const bType = types.find(t => t.name === stay_type);
+        windowTypes = bwResult.rows[0]?.booking_windows?.types ?? [];
+      });
 
-        if (bType) {
-          // Day-of-week check
-          const DAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-          const cinDay = DAY_ABBR[new Date(check_in_date + 'T12:00:00').getDay()];
-          if (!bType.available_days.includes(cinDay)) {
-            await client.query("ROLLBACK");
-            return NextResponse.json(
-              { success: false, error: `${stay_type} is not available on ${cinDay}` },
-              { status: 400 }
-            );
-          }
-          // Time window check
-          const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
-          const cinMins = toMins(check_in_time);
-          const firstMins = toMins(bType.first_check_in);
-          const lastMins = toMins(bType.last_check_in);
-          const inWindow = firstMins <= lastMins
-            ? cinMins >= firstMins && cinMins <= lastMins
-            : cinMins >= firstMins || cinMins <= lastMins;
-          if (!inWindow) {
-            await client.query("ROLLBACK");
-            return NextResponse.json(
-              { success: false, error: `Check-in time must be between ${bType.first_check_in} and ${bType.last_check_in} for ${stay_type}` },
-              { status: 400 }
-            );
-          }
+      const bType = windowTypes.find(t => t.name === stay_type);
+
+      if (bType) {
+        // Day-of-week check
+        const DAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        const cinDay = DAY_ABBR[new Date(check_in_date + 'T12:00:00').getDay()];
+        if (!bType.available_days.includes(cinDay)) {
+          await client.query("ROLLBACK");
+          return NextResponse.json(
+            { success: false, error: `${stay_type} is not available on ${cinDay}` },
+            { status: 400 }
+          );
         }
-      } catch {
-        // Booking window validation is advisory — don't block booking if check fails
+        // Time window check
+        const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+        const cinMins = toMins(check_in_time);
+        const firstMins = toMins(bType.first_check_in);
+        const lastMins = toMins(bType.last_check_in);
+        const inWindow = firstMins <= lastMins
+          ? cinMins >= firstMins && cinMins <= lastMins
+          : cinMins >= firstMins || cinMins <= lastMins;
+        if (!inWindow) {
+          await client.query("ROLLBACK");
+          return NextResponse.json(
+            { success: false, error: `Check-in time must be between ${bType.first_check_in} and ${bType.last_check_in} for ${stay_type}` },
+            { status: 400 }
+          );
+        }
       }
     }
     // --- END BOOKING WINDOW VALIDATION ---
@@ -915,6 +945,11 @@ export const createBooking = async (
         http_code?: number;
         name?: string;
       };
+      // Every other bail-out in this function rolls back first. This one did
+      // not, so the connection went back to the pool mid-transaction — holding
+      // a booking row nobody would ever commit, for the next request to
+      // inherit.
+      await client.query("ROLLBACK");
       return NextResponse.json(
         {
           success: false,
@@ -1113,22 +1148,18 @@ export const createBooking = async (
     // on a future booking (enforced by /api/discounts/validate). Best-effort —
     // the booking still succeeds even if these updates fail for some reason.
     if (discount_id) {
-      try {
+      await bestEffort(client, "discount_use_count", async () => {
         await client.query(`UPDATE discounts SET used_count = used_count + 1 WHERE id = $1`, [discount_id]);
-      } catch (err) {
-        console.error("⚠️ [BOOKING] Failed to increment discount used_count:", err);
-      }
+      });
       if (user_id) {
-        try {
+        await bestEffort(client, "discount_redemption", async () => {
           await client.query(
             `INSERT INTO discount_users (discount_id, user_id, used, used_at)
              VALUES ($1, $2, true, NOW())
              ON CONFLICT (discount_id, user_id) DO UPDATE SET used = true, used_at = NOW()`,
             [discount_id, user_id]
           );
-        } catch (err) {
-          console.error("⚠️ [BOOKING] Failed to record discount redemption:", err);
-        }
+        });
       }
     }
 
@@ -1137,16 +1168,14 @@ export const createBooking = async (
     // here on /api/promotions/active stops returning this promotion to this
     // guest, so no later surface can offer it to them again.
     if (promotion_id && user_id) {
-      try {
+      await bestEffort(client, "promotion_redemption", async () => {
         await client.query(
           `INSERT INTO promotion_users (promotion_id, user_id, booking_id, used, used_at)
            VALUES ($1, $2, $3, true, NOW())
            ON CONFLICT (promotion_id, user_id) DO UPDATE SET used = true, used_at = NOW()`,
           [promotion_id, user_id, bookingId]
         );
-      } catch (err) {
-        console.error("⚠️ [BOOKING] Failed to record promotion redemption:", err);
-      }
+      });
     }
 
     // Step 4.5: Create security deposit record (always create with 0 amount during booking)
@@ -1438,29 +1467,55 @@ export const createBooking = async (
       column?: string;
     };
 
-    // Provide detailed error information
+    // Provide detailed error information.
+    //
+    // ORDER MATTERS: a pg error IS an Error instance, so the old
+    // `instanceof Error` branch ran first and shadowed every case below it —
+    // which is how a guest came to be shown "current transaction is aborted,
+    // commands ignored until end of transaction block" as if it were something
+    // they could act on. Postgres text is for the log; the guest gets a
+    // sentence about what to do next.
     let errorMessage = "Failed to create booking";
     let errorDetails = "";
 
-    if (error instanceof Error) {
+    const pgCode = typeof e?.code === "string" && /^[0-9A-Z]{5}$/.test(e.code) ? e.code : null;
+
+    if (pgCode === "23505") {
+      // Unique constraint violation. Most often a double-tapped Submit, so
+      // point the guest at My Bookings before they try a third time.
+      errorMessage =
+        "This booking looks like it was already submitted. Please check My Bookings " +
+        "first — it may have gone through. If you don't see it there, message us and " +
+        "we'll check for you.";
+      errorDetails = `Constraint: ${e.constraint || "unknown"}`;
+    } else if (pgCode === "23503") {
+      // Foreign key constraint violation. "Invalid reference in booking data"
+      // meant nothing to a guest and told them nothing to do next.
+      errorMessage =
+        "Something in your booking details didn't match our records. Don't worry — " +
+        "your payment is safe with the host, and please DON'T pay again. Message us " +
+        "your payment reference number and we'll finish the booking for you.";
+      errorDetails = `Table: ${e.table || "unknown"}, Column: ${e.column || "unknown"}`;
+    } else if (pgCode) {
+      // The guest has ALREADY sent the down payment by hand before reaching
+      // this point, so read this message as they will: anything resembling
+      // "payment failed" reads as "my money is gone". It isn't — it went
+      // straight to the host's GCash/BPI account and the site never touches
+      // it. Lead with that, then stop them from paying a second time.
+      errorMessage =
+        "Don't worry — your payment is safe with the host. We just couldn't save " +
+        "your booking. Please DON'T pay again. Tap Submit one more time. If it " +
+        "still doesn't work, message us your payment reference number and we'll " +
+        "finish the booking for you.";
+      errorDetails = `${pgCode}: ${e.message || ""}${e.detail ? ` (${e.detail})` : ""}`;
+      console.error("❌ [BOOKING] Postgres error:", errorDetails);
+    } else if (error instanceof Error) {
       errorMessage = error.message;
       console.error("❌ [BOOKING] Error message:", error.message);
       console.error("❌ [BOOKING] Error stack:", error.stack);
     } else if (typeof error === "object" && error !== null) {
-      if ("code" in error && error.code === "23505") {
-        // Unique constraint violation
-        errorMessage = `Booking already exists for this date/guest combination`;
-        errorDetails = `Constraint: ${e.constraint || "unknown"}`;
-      } else if ("code" in error && error.code === "23503") {
-        // Foreign key constraint violation
-        errorMessage = `Invalid reference in booking data`;
-        errorDetails = `Table: ${e.table || "unknown"}, Column: ${e.column || "unknown"}`;
-      } else if ("detail" in error) {
-        errorMessage = e.detail || "Database error";
-        errorDetails = JSON.stringify(error);
-      } else {
-        errorMessage = JSON.stringify(error);
-      }
+      errorMessage = e.detail || JSON.stringify(error);
+      errorDetails = JSON.stringify(error);
     }
 
     if (errorDetails) {
