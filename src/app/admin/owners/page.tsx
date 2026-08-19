@@ -167,6 +167,12 @@ export default function OwnerDashboard() {
   };
   const [revenueRange, setRevenueRange] = useState<keyof typeof REVENUE_RANGES>("monthly");
   const [revenueRangeOpen, setRevenueRangeOpen] = useState(false);
+  // Overview KPI toggle: "collected" (cash actually received — down payments +
+  // full payments already approved) vs "gross" (the full booked value of every
+  // incoming booking, whether or not any payment has landed yet). Same window
+  // and status filter as Total Revenue; only which payment-status branch of
+  // the SQL SUM() is used differs (see analyticsController.ts summaryStatsQuery).
+  const [revenueBasis, setRevenueBasis] = useState<"collected" | "gross">("collected");
   const { data: summaryRes }   = useGetAnalyticsSummaryQuery({ period: REVENUE_RANGES[revenueRange].days });
   const { data: monthlyRes }   = useGetMonthlyRevenueQuery({ months: REVENUE_RANGES[revenueRange].months });
   const { data: roomRevRes }   = useGetRevenueByRoomQuery({ period: REVENUE_RANGES[revenueRange].days });
@@ -579,7 +585,9 @@ export default function OwnerDashboard() {
   const reviewsList = (reviewsRes?.data as unknown as Record<string, unknown>[]) || [];
   const kpis = [
     { label: "Total Bookings", value: String(s?.total_bookings ?? 0),            change: pct(s?.bookings_change ?? 0),  icon: CalendarDays, iconBg: "#F7F0E3", iconColor: "#B07848" },
-    { label: "Total Revenue",  value: peso(s?.total_revenue ?? 0),               change: pct(s?.revenue_change ?? 0),   icon: PhilippinePeso,   iconBg: "#d1fae5", iconColor: "#059669" },
+    revenueBasis === "gross"
+      ? { label: "Gross Revenue", value: peso(s?.total_gross_revenue ?? 0), change: pct(s?.gross_revenue_change ?? 0), icon: PhilippinePeso, iconBg: "#d1fae5", iconColor: "#059669" }
+      : { label: "Total Revenue", value: peso(s?.total_revenue ?? 0),      change: pct(s?.revenue_change ?? 0),       icon: PhilippinePeso, iconBg: "#d1fae5", iconColor: "#059669" },
     { label: "Occupancy Rate", value: `${Math.round(s?.occupancy_rate ?? 0)}%`,  change: pct(s?.occupancy_change ?? 0), icon: TrendingUp,   iconBg: "#ede9fe", iconColor: "#7c3aed" },
     { label: "Total Guests",   value: String(s?.new_guests ?? 0),                change: pct(s?.guests_change ?? 0),    icon: UserCheck,    iconBg: "#ffedd5", iconColor: "#ea580c" },
     { label: "Reviews",        value: String(reviewsList.length),                change: "—",                           icon: Star,         iconBg: "#fef9c3", iconColor: "#ca8a04" },
@@ -587,12 +595,22 @@ export default function OwnerDashboard() {
   ];
 
   // Revenue chart — normalize monthly revenue to bar heights (Overview + Finance)
-  const monthly = (monthlyRes?.data as { month: string; revenue: number }[]) || [];
+  const monthly = (monthlyRes?.data as { month: string; revenue: number; gross_revenue: number }[]) || [];
   const maxRev = Math.max(1, ...monthly.map((m) => Number(m.revenue) || 0));
-  const revenueData = monthly.map((m) => ({
-    month: /^\d{4}-\d{2}/.test(m.month) ? new Date(m.month + "-01").toLocaleString("en", { month: "short" }) : m.month,
-    value: Math.round(((Number(m.revenue) || 0) / maxRev) * 100),
-  }));
+  // Overview chart only: reads gross_revenue and its own max when the
+  // Collected/Gross toggle is set to "gross", collected revenue otherwise.
+  // Finance's chart below (monthly/maxRev directly) always stays collected.
+  const maxGrossRev = Math.max(1, ...monthly.map((m) => Number(m.gross_revenue) || 0));
+  const overviewRevenueData = monthly.map((m) => {
+    const amount = revenueBasis === "gross" ? Number(m.gross_revenue) || 0 : Number(m.revenue) || 0;
+    const max = revenueBasis === "gross" ? maxGrossRev : maxRev;
+    return {
+      month: /^\d{4}-\d{2}/.test(m.month) ? new Date(m.month + "-01").toLocaleString("en", { month: "short" }) : m.month,
+      amount,
+      value: Math.round((amount / max) * 100),
+    };
+  });
+  const overviewRevenueTotal = overviewRevenueData.reduce((t, m) => t + m.amount, 0);
   // Revenue by haven (Finance) + y-axis ticks for the bar chart
   const roomRev = ((roomRevRes as unknown as { data?: { room_name: string; revenue: number; bookings: number }[] })?.data) || [];
   const totalRoomRev = Math.max(1, roomRev.reduce((t, r) => t + (Number(r.revenue) || 0), 0));
@@ -1029,7 +1047,23 @@ export default function OwnerDashboard() {
               {tabBar([{ id: "dashboard", label: "Dashboard", icon: LayoutDashboard }, { id: "analytics", label: "Analytics & Reports", icon: BarChart3 }], overviewTab, (id) => setOverviewTab(id as "dashboard" | "analytics"))}
             </div>
             {overviewTab === "dashboard" && (
-              <div style={{ position: "relative" }}>
+              <div className="flex items-center flex-wrap" style={{ gap: 10 }}>
+                {/* Collected (cash actually received) vs Gross (full value of
+                    every incoming booking, before any payment lands) — swaps
+                    what the "Total/Gross Revenue" KPI card above shows. */}
+                <div className="inline-flex" style={{ border: "1px solid #D4BFA0", background: "#F7F0E3" }}>
+                  <button type="button" onClick={() => setRevenueBasis("collected")}
+                    className="cursor-pointer"
+                    style={{ padding: "9px 14px", fontSize: 13, fontWeight: 500, color: revenueBasis === "collected" ? "#1f1b16" : "#8a8276", background: revenueBasis === "collected" ? "#fff" : "transparent", border: "none" }}>
+                    Collected
+                  </button>
+                  <button type="button" onClick={() => setRevenueBasis("gross")}
+                    className="cursor-pointer"
+                    style={{ padding: "9px 14px", fontSize: 13, fontWeight: 500, color: revenueBasis === "gross" ? "#1f1b16" : "#8a8276", background: revenueBasis === "gross" ? "#fff" : "transparent", border: "none", borderLeft: "1px solid #D4BFA0" }}>
+                    Gross Revenue
+                  </button>
+                </div>
+                <div style={{ position: "relative" }}>
                 <button type="button" onClick={() => setRevenueRangeOpen((v) => !v)}
                   className="inline-flex items-center cursor-pointer"
                   style={{ gap: 8, padding: "9px 16px", fontSize: 13, fontWeight: 500, color: "#5a4a3a", background: "#F7F0E3", border: "1px solid #D4BFA0" }}>
@@ -1052,6 +1086,7 @@ export default function OwnerDashboard() {
                     </div>
                   </>
                 )}
+                </div>
               </div>
             )}
           </div>
@@ -1083,17 +1118,30 @@ export default function OwnerDashboard() {
             <div className="xl:col-span-2" style={{ background: "#fff", border: "1px solid #ece5d4" }}>
               <div className="flex items-end justify-between" style={{ padding: "22px 24px 0" }}>
                 <div>
-                  <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, margin: 0, lineHeight: 1, color: "#1f1b16" }}>Revenue overview</h3>
+                  <div className="flex items-center" style={{ gap: 8 }}>
+                    <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, margin: 0, lineHeight: 1, color: "#1f1b16" }}>Revenue overview</h3>
+                    {/* Identifies which figure the bars/total below are showing
+                        — follows the Collected/Gross Revenue toggle above. */}
+                    <span style={{
+                      fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".04em",
+                      padding: "2px 8px", borderRadius: 999,
+                      color: revenueBasis === "gross" ? "#8C5A2E" : "#059669",
+                      background: revenueBasis === "gross" ? "#F3E4CB" : "#d1fae5",
+                    }}>
+                      {revenueBasis === "gross" ? "Gross" : "Collected"}
+                    </span>
+                  </div>
                   <p style={{ fontSize: 12, color: "#8a8276", margin: "8px 0 0" }}>{REVENUE_RANGES[revenueRange].label}</p>
                 </div>
-                <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 20, fontWeight: 500, letterSpacing: "-0.02em", color: "#1f1b16" }}>{peso(monthly.reduce((t, m) => t + (Number(m.revenue) || 0), 0))}</div>
+                <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 20, fontWeight: 500, letterSpacing: "-0.02em", color: "#1f1b16" }}>{peso(overviewRevenueTotal)}</div>
               </div>
               <div style={{ padding: "18px 24px 24px" }}>
                 <div className="flex items-end gap-3" style={{ height: 160 }}>
-                  {revenueData.map((item) => (
+                  {overviewRevenueData.map((item) => (
                     <div key={item.month} className="flex-1 flex flex-col items-center" style={{ gap: 8 }}>
                       <div className="w-full flex items-end justify-center" style={{ height: 120 }}>
-                        <div style={{ width: "100%", height: `${item.value}%`, background: "#b8754a" }} title={`${item.month}: ${item.value}%`} />
+                        <div style={{ width: "100%", height: `${item.value}%`, background: "#b8754a" }}
+                          title={`${item.month}: ${peso(item.amount)}`} />
                       </div>
                       <span style={{ fontSize: 11, color: "#8a8276" }}>{item.month}</span>
                     </div>
