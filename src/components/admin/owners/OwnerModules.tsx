@@ -128,11 +128,17 @@ export function AnalyticsSection() {
   const { data: monthlyRes } = useGetMonthlyRevenueQuery({ months: "6" });
   const { data: roomRes } = useGetRevenueByRoomQuery({ period: "30" });
   const s = (summaryRes as unknown as { data?: Row })?.data || {};
-  const monthly = dataOf(monthlyRes) as { month: string; revenue: number }[];
+  const monthly = dataOf(monthlyRes) as { month: string; revenue: number; gross_revenue: number }[];
   const rooms = dataOf(roomRes) as { room_name: string; revenue: number; bookings: number }[];
-  const maxRev = Math.max(1, ...monthly.map((m) => Number(m.revenue) || 0));
+  // Collected = cash actually received (down payments + full payments already
+  // approved). Gross = the full booked value of every incoming booking, even
+  // before any payment has landed — see analyticsController.ts summaryStatsQuery.
+  const [revenueBasis, setRevenueBasis] = useState<"collected" | "gross">("collected");
+  const revenueNow = (m: { revenue: number; gross_revenue: number }) =>
+    revenueBasis === "gross" ? Number(m.gross_revenue) || 0 : Number(m.revenue) || 0;
+  const maxRev = Math.max(1, ...monthly.map(revenueNow));
   const stats = [
-    { label: "Revenue (30d)", value: peso(Number(s.total_revenue ?? 0)) },
+    { label: revenueBasis === "gross" ? "Gross Revenue (30d)" : "Revenue (30d)", value: peso(revenueBasis === "gross" ? Number(s.total_gross_revenue ?? 0) : Number(s.total_revenue ?? 0)) },
     { label: "Bookings (30d)", value: String(s.total_bookings ?? 0) },
     { label: "Occupancy", value: `${Math.round(Number(s.occupancy_rate ?? 0))}%` },
     { label: "New Guests", value: String(s.new_guests ?? 0) },
@@ -142,6 +148,22 @@ export function AnalyticsSection() {
   const MONO = "'Geist Mono', ui-monospace, monospace";
   return (
     <div>
+      {/* Collected (cash actually received) vs Gross (full value of every
+          incoming booking, before any payment lands) — swaps the "Revenue
+          (30d)" stat and the chart below between the two figures. */}
+      <div className="inline-flex mb-6" style={{ border: "1px solid #D4BFA0", background: "#F7F0E3" }}>
+        <button type="button" onClick={() => setRevenueBasis("collected")}
+          className="cursor-pointer"
+          style={{ padding: "9px 14px", fontSize: 13, fontWeight: 500, color: revenueBasis === "collected" ? "#1f1b16" : "#8a8276", background: revenueBasis === "collected" ? "#fff" : "transparent", border: "none" }}>
+          Collected
+        </button>
+        <button type="button" onClick={() => setRevenueBasis("gross")}
+          className="cursor-pointer"
+          style={{ padding: "9px 14px", fontSize: 13, fontWeight: 500, color: revenueBasis === "gross" ? "#1f1b16" : "#8a8276", background: revenueBasis === "gross" ? "#fff" : "transparent", border: "none", borderLeft: "1px solid #D4BFA0" }}>
+          Gross Revenue
+        </button>
+      </div>
+
       {/* stats — flat bordered cells */}
       <div className="grid grid-cols-2 lg:grid-cols-4 mb-6" style={{ gap: 1, background: "#ece5d4", border: "1px solid #ece5d4" }}>
         {stats.map((st) => (
@@ -154,8 +176,16 @@ export function AnalyticsSection() {
 
       {/* revenue chart */}
       <div style={{ background: "#fff", border: "1px solid #ece5d4", marginBottom: 24 }}>
-        <div style={{ padding: "22px 24px 0" }}>
+        <div className="flex items-center" style={{ padding: "22px 24px 0", gap: 8 }}>
           <h3 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 20, margin: 0, lineHeight: 1, color: "#1f1b16" }}>Revenue — last 6 months</h3>
+          <span style={{
+            fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".04em",
+            padding: "2px 8px", borderRadius: 999,
+            color: revenueBasis === "gross" ? "#8C5A2E" : "#059669",
+            background: revenueBasis === "gross" ? "#F3E4CB" : "#d1fae5",
+          }}>
+            {revenueBasis === "gross" ? "Gross" : "Collected"}
+          </span>
         </div>
         <div style={{ padding: "18px 24px 24px" }}>
           {monthly.length === 0 ? (
@@ -164,9 +194,9 @@ export function AnalyticsSection() {
             <div className="flex items-end gap-3" style={{ height: 200 }}>
               {monthly.map((m) => (
                 <div key={m.month} className="flex-1 flex flex-col items-center" style={{ gap: 8 }}>
-                  <span style={{ fontFamily: MONO, fontSize: 11, color: "#6b6358" }}>{peso(Number(m.revenue) || 0)}</span>
+                  <span style={{ fontFamily: MONO, fontSize: 11, color: "#6b6358" }}>{peso(revenueNow(m))}</span>
                   <div className="w-full flex items-end justify-center" style={{ height: 140 }}>
-                    <div style={{ width: "100%", height: `${Math.max(2, ((Number(m.revenue) || 0) / maxRev) * 100)}%`, background: "#b8754a" }} />
+                    <div style={{ width: "100%", height: `${Math.max(2, (revenueNow(m) / maxRev) * 100)}%`, background: "#b8754a" }} />
                   </div>
                   <span style={{ fontSize: 11, color: "#8a8276" }}>{/^\d{4}-\d{2}/.test(m.month) ? new Date(m.month + "-01").toLocaleString("en", { month: "short" }) : m.month}</span>
                 </div>
