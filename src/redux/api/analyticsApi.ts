@@ -2,10 +2,12 @@ import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 
 export interface AnalyticsSummary {
   total_revenue: number;
+  total_gross_revenue: number;
   total_bookings: number;
   occupancy_rate: number;
   new_guests: number;
   revenue_change: number;
+  gross_revenue_change: number;
   bookings_change: number;
   occupancy_change: number;
   guests_change: number;
@@ -20,6 +22,7 @@ export interface RevenueByRoom {
 export interface MonthlyRevenue {
   month: string;
   revenue: number;
+  gross_revenue: number;
 }
 
 export const analyticsApi = createApi({

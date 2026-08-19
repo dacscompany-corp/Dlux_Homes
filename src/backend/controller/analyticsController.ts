@@ -36,6 +36,15 @@ const summaryStatsQuery = (where: string) => `
       WHEN bp.payment_status = 'approved_full_payment' THEN bp.total_amount
       ELSE 0
     END), 0) as total_revenue,
+    -- Gross revenue: the full booked value of every booking in this window,
+    -- regardless of whether any payment has actually been collected yet -
+    -- a pending-payment booking counts here even at zero received.
+    -- total_revenue above is the collected-cash figure; this is the pipeline
+    -- figure. Both share the same booking-status filter passed in via the
+    -- where clause, so neither counts a rejected/cancelled booking.
+    -- total_amount lives on booking_payments (one row per booking), not on
+    -- the booking row itself.
+    COALESCE(SUM(bp.total_amount), 0) as total_gross_revenue,
     COUNT(DISTINCT b.id) as total_bookings,
     COUNT(DISTINCT COALESCE(
       b.user_id::text,
@@ -61,10 +70,12 @@ const previousWindow = (period: string) => `
 
 export interface AnalyticsSummary {
   total_revenue: number;
+  total_gross_revenue: number;
   total_bookings: number;
   occupancy_rate: number;
   new_guests: number;
   revenue_change: number;
+  gross_revenue_change: number;
   bookings_change: number;
   occupancy_change: number;
   guests_change: number;
@@ -79,6 +90,9 @@ export interface RevenueByRoom {
 export interface MonthlyRevenue {
   month: string;
   revenue: number;
+  // Gross: full booked value of every booking that month, before any payment
+  // is collected. revenue (above) stays the collected-cash figure.
+  gross_revenue: number;
 }
 
 // Helper function for direct data fetching (non-API)
@@ -128,6 +142,10 @@ export async function fetchAnalyticsSummary(period: string = '30'): Promise<Anal
     ? ((current.total_revenue - previous.total_revenue) / previous.total_revenue) * 100
     : 0;
 
+  const gross_revenue_change = previous.total_gross_revenue > 0
+    ? ((current.total_gross_revenue - previous.total_gross_revenue) / previous.total_gross_revenue) * 100
+    : 0;
+
   const bookings_change = previous.total_bookings > 0
     ? ((current.total_bookings - previous.total_bookings) / previous.total_bookings) * 100
     : 0;
@@ -154,10 +172,12 @@ export async function fetchAnalyticsSummary(period: string = '30'): Promise<Anal
 
   return {
     total_revenue: parseFloat(current.total_revenue),
+    total_gross_revenue: parseFloat(current.total_gross_revenue),
     total_bookings: parseInt(current.total_bookings),
     occupancy_rate: parseFloat(occupancy_rate.toFixed(1)),
     new_guests: parseInt(current.new_guests),
     revenue_change: parseFloat(revenue_change.toFixed(1)),
+    gross_revenue_change: parseFloat(gross_revenue_change.toFixed(1)),
     bookings_change: parseFloat(bookings_change.toFixed(1)),
     occupancy_change: parseFloat(occupancy_change.toFixed(1)),
     guests_change: parseFloat(guests_change.toFixed(1)),
@@ -203,7 +223,8 @@ export async function fetchMonthlyRevenue(months: string = '6'): Promise<Monthly
         WHEN bp.payment_status = 'approved_down_payment' THEN bp.down_payment
         WHEN bp.payment_status = 'approved_full_payment' THEN bp.total_amount
         ELSE 0
-      END), 0) as revenue
+      END), 0) as revenue,
+      COALESCE(SUM(bp.total_amount), 0) as gross_revenue
     FROM ${BOOKING_TABLE} b
     LEFT JOIN booking_payments bp ON b.id = bp.booking_id
     WHERE b.created_at >= NOW() - INTERVAL '${months} months'
@@ -217,6 +238,7 @@ export async function fetchMonthlyRevenue(months: string = '6'): Promise<Monthly
   return result.rows.map((row: any) => ({
     month: row.month,
     revenue: parseFloat(row.revenue),
+    gross_revenue: parseFloat(row.gross_revenue),
   }));
 }
 
@@ -262,6 +284,10 @@ export const getAnalyticsSummary = async (req: NextRequest): Promise<NextRespons
       ? ((current.total_revenue - previous.total_revenue) / previous.total_revenue) * 100
       : 0;
 
+    const gross_revenue_change = previous.total_gross_revenue > 0
+      ? ((current.total_gross_revenue - previous.total_gross_revenue) / previous.total_gross_revenue) * 100
+      : 0;
+
     const bookings_change = previous.total_bookings > 0
       ? ((current.total_bookings - previous.total_bookings) / previous.total_bookings) * 100
       : 0;
@@ -305,10 +331,12 @@ export const getAnalyticsSummary = async (req: NextRequest): Promise<NextRespons
 
     const summary: AnalyticsSummary = {
       total_revenue: parseFloat(current.total_revenue),
+      total_gross_revenue: parseFloat(current.total_gross_revenue),
       total_bookings: parseInt(current.total_bookings),
       occupancy_rate: parseFloat(occupancy_rate.toFixed(1)),
       new_guests: parseInt(current.new_guests),
       revenue_change: parseFloat(revenue_change.toFixed(1)),
+      gross_revenue_change: parseFloat(gross_revenue_change.toFixed(1)),
       bookings_change: parseFloat(bookings_change.toFixed(1)),
       occupancy_change: parseFloat(occupancy_change.toFixed(1)),
       guests_change: parseFloat(guests_change.toFixed(1)),
@@ -392,7 +420,8 @@ export const getMonthlyRevenue = async (req: NextRequest): Promise<NextResponse>
           WHEN bp.payment_status = 'approved_down_payment' THEN bp.down_payment
           WHEN bp.payment_status = 'approved_full_payment' THEN bp.total_amount
           ELSE 0
-        END), 0) as revenue
+        END), 0) as revenue,
+        COALESCE(SUM(bp.total_amount), 0) as gross_revenue
       FROM ${BOOKING_TABLE} b
       LEFT JOIN booking_payments bp ON b.id = bp.booking_id
       WHERE b.created_at >= NOW() - INTERVAL '${months} months'
@@ -406,6 +435,7 @@ export const getMonthlyRevenue = async (req: NextRequest): Promise<NextResponse>
     const monthlyRevenue: MonthlyRevenue[] = result.rows.map((row: any) => ({
       month: row.month,
       revenue: parseFloat(row.revenue),
+      gross_revenue: parseFloat(row.gross_revenue),
     }));
 
     console.log(`✅ Retrieved monthly revenue: ${monthlyRevenue.length} months`);
