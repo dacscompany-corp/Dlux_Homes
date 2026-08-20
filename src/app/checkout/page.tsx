@@ -19,6 +19,7 @@ import { stayTotal, isWeekendOrHoliday, addDaysISO, extraPaxFee, bundleNightlyRa
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
 import { autoDiscountAmount, pickAutoPromo } from "@/lib/promo-offer";
+import { TERMS_VERSION } from "@/lib/terms";
 import { DluxLoaderOverlay, DluxLoaderPage } from "@/components/brand/DluxLoader";
 
 // ── Helpers ────────────────────────────────────────────────────
@@ -247,6 +248,20 @@ const G = {
   accent: "#B07848", accentInk: "#8C5A2E", white: "#FFFCF4", soft: "#FAF7F1",
   green: "#2F7D55", greenBg: "#E7F2EA", err: "#A8492F", errBg: "#FBEDE9",
   errLine: "#F0CFC6", errField: "#FFF8F6", offBg: "#E3D6C0", offInk: "#97866F",
+};
+
+// Before-you-pay gate. Its own small palette rather than entries in G: the
+// gate is a dark-on-cream document sitting inside a cream form, so it needs a
+// hairline and a green that read against #FFFDF8 rather than against the page.
+// TG_GREEN is lighter than G.green (#2F7D55) on purpose — at 9% opacity behind
+// the accepted checkbox, the darker one goes grey.
+const TG_HAIR = "#E6DFCF";
+const TG_GREEN = "#5B9E6B";
+const TG_CRIT_TEXT: React.CSSProperties = { color: "#DCCFB8", textWrap: "pretty" };
+const TG_NEUTRAL_TEXT: React.CSSProperties = { fontSize: 13.5, lineHeight: 1.5, color: "#5A4E3F", textWrap: "pretty" };
+const TG_ICON_WELL: React.CSSProperties = {
+  flex: "none", width: 28, height: 28, borderRadius: 9, background: "#F4EEE1",
+  border: `1px solid ${TG_HAIR}`, display: "grid", placeItems: "center",
 };
 
 function AskLabel({ label, required, hint }: { label: string; required?: boolean; hint?: string }) {
@@ -585,6 +600,21 @@ function CheckoutInner() {
   // stored with no ID attached.
   const [info, setInfo] = useState<Info>({ firstName: "", lastName: "", age: "", gender: "Male", email: "", phone: "", facebook: "", notes: "", validIds: [], senior: false, birthday: "" });
   const [payment, setPayment] = useState<Payment>({ methodId: "", method: "", reference: "", proofName: null, proofData: null, idName: null, idData: null });
+  // Terms acceptance. Gated on step 0 -> 1, i.e. BEFORE the payment step reveals
+  // the GCash/BPI details — never at the final Review step. The down payment is
+  // a manual transfer the guest makes outside the app, so by the time they press
+  // Submit the money is already gone and a no-refund term shown there would be
+  // disclosed after the decision it governs. `termsAt` is the moment of the tick
+  // and is stored on the booking alongside the version (see /lib/terms.ts).
+  const [termsOk, setTermsOk] = useState(false);
+  const [termsAt, setTermsAt] = useState<string | null>(null);
+  // Phone-only: whether the two logistics facts are unfolded. Desktop shows
+  // them unconditionally, so this never leaves `false` there.
+  const [termsOpen, setTermsOpen] = useState(false);
+  const acceptTerms = (on: boolean) => {
+    setTermsOk(on);
+    setTermsAt(on ? new Date().toISOString() : null);
+  };
   // Active payment methods (with QR + account details) configured by the owner.
   const [methods, setMethods] = useState<PayMethod[]>([]);
   useEffect(() => {
@@ -770,6 +800,12 @@ function CheckoutInner() {
         if (needDoc && g.validIds.length === 0) e.add(`x${i}-validId`);
         if (g.senior && !g.birthday) e.add(`x${i}-birthday`);
       });
+      // Terms must be accepted before the payment step can be reached. Added
+      // LAST so the guest is walked through the guest cards first and only meets
+      // the Terms once their booking is otherwise complete — and so the "jump to
+      // the first missing field" hop in tryAdvance never skips past a half-filled
+      // guest card to land on the checkbox.
+      if (!termsOk) e.add("terms");
     }
     // Step 1 (Payment): a payment method must be selected.
     if (step === 1 && !payment.methodId) e.add("method");
@@ -820,6 +856,10 @@ function CheckoutInner() {
   // First guest still missing something — drives the "not finished yet" banner
   // and the reason printed above a disabled Continue.
   const firstIncomplete = Array.from({ length: totalGuests }, (_, gi) => gi).find((gi) => !guestComplete(gi)) ?? null;
+  // Terms panel turns from ink to the error treatment only after a blocked
+  // Continue, matching every other field on the step: nothing is marked red
+  // before the guest has actually tried to move on.
+  const termsErr = showErrors && !termsOk;
   // Field chrome for the popup — 16px text and 48px targets per the design.
   const askStyle = (invalid: boolean): React.CSSProperties => ({
     width: "100%", padding: "15px 16px", borderRadius: 14, fontSize: 16, fontFamily: "inherit",
@@ -883,13 +923,24 @@ function CheckoutInner() {
   const tryAdvance = (action: () => void) => {
     if (fieldErrors.size > 0) {
       setShowErrors(true);
-      toast.error(`Please complete the ${fieldErrors.size} highlighted field${fieldErrors.size > 1 ? "s" : ""} before continuing.`);
+      // The Terms checkbox is not a "field", so the generic count reads oddly
+      // when it is the only thing left — and it is the one blocker whose reason
+      // the guest most needs stated plainly.
+      const onlyTerms = fieldErrors.size === 1 && fieldErrors.has("terms");
+      toast.error(
+        onlyTerms
+          ? "Please read and accept the Terms & Conditions before you pay."
+          : `Please complete the ${fieldErrors.size} highlighted field${fieldErrors.size > 1 ? "s" : ""} before continuing.`,
+      );
       // Jump to the first missing field (Set keeps form order).
       const firstKey = fieldErrors.values().next().value;
       // A collapsed card's inputs are NOT in the DOM, so the scroll/focus below
       // would silently do nothing. Open the offending guest first — the 60ms
       // timeout is what gives React the tick it needs to mount the fields.
-      if (step === 0 && firstKey) setOpenGuest(guestOfKey(firstKey));
+      // `terms` belongs to no guest and lives outside the cards, so it must not
+      // be routed through guestOfKey (which would fall through to guest 1 and
+      // pop open a card the guest already finished).
+      if (step === 0 && firstKey && firstKey !== "terms") setOpenGuest(guestOfKey(firstKey));
       setTimeout(() => {
         const el = document.getElementById(`f-${firstKey}`);
         el?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -971,6 +1022,12 @@ function CheckoutInner() {
       // Only when an automatic promotion actually reduced this booking — the
       // server records it against the account so it can't be used a second time.
       promotion_id: autoDiscount > 0 ? autoPromo?.id : undefined,
+      // Which Terms the guest accepted, and when. Captured on step 0 -> 1,
+      // before the payment details were shown. §22 of the Terms binds a booking
+      // to the version in force when it was submitted, so this is what makes
+      // that promise checkable later.
+      terms_version: TERMS_VERSION,
+      terms_accepted_at: termsAt,
     };
 
     const body = JSON.stringify(payload);
@@ -1120,6 +1177,44 @@ function CheckoutInner() {
           }
           @media (max-width: 420px) {
             .co-pay-amt { font-size: 42px !important; }
+          }
+          /* Before-you-pay gate ---------------------------------------
+             The gate is the one block on step 0 whose padding rhythm is its
+             own: it has to read as a document the guest is signing, not as
+             another form card. Desktop figures first, phone overrides at
+             620px (the width where the card stops having room for margins). */
+          .tg-card { border-radius: 18px; }
+          .tg-head { padding: 17px 22px 14px; }
+          .tg-title { font-size: 23px; }
+          .tg-critical { margin: 0 22px; padding: 14px 17px; }
+          .tg-crit-text { font-size: 13.5px; line-height: 1.45; }
+          .tg-disclose { display: none; }
+          .tg-neutral { padding: 4px 22px 0; }
+          .tg-row { padding: 12px 0; }
+          .tg-row-last { padding: 12px 0 4px; }
+          .tg-accept { margin-top: 6px; padding: 14px 22px 16px; }
+          .tg-check { padding: 14px 16px; }
+          .tg-check-text { font-size: 14px; }
+          .tg-fine { font-size: 11.5px; line-height: 1.35; }
+          @media (max-width: 620px) {
+            .tg-card { border-radius: 16px; }
+            .tg-head { padding: 14px 16px 12px; }
+            .tg-title { font-size: 20px; }
+            .tg-critical { margin: 0 16px; padding: 13px 15px; }
+            .tg-crit-text { font-size: 13px; }
+            /* On a phone the two logistics facts fold away so the panel that
+               costs money is what fits on screen. Desktop never collapses:
+               .tg-disclose and .tg-collapsed only do anything inside this
+               query, so the button is unreachable and both rows stay open. */
+            .tg-disclose { display: flex; }
+            .tg-neutral { padding: 2px 16px 0; }
+            .tg-neutral.tg-collapsed { display: none; }
+            .tg-row { padding: 11px 0; }
+            .tg-row-last { padding: 11px 0 2px; }
+            .tg-accept { margin-top: 10px; padding: 12px 16px 13px; }
+            .tg-check { padding: 13px 14px; }
+            .tg-check-text { font-size: 13.5px; }
+            .tg-fine { font-size: 11px; }
           }
         `}</style>
         <div style={{ maxWidth: 1320, margin: "0 auto", height: 72, padding: "0 32px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24 }}>
@@ -1464,7 +1559,135 @@ function CheckoutInner() {
                 {/* Says why the IDs are being asked for, right where they're asked. */}
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, fontSize: 12.5, color: G.muted }}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
-                  Secure checkout · IDs are used only for check-in verification
+                  IDs are used only for check-in verification
+                </div>
+
+                {/* ── Terms gate ────────────────────────────────────────────────
+                    LAST thing on step 0, so the next tap reveals the GCash/BPI
+                    details and the guest transfers real money. The down payment
+                    leaves their account outside this app and cannot be reversed,
+                    so the no-cancellation terms have to be put in front of them
+                    HERE — showing them on the Review step would disclose the rule
+                    after the decision it governs. Do not move this later in the
+                    flow.
+
+                    The four facts are split by consequence, not by list order:
+                    the two that cannot be undone sit in the dark panel, the two
+                    that are only logistics sit as plain rows below it. A guest
+                    who reads nothing but the dark panel has still read the part
+                    that costs them money. */}
+                <div
+                  id="f-terms"
+                  className="tg-card"
+                  style={{
+                    marginTop: 26, overflow: "hidden", background: "#FFFDF8",
+                    border: `1px solid ${termsErr ? "#D2856D" : TG_HAIR}`,
+                    boxShadow: "0 24px 60px -40px rgba(31,22,14,.45)",
+                  }}
+                >
+                  {/* Header — title, the "required" flag, and the way out to the full document */}
+                  <div className="tg-head" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0, flexWrap: "wrap" }}>
+                      <h2 className="tg-title" style={{ margin: 0, fontFamily: "'Fraunces', Georgia, serif", fontWeight: 500, letterSpacing: "-.015em", color: G.ink, lineHeight: 1.15 }}>
+                        Before you pay
+                      </h2>
+                      <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 9.5, letterSpacing: ".15em", textTransform: "uppercase", color: G.err }}>Required</span>
+                    </div>
+                    <Link href="/terms" target="_blank" rel="noopener" style={{ flex: "none", display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 13px", border: `1px solid ${TG_HAIR}`, background: G.soft, color: "#9A6840", fontSize: 12.5, fontWeight: 600, textDecoration: "none", borderRadius: 99, whiteSpace: "nowrap" }}>
+                      <span>Read the Terms</span>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
+                    </Link>
+                  </div>
+
+                  {/* The two irreversible facts. Dark panel = the money you cannot get back. */}
+                  <div className="tg-critical" style={{ background: "#2C2218", borderRadius: 13, display: "flex", flexDirection: "column", gap: 9 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E5B877" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12" y2="17" /></svg>
+                      <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 9.5, letterSpacing: ".15em", textTransform: "uppercase", color: "#E5B877" }}>Cannot be undone</span>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                      <div className="tg-crit-text" style={TG_CRIT_TEXT}>Once your booking is confirmed it <strong style={{ color: "#FBE9C8", fontWeight: 700 }}>cannot be cancelled</strong> and your payment is <strong style={{ color: "#FBE9C8", fontWeight: 700 }}>not refundable</strong>.</div>
+                      <div className="tg-crit-text" style={TG_CRIT_TEXT}>If you do not arrive, what you have paid is forfeited.</div>
+                    </div>
+                  </div>
+
+                  {/* The two neutral facts — what still can change, and what is
+                      still owed. Worth reading, but not worth pushing the accept
+                      row off a small screen, so on a phone they fold behind this
+                      button and the dark panel keeps the fold to itself. */}
+                  <button
+                    type="button"
+                    className="tg-disclose"
+                    aria-expanded={termsOpen}
+                    aria-controls="tg-neutral-facts"
+                    onClick={() => setTermsOpen((o) => !o)}
+                    style={{ margin: "8px 16px 0", padding: "10px 13px", alignItems: "center", gap: 8, width: "calc(100% - 32px)", borderRadius: 11, background: G.soft, border: `1px solid ${TG_HAIR}`, fontFamily: "inherit", fontSize: 13, fontWeight: 600, color: "#6B5A44", cursor: "pointer" }}
+                  >
+                    <span style={{ flex: 1, textAlign: "left" }}>{termsOpen ? "Hide the other two" : "Two more things apply"}</span>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none", transition: "transform .2s ease", transform: `rotate(${termsOpen ? 180 : 0}deg)` }}><polyline points="6 9 12 15 18 9" /></svg>
+                  </button>
+
+                  <div id="tg-neutral-facts" className={`tg-neutral${termsOpen ? "" : " tg-collapsed"}`}>
+                    <div className="tg-row" style={{ display: "flex", gap: 11, alignItems: "center", borderBottom: `1px solid ${TG_HAIR}` }}>
+                      <span style={TG_ICON_WELL}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9A6840" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 0 1 15.3-6.4L21 8" /><polyline points="21 3 21 8 16 8" /><path d="M21 12a9 9 0 0 1-15.3 6.4L3 16" /><polyline points="3 21 3 16 8 16" /></svg>
+                      </span>
+                      <div style={{ flex: 1 }}>
+                        <div style={TG_NEUTRAL_TEXT}>If your plans change you may ask for <strong style={{ fontWeight: 700, color: "#2C2218" }}>one date change</strong>, at least <strong style={{ fontWeight: 700, color: "#2C2218" }}>7 days before check-in</strong>, for a new date within 1 month.</div>
+                      </div>
+                    </div>
+                    <div className="tg-row-last" style={{ display: "flex", gap: 11, alignItems: "center" }}>
+                      <span style={TG_ICON_WELL}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9A6840" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="13" rx="2" /><line x1="2" y1="11" x2="22" y2="11" /><line x1="6" y1="15" x2="10" y2="15" /></svg>
+                      </span>
+                      <div style={{ flex: 1 }}>
+                        <div style={TG_NEUTRAL_TEXT}>The <strong style={{ fontWeight: 700, color: "#2C2218" }}>{peso(total - downPayment)}</strong> balance and the <strong style={{ fontWeight: 700, color: "#2C2218" }}>{peso(SECURITY_DEPOSIT)}</strong> refundable deposit are paid when you arrive.</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Accept */}
+                  <div className="tg-accept" style={{ background: G.soft, borderTop: `1px solid ${TG_HAIR}`, display: "flex", flexDirection: "column", gap: 10 }}>
+                    {termsErr && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "10px 13px", borderRadius: 11, background: "rgba(168,73,47,.09)", border: "1px solid rgba(168,73,47,.32)", fontSize: 12.5, fontWeight: 600, color: G.err, lineHeight: 1.4 }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" style={{ flex: "none" }}><circle cx="12" cy="12" r="9" /><line x1="12" y1="8" x2="12" y2="13" /><line x1="12" y1="16.5" x2="12" y2="16.5" /></svg>
+                        Please accept the Terms &amp; Conditions to continue to payment.
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      role="checkbox"
+                      aria-checked={termsOk}
+                      onClick={() => acceptTerms(!termsOk)}
+                      className="tg-check"
+                      style={{
+                        display: "flex", alignItems: "flex-start", gap: 12, width: "100%", minHeight: 52,
+                        textAlign: "left", borderRadius: 13, cursor: "pointer", font: "inherit",
+                        transition: "background .15s, border-color .15s",
+                        background: termsOk ? "rgba(91,158,107,.09)" : "#FFFDF8",
+                        border: `1.5px solid ${termsOk ? TG_GREEN : termsErr ? "#C97A62" : TG_HAIR}`,
+                      }}
+                    >
+                      <span style={{ flex: "none", width: 24, height: 24, marginTop: 1, borderRadius: 7, display: "grid", placeItems: "center", color: "#fff", transition: "background .15s, border-color .15s", background: termsOk ? TG_GREEN : "#FFFDF8", border: `1.5px solid ${termsOk ? TG_GREEN : termsErr ? G.err : "#C6B69A"}` }}>
+                        {termsOk && <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>}
+                      </span>
+                      <span className="tg-check-text" style={{ flex: 1, lineHeight: 1.55, fontWeight: 600, color: G.ink }}>
+                        I have read and accept the{" "}
+                        <Link href="/terms" target="_blank" rel="noopener" onClick={(e) => e.stopPropagation()} style={{ color: G.accent, fontWeight: 700, textDecoration: "underline", textUnderlineOffset: 2 }}>
+                          Terms &amp; Conditions
+                        </Link>
+                        , including that my booking cannot be cancelled or refunded once confirmed.
+                      </span>
+                    </button>
+
+                    <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+                      <div className="tg-fine" style={{ display: "flex", alignItems: "center", gap: 8, color: G.muted }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+                        <span>Secure checkout · your acceptance is recorded with your booking.</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
@@ -1626,6 +1849,11 @@ function CheckoutInner() {
                   <div style={{ fontSize: 13, color: "#8B7458", marginTop: 2 }}>{peso(total - downPayment)} balance + {peso(SECURITY_DEPOSIT)} deposit at check-in</div>
                 </ReviewBlock>
                 <div style={{ marginTop: 20, padding: 20, background: "#EFE4CE", borderRadius: 16 }}>
+                  {/* A REMINDER of what was accepted on step 0, not the consent
+                      event itself — by this point the down payment has already
+                      been transferred, so nothing here can be the first time the
+                      guest meets these terms. The gate lives at the end of
+                      step 0; see the "Terms gate" block there. */}
                   <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>You&apos;re agreeing to:</div>
                   <ul style={{ margin: 0, padding: "0 0 0 18px", fontSize: 13, color: "#4A3A2A", lineHeight: 1.75 }}>
                     <li>Check-in at {checkInTime} and check-out by {checkOutTime}</li>
@@ -1633,6 +1861,13 @@ function CheckoutInner() {
                     <li>50% balance + {peso(SECURITY_DEPOSIT)} refundable security deposit due at check-in</li>
                     <li>No cancellations — one free date change if requested ≥7 days before check-in, new date within 1 month</li>
                   </ul>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 12, fontSize: 12.5, fontWeight: 600, color: G.green }}>
+                    <IcoCheckLg />
+                    <span style={{ color: "#4A3A2A", fontWeight: 500 }}>
+                      Terms &amp; Conditions (v{TERMS_VERSION}) accepted ·{" "}
+                      <Link href="/terms" target="_blank" rel="noopener" style={{ color: G.accent, fontWeight: 600 }}>read again</Link>
+                    </span>
+                  </div>
                 </div>
               </div>
             )}
