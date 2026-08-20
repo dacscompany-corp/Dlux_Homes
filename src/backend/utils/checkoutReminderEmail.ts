@@ -10,6 +10,7 @@
 // view doesn't reliably honor margin:0 auto / display:flex).
 
 import nodemailer from "nodemailer";
+import { securityDepositFor } from "@/lib/pricing";
 
 const transporter = nodemailer.createTransport({
   service: "gmail",
@@ -22,9 +23,6 @@ const transporter = nodemailer.createTransport({
 // Where the key goes back. Same value the self check-in email tells them to
 // collect it from, so the two emails can never disagree.
 const MAILBOX = process.env.DLUX_MAILBOX || "1240";
-
-// Refundable security deposit collected at check-in (D'Lux house policy).
-const SECURITY_DEPOSIT = 1000;
 
 export interface CheckoutReminderEmailInput {
   email: string;
@@ -39,6 +37,12 @@ export interface CheckoutReminderEmailInput {
   isToday: boolean;
   /** Manila hour (0–23) at send time, used to pick the greeting. */
   hour: number;
+  /** Haven's owner-configured deposit tiers, for securityDepositFor(). */
+  securityDeposit?: number;
+  depositTier1Amount?: number;
+  depositTier2Amount?: number;
+  depositTier3Amount?: number;
+  depositTier4Amount?: number;
 }
 
 function escapeHtml(v: string): string {
@@ -71,6 +75,13 @@ const INSTRUCTIONS = [
 export function renderCheckoutReminderEmailHtml(d: CheckoutReminderEmailInput): string {
   const name = escapeHtml(d.guestName || "Guest");
   const when = d.isToday ? "today" : "tomorrow";
+  // Daycation/Nightcation share one calendar date (check-in date === check-out
+  // date), so this naturally lands under the 3-night floor and falls back to
+  // the default deposit without needing the stay type here.
+  const nights = d.checkInDate && d.checkOutDate
+    ? Math.round((new Date(d.checkOutDate).getTime() - new Date(d.checkInDate).getTime()) / 86_400_000)
+    : 1;
+  const securityDeposit = securityDepositFor(nights, undefined, d);
 
   const steps = INSTRUCTIONS.map(
     (t, i) => `
@@ -187,7 +198,7 @@ export function renderCheckoutReminderEmailHtml(d: CheckoutReminderEmailInput): 
                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#2b1b12;border-radius:12px;margin-bottom:20px;">
                       <tr>
                         <td style="padding:16px 20px;">
-                          <div style="font-size:13px;font-weight:600;color:#f6ede0;margin-bottom:5px;">Your &#8369;${SECURITY_DEPOSIT.toLocaleString()} security deposit</div>
+                          <div style="font-size:13px;font-weight:600;color:#f6ede0;margin-bottom:5px;">Your &#8369;${securityDeposit.toLocaleString()} security deposit</div>
                           <div style="font-size:13px;line-height:1.55;color:#CBB89C;">
                             May we send it back to you through <strong style="color:#f6ede0;">GCash</strong>? Just reply to this email with your GCash details. We&rsquo;ll send it right after we check the room.
                           </div>

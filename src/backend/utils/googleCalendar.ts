@@ -1,10 +1,7 @@
 import { google } from "googleapis";
+import { securityDepositFor } from "@/lib/pricing";
 
 const SCOPES = ["https://www.googleapis.com/auth/calendar.events"];
-
-// Refundable security deposit collected at check-in (D'Lux house policy).
-// Used only when a caller doesn't supply the booking's own recorded amount.
-const SECURITY_DEPOSIT_DEFAULT = 1000;
 
 /**
  * Robustly parses GOOGLE_PRIVATE_KEY from .env regardless of how it was stored.
@@ -193,12 +190,14 @@ const buildEventBody = (bookingData: CalendarEventData) => {
       ? Number(total_amount) - Number(down_payment)
       : null;
   // A stored 0 means the deposit hasn't been collected/recorded yet — NOT that
-  // none is owed. Reading it literally would print "collect ₱0.00" when house
-  // policy is ₱1,000, so only a positive recorded amount overrides the default.
+  // none is owed. Reading it literally would print "collect ₱0.00", so only a
+  // positive recorded amount overrides the tiered default for this stay's
+  // length (securityDepositFor()).
+  const nights = Math.round((new Date(outDateOnly).getTime() - new Date(inDateOnly).getTime()) / 86_400_000);
   const depositDue =
     security_deposit != null && Number(security_deposit) > 0
       ? Number(security_deposit)
-      : SECURITY_DEPOSIT_DEFAULT;
+      : securityDepositFor(nights);
 
   // Everyone beyond the main guest. The event previously showed only a count,
   // so a host checking IDs at the door had no names to check them against.

@@ -73,6 +73,12 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
       property_type,
       cleaning_fee,
       security_deposit,
+      // Security deposit tiers (Overnight/21h only) — see
+      // 2026-08-20-add-deposit-tiers.sql. null/undefined = not configured.
+      deposit_tier1_amount,
+      deposit_tier2_amount,
+      deposit_tier3_amount,
+      deposit_tier4_amount,
       extra_pax_fee,
       commission_rate,
       house_rules,
@@ -208,6 +214,7 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
         commission_rate,
         longterm_tier1_rate, longterm_tier2_rate, longterm_tier3_rate, longterm_tier4_rate,
         longterm_extra_pax_fee, longterm_active,
+        deposit_tier1_amount, deposit_tier2_amount, deposit_tier3_amount, deposit_tier4_amount,
         created_at, updated_at
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb,
@@ -216,6 +223,7 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
                 $36,
                 $37, $38, $39, $40,
                 $41, $42,
+                $43, $44, $45, $46,
                 NOW(), NOW())
       RETURNING *
     `;
@@ -267,6 +275,10 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
       longterm_tier4_rate ? parseFloat(longterm_tier4_rate) : null,
       longterm_extra_pax_fee ? parseFloat(longterm_extra_pax_fee) : 100,
       longterm_active !== false,
+      deposit_tier1_amount ? parseFloat(deposit_tier1_amount) : null,
+      deposit_tier2_amount ? parseFloat(deposit_tier2_amount) : null,
+      deposit_tier3_amount ? parseFloat(deposit_tier3_amount) : null,
+      deposit_tier4_amount ? parseFloat(deposit_tier4_amount) : null,
     ];
 
     const havenResult = await pool.query(havenQuery, havenValues);
@@ -700,6 +712,12 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
       property_type,
       cleaning_fee,
       security_deposit,
+      // Security deposit tiers (Overnight/21h only) — see
+      // 2026-08-20-add-deposit-tiers.sql. null/undefined = not configured.
+      deposit_tier1_amount,
+      deposit_tier2_amount,
+      deposit_tier3_amount,
+      deposit_tier4_amount,
       extra_pax_fee,
       commission_rate,
       house_rules,
@@ -781,6 +799,10 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
           longterm_tier4_rate = $40,
           longterm_extra_pax_fee = $41,
           longterm_active = $42,
+          deposit_tier1_amount = $43,
+          deposit_tier2_amount = $44,
+          deposit_tier3_amount = $45,
+          deposit_tier4_amount = $46,
           updated_at = NOW()
       WHERE uuid_id = $22
       RETURNING *
@@ -833,6 +855,10 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
       longterm_tier4_rate ? parseFloat(longterm_tier4_rate) : null,
       longterm_extra_pax_fee ? parseFloat(longterm_extra_pax_fee) : 100,
       longterm_active !== false,
+      deposit_tier1_amount ? parseFloat(deposit_tier1_amount) : null,
+      deposit_tier2_amount ? parseFloat(deposit_tier2_amount) : null,
+      deposit_tier3_amount ? parseFloat(deposit_tier3_amount) : null,
+      deposit_tier4_amount ? parseFloat(deposit_tier4_amount) : null,
     ];
 
     const result = await pool.query(query, values);

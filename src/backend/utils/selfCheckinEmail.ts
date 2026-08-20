@@ -15,6 +15,7 @@
 
 import nodemailer from "nodemailer";
 import pool from "../config/db";
+import { securityDepositFor } from "@/lib/pricing";
 
 const transporter = nodemailer.createTransport({
   service: "gmail",
@@ -33,9 +34,6 @@ const ACCESS = {
   unit: process.env.DLUX_UNIT_NUMBER || "1240",
   mailbox: process.env.DLUX_MAILBOX || "1240",
 };
-
-// Refundable, handed back at check-out. Same figure as NewBookingWizard.
-const SECURITY_DEPOSIT = 1000;
 
 export interface PaymentChannels {
   gcashNumber: string;
@@ -62,7 +60,8 @@ export interface SelfCheckinEmailInput {
   bookingId: string;
   /** Still owed on arrival — booking_payments.remaining_balance. */
   balanceAmount: number;
-  /** Refundable deposit collected at check-in. Defaults to ₱1,000. */
+  /** Refundable deposit collected at check-in. Undefined falls back to the
+   *  tiered amount for checkInDate/checkOutDate's night count (securityDepositFor()). */
   depositAmount?: number;
   /** Row label for the balance. Defaults to the standard 50% split. */
   balanceLabel?: string;
@@ -72,6 +71,12 @@ export interface SelfCheckinEmailInput {
   checkInTime: string;
   checkOutDate: string;
   checkOutTime: string;
+  /** Haven's owner-configured deposit tiers, used when depositAmount is absent. */
+  securityDeposit?: number;
+  depositTier1Amount?: number;
+  depositTier2Amount?: number;
+  depositTier3Amount?: number;
+  depositTier4Amount?: number;
 }
 
 function escapeHtml(v: string): string {
@@ -219,7 +224,13 @@ function channelCard(label: string, account: string, holder: string, qr: string)
 export function renderSelfCheckinEmailHtml(d: SelfCheckinEmailInput): string {
   const name = escapeHtml(d.guestName || "Guest");
   const balance = Number(d.balanceAmount || 0);
-  const deposit = Number(d.depositAmount ?? SECURITY_DEPOSIT);
+  // Daycation/Nightcation share one calendar date (check-in date === check-out
+  // date), so this naturally lands under the 3-night floor and falls back to
+  // the default deposit without needing the stay type here.
+  const nights = d.checkInDate && d.checkOutDate
+    ? Math.round((new Date(d.checkOutDate).getTime() - new Date(d.checkInDate).getTime()) / 86_400_000)
+    : 1;
+  const deposit = Number(d.depositAmount ?? securityDepositFor(nights, undefined, d));
   const balanceLabel = escapeHtml(d.balanceLabel || "50% Balance");
 
   const c = d.channels || {};

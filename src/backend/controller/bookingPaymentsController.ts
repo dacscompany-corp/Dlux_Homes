@@ -701,10 +701,16 @@ export const updateBookingPayment = async (
             bg.last_name,
             bg.email,
             bp.total_amount,
-            bp.down_payment
+            bp.down_payment,
+            h.security_deposit AS haven_security_deposit,
+            h.deposit_tier1_amount,
+            h.deposit_tier2_amount,
+            h.deposit_tier3_amount,
+            h.deposit_tier4_amount
           FROM booking b
           JOIN booking_guests bg ON b.id = bg.booking_id
           JOIN booking_payments bp ON b.id = bp.booking_id
+          LEFT JOIN havens h ON h.haven_name = b.room_name
           WHERE bp.id = $1 AND bg.id = (
             SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY guest_index, id LIMIT 1
           )
@@ -794,6 +800,12 @@ export const updateBookingPayment = async (
               ? new Date(booking.check_out_date).toLocaleDateString()
               : "",
             checkOutTime: booking.check_out_time,
+            // Raw ISO dates alongside the display-formatted ones above — the
+            // email route needs these to compute the nights-tiered security
+            // deposit (securityDepositFor()) and a locale-formatted string
+            // can't be safely re-parsed for that.
+            checkInDateRaw: booking.check_in_date,
+            checkOutDateRaw: booking.check_out_date,
             guests: `${booking.adults} Adults, ${booking.children} Young Adults, ${booking.infants} Children`,
             paymentMethod:
               booking.payment_method || updatedPayment.payment_method,
@@ -801,6 +813,12 @@ export const updateBookingPayment = async (
             totalAmount: booking.total_amount || updatedPayment.total_amount,
             rentableItems,
             addonCategories,
+            // Haven's owner-configured deposit tiers, for securityDepositFor().
+            securityDeposit: booking.haven_security_deposit,
+            depositTier1Amount: booking.deposit_tier1_amount,
+            depositTier2Amount: booking.deposit_tier2_amount,
+            depositTier3Amount: booking.deposit_tier3_amount,
+            depositTier4Amount: booking.deposit_tier4_amount,
           };
 
           // Fire-and-forget email

@@ -7,6 +7,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
 import { imageFileError, PHOTO_READ_ERROR } from "@/lib/validateImageFile";
 import { fileToCompressedDataUrl } from "@/lib/compressImage";
+import { securityDepositFor } from "@/lib/pricing";
+import { useGetHavensQuery } from "@/redux/api/roomApi";
 import ImageThumb from "@/components/ImageThumb";
 import SiteHeader from "@/components/SiteHeader";
 import type { StoredBooking } from "@/lib/booking-store";
@@ -81,6 +83,17 @@ function ConfirmedInner() {
   const reviewCardRef = useRef<HTMLDivElement | null>(null);
   const [booking, setBooking] = useState<ExtendedBooking | null>(null);
   const [loading, setLoading] = useState(true);
+  // Owner-configured security deposit tiers, for securityDepositFor() below.
+  // Single-property app — the first (only) haven is the one this booking is for.
+  const { data: havensData } = useGetHavensQuery({});
+  const h0 = ((havensData as Record<string, unknown>[] | undefined)?.[0] as Record<string, unknown>) || {};
+  const depositRates = {
+    securityDeposit: h0.security_deposit != null ? Number(h0.security_deposit) : undefined,
+    depositTier1Amount: h0.deposit_tier1_amount != null ? Number(h0.deposit_tier1_amount) : undefined,
+    depositTier2Amount: h0.deposit_tier2_amount != null ? Number(h0.deposit_tier2_amount) : undefined,
+    depositTier3Amount: h0.deposit_tier3_amount != null ? Number(h0.deposit_tier3_amount) : undefined,
+    depositTier4Amount: h0.deposit_tier4_amount != null ? Number(h0.deposit_tier4_amount) : undefined,
+  };
   const [showChange, setShowChange] = useState(false);
   const [changing, setChanging] = useState(false);
   const [newDate, setNewDate] = useState("");
@@ -321,9 +334,14 @@ function ConfirmedInner() {
     && Number(booking.dateChangeCount ?? 0) < 1
     && !hasPendingDateChange
     && daysUntilCheckIn >= 7;
-  // Remaining balance + ₱1,000 refundable deposit are collected at check-in.
+  // Remaining balance + refundable deposit are collected at check-in. Deposit
+  // scales with nights booked (securityDepositFor()); Daycation/Nightcation
+  // share one calendar date, so those naturally fall to the default tier.
   const remainingBalance = Math.max(0, (booking.totalAmount || 0) - (pay.down || 0));
-  const checkInDeposit = 1000;
+  const stayNights = booking.checkIn && booking.checkOut
+    ? Math.round((new Date(booking.checkOut).getTime() - new Date(booking.checkIn).getTime()) / 86_400_000)
+    : 1;
+  const checkInDeposit = securityDepositFor(stayNights, undefined, depositRates);
 
   // ── Booking Confirmed design (shown once the down payment is approved) ──
   if (isConfirmed) {
@@ -761,7 +779,7 @@ function ConfirmedInner() {
             ) : (
               <div style={{ padding: 28 }}>
                 <p style={{ fontSize: 16, color: "var(--ink-2)", lineHeight: 1.6, margin: "0 0 18px" }}>
-                  Send the <strong>{peso(pay.down)}</strong> down payment (50%) to secure your booking, then upload your receipt below. The balance + ₱1,000 refundable deposit are paid at check-in.
+                  Send the <strong>{peso(pay.down)}</strong> down payment (50%) to secure your booking, then upload your receipt below. The balance + {peso(checkInDeposit)} refundable deposit are paid at check-in.
                 </p>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "16px 18px", borderRadius: 14, background: "var(--white)", border: "1px solid var(--line)", marginBottom: 18 }}>
                   <div>
@@ -892,7 +910,7 @@ function ConfirmedInner() {
             {[
               { h: "Date changes", t: "No cancellations. One free date change if requested at least 7 days before check-in (new date within 1 month)." },
               { h: "24 hrs before", t: "Your host sends unit access codes and building instructions via email." },
-              { h: "Check-in day", t: "Bring a valid ID at the lobby. Settle the 50% balance + ₱1,000 deposit, then start resting." },
+              { h: "Check-in day", t: `Bring a valid ID at the lobby. Settle the 50% balance + ${peso(checkInDeposit)} deposit, then start resting.` },
             ].map((b) => (
               <div key={b.h}>
                 <div style={{ fontSize: 16, fontWeight: 700, color: "var(--accent-ink)" }}>{b.h}</div>

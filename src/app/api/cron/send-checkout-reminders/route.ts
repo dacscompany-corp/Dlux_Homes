@@ -36,6 +36,11 @@ interface DueBooking {
   manila_hour: number;
   first_name: string;
   email: string;
+  security_deposit: number | string | null;
+  deposit_tier1_amount: number | string | null;
+  deposit_tier2_amount: number | string | null;
+  deposit_tier3_amount: number | string | null;
+  deposit_tier4_amount: number | string | null;
 }
 
 export async function GET(req: NextRequest) {
@@ -72,7 +77,12 @@ export async function GET(req: NextRequest) {
         (b.check_out_date = (NOW() AT TIME ZONE $1)::date)                AS is_today,
         EXTRACT(HOUR FROM (NOW() AT TIME ZONE $1))::int                   AS manila_hour,
         bg.first_name,
-        bg.email
+        bg.email,
+        h.security_deposit,
+        h.deposit_tier1_amount,
+        h.deposit_tier2_amount,
+        h.deposit_tier3_amount,
+        h.deposit_tier4_amount
       FROM booking b
       JOIN LATERAL (
         SELECT first_name, email
@@ -81,6 +91,7 @@ export async function GET(req: NextRequest) {
         ORDER BY id
         LIMIT 1
       ) bg ON TRUE
+      LEFT JOIN havens h ON h.haven_name = b.room_name
       WHERE b.status IN ('approved', 'confirmed', 'checked-in')
         AND b.checkout_reminder_email_sent_at IS NULL
         AND bg.email IS NOT NULL
@@ -110,6 +121,11 @@ export async function GET(req: NextRequest) {
           checkOutTime: b.check_out_time,
           isToday: b.is_today,
           hour: b.manila_hour,
+          securityDeposit: b.security_deposit != null ? Number(b.security_deposit) : undefined,
+          depositTier1Amount: b.deposit_tier1_amount != null ? Number(b.deposit_tier1_amount) : undefined,
+          depositTier2Amount: b.deposit_tier2_amount != null ? Number(b.deposit_tier2_amount) : undefined,
+          depositTier3Amount: b.deposit_tier3_amount != null ? Number(b.deposit_tier3_amount) : undefined,
+          depositTier4Amount: b.deposit_tier4_amount != null ? Number(b.deposit_tier4_amount) : undefined,
         });
         // Stamp only after a successful send, so a transient SMTP failure
         // retries on the next run rather than silently skipping a guest.

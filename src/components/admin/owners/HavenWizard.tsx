@@ -71,6 +71,9 @@ const empty = {
   // length prices per-night as normal until re-activated.
   longterm_active: true,
   cleaning_fee: "", security_deposit: "", extra_pax_fee: "",
+  // Security deposit tiers — same 3/11/18/26 night bands, scales
+  // independently of long-term pricing. Blank = not configured for that tier.
+  deposit_tier1_amount: "", deposit_tier2_amount: "", deposit_tier3_amount: "", deposit_tier4_amount: "",
   // check-in
   six_hour_check_in: "09:00", six_hour_check_out: "15:00",
   ten_hour_check_in: "09:00", ten_hour_check_out: "19:00",
@@ -128,6 +131,8 @@ function havenToForm(h: Record<string, unknown>): { form: Form; images: ImgRef[]
       longterm_extra_pax_fee: s(h.longterm_extra_pax_fee),
       longterm_active: h.longterm_active !== false,
       cleaning_fee: s(h.cleaning_fee), security_deposit: s(h.security_deposit), extra_pax_fee: s(h.extra_pax_fee),
+      deposit_tier1_amount: s(h.deposit_tier1_amount), deposit_tier2_amount: s(h.deposit_tier2_amount),
+      deposit_tier3_amount: s(h.deposit_tier3_amount), deposit_tier4_amount: s(h.deposit_tier4_amount),
       six_hour_check_in: s(h.six_hour_check_in) || empty.six_hour_check_in, six_hour_check_out: s(h.six_hour_check_out) || empty.six_hour_check_out,
       ten_hour_check_in: s(h.ten_hour_check_in) || empty.ten_hour_check_in, ten_hour_check_out: s(h.ten_hour_check_out) || empty.ten_hour_check_out,
       twenty_one_hour_check_in: s(h.twenty_one_hour_check_in) || empty.twenty_one_hour_check_in, twenty_one_hour_check_out: s(h.twenty_one_hour_check_out) || empty.twenty_one_hour_check_out,
@@ -228,6 +233,8 @@ export default function HavenWizard({
         longterm_extra_pax_fee: form.longterm_extra_pax_fee || undefined,
         longterm_active: form.longterm_active,
         cleaning_fee: form.cleaning_fee || undefined, security_deposit: form.security_deposit || undefined,
+        deposit_tier1_amount: num(form.deposit_tier1_amount), deposit_tier2_amount: num(form.deposit_tier2_amount),
+        deposit_tier3_amount: num(form.deposit_tier3_amount), deposit_tier4_amount: num(form.deposit_tier4_amount),
         extra_pax_fee: form.extra_pax_fee || undefined,
         six_hour_check_in: form.six_hour_check_in, six_hour_check_out: form.six_hour_check_out,
         ten_hour_check_in: form.ten_hour_check_in, ten_hour_check_out: form.ten_hour_check_out,
@@ -377,17 +384,32 @@ export default function HavenWizard({
                   <input type="number" placeholder="100" disabled={!form.longterm_active} value={form.longterm_extra_pax_fee} onChange={(e) => set({ longterm_extra_pax_fee: e.target.value })} className={`${field} mt-1`} style={fieldStyle} />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3 pt-1">
-                <div>
-                  <label className={labelCls} style={labelStyle}>Security deposit (₱)</label>
-                  <input type="number" placeholder="1000" value={form.security_deposit} onChange={(e) => set({ security_deposit: e.target.value })} className={`${field} mt-1`} style={fieldStyle} />
+              <div className="pt-2">
+                <p className="text-xs font-semibold" style={{ color: "#8B6344" }}>Security deposit</p>
+                <p className="text-xs mt-1" style={{ color: "#C9B79E" }}>Refundable, collected at check-in. Scales with how many nights are booked — same {BUNDLE_TIER1_NIGHTS}/{BUNDLE_TIER2_NIGHTS}/{BUNDLE_TIER3_NIGHTS}/{BUNDLE_TIER4_NIGHTS}-night bands as long-term pricing above, but applies regardless of whether long-term pricing is on. Daycation/Nightcation always uses the default below.</p>
+                <div className="mt-2">
+                  <label className={labelCls} style={labelStyle}>Default (₱) <span className="font-normal" style={{ color: "#C9B79E" }}>· 1–2 nights, Daycation/Nightcation</span></label>
+                  <input type="number" placeholder="1000" value={form.security_deposit} onChange={(e) => set({ security_deposit: e.target.value })} className={`${field} mt-1`} style={{ ...fieldStyle, maxWidth: 200 }} />
                 </div>
-                <div>
-                  <label className={labelCls} style={labelStyle}>Extra pax fee (₱ / pax)</label>
-                  <input type="number" placeholder="0" value={form.extra_pax_fee} onChange={(e) => set({ extra_pax_fee: e.target.value })} className={`${field} mt-1`} style={fieldStyle} />
+                <div className="space-y-2 mt-2">
+                  {[
+                    { label: "Tier 1", nights: BUNDLE_TIER1_LABEL, key: "deposit_tier1_amount" },
+                    { label: "Tier 2", nights: BUNDLE_TIER2_LABEL, key: "deposit_tier2_amount" },
+                    { label: "Tier 3", nights: BUNDLE_TIER3_LABEL, key: "deposit_tier3_amount" },
+                    { label: "Tier 4", nights: BUNDLE_TIER4_LABEL, key: "deposit_tier4_amount" },
+                  ].map((tier) => (
+                    <div key={tier.key} className="rounded-xl border p-3 flex items-center justify-between gap-3" style={{ borderColor: "#EDE3D2", backgroundColor: "#FFFFFF" }}>
+                      <p className="text-xs font-semibold" style={{ color: "#B07848" }}>{tier.label} <span className="font-normal" style={{ color: "#C9B79E" }}>· {tier.nights}</span></p>
+                      <input type="number" placeholder="—" value={form[tier.key as keyof Form] as string} onChange={(e) => set({ [tier.key]: e.target.value } as Partial<Form>)} className={field} style={{ ...fieldStyle, width: 140 }} />
+                    </div>
+                  ))}
                 </div>
               </div>
-              <p className="text-xs" style={{ color: "#C9B79E" }}>The nightly rate covers 2 guests. The extra-pax fee is charged per adult/young-adult beyond that (children 7 &amp; under are free) — leave it blank for none. Deposit is collected at check-in and refunded on checkout.</p>
+              <div>
+                <label className={labelCls} style={labelStyle}>Extra pax fee (₱ / pax)</label>
+                <input type="number" placeholder="0" value={form.extra_pax_fee} onChange={(e) => set({ extra_pax_fee: e.target.value })} className={`${field} mt-1`} style={{ ...fieldStyle, maxWidth: 200 }} />
+              </div>
+              <p className="text-xs" style={{ color: "#C9B79E" }}>The nightly rate covers 2 guests. The extra-pax fee is charged per adult/young-adult beyond that (children 7 &amp; under are free) — leave it blank for none.</p>
             </div>
           )}
 

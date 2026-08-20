@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
 import { contactBlockHtml } from '@/backend/utils/emailContact';
+import { securityDepositFor } from '@/lib/pricing';
 
 export async function POST(request: NextRequest) {
   try {
@@ -29,9 +30,23 @@ export async function POST(request: NextRequest) {
     // owe nothing. Show the full breakdown instead: what they paid, what's left,
     // and the refundable deposit that is ALSO collected at check-in, so the
     // "due at check-in" figure is the real amount they need to bring.
-    const SECURITY_DEPOSIT = 1000; // refundable, collected at check-in
     const peso = (n: number) =>
       `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+    // Deposit scales with nights booked (securityDepositFor()) — needs the
+    // raw ISO dates (checkInDateRaw/checkOutDateRaw), not the locale-formatted
+    // checkInDate/checkOutDate strings used for display below, which can't be
+    // safely re-parsed.
+    const nights = bookingData.checkInDateRaw && bookingData.checkOutDateRaw
+      ? Math.round((new Date(bookingData.checkOutDateRaw).getTime() - new Date(bookingData.checkInDateRaw).getTime()) / 86_400_000)
+      : 1;
+    const SECURITY_DEPOSIT = securityDepositFor(nights, undefined, {
+      securityDeposit: bookingData.securityDeposit != null ? Number(bookingData.securityDeposit) : undefined,
+      depositTier1Amount: bookingData.depositTier1Amount != null ? Number(bookingData.depositTier1Amount) : undefined,
+      depositTier2Amount: bookingData.depositTier2Amount != null ? Number(bookingData.depositTier2Amount) : undefined,
+      depositTier3Amount: bookingData.depositTier3Amount != null ? Number(bookingData.depositTier3Amount) : undefined,
+      depositTier4Amount: bookingData.depositTier4Amount != null ? Number(bookingData.depositTier4Amount) : undefined,
+    });
 
     const totalAmount = Number(bookingData.totalAmount) || 0;
     // Fall back to the 50% house rule if the caller didn't pass a down payment.
