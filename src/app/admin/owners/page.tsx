@@ -21,7 +21,7 @@ import { useGetReviewsQuery } from "@/redux/api/reviewsApi";
 import { useGetReportsQuery } from "@/redux/api/reportApi";
 import { useGetConversationsQuery } from "@/redux/api/messagesApi";
 import { fmtWindow, fmtSpan } from "@/lib/stay-window";
-import { BUNDLE_TIER1_LABEL, BUNDLE_TIER2_LABEL, BUNDLE_TIER3_LABEL, BUNDLE_TIER4_LABEL } from "@/lib/pricing";
+import { BUNDLE_TIER1_LABEL, BUNDLE_TIER2_LABEL, BUNDLE_TIER3_LABEL, BUNDLE_TIER4_LABEL, securityDepositFor, DEPOSIT_DEFAULT } from "@/lib/pricing";
 import PromotionModal, { type PromotionFormState } from "@/components/admin/PromotionModal";
 import { checkInOpensLabel, isCheckInOpen } from "@/lib/checkin-window";
 import {
@@ -102,8 +102,6 @@ const navItems = [
   { icon: Users, label: "Team" },
   { icon: Settings, label: "System" },
 ];
-
-const SECURITY_DEPOSIT = 1000; // refundable, collected at check-in
 
 const statusConfig: Record<string, { label: string; color: string; bg: string; dot: string }> = {
   pending:      { label: "Pending",     color: "#92400e", bg: "#fef3c7", dot: "#f59e0b" },
@@ -443,14 +441,16 @@ export default function OwnerDashboard() {
     } catch { toast.error("Could not reject booking"); }
   };
 
-  // Check-in collects the remaining 50% balance + ₱1,000 refundable deposit, then
+  // Check-in collects the remaining 50% balance + refundable deposit, then
   // flips the booking to checked-in (settles the balance on booking_payments and
-  // records the deposit as held). Mirrors the CSR check-in flow.
-  const [checkIn, setCheckIn] = useState<{ open: boolean; id: string; displayId: string; guest: string; remaining: number; method: string; busy: boolean }>(
-    { open: false, id: "", displayId: "", guest: "", remaining: 0, method: "Cash", busy: false }
+  // records the deposit as held). Mirrors the CSR check-in flow. Deposit scales
+  // with nights booked (securityDepositFor()) — carried in state so the modal
+  // and confirmCollect() don't need to re-derive it from the booking list.
+  const [checkIn, setCheckIn] = useState<{ open: boolean; id: string; displayId: string; guest: string; remaining: number; deposit: number; method: string; busy: boolean }>(
+    { open: false, id: "", displayId: "", guest: "", remaining: 0, deposit: DEPOSIT_DEFAULT, method: "Cash", busy: false }
   );
-  const openCheckIn = (b: { id: string; displayId: string; guest: string; remaining: number }) =>
-    setCheckIn({ open: true, id: b.id, displayId: b.displayId, guest: b.guest, remaining: Math.max(0, b.remaining), method: "Cash", busy: false });
+  const openCheckIn = (b: { id: string; displayId: string; guest: string; remaining: number; checkInRaw: string; checkOutRaw: string }) =>
+    setCheckIn({ open: true, id: b.id, displayId: b.displayId, guest: b.guest, remaining: Math.max(0, b.remaining), deposit: securityDepositFor(nightsBetween(b.checkInRaw, b.checkOutRaw), undefined, depositRates), method: "Cash", busy: false });
   // Send the self check-in instructions — the four steps, what to pay on
   // arrival, and where to send it. House rules are not part of this email; they
   // go out with Collect. The route re-stamps self_checkin_email_sent_at, so the
@@ -525,14 +525,14 @@ export default function OwnerDashboard() {
   const confirmCollect = async () => {
     setCheckIn((c) => ({ ...c, busy: true }));
     try {
-      const collected = checkIn.remaining + SECURITY_DEPOSIT;
+      const collected = checkIn.remaining + checkIn.deposit;
       await updateDepositStatusByBookingId(checkIn.id, "Paid", undefined, undefined, collected, checkIn.method, "owner");
       // Best-effort: the money is already recorded, so a mail failure must not
       // look like the collection failed.
       fetch(`/api/send-checkin-email/for-booking/${encodeURIComponent(checkIn.id)}`, { method: "POST" })
         .catch(() => {});
       toast.success("Balance & deposit collected — house rules sent");
-      setCheckIn({ open: false, id: "", displayId: "", guest: "", remaining: 0, method: "Cash", busy: false });
+      setCheckIn({ open: false, id: "", displayId: "", guest: "", remaining: 0, deposit: DEPOSIT_DEFAULT, method: "Cash", busy: false });
       refetchBookings();
     } catch {
       toast.error("Could not record the payment");
@@ -803,6 +803,16 @@ export default function OwnerDashboard() {
   // actual rates so this mirrors exactly what guests are charged (no separate,
   // drifting config). Three D'Lux stay types per the rate card.
   const h0 = (havensList[0] as Record<string, unknown>) || {};
+  // Owner-configured security deposit tiers, for securityDepositFor(). Single-
+  // property app — h0 is the haven — so this is a plain snake_case -> camelCase
+  // pluck rather than a full havenToRoom() conversion.
+  const depositRates = {
+    securityDeposit: h0.security_deposit != null ? Number(h0.security_deposit) : undefined,
+    depositTier1Amount: h0.deposit_tier1_amount != null ? Number(h0.deposit_tier1_amount) : undefined,
+    depositTier2Amount: h0.deposit_tier2_amount != null ? Number(h0.deposit_tier2_amount) : undefined,
+    depositTier3Amount: h0.deposit_tier3_amount != null ? Number(h0.deposit_tier3_amount) : undefined,
+    depositTier4Amount: h0.deposit_tier4_amount != null ? Number(h0.deposit_tier4_amount) : undefined,
+  };
   const rnum = (v: unknown) => Number(v ?? 0);
   // Overnight-only long-term stay tiers — flat rate, no weekday/weekend
   // split. null entries mean that tier isn't configured yet.
@@ -1351,7 +1361,7 @@ export default function OwnerDashboard() {
                             {(booking.status === "confirmed" || booking.status === "down-paid") && (
                               <button
                                 type="button"
-                                onClick={() => openCheckIn({ id: booking.id, displayId: booking.displayId, guest: booking.guest, remaining: booking.balance })}
+                                onClick={() => openCheckIn({ id: booking.id, displayId: booking.displayId, guest: booking.guest, remaining: booking.balance, checkInRaw: booking.checkInRaw, checkOutRaw: booking.checkOutRaw })}
                                 disabled={bookingUpdating}
                                 title="Check in (collect balance + deposit)"
                                 className="p-1.5 rounded-lg transition-colors disabled:opacity-50"
@@ -1365,7 +1375,7 @@ export default function OwnerDashboard() {
                             {booking.status === "checked-in" && booking.balance > 0 && (
                               <button
                                 type="button"
-                                onClick={() => openCheckIn({ id: booking.id, displayId: booking.displayId, guest: booking.guest, remaining: booking.balance })}
+                                onClick={() => openCheckIn({ id: booking.id, displayId: booking.displayId, guest: booking.guest, remaining: booking.balance, checkInRaw: booking.checkInRaw, checkOutRaw: booking.checkOutRaw })}
                                 disabled={bookingUpdating}
                                 title="Collect remaining balance + deposit (sends the house rules)"
                                 className="p-1.5 rounded-lg transition-colors disabled:opacity-50"
@@ -1472,7 +1482,7 @@ export default function OwnerDashboard() {
                     { n: 1, label: "Approve", icon: Check, bg: "#10b981", desc: "Say yes to a new booking request. The guest is told their dates are accepted and is asked to pay the down payment." },
                     { n: 2, label: "Confirm payment", icon: CheckCircle2, bg: "#059669", desc: "Use this once the down payment has landed. The booking status changes to Confirmed and the room is held for the guest." },
                     { n: 3, label: "Check in", icon: LogIn, bg: "#3b82f6", desc: "Mark that the guest has arrived. You can do this at any time, even days before their stay starts." },
-                    { n: 4, label: "Collect", icon: Wallet, bg: "#b45309", desc: "Take what's still owed plus the ₱1,000 refundable deposit. The house rules are emailed to the guest for you." },
+                    { n: 4, label: "Collect", icon: Wallet, bg: "#b45309", desc: "Take what's still owed plus the refundable security deposit (scales with nights booked). The house rules are emailed to the guest for you." },
                     { n: 5, label: "Check out", icon: LogOut, bg: "#ef4444", desc: "The guest has left and the stay is finished. This closes the booking for good." },
                   ].map((s) => (
                     <div key={s.n} style={{ background: "#faf7f1", border: "1px solid #f0e9db", padding: "18px 16px 16px" }}>
@@ -1743,7 +1753,7 @@ export default function OwnerDashboard() {
                                 onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#b08968";}}><Send className="w-3.5 h-3.5"/></button>
                             )}
                             {booking.status === "checked-in" && booking.balance > 0 && (
-                              <button type="button" onClick={() => openCheckIn({ id: booking.id, displayId: booking.displayId, guest: booking.guest, remaining: booking.balance })} disabled={bookingUpdating}
+                              <button type="button" onClick={() => openCheckIn({ id: booking.id, displayId: booking.displayId, guest: booking.guest, remaining: booking.balance, checkInRaw: booking.checkInRaw, checkOutRaw: booking.checkOutRaw })} disabled={bookingUpdating}
                                 title="Collect remaining balance + deposit (sends the house rules)"
                                 className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#6b7280" }}
                                 onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#fef3c7";(e.currentTarget as HTMLElement).style.color="#b45309";}}
@@ -2344,7 +2354,7 @@ export default function OwnerDashboard() {
         </div>
       )}
 
-      {/* ── Check-in: collect remaining balance + ₱1,000 deposit ── */}
+      {/* ── Check-in: collect remaining balance + refundable deposit ── */}
       {checkIn.open && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => !checkIn.busy && setCheckIn((c) => ({ ...c, open: false }))}>
           <div className="w-full max-w-md border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }} onClick={(e) => e.stopPropagation()}>
@@ -2355,8 +2365,8 @@ export default function OwnerDashboard() {
               <div className="flex items-center justify-between text-sm"><span style={{ color: "#8B6344" }}>Booking</span><span className="font-mono text-xs" style={{ color: "#1a1a1a" }}>{checkIn.displayId}</span></div>
               <div className="flex items-center justify-between text-sm mt-2"><span style={{ color: "#8B6344" }}>Guest</span><span style={{ color: "#1a1a1a" }}>{checkIn.guest}</span></div>
               <div className="flex items-center justify-between text-sm mt-3 pt-3 border-t" style={{ borderColor: "#ece5d4" }}><span style={{ color: "#8B6344" }}>Remaining balance</span><span style={{ color: "#1a1a1a" }}>₱{checkIn.remaining.toLocaleString()}</span></div>
-              <div className="flex items-center justify-between text-sm mt-2"><span style={{ color: "#8B6344" }}>Security deposit (refundable)</span><span style={{ color: "#1a1a1a" }}>₱{SECURITY_DEPOSIT.toLocaleString()}</span></div>
-              <div className="flex items-center justify-between text-sm mt-2 pt-2 border-t font-bold" style={{ borderColor: "#ece5d4" }}><span style={{ color: "#1a1a1a" }}>Total to collect</span><span style={{ color: "#B07848" }}>₱{(checkIn.remaining + SECURITY_DEPOSIT).toLocaleString()}</span></div>
+              <div className="flex items-center justify-between text-sm mt-2"><span style={{ color: "#8B6344" }}>Security deposit (refundable)</span><span style={{ color: "#1a1a1a" }}>₱{checkIn.deposit.toLocaleString()}</span></div>
+              <div className="flex items-center justify-between text-sm mt-2 pt-2 border-t font-bold" style={{ borderColor: "#ece5d4" }}><span style={{ color: "#1a1a1a" }}>Total to collect</span><span style={{ color: "#B07848" }}>₱{(checkIn.remaining + checkIn.deposit).toLocaleString()}</span></div>
             </div>
 
             <label className="text-xs font-semibold" style={{ color: "#8B6344" }}>Payment method</label>
@@ -2366,11 +2376,11 @@ export default function OwnerDashboard() {
               <option value="Bank">BPI bank transfer</option>
             </select>
 
-            <p className="text-xs mt-3 leading-relaxed" style={{ color: "#8B6344" }}>The ₱{SECURITY_DEPOSIT.toLocaleString()} deposit is refundable on checkout. Confirming marks the balance fully paid and checks the guest in.</p>
+            <p className="text-xs mt-3 leading-relaxed" style={{ color: "#8B6344" }}>The ₱{checkIn.deposit.toLocaleString()} deposit is refundable on checkout. Confirming marks the balance fully paid and checks the guest in.</p>
 
             <div className="flex justify-between gap-2 mt-5">
               <button type="button" onClick={() => setCheckIn((c) => ({ ...c, open: false }))} disabled={checkIn.busy} className="px-4 py-2 text-sm font-medium border cursor-pointer disabled:opacity-60" style={{ color: "#8B6344", borderColor: "#ece5d4", backgroundColor: "#ffffff" }}>Cancel</button>
-              <button type="button" onClick={confirmCollect} disabled={checkIn.busy} className="px-5 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#B07848" }}>{checkIn.busy ? "Recording…" : `Collect ₱${(checkIn.remaining + SECURITY_DEPOSIT).toLocaleString()}`}</button>
+              <button type="button" onClick={confirmCollect} disabled={checkIn.busy} className="px-5 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#B07848" }}>{checkIn.busy ? "Recording…" : `Collect ₱${(checkIn.remaining + checkIn.deposit).toLocaleString()}`}</button>
             </div>
           </div>
         </div>

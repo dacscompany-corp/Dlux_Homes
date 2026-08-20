@@ -15,7 +15,7 @@ import { mockRooms } from "@/lib/mock-data";
 import { generateBookingId, addMyBookingId } from "@/lib/booking-store";
 import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
 import { havenToRoom } from "@/lib/haven-adapter";
-import { stayTotal, isWeekendOrHoliday, addDaysISO, extraPaxFee, bundleNightlyRate, bundleExtraPaxFee, seniorPwdDiscount } from "@/lib/pricing";
+import { stayTotal, isWeekendOrHoliday, addDaysISO, extraPaxFee, bundleNightlyRate, bundleExtraPaxFee, seniorPwdDiscount, securityDepositFor } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
 import { autoDiscountAmount, pickAutoPromo } from "@/lib/promo-offer";
@@ -103,8 +103,6 @@ function IcoUpload() { return <svg width={16} height={16} viewBox="0 0 24 24" fi
 function IcoStar() { return <svg width={12} height={12} viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="12 2 15 9 22 10 17 15 18 22 12 18.5 6 22 7 15 2 10 9 9 12 2" /></svg>; }
 
 const STEPS = ["Your details", "Payment", "Confirm", "Review"];
-// Refundable security deposit collected at check-in (D'Lux house policy).
-const SECURITY_DEPOSIT = 1000;
 
 // Brand marks for the payment options (see public/images). Matched against the
 // method key, provider and display name together, so a method stored as "bank"
@@ -694,6 +692,10 @@ function CheckoutInner() {
   const paxFee = bundleRate != null
     ? bundleExtraPaxFee(feePax, room.basePax, nights, room)
     : extraPaxFee(feePax, room.basePax, room.additionalPaxFee, nights);
+  // Refundable security deposit, collected at check-in — scales with nights
+  // booked (owner spec, 2026-08-19): 3-10 nights ₱1,500, 11-17 ₱2,000,
+  // 18-25 ₱3,000, 26+ ₱5,000, ₱1,000 otherwise (incl. Daycation/Nightcation).
+  const SECURITY_DEPOSIT = securityDepositFor(nights, stayType, room as { securityDeposit?: number; depositTier1Amount?: number; depositTier2Amount?: number; depositTier3Amount?: number; depositTier4Amount?: number });
   // Senior citizen / PWD: 20% off each qualifying guest's share of the ROOM
   // (basePrice), never the pax fee. Comes off before any promo code, so a promo
   // lands on the already-reduced subtotal — the statutory discount is protected.

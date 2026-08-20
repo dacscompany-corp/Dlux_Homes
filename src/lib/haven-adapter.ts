@@ -79,6 +79,13 @@ export function havenToRoom(h: Record<string, unknown>): Room & RoomExtras {
     longtermTier4Rate: h.longterm_tier4_rate != null ? Number(h.longterm_tier4_rate) : undefined,
     longtermActive: h.longterm_active !== false,
     longtermExtraPaxFee: h.longterm_extra_pax_fee != null ? Number(h.longterm_extra_pax_fee) : undefined,
+    // Refundable security deposit tiers — see securityDepositFor() in
+    // src/lib/pricing.ts. undefined = tier not configured, code default applies.
+    securityDeposit: h.security_deposit != null ? Number(h.security_deposit) : undefined,
+    depositTier1Amount: h.deposit_tier1_amount != null ? Number(h.deposit_tier1_amount) : undefined,
+    depositTier2Amount: h.deposit_tier2_amount != null ? Number(h.deposit_tier2_amount) : undefined,
+    depositTier3Amount: h.deposit_tier3_amount != null ? Number(h.deposit_tier3_amount) : undefined,
+    depositTier4Amount: h.deposit_tier4_amount != null ? Number(h.deposit_tier4_amount) : undefined,
     additionalPaxFee: Number(h.extra_pax_fee ?? 200),
     basePax: Number(h.base_pax ?? 2),
     maxPax: Number(h.capacity ?? 4),

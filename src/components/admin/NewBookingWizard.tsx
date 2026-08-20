@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import { generateBookingId } from "@/lib/booking-store";
 import { fileToCompressedDataUrl } from "@/lib/compressImage";
-import { stayTotal, pickRate, isWeekendOrHoliday, addDaysISO, extraPaxFee, bundleNightlyRate, bundleExtraPaxFee } from "@/lib/pricing";
+import { stayTotal, pickRate, isWeekendOrHoliday, addDaysISO, extraPaxFee, bundleNightlyRate, bundleExtraPaxFee, securityDepositFor } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import { havenToRoom } from "@/lib/haven-adapter";
 
@@ -18,7 +18,6 @@ import { havenToRoom } from "@/lib/haven-adapter";
 
 const BASE_PAX_FALLBACK = 2;
 const MAX_COUNTED = 4; // adults + young adults; more must book via Messenger
-const SECURITY_DEPOSIT = 1000; // refundable, collected at check-in
 
 const BORDER = "#EDE3D2";
 const ACCENT = "#B07848";
@@ -209,7 +208,9 @@ export default function NewBookingWizard({
     const total = base + paxFee;
     const down = form.downMode === "full" ? total : Math.round(total * 0.5);
     const balance = total - down;
-    return { nights, adults, young, kids, counted, overCap, base, extraCount, perPax: paxFeeRate, paxFee, total, down, balance, atCheckin: balance + SECURITY_DEPOSIT, weekend: isWeekendOrHoliday(form.ci, rules), bundleRate };
+    // Refundable deposit scales with nights booked (securityDepositFor()).
+    const deposit = securityDepositFor(nights, stay?.group, room);
+    return { nights, adults, young, kids, counted, overCap, base, extraCount, perPax: paxFeeRate, paxFee, total, down, balance, deposit, atCheckin: balance + deposit, weekend: isWeekendOrHoliday(form.ci, rules), bundleRate };
   }, [entry, stay, form, rules]);
 
   // The main guest is "Adult 1"; every other head gets its own record for
@@ -692,7 +693,7 @@ export default function NewBookingWizard({
                     {c.paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: TEXTBROWN, marginTop: 7 }}><span>Extra guests · {c.extraCount} × {peso(c.perPax)}{c.nights > 1 ? ` × ${c.nights} nights` : ""}</span><span style={{ color: DARK, fontWeight: 600 }}>{peso(c.paxFee)}</span></div>}
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, fontWeight: 700, color: DARK, marginTop: 9, paddingTop: 9, borderTop: `1px solid ${BORDER}` }}><span>Total</span><span style={{ color: ACCENT }}>{peso(c.total)}</span></div>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: TEXTBROWN, marginTop: 11 }}><span>{form.downMode === "full" ? "Paid in full today" : "50% down to reserve"}</span><span style={{ color: DARK, fontWeight: 600 }}>{peso(c.down)}</span></div>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: TEXTBROWN, marginTop: 6 }}><span>At check-in (balance + {peso(SECURITY_DEPOSIT)} deposit)</span><span style={{ color: DARK, fontWeight: 600 }}>{peso(c.atCheckin)}</span></div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: TEXTBROWN, marginTop: 6 }}><span>At check-in (balance + {peso(c.deposit)} deposit)</span><span style={{ color: DARK, fontWeight: 600 }}>{peso(c.atCheckin)}</span></div>
                   </div>
                 </div>
               )}

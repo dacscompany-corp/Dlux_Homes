@@ -35,6 +35,11 @@ interface DueBooking {
   email: string;
   remaining_balance: string | number | null;
   security_deposit: string | number | null;
+  haven_security_deposit: string | number | null;
+  deposit_tier1_amount: string | number | null;
+  deposit_tier2_amount: string | number | null;
+  deposit_tier3_amount: string | number | null;
+  deposit_tier4_amount: string | number | null;
 }
 
 export async function GET(req: NextRequest) {
@@ -74,7 +79,12 @@ export async function GET(req: NextRequest) {
         bg.first_name,
         bg.email,
         bp.remaining_balance,
-        bd.amount AS security_deposit
+        bd.amount AS security_deposit,
+        h.security_deposit AS haven_security_deposit,
+        h.deposit_tier1_amount,
+        h.deposit_tier2_amount,
+        h.deposit_tier3_amount,
+        h.deposit_tier4_amount
       FROM booking b
       JOIN LATERAL (
         SELECT first_name, email
@@ -85,6 +95,7 @@ export async function GET(req: NextRequest) {
       ) bg ON TRUE
       LEFT JOIN booking_payments bp ON b.id = bp.booking_id
       LEFT JOIN booking_security_deposits bd ON b.id = bd.booking_id
+      LEFT JOIN havens h ON h.haven_name = b.room_name
       WHERE b.status IN ('approved', 'confirmed', 'checked-in')
         AND b.self_checkin_email_sent_at IS NULL
         AND bg.email IS NOT NULL
@@ -114,6 +125,11 @@ export async function GET(req: NextRequest) {
           // waived — fall back to the standard amount so the guest still knows
           // to bring it.
           depositAmount: b.security_deposit == null ? undefined : Number(b.security_deposit),
+          securityDeposit: b.haven_security_deposit != null ? Number(b.haven_security_deposit) : undefined,
+          depositTier1Amount: b.deposit_tier1_amount != null ? Number(b.deposit_tier1_amount) : undefined,
+          depositTier2Amount: b.deposit_tier2_amount != null ? Number(b.deposit_tier2_amount) : undefined,
+          depositTier3Amount: b.deposit_tier3_amount != null ? Number(b.deposit_tier3_amount) : undefined,
+          depositTier4Amount: b.deposit_tier4_amount != null ? Number(b.deposit_tier4_amount) : undefined,
           channels,
           checkInDate: b.check_in_date,
           checkInTime: b.check_in_time,

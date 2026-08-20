@@ -135,6 +135,55 @@ export function bundleExtraPaxFee(totalPax: number, basePax: number, nights: num
   return extra * Math.max(0, feePerPax) * n;
 }
 
+// Refundable security deposit (owner spec, 2026-08-19): scales with how many
+// nights are booked, independent of whether the stay actually lands on a
+// long-term pricing tier — a 5-night Overnight owes the tier-1 deposit even
+// on a haven with long-term pricing switched off. Shares the same 3/11/18/26
+// night boundaries as the long-term rate tiers because the owner gave both
+// schedules the same bands, not because the two concepts are the same thing;
+// they're intentionally separate constants so one can change without the
+// other silently drifting.
+export const DEPOSIT_TIER1_NIGHTS = BUNDLE_TIER1_NIGHTS; // 3
+export const DEPOSIT_TIER2_NIGHTS = BUNDLE_TIER2_NIGHTS; // 11
+export const DEPOSIT_TIER3_NIGHTS = BUNDLE_TIER3_NIGHTS; // 18
+export const DEPOSIT_TIER4_NIGHTS = BUNDLE_TIER4_NIGHTS; // 26
+
+// Fallback amounts, used only when a haven has no configured value for that
+// tier (or no haven/rates object is passed at all — see securityDepositFor()).
+// Owner-editable per haven via System → Property → haven → Pricing (see
+// 2026-08-20-add-deposit-tiers.sql): havens.security_deposit (1-2 nights,
+// existing column) and deposit_tier1_amount..deposit_tier4_amount.
+export const DEPOSIT_DEFAULT = 1000;   // 1-2 nights, and Daycation/Nightcation
+export const DEPOSIT_TIER1_AMOUNT = 1500;
+export const DEPOSIT_TIER2_AMOUNT = 2000;
+export const DEPOSIT_TIER3_AMOUNT = 3000;
+export const DEPOSIT_TIER4_AMOUNT = 5000;
+
+type DepositRates = {
+  securityDeposit?: number;
+  depositTier1Amount?: number;
+  depositTier2Amount?: number;
+  depositTier3Amount?: number;
+  depositTier4Amount?: number;
+};
+
+// Nights booked -> the refundable deposit owed. stayType "10" (Daycation/
+// Nightcation) is always a single session, so it never reaches a tier and
+// always returns the default — pass nights=1 (or omit stayType entirely) for
+// that case rather than a computed night count. `rates`, when passed, is the
+// haven's own owner-configured amounts; any tier left unconfigured (undefined
+// or 0) falls back to the code default for that tier.
+export function securityDepositFor(nights: number, stayType?: string, rates?: DepositRates): number {
+  const base = rates?.securityDeposit || DEPOSIT_DEFAULT;
+  if (stayType === "10") return base;
+  const n = Math.max(1, Math.floor(nights || 1));
+  if (n >= DEPOSIT_TIER4_NIGHTS) return rates?.depositTier4Amount || DEPOSIT_TIER4_AMOUNT;
+  if (n >= DEPOSIT_TIER3_NIGHTS) return rates?.depositTier3Amount || DEPOSIT_TIER3_AMOUNT;
+  if (n >= DEPOSIT_TIER2_NIGHTS) return rates?.depositTier2Amount || DEPOSIT_TIER2_AMOUNT;
+  if (n >= DEPOSIT_TIER1_NIGHTS) return rates?.depositTier1Amount || DEPOSIT_TIER1_AMOUNT;
+  return base;
+}
+
 export function addDaysISO(iso: string, n: number): string {
   if (!iso) return iso;
   const d = new Date(iso + "T00:00:00");

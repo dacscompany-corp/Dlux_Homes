@@ -6,6 +6,7 @@ import { createNotificationsForRoles } from "@/backend/utils/notificationHelper"
 import { requireAdmin } from "@/backend/utils/requireAdmin";
 import { upload_image_from_form } from "@/backend/utils/fileUpload";
 import type { PromoStayType } from "@/redux/api/promotionsApi";
+import { securityDepositFor, DEPOSIT_DEFAULT } from "@/lib/pricing";
 
 export interface DepositRecord {
   id: string; // UUID from booking_security_deposits
@@ -168,8 +169,6 @@ export async function getDeposits(): Promise<DepositRecord[]> {
   }
 }
 
-// Default security deposit amount
-const DEFAULT_SECURITY_DEPOSIT_AMOUNT = 1000;
 
 // Update deposit status in booking_security_deposits table
 export async function updateDepositStatus(
@@ -207,6 +206,31 @@ export async function updateDepositStatus(
         [depositId, dbStatus, now, employeeId, notes]
       );
     } else if (dbStatus === 'held') {
+      // Deposit amount scales with nights booked (see securityDepositFor() in
+      // src/lib/pricing.ts) — look up this deposit's booking dates AND the
+      // haven's owner-configured tier amounts to compute it.
+      const staysResult = await client.query(
+        `SELECT b.check_in_date, b.check_out_date,
+                h.security_deposit, h.deposit_tier1_amount, h.deposit_tier2_amount,
+                h.deposit_tier3_amount, h.deposit_tier4_amount
+           FROM booking_security_deposits sd
+           JOIN booking b ON b.id = sd.booking_id
+           LEFT JOIN havens h ON h.haven_name = b.room_name
+          WHERE sd.id = $1`,
+        [depositId]
+      );
+      const stay = staysResult.rows[0];
+      const nights = stay?.check_in_date && stay?.check_out_date
+        ? Math.round((new Date(stay.check_out_date).getTime() - new Date(stay.check_in_date).getTime()) / 86_400_000)
+        : 1;
+      const depositAmount = securityDepositFor(nights, undefined, {
+        securityDeposit: stay?.security_deposit != null ? Number(stay.security_deposit) : undefined,
+        depositTier1Amount: stay?.deposit_tier1_amount != null ? Number(stay.deposit_tier1_amount) : undefined,
+        depositTier2Amount: stay?.deposit_tier2_amount != null ? Number(stay.deposit_tier2_amount) : undefined,
+        depositTier3Amount: stay?.deposit_tier3_amount != null ? Number(stay.deposit_tier3_amount) : undefined,
+        depositTier4Amount: stay?.deposit_tier4_amount != null ? Number(stay.deposit_tier4_amount) : undefined,
+      });
+
       // When marking as held (paid), also set the amount, payment method, proof URL, and held_at
       await client.query(
         `UPDATE booking_security_deposits
@@ -218,7 +242,7 @@ export async function updateDepositStatus(
              processed_by = $7,
              notes = COALESCE($8, notes)
          WHERE id = $1`,
-        [depositId, dbStatus, DEFAULT_SECURITY_DEPOSIT_AMOUNT, paymentMethod, paymentProofUrl, now, employeeId, notes]
+        [depositId, dbStatus, depositAmount, paymentMethod, paymentProofUrl, now, employeeId, notes]
       );
     } else {
       await client.query(
@@ -349,7 +373,7 @@ export async function updateDepositStatusByBookingId(
 
     const dbStatus = statusMap[newStatus] || newStatus.toLowerCase();
     const now = new Date();
-    const reportedAmount = (amountReceived && amountReceived > 0) ? amountReceived : DEFAULT_SECURITY_DEPOSIT_AMOUNT;
+    const reportedAmount = (amountReceived && amountReceived > 0) ? amountReceived : DEPOSIT_DEFAULT;
 
     // When the cleaner / CSR collects, the reported amount is balance + deposit.
     // Split it: deposit_portion goes to booking_security_deposits.amount,
@@ -362,7 +386,14 @@ export async function updateDepositStatusByBookingId(
         `SELECT
            COALESCE((SELECT amount FROM booking_security_deposits WHERE booking_id = $1 LIMIT 1), 0)::numeric AS existing_deposit_amount,
            COALESCE((SELECT total_amount FROM booking_payments WHERE booking_id = $1 LIMIT 1), 0)::numeric AS total_amount,
-           COALESCE((SELECT amount_paid  FROM booking_payments WHERE booking_id = $1 LIMIT 1), 0)::numeric AS amount_paid
+           COALESCE((SELECT amount_paid  FROM booking_payments WHERE booking_id = $1 LIMIT 1), 0)::numeric AS amount_paid,
+           (SELECT check_in_date  FROM booking WHERE id = $1) AS check_in_date,
+           (SELECT check_out_date FROM booking WHERE id = $1) AS check_out_date,
+           (SELECT h.security_deposit FROM booking b JOIN havens h ON h.haven_name = b.room_name WHERE b.id = $1) AS security_deposit,
+           (SELECT h.deposit_tier1_amount FROM booking b JOIN havens h ON h.haven_name = b.room_name WHERE b.id = $1) AS deposit_tier1_amount,
+           (SELECT h.deposit_tier2_amount FROM booking b JOIN havens h ON h.haven_name = b.room_name WHERE b.id = $1) AS deposit_tier2_amount,
+           (SELECT h.deposit_tier3_amount FROM booking b JOIN havens h ON h.haven_name = b.room_name WHERE b.id = $1) AS deposit_tier3_amount,
+           (SELECT h.deposit_tier4_amount FROM booking b JOIN havens h ON h.haven_name = b.room_name WHERE b.id = $1) AS deposit_tier4_amount
          `,
         [bookingId]
       );
@@ -373,9 +404,20 @@ export async function updateDepositStatusByBookingId(
       const outstandingBalance = Math.max(0, totalAmt - amountPaid);
 
       // The deposit row stores the expected deposit amount (room policy), not the
-      // combined collection. Prefer the existing amount if present, otherwise fall
-      // back to the default.
-      depositPortion = existingDeposit > 0 ? existingDeposit : DEFAULT_SECURITY_DEPOSIT_AMOUNT;
+      // combined collection. Prefer the existing amount if present, otherwise
+      // fall back to the tiered amount for this stay's length, using the
+      // haven's own owner-configured tiers (securityDepositFor() in
+      // src/lib/pricing.ts).
+      const nights = ctx.check_in_date && ctx.check_out_date
+        ? Math.round((new Date(ctx.check_out_date).getTime() - new Date(ctx.check_in_date).getTime()) / 86_400_000)
+        : 1;
+      depositPortion = existingDeposit > 0 ? existingDeposit : securityDepositFor(nights, undefined, {
+        securityDeposit: ctx.security_deposit != null ? Number(ctx.security_deposit) : undefined,
+        depositTier1Amount: ctx.deposit_tier1_amount != null ? Number(ctx.deposit_tier1_amount) : undefined,
+        depositTier2Amount: ctx.deposit_tier2_amount != null ? Number(ctx.deposit_tier2_amount) : undefined,
+        depositTier3Amount: ctx.deposit_tier3_amount != null ? Number(ctx.deposit_tier3_amount) : undefined,
+        depositTier4Amount: ctx.deposit_tier4_amount != null ? Number(ctx.deposit_tier4_amount) : undefined,
+      });
       // Anything reported beyond the deposit covers the remaining balance,
       // capped at the actual outstanding amount.
       balancePortion = Math.min(

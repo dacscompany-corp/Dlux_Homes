@@ -209,10 +209,12 @@ export default function CleanerDashboard() {
     f.click();
   };
 
-  // ── Security-deposit proof — the ₱1,000 deposit receipt for an assignment's
-  // booking. Read from the cleaning task (deposit_proof_url), uploaded via
-  // /api/admin/cleaners/deposit-proof (keyed by booking_uuid). Local overrides
-  // reflect a just-uploaded proof without a full refetch.
+  // ── Security-deposit proof — the refundable deposit receipt for an
+  // assignment's booking (amount scales with nights booked, see
+  // securityDepositFor() in src/lib/pricing.ts). Read from the cleaning task
+  // (deposit_proof_url), uploaded via /api/admin/cleaners/deposit-proof
+  // (keyed by booking_uuid). Local overrides reflect a just-uploaded proof
+  // without a full refetch.
   const [depositProofs, setDepositProofs] = useState<Record<string, string>>({});
   const [depositUploading, setDepositUploading] = useState<string | null>(null);
   const uploadDepositProof = async (bookingUuid: string, file: File) => {

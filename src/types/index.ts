@@ -27,6 +27,16 @@ export interface Room {
   longtermTier4Rate?: number;
   longtermActive?: boolean;
   longtermExtraPaxFee?: number;
+  // Refundable security deposit, collected at check-in — scales with nights
+  // booked (securityDepositFor() in src/lib/pricing.ts): securityDeposit is
+  // the 1-2 night / Daycation-Nightcation default, depositTier1..4Amount are
+  // the 3-10/11-17/18-25/26+ night tiers. undefined = that tier isn't
+  // configured for this haven, code default applies.
+  securityDeposit?: number;
+  depositTier1Amount?: number;
+  depositTier2Amount?: number;
+  depositTier3Amount?: number;
+  depositTier4Amount?: number;
   additionalPaxFee: number;
   basePax: number;
   maxPax: number;
