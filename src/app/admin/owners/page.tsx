@@ -417,8 +417,31 @@ export default function OwnerDashboard() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Report the status change AND whether the guest was actually emailed about
+  // it. These are two separate outcomes: the booking moves regardless, but a
+  // guest who was never told is a real problem the owner has to know about —
+  // it used to be swallowed into a plain "Booking approved" toast. `res` is the
+  // updateBookingStatus response; emailStatus is null when the status sends no
+  // email at all, which is a success, not a silent failure.
+  type StatusEmailResult = { emailStatus?: { kind: string; ok: boolean; detail?: string } | null };
+  const reportStatusChange = (res: unknown, okMessage: string) => {
+    const email = (res as StatusEmailResult | undefined)?.emailStatus;
+    if (email && !email.ok) {
+      toast(`${okMessage}, but the ${email.kind} email did NOT reach the guest.`,
+        { icon: "⚠️", duration: 9000 });
+      // The detail carries the URL and the failure body — the thing that
+      // actually identifies a misconfigured NEXTAUTH_URL or a blocked route.
+      console.error(`Email send failed (${email.kind}):`, email.detail);
+      return;
+    }
+    toast.success(okMessage);
+  };
+
   const handleApproveBooking = async (id: string) => {
-    try { await updateBookingStatus({ id, status: "approved" }).unwrap(); toast.success("Booking approved"); }
+    try {
+      const res = await updateBookingStatus({ id, status: "approved" }).unwrap();
+      reportStatusChange(res, "Booking approved");
+    }
     catch { toast.error("Could not approve booking"); }
   };
   // Approve the down payment → moves an "Awaiting Payment" booking to Confirmed.
@@ -428,15 +451,15 @@ export default function OwnerDashboard() {
   const handleConfirmPayment = async (id: string) => {
     try {
       await approveDownPaymentByBookingId(id);
-      await updateBookingStatus({ id, status: "approved" }).unwrap();
-      toast.success("Down payment approved — booking confirmed");
+      const res = await updateBookingStatus({ id, status: "approved" }).unwrap();
+      reportStatusChange(res, "Down payment approved — booking confirmed");
       refetchBookings();
     } catch { toast.error("Could not confirm the down payment"); }
   };
   const submitRejectBooking = async () => {
     try {
-      await updateBookingStatus({ id: rejectModal.id, status: "rejected", rejection_reason: rejectModal.reason.trim() || "Rejected by admin" }).unwrap();
-      toast.success("Booking rejected");
+      const res = await updateBookingStatus({ id: rejectModal.id, status: "rejected", rejection_reason: rejectModal.reason.trim() || "Rejected by admin" }).unwrap();
+      reportStatusChange(res, "Booking rejected");
       setRejectModal({ open: false, id: "", reason: "" });
     } catch { toast.error("Could not reject booking"); }
   };
@@ -541,7 +564,11 @@ export default function OwnerDashboard() {
   };
   // Check out → completes the booking (keeps the record + unlocks guest review).
   const handleCheckOut = async (id: string) => {
-    try { await updateBookingStatus({ id, status: "completed" }).unwrap(); toast.success("Guest checked out — booking completed"); refetchBookings(); }
+    try {
+      const res = await updateBookingStatus({ id, status: "completed" }).unwrap();
+      reportStatusChange(res, "Guest checked out — booking completed");
+      refetchBookings();
+    }
     catch { toast.error("Could not check out the guest"); }
   };
   const decideDateChange = async (id: string, action: "approve" | "reject") => {

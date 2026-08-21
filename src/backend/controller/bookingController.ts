@@ -6,6 +6,7 @@ import { validateImageDataUrl } from "../utils/imageGuard";
 import { validateDiscount } from "../utils/validateDiscount";
 import { createCalendarEvent, createCalendarEventWithResult, updateCalendarEvent, CalendarEventData } from "../utils/googleCalendar";
 import { turnoverSql, TURNOVER_BLURB } from "@/lib/turnover";
+import { dispatchTransactionalEmail, type EmailDispatchResult } from "../utils/dispatchEmail";
 
 // The existing booking's start/end as timestamps, for the availability check.
 // A '00:00' checkout means end-of-day, i.e. midnight starting the NEXT day —
@@ -1410,20 +1411,14 @@ export const createBooking = async (
         addonCategories,
       };
 
-      const emailResponse = await fetch(
-        `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/send-pending-email`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(emailData),
-        },
+      // Runs inside after(), so there is no response left to report into — the
+      // log line from dispatchTransactionalEmail is the only record, which is
+      // exactly why it now carries the URL and the failure body.
+      await dispatchTransactionalEmail(
+        "pending approval",
+        "/api/send-pending-email",
+        emailData,
       );
-
-      if (!emailResponse.ok) {
-        console.error("❌ Failed to send pending approval email");
-      } else {
-        console.log("✅ Pending approval email sent to:", booking.email);
-      }
     } catch (emailError) {
       console.error("❌ Email sending error:", emailError);
       // Don't fail the whole request if email fails
@@ -1940,6 +1935,32 @@ export const updateBookingStatus = async (
 
     const bookingDetailsResult = await pool.query(bookingDetailsQuery, [id]);
 
+    // Send status for whichever email this status change triggers, returned to
+    // the caller below. `null` means this status doesn't send one at all (e.g.
+    // checked-in — the house rules go out from the Collect step instead), which
+    // is different from "tried and failed" and must not read as an error.
+    let emailStatus: EmailDispatchResult | null = null;
+
+    // The query above INNER JOINs booking_guests and booking_payments, so a
+    // booking missing either row yields no rows and every branch below is
+    // skipped. That used to happen in total silence; say so instead.
+    const emailSends = ["approved", "rejected", "completed", "checked-out"];
+    if (
+      typeof status === "string" &&
+      emailSends.includes(status) &&
+      bookingDetailsResult.rows.length === 0
+    ) {
+      console.error(
+        `❌ No email for ${status}: booking ${id} has no guest and/or payment row`,
+      );
+      emailStatus = {
+        kind: status,
+        ok: false,
+        detail:
+          "This booking has no guest or payment record, so no email could be addressed.",
+      };
+    }
+
     // Send confirmation email when booking is approved
     if (status === "approved" && bookingDetailsResult.rows.length > 0) {
       try {
@@ -2037,23 +2058,24 @@ export const updateBookingStatus = async (
         };
 
         // Send email via API route
-        const emailResponse = await fetch(
-          `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/send-booking-email`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(emailData),
-          },
+        emailStatus = await dispatchTransactionalEmail(
+          "confirmation",
+          "/api/send-booking-email",
+          emailData,
         );
-
-        if (!emailResponse.ok) {
-          console.error("❌ Failed to send confirmation email");
-        } else {
-          console.log("✅ Confirmation email sent to:", booking.email);
-        }
       } catch (emailError) {
+        // Anything that threw while ASSEMBLING the payload (the add-ons
+        // lookups above) lands here — the send itself no longer throws.
+        // Don't fail the whole request if email fails.
         console.error("❌ Email sending error:", emailError);
-        // Don't fail the whole request if email fails
+        emailStatus = {
+          kind: "confirmation",
+          ok: false,
+          detail:
+            emailError instanceof Error
+              ? emailError.message
+              : "Could not build the confirmation email",
+        };
       }
     }
 
@@ -2079,22 +2101,21 @@ export const updateBookingStatus = async (
           rejectionReason: rejection_reason ?? booking.rejection_reason ?? "",
         };
 
-        const emailResponse = await fetch(
-          `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/send-rejection-email`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(emailData),
-          },
+        emailStatus = await dispatchTransactionalEmail(
+          "rejection",
+          "/api/send-rejection-email",
+          emailData,
         );
-
-        if (!emailResponse.ok) {
-          console.error("❌ Failed to send rejection email");
-        } else {
-          console.log("✅ Rejection email sent to:", booking.email);
-        }
       } catch (emailError) {
         console.error("❌ Email sending error:", emailError);
+        emailStatus = {
+          kind: "rejection",
+          ok: false,
+          detail:
+            emailError instanceof Error
+              ? emailError.message
+              : "Could not build the rejection email",
+        };
       }
     }
 
@@ -2119,14 +2140,21 @@ export const updateBookingStatus = async (
           totalAmount: booking.total_amount,
           remainingBalance: Number(booking.remaining_balance ?? 0),
         };
-        const emailResponse = await fetch(
-          `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/send-checkout-email`,
-          { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(emailData) },
+        emailStatus = await dispatchTransactionalEmail(
+          "check-out",
+          "/api/send-checkout-email",
+          emailData,
         );
-        if (!emailResponse.ok) console.error("❌ Failed to send check-out email");
-        else console.log("✅ Check-out email sent to:", booking.email);
       } catch (emailError) {
         console.error("❌ Email sending error:", emailError);
+        emailStatus = {
+          kind: "check-out",
+          ok: false,
+          detail:
+            emailError instanceof Error
+              ? emailError.message
+              : "Could not build the check-out email",
+        };
       }
     }
 
@@ -2144,6 +2172,9 @@ export const updateBookingStatus = async (
         typeof status === "string"
           ? `Booking ${status} successfully`
           : "Booking updated successfully",
+      // The status change itself succeeded regardless — this only reports
+      // whether the guest was actually told. Null when no email applies.
+      emailStatus,
     });
   } catch (error) {
     console.log("❌ Error updating booking status:", error);
