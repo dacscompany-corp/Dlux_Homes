@@ -851,7 +851,7 @@ export default function BrowsePage() {
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gridAutoRows: "118px", gridAutoFlow: "dense", gap: 16 }}>
             {[
-              { src: room.images[1], alt: "Interior detail", span: 3 },
+              { src: "/images/rooms/dining.png", alt: "Dining area with TV", span: 3 },
               { src: "/images/rooms/garden.jpg", alt: "Landscaped garden courtyard", span: 2 },
               { src: "/images/rooms/tower.jpg", alt: "Tower 4 Grass Residences at dusk", span: 2 },
             ].map((p, i) => (

@@ -165,6 +165,9 @@ export default function OwnerDashboard() {
   };
   const [revenueRange, setRevenueRange] = useState<keyof typeof REVENUE_RANGES>("monthly");
   const [revenueRangeOpen, setRevenueRangeOpen] = useState(false);
+  const [monthlyBreakdownOpen, setMonthlyBreakdownOpen] = useState(false);
+  // null = show all-time / range; a "YYYY-MM" string = filter to that month
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   // Overview KPI toggle: "collected" (cash actually received — down payments +
   // full payments already approved) vs "gross" (the full booked value of every
   // incoming booking, whether or not any payment has landed yet). Same window
@@ -172,7 +175,7 @@ export default function OwnerDashboard() {
   // the SQL SUM() is used differs (see analyticsController.ts summaryStatsQuery).
   const [revenueBasis, setRevenueBasis] = useState<"collected" | "gross">("collected");
   const { data: summaryRes }   = useGetAnalyticsSummaryQuery({ period: REVENUE_RANGES[revenueRange].days });
-  const { data: monthlyRes }   = useGetMonthlyRevenueQuery({ months: REVENUE_RANGES[revenueRange].months });
+  const { data: monthlyRes }   = useGetMonthlyRevenueQuery({ months: "24" });
   const { data: roomRevRes }   = useGetRevenueByRoomQuery({ period: REVENUE_RANGES[revenueRange].days });
   const { data: bookingsData, refetch: refetchBookings } = useGetBookingsQuery();
   const [newBookingOpen, setNewBookingOpen] = useState(false);
@@ -610,25 +613,38 @@ export default function OwnerDashboard() {
   const s = summaryRes?.data;
   const havensList = (havensData as Record<string, unknown>[]) || [];
   const reviewsList = (reviewsRes?.data as unknown as Record<string, unknown>[]) || [];
-  const kpis = [
-    { label: "Total Bookings", value: String(s?.total_bookings ?? 0),            change: pct(s?.bookings_change ?? 0),  icon: CalendarDays, iconBg: "#F7F0E3", iconColor: "#B07848" },
-    revenueBasis === "gross"
-      ? { label: "Gross Revenue", value: peso(s?.total_gross_revenue ?? 0), change: pct(s?.gross_revenue_change ?? 0), icon: PhilippinePeso, iconBg: "#d1fae5", iconColor: "#059669" }
-      : { label: "Total Revenue", value: peso(s?.total_revenue ?? 0),      change: pct(s?.revenue_change ?? 0),       icon: PhilippinePeso, iconBg: "#d1fae5", iconColor: "#059669" },
-    { label: "Occupancy Rate", value: `${Math.round(s?.occupancy_rate ?? 0)}%`,  change: pct(s?.occupancy_change ?? 0), icon: TrendingUp,   iconBg: "#ede9fe", iconColor: "#7c3aed" },
-    { label: "Total Guests",   value: String(s?.new_guests ?? 0),                change: pct(s?.guests_change ?? 0),    icon: UserCheck,    iconBg: "#ffedd5", iconColor: "#ea580c" },
-    { label: "Reviews",        value: String(reviewsList.length),                change: "—",                           icon: Star,         iconBg: "#fef9c3", iconColor: "#ca8a04" },
-    { label: "Active Rooms",  value: String(havensList.length),                 change: "—",                           icon: BedDouble,    iconBg: "#ccfbf1", iconColor: "#0d9488" },
-  ];
 
   // Revenue chart — normalize monthly revenue to bar heights (Overview + Finance)
   const monthly = (monthlyRes?.data as { month: string; revenue: number; gross_revenue: number }[]) || [];
+
+  // When a month is selected, derive KPI values from that month's data only.
+  const monthEntry = selectedMonth ? monthly.find((m) => m.month === selectedMonth) : null;
+  const monthBookings = selectedMonth
+    ? toRows(bookingsData).filter((b) => b.check_in_date && String(b.check_in_date).slice(0, 7) === selectedMonth).length
+    : null;
+  const monthRevenue = monthEntry ? Number(monthEntry.revenue) || 0 : null;
+  const monthGrossRevenue = monthEntry ? Number(monthEntry.gross_revenue) || 0 : null;
+  const monthLabel = selectedMonth
+    ? new Date(selectedMonth + "-01").toLocaleString("en", { month: "long", year: "numeric" })
+    : null;
+
+  const kpis = [
+    { label: "Total Bookings", value: selectedMonth ? String(monthBookings ?? 0) : String(s?.total_bookings ?? 0), change: selectedMonth ? "—" : pct(s?.bookings_change ?? 0), icon: CalendarDays, iconBg: "#F7F0E3", iconColor: "#B07848" },
+    revenueBasis === "gross"
+      ? { label: "Gross Revenue", value: selectedMonth ? peso(monthGrossRevenue ?? 0) : peso(s?.total_gross_revenue ?? 0), change: selectedMonth ? "—" : pct(s?.gross_revenue_change ?? 0), icon: PhilippinePeso, iconBg: "#d1fae5", iconColor: "#059669" }
+      : { label: "Total Revenue", value: selectedMonth ? peso(monthRevenue ?? 0) : peso(s?.total_revenue ?? 0), change: selectedMonth ? "—" : pct(s?.revenue_change ?? 0), icon: PhilippinePeso, iconBg: "#d1fae5", iconColor: "#059669" },
+    { label: "Occupancy Rate", value: `${Math.round(s?.occupancy_rate ?? 0)}%`, change: selectedMonth ? "—" : pct(s?.occupancy_change ?? 0), icon: TrendingUp, iconBg: "#ede9fe", iconColor: "#7c3aed" },
+    { label: "Total Guests",   value: String(s?.new_guests ?? 0), change: selectedMonth ? "—" : pct(s?.guests_change ?? 0), icon: UserCheck, iconBg: "#ffedd5", iconColor: "#ea580c" },
+    { label: "Reviews",        value: String(reviewsList.length), change: "—", icon: Star,      iconBg: "#fef9c3", iconColor: "#ca8a04" },
+    { label: "Active Rooms",   value: String(havensList.length),  change: "—", icon: BedDouble, iconBg: "#ccfbf1", iconColor: "#0d9488" },
+  ];
   const maxRev = Math.max(1, ...monthly.map((m) => Number(m.revenue) || 0));
   // Overview chart only: reads gross_revenue and its own max when the
   // Collected/Gross toggle is set to "gross", collected revenue otherwise.
   // Finance's chart below (monthly/maxRev directly) always stays collected.
   const maxGrossRev = Math.max(1, ...monthly.map((m) => Number(m.gross_revenue) || 0));
-  const overviewRevenueData = monthly.map((m) => {
+  const overviewRevenueSource = selectedMonth ? monthly.filter((m) => m.month === selectedMonth) : monthly;
+  const overviewRevenueData = overviewRevenueSource.map((m) => {
     const amount = revenueBasis === "gross" ? Number(m.gross_revenue) || 0 : Number(m.revenue) || 0;
     const max = revenueBasis === "gross" ? maxGrossRev : maxRev;
     return {
@@ -1100,6 +1116,51 @@ export default function OwnerDashboard() {
                     Gross Revenue
                   </button>
                 </div>
+                {/* Month navigator: prev | current | next + Today */}
+                {(() => {
+                  const now = new Date();
+                  const base = selectedMonth
+                    ? new Date(selectedMonth + "-01")
+                    : new Date(now.getFullYear(), now.getMonth(), 1);
+                  const prevDate = new Date(base.getFullYear(), base.getMonth() - 1, 1);
+                  const nextDate = new Date(base.getFullYear(), base.getMonth() + 1, 1);
+                  const toKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+                  const prevLabel = prevDate.toLocaleString("en", { month: "long" });
+                  const nextLabel = nextDate.toLocaleString("en", { month: "long" });
+                  const currentLabel = base.toLocaleString("en", { month: "long", year: "numeric" });
+                  return (
+                    <div className="inline-flex" style={{ border: "1px solid #D4BFA0" }}>
+                      <button type="button" onClick={() => setSelectedMonth(toKey(prevDate))}
+                        className="inline-flex items-center cursor-pointer"
+                        style={{ gap: 5, padding: "9px 14px", fontSize: 13, fontWeight: 500, color: "#B07848", background: "#F7F0E3", border: "none", borderRight: "1px solid #D4BFA0", fontFamily: "inherit" }}
+                        onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.background = "#efe4ce"}
+                        onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.background = "#F7F0E3"}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
+                        {prevLabel}
+                      </button>
+                      <div style={{ padding: "9px 18px", fontSize: 13, fontWeight: 600, color: "#1f1b16", background: "#fff", borderRight: "1px solid #D4BFA0", minWidth: 148, textAlign: "center" }}>
+                        {currentLabel}
+                      </div>
+                      <button type="button" onClick={() => setSelectedMonth(toKey(nextDate))}
+                        className="inline-flex items-center cursor-pointer"
+                        style={{ gap: 5, padding: "9px 14px", fontSize: 13, fontWeight: 500, color: "#B07848", background: "#F7F0E3", border: "none", borderRight: selectedMonth ? "1px solid #D4BFA0" : "none", fontFamily: "inherit" }}
+                        onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.background = "#efe4ce"}
+                        onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.background = "#F7F0E3"}>
+                        {nextLabel}
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
+                      </button>
+                      {selectedMonth && (
+                        <button type="button" onClick={() => setSelectedMonth(null)}
+                          className="cursor-pointer"
+                          style={{ padding: "9px 14px", fontSize: 13, fontWeight: 600, color: "#B07848", background: "#F7F0E3", border: "none", fontFamily: "inherit" }}
+                          onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.background = "#efe4ce"}
+                          onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.background = "#F7F0E3"}>
+                          All
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
                 <div style={{ position: "relative" }}>
                 <button type="button" onClick={() => setRevenueRangeOpen((v) => !v)}
                   className="inline-flex items-center cursor-pointer"
@@ -1168,7 +1229,7 @@ export default function OwnerDashboard() {
                       {revenueBasis === "gross" ? "Gross" : "Collected"}
                     </span>
                   </div>
-                  <p style={{ fontSize: 12, color: "#8a8276", margin: "8px 0 0" }}>{REVENUE_RANGES[revenueRange].label}</p>
+                  <p style={{ fontSize: 12, color: "#8a8276", margin: "8px 0 0" }}>{selectedMonth ? monthLabel : REVENUE_RANGES[revenueRange].label}</p>
                 </div>
                 <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 20, fontWeight: 500, letterSpacing: "-0.02em", color: "#1f1b16" }}>{peso(overviewRevenueTotal)}</div>
               </div>
@@ -1177,8 +1238,7 @@ export default function OwnerDashboard() {
                   {overviewRevenueData.map((item) => (
                     <div key={item.month} className="flex-1 flex flex-col items-center" style={{ gap: 8 }}>
                       <div className="w-full flex items-end justify-center" style={{ height: 120 }}>
-                        <div style={{ width: "100%", height: `${item.value}%`, background: "#b8754a" }}
-                          title={`${item.month}: ${peso(item.amount)}`} />
+                        <div style={{ width: "100%", height: `${item.value}%`, background: "#b8754a" }} />
                       </div>
                       <span style={{ fontSize: 11, color: "#8a8276" }}>{item.month}</span>
                     </div>
@@ -1928,42 +1988,6 @@ export default function OwnerDashboard() {
               ))}
             </div>
 
-            {/* revenue chart with y-axis */}
-            <div className="mb-6" style={{ background: "#fff", border: "1px solid #ece5d4" }}>
-              <div style={{ padding: "22px 24px 0" }}>
-                <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, margin: 0, lineHeight: 1, color: "#1f1b16" }}>Revenue — last 6 months</h3>
-              </div>
-              <div style={{ padding: "18px 24px 24px" }}>
-                {monthly.length === 0 ? (
-                  <p style={{ fontSize: 13, color: "#8a8276", margin: 0 }}>No revenue recorded yet.</p>
-                ) : (
-                  <div className="flex" style={{ gap: 14, height: 220 }}>
-                    <div className="flex flex-col justify-between" style={{ paddingBottom: 22, fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 10, color: "#b8b1a6", textAlign: "right" }}>
-                      {revYticks.map((y, i) => <span key={i}>{y}</span>)}
-                    </div>
-                    <div style={{ flex: 1, position: "relative" }}>
-                      <div style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 22 }}>
-                        {[0, 1, 2, 3, 4].map((i) => <div key={i} style={{ position: "absolute", left: 0, right: 0, top: `${i * 25}%`, height: 1, background: "#f3eee2" }} />)}
-                      </div>
-                      <div style={{ position: "relative", zIndex: 1, display: "flex", height: "100%" }}>
-                        {monthly.map((m) => {
-                          const label = /^\d{4}-\d{2}/.test(m.month) ? new Date(m.month + "-01").toLocaleString("en", { month: "short" }) : m.month;
-                          return (
-                            <div key={m.month} className="flex-1 flex flex-col items-center">
-                              <div className="w-full flex items-end justify-center" style={{ flex: 1 }}>
-                                <div title={`${label}: ${peso(Number(m.revenue) || 0)}`} style={{ width: "52%", height: `${Math.max(1, ((Number(m.revenue) || 0) / maxRev) * 100)}%`, background: "#b8754a" }} />
-                              </div>
-                              <div style={{ height: 22, display: "flex", alignItems: "center", fontSize: 11, color: "#8a8276" }}>{label}</div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
             {/* revenue by haven */}
             <div style={{ background: "#fff", border: "1px solid #ece5d4" }}>
               <div style={{ padding: "18px 24px", borderBottom: "1px solid #ece5d4" }}>
@@ -2345,6 +2369,80 @@ export default function OwnerDashboard() {
 
         </main>
       </div>
+
+      {/* ── Monthly Breakdown Modal ── */}
+      {monthlyBreakdownOpen && (() => {
+        const totalRev = monthly.reduce((t, m) => t + (Number(m.revenue) || 0), 0);
+        const totalBookings = allAdminBookings.length;
+        return (
+          <div onClick={() => setMonthlyBreakdownOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: "rgba(31,27,22,0.45)" }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 680, maxHeight: "85vh", background: "#fff", border: "1px solid #ece5d4", boxShadow: "0 24px 64px rgba(31,22,14,.28)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+              {/* Header */}
+              <div style={{ padding: "20px 24px", borderBottom: "1px solid #ece5d4", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+                <div>
+                  <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 22, margin: 0, lineHeight: 1, color: "#1f1b16" }}>Monthly Breakdown</h3>
+                  <p style={{ fontSize: 12, color: "#8a8276", margin: "6px 0 0" }}>Confirmed &amp; paid bookings only</p>
+                </div>
+                <button type="button" onClick={() => setMonthlyBreakdownOpen(false)} style={{ width: 32, height: 32, display: "grid", placeItems: "center", border: "1px solid #e7dcc5", background: "transparent", color: "#8a6f4d", cursor: "pointer" }}>
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              {/* KPI summary row */}
+              <div className="grid grid-cols-3" style={{ gap: 1, background: "#ece5d4", borderBottom: "1px solid #ece5d4", flexShrink: 0 }}>
+                {[
+                  { label: "Total Bookings", value: String(s?.total_bookings ?? totalBookings) },
+                  { label: "Total Revenue", value: peso(Number(s?.total_revenue ?? totalRev)) },
+                  { label: "Occupancy Rate", value: `${Math.round(Number(s?.occupancy_rate ?? 0))}%` },
+                  { label: "Total Guests", value: String(s?.new_guests ?? 0) },
+                  { label: "Reviews", value: String(reviewsList.length) },
+                  { label: "Active Rooms", value: String(havensList.length) },
+                ].map((item) => (
+                  <div key={item.label} style={{ background: "#fff", padding: "14px 18px" }}>
+                    <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 20, fontWeight: 500, color: "#1f1b16", letterSpacing: "-0.02em" }}>{item.value}</div>
+                    <div style={{ fontSize: 11, color: "#8a8276", marginTop: 4 }}>{item.label}</div>
+                  </div>
+                ))}
+              </div>
+              {/* Monthly table */}
+              <div style={{ overflowY: "auto", flex: 1 }}>
+                <div className="grid" style={{ gridTemplateColumns: "1fr 1fr 1.6fr", padding: "10px 24px", background: "#faf7f1", borderBottom: "1px solid #ece5d4", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "#8a8276", position: "sticky", top: 0 }}>
+                  <span>Month</span><span style={{ textAlign: "right" }}>Revenue</span><span style={{ paddingLeft: 16 }}>Share of total</span>
+                </div>
+                {monthly.length === 0 && (
+                  <div style={{ padding: "32px 24px", textAlign: "center" }}>
+                    <PhilippinePeso className="w-5 h-5" style={{ color: "#B07848", margin: "0 auto 10px" }} />
+                    <p style={{ fontSize: 14, color: "#5a4a3a" }}>No revenue recorded yet</p>
+                  </div>
+                )}
+                {monthly.map((m) => {
+                  const rev = Number(m.revenue) || 0;
+                  const share = totalRev > 0 ? Math.round((rev / totalRev) * 100) : 0;
+                  const label = /^\d{4}-\d{2}/.test(m.month) ? new Date(m.month + "-01").toLocaleString("en", { month: "long", year: "numeric" }) : m.month;
+                  return (
+                    <div key={m.month} className="grid items-center" style={{ gridTemplateColumns: "1fr 1fr 1.6fr", padding: "13px 24px", borderBottom: "1px solid #f3eee2", fontSize: 13.5 }}>
+                      <span style={{ color: "#1f1b16", fontWeight: 500 }}>{label}</span>
+                      <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 14, color: "#1f1b16", textAlign: "right", fontWeight: 600 }}>{peso(rev)}</span>
+                      <div className="flex items-center" style={{ gap: 10, paddingLeft: 16 }}>
+                        <div style={{ flex: 1, height: 6, background: "#f3eee2", borderRadius: 999 }}>
+                          <div style={{ width: `${share}%`, height: "100%", background: "#b8754a", borderRadius: 999 }} />
+                        </div>
+                        <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 11, color: "#8a8276", width: 32, textAlign: "right" }}>{share}%</span>
+                      </div>
+                    </div>
+                  );
+                })}
+                {monthly.length > 0 && (
+                  <div className="grid items-center" style={{ gridTemplateColumns: "1fr 1fr 1.6fr", padding: "16px 24px", background: "#F7F0E3", borderTop: "2px solid #D4BFA0" }}>
+                    <span style={{ color: "#1f1b16", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", fontSize: 12 }}>Total Revenue</span>
+                    <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 16, color: "#B07848", textAlign: "right", fontWeight: 700 }}>{peso(totalRev)}</span>
+                    <span style={{ paddingLeft: 16, fontSize: 12, color: "#8a8276" }}>across {monthly.length} month{monthly.length !== 1 ? "s" : ""}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Create/edit promotion modal ── */}
       <PromotionModal
