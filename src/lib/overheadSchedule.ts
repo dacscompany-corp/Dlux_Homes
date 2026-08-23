@@ -81,12 +81,33 @@ function isMonthBased(def: ScheduleDef): boolean {
     || (def.frequency === "custom" && def.interval_unit === "month");
 }
 
+// The number of days a non-month-based frequency advances by.
+function dayStepFor(def: ScheduleDef): number {
+  const days = DAY_STEP[def.frequency];
+  if (days) return days;
+  if (def.frequency === "custom") {
+    const n = def.interval_count ?? 1;
+    if (def.interval_unit === "week") return n * 7;
+    return n; // "day" or unspecified
+  }
+  return 1;
+}
+
+/**
+ * Due date honors the frequency's own month-basis, matching `isMonthBased`
+ * exactly — including `custom` + `interval_unit: "month"` — so a custom
+ * bi-monthly expense with a `due_day` isn't silently ignored. `intervalUnit`
+ * is optional for backward compatibility with callers that only ever pass a
+ * fixed (non-custom) frequency.
+ */
 export function dueDateFor(
   periodStart: string,
   dueDay: number | null | undefined,
   frequency: Frequency,
+  intervalUnit?: IntervalUnit | null,
 ): string {
-  const monthBased = frequency in MONTH_STEP;
+  const monthBased = frequency in MONTH_STEP
+    || (frequency === "custom" && intervalUnit === "month");
   if (!dueDay || !monthBased) return periodStart;
   const { y, m } = parse(periodStart);
   return fmt(y, m, Math.min(dueDay, daysInMonth(y, m)));
@@ -111,6 +132,51 @@ function step(def: ScheduleDef, iso: string): string {
   return iso;
 }
 
+function diffDays(a: string, b: string): number {
+  const pa = parse(a);
+  const pb = parse(b);
+  const ta = Date.UTC(pa.y, pa.m - 1, pa.d);
+  const tb = Date.UTC(pb.y, pb.m - 1, pb.d);
+  return Math.round((tb - ta) / 86_400_000);
+}
+
+// Smallest k >= 0 such that start_date + k * dayStep >= from. Day arithmetic
+// is exact (no clamping), so this is a direct computation, not a search.
+function firstDayIndexAtOrAfter(startDate: string, dayStep: number, from: string): number {
+  if (from <= startDate) return 0;
+  return Math.ceil(diffDays(startDate, from) / dayStep);
+}
+
+// Smallest k >= 0 such that addMonths(start_date, k * monthsPerStep) >= from.
+// addMonths is monotonic non-decreasing in k (a later month is never an
+// earlier date, even after day-of-month clamping), so binary search is valid
+// even though the day-of-month can clamp unpredictably near month-end starts.
+function firstMonthIndexAtOrAfter(startDate: string, monthsPerStep: number, from: string): number {
+  if (from <= startDate) return 0;
+
+  let hi = 1;
+  while (addMonths(startDate, hi * monthsPerStep) < from) {
+    hi *= 2;
+    if (hi > 1_000_000) {
+      throw new Error(
+        `occurrencesBetween: could not seek forward to '${from}' from start_date ` +
+        `'${startDate}' with monthsPerStep=${monthsPerStep} — schedule definition looks malformed.`
+      );
+    }
+  }
+
+  let lo = 0;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (addMonths(startDate, mid * monthsPerStep) >= from) {
+      hi = mid;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  return lo;
+}
+
 /**
  * Occurrences whose period_start falls within [from, through], bounded by the
  * definition's own start_date and end_date.
@@ -132,7 +198,7 @@ export function occurrencesBetween(
       out.push({
         period_start: s,
         period_end: s,
-        due_date: dueDateFor(s, def.due_day, def.frequency),
+        due_date: dueDateFor(s, def.due_day, def.frequency, def.interval_unit),
       });
     }
     return out;
@@ -146,24 +212,58 @@ export function occurrencesBetween(
   const monthsPerStep = monthBased
     ? (MONTH_STEP[def.frequency] ?? (def.interval_count ?? 1))
     : 0;
+  const dayStep = monthBased ? 0 : dayStepFor(def);
 
-  // Guard against a malformed custom definition spinning forever.
+  // Seek forward by arithmetic to the first occurrence at or after `from`,
+  // instead of always walking one step at a time from `start_date`. A
+  // schedule whose start_date is decades in the past must return exactly the
+  // same occurrences for a recent window as it would if walked from the very
+  // beginning — this seek is what keeps that true without the iteration
+  // guard below ever mistaking a long-lived legitimate schedule for a
+  // malformed one.
+  const startIndex = from <= def.start_date
+    ? 0
+    : monthBased
+      ? firstMonthIndexAtOrAfter(def.start_date, monthsPerStep, from)
+      : firstDayIndexAtOrAfter(def.start_date, dayStep, from);
+
+  let cursor = monthBased
+    ? addMonths(def.start_date, startIndex * monthsPerStep)
+    : addDays(def.start_date, startIndex * dayStep);
+
+  // Guard against a malformed custom definition (or a window so large it
+  // would take an unreasonable number of steps) spinning forever. If this is
+  // genuinely hit, fail loudly — silently returning a short, wrong list is
+  // worse than a crash, and callers depend on results not depending on `from`.
   const MAX_ITERATIONS = 10_000;
-  let cursor = def.start_date;
+  let index = startIndex;
+  let iterations = 0;
 
-  for (let i = 0; i < MAX_ITERATIONS && cursor <= limit; i++) {
+  while (cursor <= limit) {
+    if (iterations >= MAX_ITERATIONS) {
+      throw new Error(
+        `occurrencesBetween: exceeded ${MAX_ITERATIONS} iterations without reaching the ` +
+        `end of the window [${from}, ${through}] — refusing to silently truncate. ` +
+        `definition: ${JSON.stringify(def)}`
+      );
+    }
+
     const next = monthBased
-      ? addMonths(def.start_date, monthsPerStep * (i + 1))
+      ? addMonths(def.start_date, monthsPerStep * (index + 1))
       : step(def, cursor);
     if (next === cursor) break; // no progress — malformed definition
+
     if (cursor >= from) {
       out.push({
         period_start: cursor,
         period_end: addDays(next, -1),
-        due_date: dueDateFor(cursor, def.due_day, def.frequency),
+        due_date: dueDateFor(cursor, def.due_day, def.frequency, def.interval_unit),
       });
     }
+
     cursor = next;
+    index += 1;
+    iterations += 1;
   }
 
   return out;

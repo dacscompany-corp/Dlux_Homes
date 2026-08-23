@@ -207,3 +207,71 @@ describe("DUE_SOON_DAYS", () => {
     expect(DUE_SOON_DAYS).toBe(7);
   });
 });
+
+// Fix round 1, Finding 1: occurrencesBetween must seek forward to `from`
+// rather than always walking one step at a time from start_date — otherwise
+// a long-lived schedule with a far-past start_date silently returns zero
+// occurrences once the walk exhausts the iteration guard before reaching
+// the requested window.
+describe("occurrencesBetween — seeking forward past a far-past start_date", () => {
+  it("returns the correct occurrences for a daily schedule decades after its start_date", () => {
+    const def: ScheduleDef = { frequency: "daily", start_date: "2000-01-01" };
+    const out = occurrencesBetween(def, "2029-01-01", "2029-01-10");
+    expect(out.map((o) => o.period_start)).toEqual([
+      "2029-01-01", "2029-01-02", "2029-01-03", "2029-01-04", "2029-01-05",
+      "2029-01-06", "2029-01-07", "2029-01-08", "2029-01-09", "2029-01-10",
+    ]);
+  });
+
+  it("returns the correct occurrences for a monthly schedule decades after its start_date", () => {
+    const def: ScheduleDef = { frequency: "monthly", start_date: "1999-01-31", due_day: 31 };
+    const out = occurrencesBetween(def, "2026-01-01", "2026-04-30");
+    expect(out.map((o) => o.period_start)).toEqual([
+      "2026-01-31", "2026-02-28", "2026-03-31", "2026-04-30",
+    ]);
+  });
+
+  it("agrees with a full walk-from-the-beginning on every occurrence at or after a later `from`", () => {
+    const def: ScheduleDef = { frequency: "monthly", start_date: "2000-01-01", due_day: 5 };
+    const full = occurrencesBetween(def, "2000-01-01", "2026-06-30");
+    const resumed = occurrencesBetween(def, "2026-01-01", "2026-06-30");
+    const tailOfFull = full.filter((o) => o.period_start >= "2026-01-01");
+    expect(resumed).toEqual(tailOfFull);
+  });
+
+  it("fails loudly instead of silently truncating when a window genuinely exceeds the iteration guard", () => {
+    const def: ScheduleDef = { frequency: "daily", start_date: "2000-01-01" };
+    expect(() => occurrencesBetween(def, "2000-01-01", "2030-01-01")).toThrow(
+      /occurrencesBetween/,
+    );
+  });
+});
+
+// Fix round 1, Finding 2: dueDateFor's month-based check must agree with the
+// module's own isMonthBased() helper, which also treats `custom` +
+// `interval_unit: "month"` as month-based — otherwise a custom bi-monthly
+// expense's due_day is silently ignored.
+describe("dueDateFor — custom month-based frequency", () => {
+  it("ignores due_day for custom frequency without an explicit month interval_unit", () => {
+    expect(dueDateFor("2026-01-01", 20, "custom")).toBe("2026-01-01");
+  });
+
+  it("honors due_day for custom + month interval_unit", () => {
+    expect(dueDateFor("2026-01-01", 20, "custom", "month")).toBe("2026-01-20");
+  });
+
+  it("clamps a custom + month due_day to the month's last day", () => {
+    expect(dueDateFor("2026-02-01", 31, "custom", "month")).toBe("2026-02-28");
+  });
+});
+
+describe("occurrencesBetween — custom bi-monthly honors due_day", () => {
+  it("carries due_day through to each occurrence's due_date", () => {
+    const def: ScheduleDef = {
+      frequency: "custom", start_date: "2026-01-01",
+      interval_count: 2, interval_unit: "month", due_day: 20,
+    };
+    const out = occurrencesBetween(def, "2026-01-01", "2026-04-30");
+    expect(out.map((o) => o.due_date)).toEqual(["2026-01-20", "2026-03-20"]);
+  });
+});
