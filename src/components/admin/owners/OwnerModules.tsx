@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import { imageFileError } from "@/lib/validateImageFile";
 import ImageThumb from "@/components/ImageThumb";
+import { MonthNavigator, currentMonthKey } from "@/components/admin/owners/MonthNavigator";
 import { BarChart3, Calendar, CalendarOff, Sparkles, CreditCard, Headphones, UsersRound, Handshake, Plus, Trash2, Power, Pencil, X, Moon, Sun } from "lucide-react";
 import { useGetAnalyticsSummaryQuery, useGetMonthlyRevenueQuery, useGetRevenueByRoomQuery } from "@/redux/api/analyticsApi";
 import { useGetBookingsQuery } from "@/redux/api/bookingsApi";
@@ -124,9 +125,13 @@ const fmtDate = (d: unknown) => (d ? new Date(String(d)).toLocaleDateString() : 
 
 // ── 1. Analytics & Reports ────────────────────────────────────────────────
 export function AnalyticsSection() {
-  const { data: summaryRes } = useGetAnalyticsSummaryQuery({ period: "30" });
+  // Opens on the current month. null falls back to the rolling 30-day window,
+  // reachable via "All time" in the picker; a 'YYYY-MM' key pins every figure
+  // on this screen — cards, haven table and chart — to that calendar month.
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(() => currentMonthKey());
+  const { data: summaryRes } = useGetAnalyticsSummaryQuery({ period: "30", month: selectedMonth });
   const { data: monthlyRes } = useGetMonthlyRevenueQuery({ months: "6" });
-  const { data: roomRes } = useGetRevenueByRoomQuery({ period: "30" });
+  const { data: roomRes } = useGetRevenueByRoomQuery({ period: "30", month: selectedMonth });
   const s = (summaryRes as unknown as { data?: Row })?.data || {};
   const monthly = dataOf(monthlyRes) as { month: string; revenue: number; gross_revenue: number }[];
   const rooms = dataOf(roomRes) as { room_name: string; revenue: number; bookings: number }[];
@@ -136,12 +141,19 @@ export function AnalyticsSection() {
   const [revenueBasis, setRevenueBasis] = useState<"collected" | "gross">("collected");
   const revenueNow = (m: { revenue: number; gross_revenue: number }) =>
     revenueBasis === "gross" ? Number(m.gross_revenue) || 0 : Number(m.revenue) || 0;
+  const chartMonthEntry = selectedMonth ? monthly.find((m) => m.month === selectedMonth) : null;
+  const monthLabel = selectedMonth
+    ? new Date(selectedMonth + "-01").toLocaleString("en", { month: "long", year: "numeric" })
+    : "";
   const maxRev = Math.max(1, ...monthly.map(revenueNow));
+  // Cards name the span they cover, so the figures can never be read against
+  // the wrong window.
+  const span = selectedMonth ? monthLabel : "30d";
   const stats = [
-    { label: revenueBasis === "gross" ? "Gross Revenue (30d)" : "Revenue (30d)", value: peso(revenueBasis === "gross" ? Number(s.total_gross_revenue ?? 0) : Number(s.total_revenue ?? 0)) },
-    { label: "Bookings (30d)", value: String(s.total_bookings ?? 0) },
-    { label: "Occupancy", value: `${Math.round(Number(s.occupancy_rate ?? 0))}%` },
-    { label: "New Guests", value: String(s.new_guests ?? 0) },
+    { label: `${revenueBasis === "gross" ? "Gross Revenue" : "Revenue"} (${span})`, value: peso(revenueBasis === "gross" ? Number(s.total_gross_revenue ?? 0) : Number(s.total_revenue ?? 0)) },
+    { label: `Bookings (${span})`, value: String(s.total_bookings ?? 0) },
+    { label: `Occupancy (${span})`, value: `${Math.round(Number(s.occupancy_rate ?? 0))}%` },
+    { label: `New Guests (${span})`, value: String(s.new_guests ?? 0) },
   ];
   const totalRoomRev = Math.max(1, rooms.reduce((t, r) => t + (Number(r.revenue) || 0), 0));
   const SERIF = "'Instrument Serif', Georgia, serif";
@@ -151,7 +163,8 @@ export function AnalyticsSection() {
       {/* Collected (cash actually received) vs Gross (full value of every
           incoming booking, before any payment lands) — swaps the "Revenue
           (30d)" stat and the chart below between the two figures. */}
-      <div className="inline-flex mb-6" style={{ border: "1px solid #D4BFA0", background: "#F7F0E3" }}>
+      <div className="flex items-center flex-wrap mb-6" style={{ gap: 12 }}>
+      <div className="inline-flex" style={{ border: "1px solid #D4BFA0", background: "#F7F0E3" }}>
         <button type="button" onClick={() => setRevenueBasis("collected")}
           className="cursor-pointer"
           style={{ padding: "9px 14px", fontSize: 13, fontWeight: 500, color: revenueBasis === "collected" ? "#1f1b16" : "#8a8276", background: revenueBasis === "collected" ? "#fff" : "transparent", border: "none" }}>
@@ -162,6 +175,13 @@ export function AnalyticsSection() {
           style={{ padding: "9px 14px", fontSize: 13, fontWeight: 500, color: revenueBasis === "gross" ? "#1f1b16" : "#8a8276", background: revenueBasis === "gross" ? "#fff" : "transparent", border: "none", borderLeft: "1px solid #D4BFA0" }}>
           Gross Revenue
         </button>
+      </div>
+      {/* Same row as the basis toggle, matching the Dashboard tab. */}
+      <MonthNavigator
+        value={selectedMonth}
+        onChange={setSelectedMonth}
+        monthsWithData={monthly.map((m) => m.month)}
+      />
       </div>
 
       {/* stats — flat bordered cells */}
@@ -187,6 +207,13 @@ export function AnalyticsSection() {
             {revenueBasis === "gross" ? "Gross" : "Collected"}
           </span>
         </div>
+        {selectedMonth && (
+          <p style={{ fontSize: 12, color: "#8a8276", margin: "10px 24px 0" }}>
+            {chartMonthEntry
+              ? `${monthLabel} · ${peso(revenueNow(chartMonthEntry))} ${revenueBasis === "gross" ? "gross" : "collected"}`
+              : `No revenue recorded for ${monthLabel} in this range`}
+          </p>
+        )}
         <div style={{ padding: "18px 24px 24px" }}>
           {monthly.length === 0 ? (
             <p style={{ fontSize: 13, color: "#8a8276", margin: 0 }}>No revenue recorded yet.</p>
@@ -196,7 +223,7 @@ export function AnalyticsSection() {
                 <div key={m.month} className="flex-1 flex flex-col items-center" style={{ gap: 8 }}>
                   <span style={{ fontFamily: MONO, fontSize: 11, color: "#6b6358" }}>{peso(revenueNow(m))}</span>
                   <div className="w-full flex items-end justify-center" style={{ height: 140 }}>
-                    <div style={{ width: "100%", height: `${Math.max(2, (revenueNow(m) / maxRev) * 100)}%`, background: "#b8754a" }} />
+                    <div style={{ width: "100%", height: `${Math.max(2, (revenueNow(m) / maxRev) * 100)}%`, background: selectedMonth && m.month !== selectedMonth ? "#e8d9c0" : "#b8754a" }} />
                   </div>
                   <span style={{ fontSize: 11, color: "#8a8276" }}>{/^\d{4}-\d{2}/.test(m.month) ? new Date(m.month + "-01").toLocaleString("en", { month: "short" }) : m.month}</span>
                 </div>

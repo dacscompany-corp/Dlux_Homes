@@ -85,7 +85,10 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
+  /* next/font exposes Geist as --font-geist-sans (see app/layout.tsx); pointing
+     --font-sans at itself left it undefined, so `html { @apply font-sans }`
+     dropped out and anything without an explicit face fell back to Times. */
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);

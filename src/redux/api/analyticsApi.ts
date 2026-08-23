@@ -30,20 +30,22 @@ export const analyticsApi = createApi({
     baseQuery: fetchBaseQuery({ baseUrl: "/api/admin/analytics"}),
     tagTypes: ['AnalyticsSummary', 'RevenueByRoom', 'MonthlyRevenue'],
     endpoints: (builder) => ({
-        getAnalyticsSummary: builder.query<{success: boolean; data: AnalyticsSummary}, {period?: string}>({
-            query({period = '30'}) {
+        getAnalyticsSummary: builder.query<{success: boolean; data: AnalyticsSummary}, {period?: string; month?: string | null}>({
+            // `month` ('YYYY-MM') pins the figures to that calendar month; omit
+            // it and the server falls back to the rolling `period` window.
+            query({period = '30', month}) {
                 return {
                     url: "/summary",
-                    params: { period }
+                    params: month ? { period, month } : { period }
                 };
             },
             providesTags: ['AnalyticsSummary']
         }),
-        getRevenueByRoom: builder.query<{success: boolean; data: RevenueByRoom[]}, {period?: string}>({
-            query({period = '30'}) {
+        getRevenueByRoom: builder.query<{success: boolean; data: RevenueByRoom[]}, {period?: string; month?: string | null}>({
+            query({period = '30', month}) {
                 return {
                     url: "/revenue-by-room",
-                    params: { period }
+                    params: month ? { period, month } : { period }
                 };
             },
             providesTags: ['RevenueByRoom']

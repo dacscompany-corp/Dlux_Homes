@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { PoolClient } from "pg";
 import pool from "../config/db";
+import { logAudit } from "../utils/auditLog";
 import {
   occurrencesBetween,
   accrualMonthOf,
@@ -279,5 +280,161 @@ export async function cancelPeriod(
       { success: false, message: "Failed to cancel period" },
       { status: 500 },
     );
+  }
+}
+
+/** GET /api/admin/overhead/periods/[id]/payments — payment history for one period. */
+export async function getPayments(
+  req: NextRequest,
+  periodId: string,
+): Promise<NextResponse> {
+  try {
+    const result = await pool.query(
+      `SELECT pay.id, pay.paid_on, pay.amount, pay.method, pay.reference,
+              pay.notes, pay.created_at,
+              e.first_name || ' ' || e.last_name AS recorded_by_name
+         FROM overhead_expense_payments pay
+         LEFT JOIN employees e ON e.id = pay.recorded_by
+        WHERE pay.period_id = $1
+        ORDER BY pay.paid_on DESC, pay.created_at DESC`,
+      [periodId],
+    );
+    return NextResponse.json({ success: true, data: result.rows });
+  } catch (err) {
+    console.error("[overhead] getPayments failed:", err);
+    return NextResponse.json(
+      { success: false, message: "Failed to load payments" },
+      { status: 500 },
+    );
+  }
+}
+
+/**
+ * POST /api/admin/overhead/periods/[id]/payments — record a payment.
+ *
+ * The cancelled-status check and the insert share one transaction, with the
+ * period row locked (`FOR UPDATE`) before its status is read. This mirrors
+ * the cancelPeriod precedent of folding a check into a single atomic
+ * statement rather than check-then-act: without the lock, this request could
+ * read status='scheduled' while a concurrent cancelPeriod call's
+ * `NOT EXISTS (payments)` guard runs before this transaction's INSERT is
+ * visible, and both could commit — leaving a cancelled period with a payment
+ * attached, or a payment recorded against a period that's cancelled a moment
+ * later. Locking the row here makes the two requests serialize: whichever
+ * commits first determines what the other sees.
+ */
+export async function recordPayment(
+  req: NextRequest,
+  periodId: string,
+  actorEmail: string,
+): Promise<NextResponse> {
+  const client = await pool.connect();
+  try {
+    const body = await req.json();
+
+    const amount = Number(body.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return NextResponse.json(
+        { success: false, message: "Payment amount must be greater than zero." },
+        { status: 400 },
+      );
+    }
+    const paidOn = String(body.paid_on || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(paidOn)) {
+      return NextResponse.json(
+        { success: false, message: "Please give the date this was paid." },
+        { status: 400 },
+      );
+    }
+
+    const actor = await pool.query<{ id: string }>(
+      `SELECT id FROM employees WHERE email = $1 LIMIT 1`, [actorEmail],
+    );
+    const actorId = actor.rows[0]?.id ?? null;
+
+    await client.query("BEGIN");
+
+    // Lock the period row before reading its status so a concurrent
+    // cancelPeriod call cannot slip in between our check and our insert.
+    const period = await client.query<{ amount_due: string; status: string }>(
+      `SELECT amount_due, status FROM overhead_expense_periods WHERE id = $1 FOR UPDATE`,
+      [periodId],
+    );
+    if (!period.rows.length) {
+      await client.query("ROLLBACK");
+      return NextResponse.json(
+        { success: false, message: "Period not found" },
+        { status: 404 },
+      );
+    }
+    if (period.rows[0].status === "cancelled") {
+      await client.query("ROLLBACK");
+      return NextResponse.json(
+        { success: false, message: "This period was cancelled — reinstate it before recording a payment." },
+        { status: 409 },
+      );
+    }
+    const due = Number(period.rows[0].amount_due);
+
+    await client.query(
+      `INSERT INTO overhead_expense_payments
+         (period_id, paid_on, amount, method, reference, notes, recorded_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [periodId, paidOn, amount,
+       body.method ? String(body.method) : null,
+       body.reference ? String(body.reference) : null,
+       body.notes ? String(body.notes) : null,
+       actorId],
+    );
+
+    // Settled only once payments cover the amount due — a lesser sum leaves
+    // the period scheduled so it keeps showing in the unpaid queue. This is
+    // a plain aggregate with no GROUP BY, so it always returns exactly one
+    // row (SUM over zero matches is just NULL, coalesced to 0) — it can't
+    // throw on .rows[0]. It sees the row just inserted because it runs on
+    // the same client inside the same transaction.
+    const totals = await client.query<{ total: string }>(
+      `SELECT COALESCE(SUM(amount), 0)::numeric AS total
+         FROM overhead_expense_payments
+        WHERE period_id = $1`,
+      [periodId],
+    );
+    const total = Number(totals.rows[0].total);
+    const settled = total >= due;
+
+    if (settled) {
+      await client.query(
+        `UPDATE overhead_expense_periods
+            SET status = 'paid', updated_at = NOW()
+          WHERE id = $1`,
+        [periodId],
+      );
+    }
+
+    await logAudit({
+      action: "overhead_period.payment_recorded",
+      entity_type: "overhead_period",
+      entity_id: periodId,
+      actor_type: "admin",
+      actor_id: actorId,
+      actor_email: actorEmail,
+      metadata: { amount, paid_on: paidOn, total_paid: total, amount_due: due },
+    }, client);
+
+    await client.query("COMMIT");
+
+    return NextResponse.json({
+      success: true,
+      data: { period_id: periodId, amount_paid: total, settled },
+    }, { status: 201 });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("[overhead] recordPayment failed:", err);
+    return NextResponse.json(
+      { success: false, message: "Failed to record the payment" },
+      { status: 500 },
+    );
+  } finally {
+    client.release();
   }
 }

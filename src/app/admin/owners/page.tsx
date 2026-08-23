@@ -30,6 +30,8 @@ import {
   PricingCalendarSection, Empty,
 } from "@/components/admin/owners/OwnerModules";
 import HavenWizard from "@/components/admin/owners/HavenWizard";
+import { MonthNavigator, currentMonthKey } from "@/components/admin/owners/MonthNavigator";
+import OverheadSection from "@/components/admin/owners/overhead/OverheadSection";
 import NewBookingWizard from "@/components/admin/NewBookingWizard";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { DluxLoaderOverlay } from "@/components/brand/DluxLoader";
@@ -83,6 +85,7 @@ import {
   Info,
   SlidersHorizontal,
   Bookmark,
+  Receipt,
 } from "lucide-react";
 
 // PromotionRecord types start_date/end_date as string, but server actions return
@@ -152,7 +155,7 @@ export default function OwnerDashboard() {
   // Booking guide starts open, matching the design — it is reference material an
   // owner can collapse once the flow is familiar.
   const [guideOpen, setGuideOpen] = useState(false);
-  const [financeTab, setFinanceTab]   = useState<"revenue"|"methods"|"promotions">("revenue");
+  const [financeTab, setFinanceTab]   = useState<"revenue"|"methods"|"promotions"|"overhead">("revenue");
   const [teamTab, setTeamTab]         = useState<"staff"|"users"|"partners">("staff");
 
   // ── Live data from the Supabase-backed API (RTK Query) ──
@@ -167,16 +170,17 @@ export default function OwnerDashboard() {
   const [revenueRangeOpen, setRevenueRangeOpen] = useState(false);
   const [monthlyBreakdownOpen, setMonthlyBreakdownOpen] = useState(false);
   // null = show all-time / range; a "YYYY-MM" string = filter to that month
-  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+  // Opens on the current month; "All time" stays available in the picker.
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(() => currentMonthKey());
   // Overview KPI toggle: "collected" (cash actually received — down payments +
   // full payments already approved) vs "gross" (the full booked value of every
   // incoming booking, whether or not any payment has landed yet). Same window
   // and status filter as Total Revenue; only which payment-status branch of
   // the SQL SUM() is used differs (see analyticsController.ts summaryStatsQuery).
   const [revenueBasis, setRevenueBasis] = useState<"collected" | "gross">("collected");
-  const { data: summaryRes }   = useGetAnalyticsSummaryQuery({ period: REVENUE_RANGES[revenueRange].days });
+  const { data: summaryRes }   = useGetAnalyticsSummaryQuery({ period: REVENUE_RANGES[revenueRange].days, month: selectedMonth });
   const { data: monthlyRes }   = useGetMonthlyRevenueQuery({ months: "24" });
-  const { data: roomRevRes }   = useGetRevenueByRoomQuery({ period: REVENUE_RANGES[revenueRange].days });
+  const { data: roomRevRes }   = useGetRevenueByRoomQuery({ period: REVENUE_RANGES[revenueRange].days, month: selectedMonth });
   const { data: bookingsData, refetch: refetchBookings } = useGetBookingsQuery();
   const [newBookingOpen, setNewBookingOpen] = useState(false);
   const [statusFilterOpen, setStatusFilterOpen] = useState(false);
@@ -239,6 +243,7 @@ export default function OwnerDashboard() {
   const { data: reportsRes }   = useGetReportsQuery({});
   const { data: session }      = useSession();
   const ownerId = (session?.user as { id?: string } | undefined)?.id;
+  const isOwner = (session?.user as { role?: string } | undefined)?.role === "Owner";
 
   // Promotions (auto-displayed banners) — same server actions as the CSR
   // dashboard's Promotions tab; requireAdmin() covers the Owner role too.
@@ -617,24 +622,21 @@ export default function OwnerDashboard() {
   // Revenue chart — normalize monthly revenue to bar heights (Overview + Finance)
   const monthly = (monthlyRes?.data as { month: string; revenue: number; gross_revenue: number }[]) || [];
 
-  // When a month is selected, derive KPI values from that month's data only.
-  const monthEntry = selectedMonth ? monthly.find((m) => m.month === selectedMonth) : null;
-  const monthBookings = selectedMonth
-    ? toRows(bookingsData).filter((b) => b.check_in_date && String(b.check_in_date).slice(0, 7) === selectedMonth).length
-    : null;
-  const monthRevenue = monthEntry ? Number(monthEntry.revenue) || 0 : null;
-  const monthGrossRevenue = monthEntry ? Number(monthEntry.gross_revenue) || 0 : null;
+  // Every KPI below comes from the summary endpoint, which is scoped by the
+  // same `month` the navigator sets — so Occupancy and Guests follow the
+  // selection too, and the % changes are genuine month-on-month figures
+  // rather than the em dash the old client-side derivation had to show.
   const monthLabel = selectedMonth
     ? new Date(selectedMonth + "-01").toLocaleString("en", { month: "long", year: "numeric" })
     : null;
 
   const kpis = [
-    { label: "Total Bookings", value: selectedMonth ? String(monthBookings ?? 0) : String(s?.total_bookings ?? 0), change: selectedMonth ? "—" : pct(s?.bookings_change ?? 0), icon: CalendarDays, iconBg: "#F7F0E3", iconColor: "#B07848" },
+    { label: "Total Bookings", value: String(s?.total_bookings ?? 0), change: pct(s?.bookings_change ?? 0), icon: CalendarDays, iconBg: "#F7F0E3", iconColor: "#B07848" },
     revenueBasis === "gross"
-      ? { label: "Gross Revenue", value: selectedMonth ? peso(monthGrossRevenue ?? 0) : peso(s?.total_gross_revenue ?? 0), change: selectedMonth ? "—" : pct(s?.gross_revenue_change ?? 0), icon: PhilippinePeso, iconBg: "#d1fae5", iconColor: "#059669" }
-      : { label: "Total Revenue", value: selectedMonth ? peso(monthRevenue ?? 0) : peso(s?.total_revenue ?? 0), change: selectedMonth ? "—" : pct(s?.revenue_change ?? 0), icon: PhilippinePeso, iconBg: "#d1fae5", iconColor: "#059669" },
-    { label: "Occupancy Rate", value: `${Math.round(s?.occupancy_rate ?? 0)}%`, change: selectedMonth ? "—" : pct(s?.occupancy_change ?? 0), icon: TrendingUp, iconBg: "#ede9fe", iconColor: "#7c3aed" },
-    { label: "Total Guests",   value: String(s?.new_guests ?? 0), change: selectedMonth ? "—" : pct(s?.guests_change ?? 0), icon: UserCheck, iconBg: "#ffedd5", iconColor: "#ea580c" },
+      ? { label: "Gross Revenue", value: peso(s?.total_gross_revenue ?? 0), change: pct(s?.gross_revenue_change ?? 0), icon: PhilippinePeso, iconBg: "#d1fae5", iconColor: "#059669" }
+      : { label: "Total Revenue", value: peso(s?.total_revenue ?? 0), change: pct(s?.revenue_change ?? 0), icon: PhilippinePeso, iconBg: "#d1fae5", iconColor: "#059669" },
+    { label: "Occupancy Rate", value: `${Math.round(s?.occupancy_rate ?? 0)}%`, change: pct(s?.occupancy_change ?? 0), icon: TrendingUp, iconBg: "#ede9fe", iconColor: "#7c3aed" },
+    { label: "Total Guests",   value: String(s?.new_guests ?? 0), change: pct(s?.guests_change ?? 0), icon: UserCheck, iconBg: "#ffedd5", iconColor: "#ea580c" },
     { label: "Reviews",        value: String(reviewsList.length), change: "—", icon: Star,      iconBg: "#fef9c3", iconColor: "#ca8a04" },
     { label: "Active Rooms",   value: String(havensList.length),  change: "—", icon: BedDouble, iconBg: "#ccfbf1", iconColor: "#0d9488" },
   ];
@@ -1116,51 +1118,11 @@ export default function OwnerDashboard() {
                     Gross Revenue
                   </button>
                 </div>
-                {/* Month navigator: prev | current | next + Today */}
-                {(() => {
-                  const now = new Date();
-                  const base = selectedMonth
-                    ? new Date(selectedMonth + "-01")
-                    : new Date(now.getFullYear(), now.getMonth(), 1);
-                  const prevDate = new Date(base.getFullYear(), base.getMonth() - 1, 1);
-                  const nextDate = new Date(base.getFullYear(), base.getMonth() + 1, 1);
-                  const toKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-                  const prevLabel = prevDate.toLocaleString("en", { month: "long" });
-                  const nextLabel = nextDate.toLocaleString("en", { month: "long" });
-                  const currentLabel = base.toLocaleString("en", { month: "long", year: "numeric" });
-                  return (
-                    <div className="inline-flex" style={{ border: "1px solid #D4BFA0" }}>
-                      <button type="button" onClick={() => setSelectedMonth(toKey(prevDate))}
-                        className="inline-flex items-center cursor-pointer"
-                        style={{ gap: 5, padding: "9px 14px", fontSize: 13, fontWeight: 500, color: "#B07848", background: "#F7F0E3", border: "none", borderRight: "1px solid #D4BFA0", fontFamily: "inherit" }}
-                        onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.background = "#efe4ce"}
-                        onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.background = "#F7F0E3"}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
-                        {prevLabel}
-                      </button>
-                      <div style={{ padding: "9px 18px", fontSize: 13, fontWeight: 600, color: "#1f1b16", background: "#fff", borderRight: "1px solid #D4BFA0", minWidth: 148, textAlign: "center" }}>
-                        {currentLabel}
-                      </div>
-                      <button type="button" onClick={() => setSelectedMonth(toKey(nextDate))}
-                        className="inline-flex items-center cursor-pointer"
-                        style={{ gap: 5, padding: "9px 14px", fontSize: 13, fontWeight: 500, color: "#B07848", background: "#F7F0E3", border: "none", borderRight: selectedMonth ? "1px solid #D4BFA0" : "none", fontFamily: "inherit" }}
-                        onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.background = "#efe4ce"}
-                        onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.background = "#F7F0E3"}>
-                        {nextLabel}
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
-                      </button>
-                      {selectedMonth && (
-                        <button type="button" onClick={() => setSelectedMonth(null)}
-                          className="cursor-pointer"
-                          style={{ padding: "9px 14px", fontSize: 13, fontWeight: 600, color: "#B07848", background: "#F7F0E3", border: "none", fontFamily: "inherit" }}
-                          onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.background = "#efe4ce"}
-                          onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.background = "#F7F0E3"}>
-                          All
-                        </button>
-                      )}
-                    </div>
-                  );
-                })()}
+                <MonthNavigator
+                  value={selectedMonth}
+                  onChange={setSelectedMonth}
+                  monthsWithData={monthly.map((m) => m.month)}
+                />
                 <div style={{ position: "relative" }}>
                 <button type="button" onClick={() => setRevenueRangeOpen((v) => !v)}
                   className="inline-flex items-center cursor-pointer"
@@ -1902,7 +1864,13 @@ export default function OwnerDashboard() {
 
           {/* ── Finance ── */}
           {activeNav === "Finance" && (<>
-          {tabBar([{ id: "revenue", label: "Revenue Management", icon: PhilippinePeso }, { id: "methods", label: "Payment Methods", icon: CreditCard }, { id: "promotions", label: "Promotions", icon: Sparkles }], financeTab, (id) => setFinanceTab(id as "revenue" | "methods" | "promotions"))}
+          {tabBar([
+            { id: "revenue", label: "Revenue Management", icon: PhilippinePeso },
+            { id: "methods", label: "Payment Methods", icon: CreditCard },
+            { id: "promotions", label: "Promotions", icon: Sparkles },
+            ...(isOwner ? [{ id: "overhead", label: "Overhead", icon: Receipt }] : []),
+          ], financeTab, (id) => setFinanceTab(id as "revenue" | "methods" | "promotions" | "overhead"))}
+          {financeTab === "overhead" && isOwner && <OverheadSection />}
           {financeTab === "methods" && <PaymentMethodsSection />}
           {financeTab === "promotions" && (<>
             <div className="flex items-center justify-between mb-6">
