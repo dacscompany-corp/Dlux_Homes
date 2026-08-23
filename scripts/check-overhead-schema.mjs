@@ -24,6 +24,12 @@ for (const t of TABLES) {
   console.log(`${found ? '✓' : '✗'} table ${t}`);
 }
 
+if (!ok) {
+  await client.end();
+  console.log('\nFAILED — see ✗ above.');
+  process.exit(1);
+}
+
 const cats = await client.query(
   `SELECT name FROM overhead_categories ORDER BY sort_order`
 );
