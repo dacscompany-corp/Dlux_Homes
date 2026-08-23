@@ -217,8 +217,7 @@ export async function fetchMonthlyRevenue(months: string = '6'): Promise<Monthly
   months = safeIntStr(months, 6, 120);
   const query = `
     SELECT
-      TO_CHAR(b.created_at, 'Mon') as month,
-      EXTRACT(MONTH FROM b.created_at) as month_num,
+      TO_CHAR(DATE_TRUNC('month', b.check_in_date::date), 'YYYY-MM') as month,
       COALESCE(SUM(CASE
         WHEN bp.payment_status = 'approved_down_payment' THEN bp.down_payment
         WHEN bp.payment_status = 'approved_full_payment' THEN bp.total_amount
@@ -227,10 +226,11 @@ export async function fetchMonthlyRevenue(months: string = '6'): Promise<Monthly
       COALESCE(SUM(bp.total_amount), 0) as gross_revenue
     FROM ${BOOKING_TABLE} b
     LEFT JOIN booking_payments bp ON b.id = bp.booking_id
-    WHERE b.created_at >= NOW() - INTERVAL '${months} months'
-      AND b.status IN ('approved', 'confirmed', 'checked-in', 'completed')
-    GROUP BY month, month_num
-    ORDER BY month_num ASC
+    WHERE b.check_in_date >= NOW() - INTERVAL '${months} months'
+      AND b.status IN ('approved', 'on-going', 'confirmed', 'checked-in', 'completed')
+      AND bp.payment_status IN ('approved_down_payment', 'approved_full_payment')
+    GROUP BY DATE_TRUNC('month', b.check_in_date::date)
+    ORDER BY DATE_TRUNC('month', b.check_in_date::date) ASC
   `;
 
   const result = await pool.query(query);
@@ -414,8 +414,7 @@ export const getMonthlyRevenue = async (req: NextRequest): Promise<NextResponse>
 
     const query = `
       SELECT
-        TO_CHAR(b.created_at, 'Mon') as month,
-        EXTRACT(MONTH FROM b.created_at) as month_num,
+        TO_CHAR(DATE_TRUNC('month', b.check_in_date::date), 'YYYY-MM') as month,
         COALESCE(SUM(CASE
           WHEN bp.payment_status = 'approved_down_payment' THEN bp.down_payment
           WHEN bp.payment_status = 'approved_full_payment' THEN bp.total_amount
@@ -424,10 +423,11 @@ export const getMonthlyRevenue = async (req: NextRequest): Promise<NextResponse>
         COALESCE(SUM(bp.total_amount), 0) as gross_revenue
       FROM ${BOOKING_TABLE} b
       LEFT JOIN booking_payments bp ON b.id = bp.booking_id
-      WHERE b.created_at >= NOW() - INTERVAL '${months} months'
-        AND b.status IN ('approved', 'confirmed', 'checked-in', 'completed')
-      GROUP BY month, month_num
-      ORDER BY month_num ASC
+      WHERE b.check_in_date >= NOW() - INTERVAL '${months} months'
+        AND b.status IN ('approved', 'on-going', 'confirmed', 'checked-in', 'completed')
+        AND bp.payment_status IN ('approved_down_payment', 'approved_full_payment')
+      GROUP BY DATE_TRUNC('month', b.check_in_date::date)
+      ORDER BY DATE_TRUNC('month', b.check_in_date::date) ASC
     `;
 
     const result = await pool.query(query);
