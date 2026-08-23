@@ -451,6 +451,17 @@ export async function updateExpense(
       ? String(body.effective_from)
       : String(before.start_date).slice(0, 10);
 
+    // Only matters when it will actually be used below (an amount change),
+    // and only when the caller supplied it — the defaulted value is already
+    // a valid date. An unvalidated bad value would otherwise reach `$2::date`
+    // inside the open transaction and surface as a generic 500.
+    if (amountChanged && body.effective_from && !/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom)) {
+      return NextResponse.json(
+        { success: false, message: "Effective date must be a valid date (YYYY-MM-DD)." },
+        { status: 400 },
+      );
+    }
+
     const actorId = await employeeIdFor(actorEmail);
 
     await client.query("BEGIN");
@@ -509,12 +520,23 @@ export async function updateExpense(
             )`,
         [id],
       );
+      // Rewind the watermark rather than deriving it from MAX(period_start)
+      // of the survivors: a later-dated period can outlive an earlier one
+      // (paid early, or carrying a payment) after the DELETE above, and
+      // MAX() would then jump the watermark past the earlier gap, silently
+      // skipping that occurrence forever. Moving the watermark earlier is
+      // always safe — materializeExpense's ON CONFLICT DO NOTHING makes
+      // re-enumerating across surviving periods a no-op for them — so this
+      // takes the LEAST of the existing watermark and yesterday (Manila),
+      // guaranteeing regeneration covers every boundary from today forward
+      // without ever regenerating into the past.
       await client.query(
         `UPDATE overhead_expenses
-            SET generated_through = (
-              SELECT MAX(period_start) FROM overhead_expense_periods
-               WHERE expense_id = $1
-            )
+            SET generated_through = LEAST(
+                  COALESCE(generated_through, start_date - 1),
+                  (NOW() AT TIME ZONE 'Asia/Manila')::date - 1
+                ),
+                updated_at = NOW()
           WHERE id = $1`,
         [id],
       );
