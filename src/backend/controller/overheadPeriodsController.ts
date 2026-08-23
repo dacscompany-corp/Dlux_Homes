@@ -235,32 +235,44 @@ export async function cancelPeriod(
   id: string,
 ): Promise<NextResponse> {
   try {
-    const paid = await pool.query(
-      `SELECT 1 FROM overhead_expense_payments WHERE period_id = $1 LIMIT 1`,
+    // Payment check and cancelling UPDATE folded into one statement so no
+    // window exists between them — a payment recorded between a separate
+    // check and update could otherwise let a paid-for period get cancelled
+    // anyway, violating the "never destroy financial history" invariant.
+    const result = await pool.query(
+      `UPDATE overhead_expense_periods p
+          SET status = 'cancelled', updated_at = NOW()
+        WHERE p.id = $1
+          AND p.status <> 'paid'
+          AND NOT EXISTS (
+            SELECT 1 FROM overhead_expense_payments WHERE period_id = p.id
+          )
+        RETURNING p.id`,
       [id],
     );
-    if (paid.rows.length) {
-      return NextResponse.json(
-        { success: false, message: "This period has payments recorded and cannot be cancelled." },
-        { status: 409 },
-      );
+    if (result.rows.length) {
+      return NextResponse.json({ success: true, data: { id } });
     }
 
-    const result = await pool.query(
-      `UPDATE overhead_expense_periods
-          SET status = 'cancelled', updated_at = NOW()
-        WHERE id = $1 AND status <> 'paid'
-        RETURNING id`,
+    // Zero rows can mean: doesn't exist, already paid, or has payments
+    // attached. By now no cancellation has happened either way, so a stale
+    // read here can only affect which error message comes back, never the
+    // data — the race that matters is already closed.
+    const existing = await pool.query(
+      `SELECT 1 FROM overhead_expense_periods WHERE id = $1 LIMIT 1`,
       [id],
     );
-    if (!result.rows.length) {
+    if (!existing.rows.length) {
       return NextResponse.json(
         { success: false, message: "Period not found" },
         { status: 404 },
       );
     }
 
-    return NextResponse.json({ success: true, data: { id } });
+    return NextResponse.json(
+      { success: false, message: "This period has payments recorded and cannot be cancelled." },
+      { status: 409 },
+    );
   } catch (err) {
     console.error("[overhead] cancelPeriod failed:", err);
     return NextResponse.json(
