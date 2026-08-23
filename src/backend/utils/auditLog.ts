@@ -1,10 +1,12 @@
+import type { PoolClient } from "pg";
 import pool from "@/backend/config/db";
 
 export type AuditActor = "admin" | "partner" | "cron" | "system" | "guest" | "csr";
 
 export interface AuditEntry {
   action: string;
-  entity_type: "haven" | "partner" | "payout" | "amenity_verification" | "booking" | "ical_feed";
+  entity_type: "haven" | "partner" | "payout" | "amenity_verification"
+    | "booking" | "ical_feed" | "overhead_expense" | "overhead_period";
   entity_id: string;
   actor_type: AuditActor;
   actor_id?: string | null;
@@ -15,12 +17,18 @@ export interface AuditEntry {
 }
 
 /**
- * Append-only logger. Failures are swallowed (audit logging must never block the
- * business action). Call after the write succeeds.
+ * Append-only logger. Failures are swallowed (audit logging must never block
+ * the business action). Call after the write succeeds.
+ *
+ * Pass `client` to write inside an open transaction — used by the overhead
+ * module so a rate change and its audit row commit together. Without it the
+ * row is written on the shared pool, best-effort, as every existing caller
+ * expects.
  */
-export async function logAudit(entry: AuditEntry): Promise<void> {
+export async function logAudit(entry: AuditEntry, client?: PoolClient): Promise<void> {
   try {
-    await pool.query(
+    const runner = client ?? pool;
+    await runner.query(
       `INSERT INTO audit_logs
          (action, entity_type, entity_id, actor_type, actor_id, actor_email,
           metadata, ip_address, user_agent)

@@ -36,6 +36,9 @@
 //   - /api/admin/employees/[id] GET, PUT (any role's own profile page)
 //   - /api/admin/activity-logs POST  (self-logging from any role)
 //   - /api/admin/employee-activity POST (same)
+//
+// Routes that use requireOwner() instead (Owner only):
+//   - /api/admin/overhead/**   (financial: rent, dues, margins)
 
 import { getServerSession, type Session } from "next-auth";
 import { NextResponse } from "next/server";
@@ -44,6 +47,7 @@ import pool from "@/backend/config/db";
 
 const ADMIN_ROLES = new Set(["Owner", "CSR"]);
 const EMPLOYEE_ROLES = new Set(["Owner", "CSR", "Cleaner"]);
+const OWNER_ROLES = new Set(["Owner"]);
 
 // On ok=true, session.user is guaranteed non-null (the guard rejects sessions
 // without a user). Callers can read session.user.email directly — no `!` needed.
@@ -95,6 +99,14 @@ export async function requireAdmin(): Promise<GuardResult> {
 // decision). The guard only blocks unauthenticated users and guests.
 export async function requireEmployee(): Promise<GuardResult> {
   return requireRole(EMPLOYEE_ROLES);
+}
+
+/**
+ * Owner-only guard. Used by /api/admin/overhead/** — overhead records carry
+ * rent, dues and margin figures that CSR accounts must not see.
+ */
+export async function requireOwner(): Promise<GuardResult> {
+  return requireRole(OWNER_ROLES);
 }
 
 // Ownership-aware guard for per-booking routes (/api/bookings/[id]). Closes the
