@@ -655,15 +655,15 @@ export default function OwnerDashboard() {
     ? new Date(selectedMonth + "-01").toLocaleString("en", { month: "long", year: "numeric" })
     : null;
 
+  // Order is deliberate. For an Owner the grid is four across, so the first row
+  // reads as the equation it is — revenue, less overhead, equals profit — with
+  // occupancy as the operational headline. Volume and near-static counts drop to
+  // the second row. A CSR sees the same array minus the two Owner-only cards,
+  // which lands as one clean row of six.
   const kpis = [
-    { label: "Total Bookings", value: String(s?.total_bookings ?? 0), change: pct(s?.bookings_change ?? 0), icon: CalendarDays, iconBg: "#F7F0E3", iconColor: "#B07848" },
     revenueBasis === "gross"
       ? { label: "Gross Revenue", value: peso(s?.total_gross_revenue ?? 0), change: pct(s?.gross_revenue_change ?? 0), icon: PhilippinePeso, iconBg: "#d1fae5", iconColor: "#059669" }
       : { label: "Total Revenue", value: peso(s?.total_revenue ?? 0), change: pct(s?.revenue_change ?? 0), icon: PhilippinePeso, iconBg: "#d1fae5", iconColor: "#059669" },
-    { label: "Occupancy Rate", value: `${Math.round(s?.occupancy_rate ?? 0)}%`, change: pct(s?.occupancy_change ?? 0), icon: TrendingUp, iconBg: "#ede9fe", iconColor: "#7c3aed" },
-    { label: "Total Guests",   value: String(s?.new_guests ?? 0), change: pct(s?.guests_change ?? 0), icon: UserCheck, iconBg: "#ffedd5", iconColor: "#ea580c" },
-    { label: "Reviews",        value: String(reviewsList.length), change: "—", icon: Star,      iconBg: "#fef9c3", iconColor: "#ca8a04" },
-    { label: "Active Rooms",   value: String(havensList.length),  change: "—", icon: BedDouble, iconBg: "#ccfbf1", iconColor: "#0d9488" },
     // No change percentage on these two: a real profit-versus-last-month figure
     // needs last month's revenue as an absolute, which the summary endpoint does
     // not return. An em dash beats an invented number.
@@ -671,6 +671,11 @@ export default function OwnerDashboard() {
       { label: overheadCardLabel, value: overheadReady ? peso(overheadFigure) : "—", change: "—", icon: Receipt, iconBg: "#F7F0E3", iconColor: "#B07848" },
       { label: "Profit", value: overheadReady ? signedPeso(profit) : "—", change: "—", icon: Wallet, iconBg: "#e0f2fe", iconColor: "#0369a1" },
     ] : []),
+    { label: "Occupancy Rate", value: `${Math.round(s?.occupancy_rate ?? 0)}%`, change: pct(s?.occupancy_change ?? 0), icon: TrendingUp, iconBg: "#ede9fe", iconColor: "#7c3aed" },
+    { label: "Total Bookings", value: String(s?.total_bookings ?? 0), change: pct(s?.bookings_change ?? 0), icon: CalendarDays, iconBg: "#F7F0E3", iconColor: "#B07848" },
+    { label: "Total Guests",   value: String(s?.new_guests ?? 0), change: pct(s?.guests_change ?? 0), icon: UserCheck, iconBg: "#ffedd5", iconColor: "#ea580c" },
+    { label: "Reviews",        value: String(reviewsList.length), change: "—", icon: Star,      iconBg: "#fef9c3", iconColor: "#ca8a04" },
+    { label: "Active Rooms",   value: String(havensList.length),  change: "—", icon: BedDouble, iconBg: "#ccfbf1", iconColor: "#0d9488" },
   ];
   const maxRev = Math.max(1, ...monthly.map((m) => Number(m.revenue) || 0));
   // Overview chart only: reads gross_revenue and its own max when the
@@ -1995,15 +2000,19 @@ export default function OwnerDashboard() {
 
             {/* stat cells — labelled with the span they actually cover */}
             <div className={`grid grid-cols-2 ${isOwner ? "lg:grid-cols-3" : "lg:grid-cols-4"} mb-6`} style={{ gap: 1, background: "#ece5d4", border: "1px solid #ece5d4" }}>
+              {/* Money story first, in arithmetic order — revenue, less overhead,
+                  equals profit — so the top row explains itself. Three across for
+                  an Owner, so volume drops to the second row; a CSR sees the same
+                  four cells it always did. */}
               {[
                 { label: `Revenue · ${monthLabel ?? "30d"}`, value: peso(Number(s?.total_revenue ?? 0)) },
-                { label: `Bookings · ${monthLabel ?? "30d"}`, value: String(s?.total_bookings ?? 0) },
-                { label: `Occupancy · ${monthLabel ?? "30d"}`, value: `${Math.round(Number(s?.occupancy_rate ?? 0))}%` },
-                { label: `New guests · ${monthLabel ?? "30d"}`, value: String(s?.new_guests ?? 0) },
                 ...(isOwner ? [
                   { label: `${overheadCardLabel} · ${monthLabel ?? "30d"}`, value: overheadReady ? peso(overheadFigure) : "—" },
                   { label: `Profit · ${monthLabel ?? "30d"}`, value: overheadReady ? signedPeso(profit) : "—" },
                 ] : []),
+                { label: `Occupancy · ${monthLabel ?? "30d"}`, value: `${Math.round(Number(s?.occupancy_rate ?? 0))}%` },
+                { label: `Bookings · ${monthLabel ?? "30d"}`, value: String(s?.total_bookings ?? 0) },
+                { label: `New guests · ${monthLabel ?? "30d"}`, value: String(s?.new_guests ?? 0) },
               ].map((item) => (
                 <div key={item.label} style={{ background: "#fff", padding: "20px 22px" }}>
                   <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 24, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1,

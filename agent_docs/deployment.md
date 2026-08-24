@@ -10,9 +10,17 @@ Environment variables and SQL migrations are **not** synced automatically:
 
 There is **no `vercel.json`**, so Vercel schedules nothing. The Hobby plan only
 offers once-a-day crons anyway, which is too coarse for
-`send-self-checkin-emails` — that one has to fire within a ~15 minute window of
-"2 hours before check-in" (see `src/lib/checkin-window.ts`). So the schedule
+`send-self-checkin-emails`: that email goes out `CHECKIN_LEAD_MINUTES` before
+check-in — **15 minutes**, defined in `src/lib/checkin-window.ts`, which is also
+the moment the unit opens and the admin Check-in button unlocks. So the schedule
 lives with an **external pinger** instead.
+
+**The ping interval must be SHORTER than the lead.** The job can only fire when
+the pinger calls it, so a 15-minute interval against a 15-minute lead lets an
+email land up to 15 minutes late — at the check-in time rather than before it.
+The guest then arrives on time with no instructions, which is exactly the case
+the lead exists to prevent. Five minutes gives the margin. If
+`CHECKIN_LEAD_MINUTES` ever changes, revisit this interval with it.
 
 Every `/api/cron/*` route checks `CRON_SECRET` and **fails closed in production**
 — unset means HTTP 503, wrong value means 401. Set it in Vercel to the same
@@ -25,10 +33,11 @@ Configure one HTTP monitor per route (cron-job.org, UptimeRobot, GitHub Actions
 |---|---|
 | URL | `https://dlux-homes.vercel.app/api/cron/send-self-checkin-emails` |
 | Method | GET |
-| Interval | every 15 minutes |
+| Interval | **every 5 minutes** (must be shorter than `CHECKIN_LEAD_MINUTES`) |
 | Header | `Authorization: Bearer <CRON_SECRET>` |
 
-Same shape for `send-checkout-reminders` and `sync-icals`.
+Same shape for `send-checkout-reminders` and `sync-icals`, except that neither
+is lead-sensitive — every 15 minutes is fine for those two.
 
 A healthy call returns `{"success":true,"summary":{"due":N,"sent":N,"failed":0}}`.
 `due: 0` is normal and means nothing was ready to send yet — the jobs are

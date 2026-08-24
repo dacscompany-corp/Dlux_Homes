@@ -159,6 +159,29 @@ describe("occurrencesBetween — other frequencies", () => {
   });
 });
 
+describe("occurrencesBetween — annual-window boundary", () => {
+  // Guards the estimatedAnnual fix in overheadReportsController: `through` is
+  // INCLUSIVE, so a window running to the same date next year counts the
+  // anniversary as a thirteenth occurrence and inflates the annual estimate by
+  // one period for every recurring expense — a 25,000 monthly bill read as
+  // 325,000 a year instead of 300,000. The controller ends the day before;
+  // these tests are why.
+  const fromToday: ScheduleDef = { frequency: "monthly", start_date: "2026-08-24" };
+
+  it("counts thirteen when the window includes the anniversary", () => {
+    expect(occurrencesBetween(fromToday, "2026-08-24", "2027-08-24")).toHaveLength(13);
+  });
+
+  it("counts twelve when the window ends the day before", () => {
+    expect(occurrencesBetween(fromToday, "2026-08-24", "2027-08-23")).toHaveLength(12);
+  });
+
+  it("still counts twelve when today falls between occurrences", () => {
+    const fromFifth: ScheduleDef = { frequency: "monthly", start_date: "2026-08-05" };
+    expect(occurrencesBetween(fromFifth, "2026-08-25", "2027-08-24")).toHaveLength(12);
+  });
+});
+
 describe("occurrencesPerYear and monthlyEquivalent", () => {
   it("maps each fixed frequency", () => {
     const at = (f: ScheduleDef["frequency"]) =>

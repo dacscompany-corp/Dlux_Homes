@@ -6,6 +6,8 @@ import { validateImageDataUrl } from "../utils/imageGuard";
 import { validateDiscount } from "../utils/validateDiscount";
 import { createCalendarEvent, createCalendarEventWithResult, updateCalendarEvent, CalendarEventData } from "../utils/googleCalendar";
 import { turnoverSql, TURNOVER_BLURB } from "@/lib/turnover";
+import { occupyingBookingSql } from "@/lib/bookingWindow";
+import { securityDepositFor } from "@/lib/pricing";
 import { dispatchTransactionalEmail, type EmailDispatchResult } from "../utils/dispatchEmail";
 
 // The existing booking's start/end as timestamps, for the availability check.
@@ -666,7 +668,7 @@ export const createBooking = async (
       SELECT b.id, b.booking_id
       FROM booking b, n
       WHERE b.room_name = $1
-        AND b.status IN ('pending', 'approved', 'confirmed', 'checked-in', 'on-going')
+        AND ${occupyingBookingSql("b")}
         -- existing check-in  <  new check-out + new cleaning buffer
         AND ${EXISTING_START_SQL} <
             n.ne + ${turnoverSql("n.ns", "n.ne")}
@@ -685,6 +687,29 @@ export const createBooking = async (
       check_out_date,
       check_out_time,
     ];
+
+    // A window whose check-in has already passed cannot be sold, however empty
+    // the unit is — nobody arrives at 7am once it is 10am. The storefront
+    // enforces the same rule in the viewer's own clock; THIS is the
+    // authoritative check, and it runs in Manila because that is the wall clock
+    // check_in_time is written in. MIN_LEAD_MINUTES lives in
+    // src/lib/bookingWindow.ts and is 0 today, so the comparison is a plain
+    // "already started".
+    const startedCheck = await client.query<{ started: boolean }>(
+      `SELECT ($1::DATE + $2::TIME)
+              < (NOW() AT TIME ZONE 'Asia/Manila') AS started`,
+      [check_in_date, check_in_time],
+    );
+    if (startedCheck.rows[0]?.started) {
+      await client.query("ROLLBACK");
+      return NextResponse.json(
+        {
+          success: false,
+          error: "That check-in time has already passed. Please pick a later slot.",
+        },
+        { status: 400 },
+      );
+    }
 
     const availabilityResult = await client.query(availabilityCheckQuery, availabilityCheckValues);
 
@@ -788,7 +813,7 @@ export const createBooking = async (
       FROM booking b
       JOIN booking_guests bg ON b.id = bg.booking_id
       WHERE b.room_name = $1
-        AND b.status IN ('pending', 'approved', 'confirmed', 'checked-in', 'on-going')
+        AND ${occupyingBookingSql("b")}
         AND bg.first_name = $2
         AND bg.last_name = $3
         AND bg.email = $4
@@ -1179,17 +1204,49 @@ export const createBooking = async (
       });
     }
 
-    // Step 4.5: Create security deposit record (always create with 0 amount during booking)
-    const depositQuery = `
-      INSERT INTO booking_security_deposits (
-        booking_id, amount, deposit_status, held_at
-      )
-      VALUES ($1, 0, 'pending', NOW())
-    `;
+    // Step 4.5: Create the security deposit record holding the EXPECTED amount.
+    //
+    // This used to insert 0 as a placeholder for "not collected yet", which is
+    // what `deposit_status = 'pending'` already says. The 0 leaked: the
+    // self check-in email reads this column and used `??`, so a zero passed
+    // straight through as an authoritative figure and told the guest to bring
+    // only the balance — understating what they owe by the whole deposit.
+    // Storing the expected amount matches what the collection flow in
+    // src/app/admin/csr/actions.ts already documents this column to mean
+    // ("the expected deposit amount (room policy), not the combined
+    // collection"), and it computes the same figure that flow would fall back
+    // to, so the split is unchanged.
+    const depositTiers = await client.query<{
+      security_deposit: string | null;
+      deposit_tier1_amount: string | null;
+      deposit_tier2_amount: string | null;
+      deposit_tier3_amount: string | null;
+      deposit_tier4_amount: string | null;
+    }>(
+      `SELECT security_deposit, deposit_tier1_amount, deposit_tier2_amount,
+              deposit_tier3_amount, deposit_tier4_amount
+         FROM havens WHERE TRIM(haven_name) = TRIM($1) LIMIT 1`,
+      [room_name],
+    );
+    const tierRow = depositTiers.rows[0];
+    const depositNights = check_in_date && check_out_date
+      ? Math.round(
+          (new Date(check_out_date + "T12:00:00").getTime()
+           - new Date(check_in_date + "T12:00:00").getTime()) / 86_400_000)
+      : 1;
+    const expectedDeposit = securityDepositFor(depositNights, undefined, {
+      securityDeposit: tierRow?.security_deposit != null ? Number(tierRow.security_deposit) : undefined,
+      depositTier1Amount: tierRow?.deposit_tier1_amount != null ? Number(tierRow.deposit_tier1_amount) : undefined,
+      depositTier2Amount: tierRow?.deposit_tier2_amount != null ? Number(tierRow.deposit_tier2_amount) : undefined,
+      depositTier3Amount: tierRow?.deposit_tier3_amount != null ? Number(tierRow.deposit_tier3_amount) : undefined,
+      depositTier4Amount: tierRow?.deposit_tier4_amount != null ? Number(tierRow.deposit_tier4_amount) : undefined,
+    });
 
-    const depositValues = [bookingId];
-
-    await client.query(depositQuery, depositValues);
+    await client.query(
+      `INSERT INTO booking_security_deposits (booking_id, amount, deposit_status, held_at)
+       VALUES ($1, $2, 'pending', NOW())`,
+      [bookingId, expectedDeposit],
+    );
 
     // Step 5: Create add-ons records
     // Accepts array form (per-haven rentable-items: name+price+quantity from the catalog)
@@ -2643,7 +2700,7 @@ export const getRoomBookings = async (
       -- Match on the haven name, tolerating curly vs straight apostrophes
       -- (bookings created from mock data use a straight ' ).
       WHERE REPLACE(TRIM(room_name), '’', '''') = REPLACE($1, '’', '''')
-        AND status IN ('pending', 'approved', 'confirmed', 'checked-in')
+        AND ${occupyingBookingSql("booking")}
       ORDER BY check_in_date ASC
     `;
 

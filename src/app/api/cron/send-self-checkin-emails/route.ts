@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
 import { sendSelfCheckinEmail, loadPaymentChannels } from "@/backend/utils/selfCheckinEmail";
+import { CHECKIN_LEAD_MINUTES } from "@/lib/checkin-window";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,7 +18,16 @@ export const dynamic = "force-dynamic";
  * Run this every ~15 minutes; it is idempotent — a booking is stamped with
  * `self_checkin_email_sent_at` only after its email actually goes out.
  *
- * Send time, in Asia/Manila: 1 hour before check-in, for every stay type
+ * Send time, in Asia/Manila: CHECKIN_LEAD_MINUTES before check-in — 15 minutes.
+ * The value lives in src/lib/checkin-window.ts so this and the admin Check-in
+ * button cannot drift apart.
+ *
+ * CADENCE: this only fires as often as the pinger runs. With a 15-minute lead
+ * and a 15-minute cadence an email can land up to 15 minutes late — at the
+ * check-in time rather than before it. Ping every 5 minutes while the lead is
+ * no longer than the cadence.
+ *
+ * Applies to every stay type
  * (Daycation, Nightcation, Overnight all share this rule).
  *
  * Protected by CRON_SECRET, and fails closed in production if it isn't set.
@@ -101,7 +111,8 @@ export async function GET(req: NextRequest) {
         AND bg.email IS NOT NULL
         AND bg.email <> ''
         AND b.check_in_date >= (NOW() AT TIME ZONE $1)::date
-        AND ((b.check_in_date + b.check_in_time) - INTERVAL '1 hour') AT TIME ZONE $1 <= NOW()
+        AND ((b.check_in_date + b.check_in_time)
+             - INTERVAL '${CHECKIN_LEAD_MINUTES} minutes') AT TIME ZONE $1 <= NOW()
       ORDER BY b.check_in_date, b.check_in_time
       `,
       [MANILA],
@@ -121,10 +132,12 @@ export async function GET(req: NextRequest) {
           guestName: b.first_name,
           bookingId: b.booking_id,
           balanceAmount: Number(b.remaining_balance ?? 0),
-          // No deposit row yet means it hasn't been collected, not that it is
-          // waived — fall back to the standard amount so the guest still knows
-          // to bring it.
-          depositAmount: b.security_deposit == null ? undefined : Number(b.security_deposit),
+          // A missing row OR a zero amount means it hasn't been collected, not
+          // that it is waived — there is no waiver feature. Every booking is
+          // created with a deposit row, so the null check alone never fired and
+          // a placeholder zero passed through as authoritative, telling the
+          // guest to bring only the balance.
+          depositAmount: Number(b.security_deposit) > 0 ? Number(b.security_deposit) : undefined,
           securityDeposit: b.haven_security_deposit != null ? Number(b.haven_security_deposit) : undefined,
           depositTier1Amount: b.deposit_tier1_amount != null ? Number(b.deposit_tier1_amount) : undefined,
           depositTier2Amount: b.deposit_tier2_amount != null ? Number(b.deposit_tier2_amount) : undefined,

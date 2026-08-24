@@ -244,7 +244,7 @@ export function getDownPaymentApprovalEmailTemplate(
 
           <!-- CTA -->
           <div class="alert-box" style="text-align:center;">
-            <p style="color:#6B5A42;font-size:14.5px;line-height:1.6;margin-bottom:18px;">Ready to check in? We&rsquo;ll send you check-in instructions and house rules soon.</p>
+            <p style="color:#6B5A42;font-size:14.5px;line-height:1.6;margin-bottom:18px;">Ready to check in? We&rsquo;ll send you the Visitors Access Form (VAF) and house rules before your stay.</p>
             <a class="cta-button" href="mailto:homesdlux@gmail.com">Contact Us for Details</a>
           </div>
 
@@ -253,7 +253,7 @@ export function getDownPaymentApprovalEmailTemplate(
           <div class="alert-box">
             <div class="alert-title">Important Steps</div>
             <ul>
-              <li>Check your email for check-in instructions</li>
+              <li>Check your email for the Visitors Access Form (VAF)</li>
               <li>Review house rules and property guidelines</li>
               <li>Confirm your arrival date (24 hours before)</li>
               ${remainingBalance ? `<li>Complete remaining balance payment before check-in</li>` : ''}

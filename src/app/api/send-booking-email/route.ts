@@ -153,16 +153,6 @@ export async function POST(request: NextRequest) {
 
                     <div style="height:1px;background:rgba(246,237,224,0.15);margin:12px 0;"></div>
 
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                      <tr>
-                        <td valign="middle" align="left">
-                          <div style="font-size:13px;color:#f6ede0;font-weight:600;">Remaining balance</div>
-                          <div style="font-size:11.5px;color:#B8A689;margin-top:2px;">Due at check-in</div>
-                        </td>
-                        <td valign="middle" align="right" style="white-space:nowrap;font-size:22px;font-weight:700;color:#d9a25c;">${peso(remainingBalance)}</td>
-                      </tr>
-                    </table>
-
                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:rgba(246,237,224,0.07);border-radius:9px;margin-top:14px;">
                       <tr>
                         <td style="padding:12px 14px;">
@@ -175,13 +165,16 @@ export async function POST(request: NextRequest) {
                               <td style="padding:2px 0;font-size:12.5px;color:#B8A689;">Security deposit &mdash; refundable</td>
                               <td align="right" style="padding:2px 0;font-size:12.5px;color:#f6ede0;white-space:nowrap;">${peso(SECURITY_DEPOSIT)}</td>
                             </tr>
-                            <tr>
-                              <td style="padding:7px 0 0;font-size:12.5px;font-weight:700;color:#f6ede0;border-top:1px solid rgba(246,237,224,0.15);">Total to bring at check-in</td>
-                              <td align="right" style="padding:7px 0 0;font-size:14px;font-weight:700;color:#d9a25c;white-space:nowrap;border-top:1px solid rgba(246,237,224,0.15);">${peso(dueAtCheckIn)}</td>
-                            </tr>
                           </table>
                           <div style="font-size:11.5px;line-height:1.5;color:#B8A689;margin-top:9px;">The ${peso(SECURITY_DEPOSIT)} deposit is returned to you on the day of check-out.</div>
                         </td>
+                      </tr>
+                    </table>
+
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:14px;">
+                      <tr>
+                        <td valign="middle" align="left" style="font-size:13px;color:#f6ede0;font-weight:600;">Total to bring at check-in</td>
+                        <td valign="middle" align="right" style="white-space:nowrap;font-size:22px;font-weight:700;color:#d9a25c;">${peso(dueAtCheckIn)}</td>
                       </tr>
                     </table>
 
@@ -196,7 +189,7 @@ export async function POST(request: NextRequest) {
                   <td width="20" valign="top" style="padding-bottom:8px;">
                     <div style="width:20px;height:20px;border-radius:50%;background:#faf5ec;color:#2b1b12;font-size:11px;font-weight:700;text-align:center;line-height:20px;">1</div>
                   </td>
-                  <td valign="top" style="padding-left:10px;padding-bottom:8px;font-size:13px;line-height:1.45;color:#5c4a3c;">We&rsquo;ll send you check-in instructions a day before your stay.</td>
+                  <td valign="top" style="padding-left:10px;padding-bottom:8px;font-size:13px;line-height:1.45;color:#5c4a3c;">We&rsquo;ll send you the Visitors Access Form (VAF) a day before your stay.</td>
                 </tr>
                 <tr>
                   <td width="20" valign="top" style="padding-bottom:8px;">
@@ -275,7 +268,7 @@ export async function POST(request: NextRequest) {
       `The ${peso(SECURITY_DEPOSIT)} deposit is returned to you on the day of check-out.`,
       ``,
       `WHAT TO EXPECT`,
-      `1. We'll send you check-in instructions a day before your stay.`,
+      `1. We'll send you the Visitors Access Form (VAF) a day before your stay.`,
       `2. Just show up at check-in time with a valid ID.`,
       ``,
       `GOOD TO KNOW`,

@@ -283,6 +283,111 @@ export async function cancelPeriod(
   }
 }
 
+/**
+ * PUT /api/admin/overhead/periods/[id]/amount — correct one period's figure.
+ *
+ * For a bill that is monthly but never the same twice (electricity, water), the
+ * expense's own `amount` is only an estimate for FUTURE months; the real figure
+ * belongs to the one period it arrived for. Changing the expense instead would
+ * rewrite every future period, which is right for "rent went up" and wrong here.
+ *
+ * Status is recomputed from the payments rather than left alone, and that is the
+ * part that matters. A bill that lands LOWER than what was already paid settles
+ * instead of sitting in the queue owing a phantom balance; one that lands HIGHER
+ * correctly reopens a period that had been marked paid. The same comparison
+ * recordPayment uses, so the two cannot drift apart.
+ */
+export async function updatePeriodAmount(
+  req: NextRequest,
+  id: string,
+  actorEmail: string,
+): Promise<NextResponse> {
+  const client = await pool.connect();
+  try {
+    const body = await req.json();
+    const amount = Number(body.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return NextResponse.json(
+        { success: false, message: "Amount must be greater than zero." },
+        { status: 400 },
+      );
+    }
+
+    const actor = await pool.query<{ id: string }>(
+      `SELECT id FROM employees WHERE email = $1 LIMIT 1`, [actorEmail],
+    );
+    const actorId = actor.rows[0]?.id ?? null;
+
+    await client.query("BEGIN");
+
+    // Lock the row before reading its status, for the same reason recordPayment
+    // does: a payment landing between the read and the write would otherwise be
+    // missed by the settle calculation below.
+    const found = await client.query<{ amount_due: string; status: string }>(
+      `SELECT amount_due, status FROM overhead_expense_periods WHERE id = $1 FOR UPDATE`,
+      [id],
+    );
+    if (!found.rows.length) {
+      await client.query("ROLLBACK");
+      return NextResponse.json(
+        { success: false, message: "Period not found" },
+        { status: 404 },
+      );
+    }
+    if (found.rows[0].status === "cancelled") {
+      await client.query("ROLLBACK");
+      return NextResponse.json(
+        { success: false, message: "This period was cancelled — reinstate it before changing the amount." },
+        { status: 409 },
+      );
+    }
+    const previous = Number(found.rows[0].amount_due);
+
+    const totals = await client.query<{ total: string }>(
+      `SELECT COALESCE(SUM(amount), 0)::numeric AS total
+         FROM overhead_expense_payments WHERE period_id = $1`,
+      [id],
+    );
+    const paid = Number(totals.rows[0].total);
+    const settled = paid >= amount;
+
+    await client.query(
+      `UPDATE overhead_expense_periods
+          SET amount_due = $2,
+              status = CASE WHEN $3 THEN 'paid' ELSE 'scheduled' END,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [id, amount, settled],
+    );
+
+    await logAudit({
+      action: "overhead_period.amount_updated",
+      entity_type: "overhead_period",
+      entity_id: id,
+      actor_type: "admin",
+      actor_id: actorId,
+      actor_email: actorEmail,
+      metadata: { previous_amount: previous, amount, amount_paid: paid, settled },
+    }, client);
+
+    await client.query("COMMIT");
+
+    return NextResponse.json({
+      success: true,
+      data: { id, amount_due: amount, amount_paid: paid, settled },
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("[overhead] updatePeriodAmount failed:", err);
+    return NextResponse.json(
+      { success: false, message: "Failed to update the amount" },
+      { status: 500 },
+    );
+  } finally {
+    client.release();
+  }
+}
+
 /** GET /api/admin/overhead/periods/[id]/payments — payment history for one period. */
 export async function getPayments(
   req: NextRequest,

@@ -151,6 +151,16 @@ export const overheadApi = createApi({
       invalidatesTags: ["OverheadPeriod", "OverheadDashboard"],
     }),
 
+    updateOverheadPeriodAmount: builder.mutation<
+      Ok<{ id: string; amount_due: number; amount_paid: number; settled: boolean }>,
+      { periodId: string; amount: number }
+    >({
+      query: ({ periodId, amount }) => ({
+        url: `/periods/${periodId}/amount`, method: "PUT", body: { amount },
+      }),
+      invalidatesTags: ["OverheadPeriod", "OverheadDashboard"],
+    }),
+
     getOverheadPayments: builder.query<Ok<OverheadPayment[]>, string>({
       query: (periodId) => `/periods/${periodId}/payments`,
       providesTags: ["OverheadPeriod"],
@@ -187,6 +197,7 @@ export const {
   useDeleteOverheadSpendMutation,
   useGetOverheadPeriodsQuery,
   useCancelOverheadPeriodMutation,
+  useUpdateOverheadPeriodAmountMutation,
   useGetOverheadPaymentsQuery,
   useRecordOverheadPaymentMutation,
   useGetOverheadDashboardQuery,

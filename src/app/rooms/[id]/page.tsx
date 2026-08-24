@@ -21,6 +21,7 @@ import { IcoZoom, PromoLightbox } from "@/components/PromoLightbox";
 import { havenToRoom } from "@/lib/haven-adapter";
 import { fmtClock, spanHours } from "@/lib/stay-window";
 import { turnoverMs } from "@/lib/turnover";
+import { isStartBookable } from "@/lib/bookingWindow";
 import DluxLoader, { DluxLoaderPage } from "@/components/brand/DluxLoader";
 import { stayTotal, isWeekendOrHoliday, extraPaxFee, bundleNightlyRate, bundleExtraPaxFee, addDaysISO } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
@@ -573,26 +574,47 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   useEffect(() => {
     if (!isUuid || !id) return;
     let active = true;
-    fetch(`/api/bookings/room/${encodeURIComponent(id)}`)
-      .then((r) => {
-        if (!r.ok) throw new Error(`availability lookup failed (${r.status})`);
-        return r.json();
-      })
-      .then((j) => {
-        if (!active) return;
-        const rows = Array.isArray(j?.data) ? j.data : [];
-        setBookedResult({
-          forId: id,
-          ranges: rows.map((b: Record<string, unknown>) => ({
-            ci: String(b.check_in_date ?? ""),
-            co: String(b.check_out_date ?? ""),
-            ciT: String(b.check_in_time ?? "").slice(0, 5),
-            coT: String(b.check_out_time ?? "").slice(0, 5),
-          })),
-        });
-      })
-      .catch(() => { if (active) setBookedResult({ forId: id, ranges: null }); });
-    return () => { active = false; };
+
+    const load = () => {
+      fetch(`/api/bookings/room/${encodeURIComponent(id)}`)
+        .then((r) => {
+          if (!r.ok) throw new Error(`availability lookup failed (${r.status})`);
+          return r.json();
+        })
+        .then((j) => {
+          if (!active) return;
+          const rows = Array.isArray(j?.data) ? j.data : [];
+          setBookedResult({
+            forId: id,
+            ranges: rows.map((b: Record<string, unknown>) => ({
+              ci: String(b.check_in_date ?? ""),
+              co: String(b.check_out_date ?? ""),
+              ciT: String(b.check_in_time ?? "").slice(0, 5),
+              coT: String(b.check_out_time ?? "").slice(0, 5),
+            })),
+          });
+        })
+        .catch(() => { if (active) setBookedResult({ forId: id, ranges: null }); });
+    };
+
+    load();
+
+    // Availability used to be fetched once and never again, so a tab left open
+    // kept showing whatever was true when it loaded — a slot taken meanwhile
+    // still looked free, and a window that had since elapsed stayed on sale.
+    // Refresh whenever the guest comes back to the tab, and hourly while it is
+    // open so a long-idle page cannot drift past a window's start time.
+    const onFocus = () => { if (document.visibilityState === "visible") load(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    const timer = window.setInterval(load, 60 * 60 * 1000);
+
+    return () => {
+      active = false;
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+      window.clearInterval(timer);
+    };
   }, [isUuid, id]);
 
   // An answer for a DIFFERENT id is no answer at all — back to "still loading".
@@ -794,6 +816,11 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
     const overnight = w.stayType !== "10";
     const span = overnight ? Math.max(1, Math.floor(forNights || 1)) : 1;
     const ns = atMs(iso, ci);
+    // A window whose check-in has already passed is not for sale, however empty
+    // the unit is: nobody can arrive at 7am once it is 10am. Without this the
+    // date-level `isPast` check (midnight granularity) leaves every window on
+    // TODAY sellable all day and all night. The server enforces the same rule.
+    if (!isStartBookable(ns, Date.now())) return false;
     // A 10-hour session ending earlier than it starts rolls into the next day
     // (nightcation); an overnight stay runs for `span` nights.
     const ne = overnight ? atMs(iso, co, span) : atMs(iso, co, co <= ci ? 1 : 0);

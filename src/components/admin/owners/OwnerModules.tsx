@@ -175,16 +175,19 @@ export function AnalyticsSection() {
   const profit = revenueFigure - overheadFigure;
   const signedPeso = (n: number) => (n < 0 ? "-₱" : "₱") + Math.abs(n).toLocaleString();
 
+  // Money story first, in arithmetic order — revenue, less overhead, equals
+  // profit — so the top row explains itself. Three across for an Owner, so
+  // volume drops to the second row; a CSR sees the same four cells as before.
   const stats = [
     { label: `${revenueBasis === "gross" ? "Gross Revenue" : "Revenue"} (${span})`, value: peso(revenueBasis === "gross" ? Number(s.total_gross_revenue ?? 0) : Number(s.total_revenue ?? 0)) },
-    { label: `Bookings (${span})`, value: String(s.total_bookings ?? 0) },
-    { label: `Occupancy (${span})`, value: `${Math.round(Number(s.occupancy_rate ?? 0))}%` },
-    { label: `New Guests (${span})`, value: String(s.new_guests ?? 0) },
     ...(isOwner ? [
       { label: `${revenueBasis === "gross" ? "Overhead due" : "Overhead paid"} (${span})`,
         value: overheadReady ? peso(overheadFigure) : "—" },
       { label: `Profit (${span})`, value: overheadReady ? signedPeso(profit) : "—" },
     ] : []),
+    { label: `Occupancy (${span})`, value: `${Math.round(Number(s.occupancy_rate ?? 0))}%` },
+    { label: `Bookings (${span})`, value: String(s.total_bookings ?? 0) },
+    { label: `New Guests (${span})`, value: String(s.new_guests ?? 0) },
   ];
   const totalRoomRev = Math.max(1, rooms.reduce((t, r) => t + (Number(r.revenue) || 0), 0));
   const SERIF = "'Instrument Serif', Georgia, serif";

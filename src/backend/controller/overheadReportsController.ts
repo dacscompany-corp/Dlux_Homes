@@ -72,7 +72,16 @@ async function estimatedAnnual(): Promise<{ annual: number; normalizedMonthly: n
   );
 
   const today = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
-  const nextYear = `${Number(today.slice(0, 4)) + 1}${today.slice(4)}`;
+  // The window must span twelve months, not twelve months plus a day.
+  // `occurrencesBetween`'s `through` is INCLUSIVE, so running to the same date
+  // next year counts the anniversary as a thirteenth occurrence: a ₱25,000
+  // monthly bill read as ₱325,000 a year instead of ₱300,000. End the day
+  // before. A 29 February start normalises to 28 February in a common year,
+  // which is the right answer for a yearly window.
+  const [ty, tm, td] = today.split("-").map(Number);
+  const end = new Date(Date.UTC(ty + 1, tm - 1, td));
+  end.setUTCDate(end.getUTCDate() - 1);
+  const throughDate = end.toISOString().slice(0, 10);
 
   let annual = 0;
   let normalizedMonthly = 0;
@@ -80,7 +89,7 @@ async function estimatedAnnual(): Promise<{ annual: number; normalizedMonthly: n
   for (const row of rows) {
     const def = toDef(row);
     const amount = Number(row.amount);
-    annual += occurrencesBetween(def, today, nextYear).length * amount;
+    annual += occurrencesBetween(def, today, throughDate).length * amount;
     normalizedMonthly += monthlyEquivalent(def, amount);
   }
 

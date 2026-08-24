@@ -6,7 +6,13 @@
 // mark them arrived before that. Keeping one definition means the email and the
 // admin button can't drift apart.
 //
-// In Asia/Manila: 1 hour before check-in, for every stay type.
+// In Asia/Manila: CHECKIN_LEAD_MINUTES before check-in, for every stay type.
+//
+// This value used to be written out three times — here as `hour - 1`, in the
+// cron's SQL as INTERVAL '1 hour', and in the email's own copy. Changing it
+// meant changing all three and hoping. One constant now: the cron interpolates
+// it and the email quotes no number at all.
+export const CHECKIN_LEAD_MINUTES = 15;
 
 const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
 
@@ -45,8 +51,8 @@ export function checkInOpensAt(
   // Unknown time → the whole day is fair game.
   if (hour == null) return midnightManila;
 
-  // One hour before the scheduled check-in time.
-  return midnightManila + (hour - 1) * 60 * 60 * 1000;
+  // CHECKIN_LEAD_MINUTES before the scheduled check-in time.
+  return midnightManila + hour * 60 * 60 * 1000 - CHECKIN_LEAD_MINUTES * 60 * 1000;
 }
 
 /** Has check-in opened for this booking yet? Unknown dates are permissive. */

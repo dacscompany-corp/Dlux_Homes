@@ -7,6 +7,7 @@ import {
 } from "@/redux/api/overheadApi";
 import { Empty } from "@/components/admin/owners/OwnerModules";
 import { PaymentModal } from "./PaymentModal";
+import { AmountModal } from "./AmountModal";
 
 const peso = (n: number | string) =>
   "₱" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2 });
@@ -22,6 +23,7 @@ const STATUS_TONE: Record<string, { c: string; dot: string; label: string }> = {
 export function PeriodQueue({ month }: { month: string }) {
   const { data, isLoading } = useGetOverheadPeriodsQuery({ month });
   const [active, setActive] = useState<OverheadPeriod | null>(null);
+  const [editing, setEditing] = useState<OverheadPeriod | null>(null);
   const rows = data?.data ?? [];
 
   return (
@@ -80,17 +82,34 @@ export function PeriodQueue({ month }: { month: string }) {
                         </span>
                       </td>
                       <td className="px-6 py-3.5 text-right">
-                        {!settled && (
-                          <button type="button" onClick={() => setActive(p)}
-                            className="cursor-pointer"
-                            style={{
-                              padding: "6px 12px", fontSize: 12, color: "#B07848",
-                              background: "#F7F0E3", border: "1px solid #D4BFA0",
-                              fontFamily: "inherit",
-                            }}>
-                            Record payment
-                          </button>
-                        )}
+                        {/* A bill that is monthly but never the same twice gets
+                            corrected here; the expense keeps its own figure as
+                            the estimate for future months. Cancelled periods
+                            take neither action. */}
+                        <div className="inline-flex items-center" style={{ gap: 8 }}>
+                          {p.display_status !== "cancelled" && (
+                            <button type="button" onClick={() => setEditing(p)}
+                              className="cursor-pointer"
+                              style={{
+                                padding: "6px 10px", fontSize: 12, color: "#6b6358",
+                                background: "#fff", border: "1px solid #d9d1c2",
+                                fontFamily: "inherit",
+                              }}>
+                              Edit amount
+                            </button>
+                          )}
+                          {!settled && (
+                            <button type="button" onClick={() => setActive(p)}
+                              className="cursor-pointer"
+                              style={{
+                                padding: "6px 12px", fontSize: 12, color: "#B07848",
+                                background: "#F7F0E3", border: "1px solid #D4BFA0",
+                                fontFamily: "inherit",
+                              }}>
+                              Record payment
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -102,6 +121,7 @@ export function PeriodQueue({ month }: { month: string }) {
       )}
 
       <PaymentModal period={active} open={!!active} onClose={() => setActive(null)} />
+      <AmountModal period={editing} open={!!editing} onClose={() => setEditing(null)} />
     </div>
   );
 }
