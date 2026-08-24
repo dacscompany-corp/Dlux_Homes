@@ -41,14 +41,17 @@ const AMENITIES: { id: string; label: string }[] = [
   { id: "towels", label: "Towels" },
 ];
 
-const PHOTO_TOUR: { key: string; label: string; required: boolean }[] = [
+// usedOnHomepage: this category's first photo (lowest display_order) feeds
+// the "About this home" collage on the storefront room page — see
+// aboutPhotos in src/lib/haven-adapter.ts.
+const PHOTO_TOUR: { key: string; label: string; required: boolean; usedOnHomepage?: boolean }[] = [
   { key: "livingArea", label: "Living Area", required: true },
   { key: "bedroom", label: "Bedroom", required: true },
   { key: "kitchenette", label: "Kitchenette", required: false },
   { key: "fullBathroom", label: "Full Bathroom", required: true },
-  { key: "diningArea", label: "Dining Area", required: false },
-  { key: "exterior", label: "Exterior / View", required: false },
-  { key: "pool", label: "Pool / Amenities", required: false },
+  { key: "diningArea", label: "Dining Area", required: false, usedOnHomepage: true },
+  { key: "exterior", label: "Exterior / View", required: false, usedOnHomepage: true },
+  { key: "pool", label: "Pool / Amenities", required: false, usedOnHomepage: true },
   { key: "garage", label: "Parking / Garage", required: false },
   { key: "additional", label: "Additional", required: false },
 ];
@@ -109,7 +112,7 @@ function readFiles(files: FileList | null, cb: (urls: string[]) => void) {
     .then((urls) => cb(urls.filter(Boolean)));
 }
 
-type ImgRef = { image_url: string; category?: string };
+type ImgRef = { image_url: string; category?: string; is_primary?: boolean };
 
 // Map a raw haven record (from the havens list / GET) into the wizard's form.
 function havenToForm(h: Record<string, unknown>): { form: Form; images: ImgRef[]; tours: ImgRef[] } {
@@ -167,6 +170,9 @@ export default function HavenWizard({
   // Existing (already-saved) images kept when editing; dropping one deletes it.
   const [existingImages, setExistingImages] = useState<ImgRef[]>([]);
   const [existingTours, setExistingTours] = useState<ImgRef[]>([]);
+  // Cover photo the owner picked — matched by image_url against both existing
+  // and newly-uploaded photos (new uploads have no haven_images.id yet).
+  const [primaryImageUrl, setPrimaryImageUrl] = useState<string>("");
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }));
 
   // Lengths quoted by the rate labels, read from the windows this same wizard
@@ -186,10 +192,12 @@ export default function HavenWizard({
       setForm(mapped.form);
       setExistingImages(mapped.images);
       setExistingTours(mapped.tours);
+      setPrimaryImageUrl(mapped.images.find((i) => i.is_primary)?.image_url || mapped.images[0]?.image_url || "");
     } else {
       setForm(empty);
       setExistingImages([]);
       setExistingTours([]);
+      setPrimaryImageUrl("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -245,6 +253,7 @@ export default function HavenWizard({
         haven_images: form.haven_images.length ? form.haven_images : undefined,
         photo_tour_images: Object.keys(photoTour).length ? photoTour : undefined,
         youtube_url: form.youtube_url || undefined, virtual_tour_url: form.virtual_tour_url || undefined,
+        primary_image_url: primaryImageUrl || undefined,
       };
 
       let havenUuid: string | undefined;
@@ -524,20 +533,29 @@ export default function HavenWizard({
           {/* Step 7 — Images */}
           {step === 6 && (
             <div className="space-y-3">
-              <p className="text-xs" style={{ color: "#8B6344" }}>Gallery photos shown on the storefront listing.</p>
+              <p className="text-xs" style={{ color: "#8B6344" }}>Gallery photos shown on the storefront listing. Click the star to set a photo as the cover image.</p>
               {existingImages.length > 0 && (
                 <div>
                   <p className="text-xs font-semibold mb-1.5" style={{ color: "#8B6344" }}>Current photos</p>
                   <div className="grid grid-cols-4 gap-2">
-                    {existingImages.map((img, i) => (
-                      <div key={i} className="relative rounded-xl overflow-hidden border" style={{ borderColor: "#EDE3D2", aspectRatio: "1" }}>
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={img.image_url} alt={`Current ${i + 1}`} title="Click to view full image" onClick={() => window.open(img.image_url, "_blank", "noopener,noreferrer")} className="w-full h-full object-cover" style={{ cursor: "zoom-in" }} />
-                        <button type="button" onClick={() => setExistingImages(existingImages.filter((_, j) => j !== i))} title="Remove" className="absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center text-white" style={{ backgroundColor: "rgba(0,0,0,0.55)" }}>
-                          <X className="w-3 h-3" />
-                        </button>
-                      </div>
-                    ))}
+                    {existingImages.map((img, i) => {
+                      const isCover = primaryImageUrl === img.image_url;
+                      return (
+                        <div key={i} className="relative rounded-xl overflow-hidden border" style={{ borderColor: isCover ? "#B07848" : "#EDE3D2", borderWidth: isCover ? 2 : 1, aspectRatio: "1" }}>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={img.image_url} alt={`Current ${i + 1}`} title="Click to view full image" onClick={() => window.open(img.image_url, "_blank", "noopener,noreferrer")} className="w-full h-full object-cover" style={{ cursor: "zoom-in" }} />
+                          {isCover && (
+                            <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold text-white" style={{ backgroundColor: "rgba(176,120,72,0.9)" }}>Cover</span>
+                          )}
+                          <button type="button" onClick={() => setPrimaryImageUrl(img.image_url)} title={isCover ? "Cover photo" : "Set as cover"} className="absolute top-1 left-1 w-5 h-5 rounded-full flex items-center justify-center text-white" style={{ backgroundColor: "rgba(0,0,0,0.55)" }}>
+                            <Star className="w-3 h-3" fill={isCover ? "currentColor" : "none"} />
+                          </button>
+                          <button type="button" onClick={() => setExistingImages(existingImages.filter((_, j) => j !== i))} title="Remove" className="absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center text-white" style={{ backgroundColor: "rgba(0,0,0,0.55)" }}>
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -547,19 +565,40 @@ export default function HavenWizard({
                 </div>
                 <span className="text-sm font-semibold" style={{ color: "#B07848" }}>Click to upload photos</span>
                 <span className="text-xs" style={{ color: "#C9B79E" }}>JPG or PNG · multiple allowed</span>
-                <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { readFiles(e.target.files, (urls) => set({ haven_images: [...form.haven_images, ...urls] })); e.target.value = ""; }} />
+                <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => {
+                  readFiles(e.target.files, (urls) => {
+                    set({ haven_images: [...form.haven_images, ...urls] });
+                    // First photo ever added (nothing existing, nothing queued yet) defaults to cover.
+                    if (!primaryImageUrl && existingImages.length === 0 && form.haven_images.length === 0 && urls[0]) {
+                      setPrimaryImageUrl(urls[0]);
+                    }
+                  });
+                  e.target.value = "";
+                }} />
               </label>
               {form.haven_images.length > 0 && (
                 <div className="grid grid-cols-4 gap-2">
-                  {form.haven_images.map((src, i) => (
-                    <div key={i} className="relative rounded-xl overflow-hidden border" style={{ borderColor: "#EDE3D2", aspectRatio: "1" }}>
+                  {form.haven_images.map((src, i) => {
+                    const isCover = primaryImageUrl === src;
+                    return (
+                    <div key={i} className="relative rounded-xl overflow-hidden border" style={{ borderColor: isCover ? "#B07848" : "#EDE3D2", borderWidth: isCover ? 2 : 1, aspectRatio: "1" }}>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={src} alt={`Photo ${i + 1}`} title="Click to view full image" onClick={() => window.open(src, "_blank", "noopener,noreferrer")} className="w-full h-full object-cover" style={{ cursor: "zoom-in" }} />
-                      <button type="button" onClick={() => set({ haven_images: form.haven_images.filter((_, j) => j !== i) })} title="Remove" className="absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center text-white" style={{ backgroundColor: "rgba(0,0,0,0.55)" }}>
+                      {isCover && (
+                        <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold text-white" style={{ backgroundColor: "rgba(176,120,72,0.9)" }}>Cover</span>
+                      )}
+                      <button type="button" onClick={() => setPrimaryImageUrl(src)} title={isCover ? "Cover photo" : "Set as cover"} className="absolute top-1 left-1 w-5 h-5 rounded-full flex items-center justify-center text-white" style={{ backgroundColor: "rgba(0,0,0,0.55)" }}>
+                        <Star className="w-3 h-3" fill={isCover ? "currentColor" : "none"} />
+                      </button>
+                      <button type="button" onClick={() => {
+                        set({ haven_images: form.haven_images.filter((_, j) => j !== i) });
+                        if (isCover) setPrimaryImageUrl("");
+                      }} title="Remove" className="absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center text-white" style={{ backgroundColor: "rgba(0,0,0,0.55)" }}>
                         <X className="w-3 h-3" />
                       </button>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -568,15 +607,18 @@ export default function HavenWizard({
           {/* Step 8 — Photo Tour */}
           {step === 7 && (
             <div className="space-y-3">
-              <p className="text-xs" style={{ color: "#8B6344" }}>One or more photos per area. Required areas are marked.</p>
+              <p className="text-xs" style={{ color: "#8B6344" }}>One or more photos per area. Required areas are marked. Categories marked <span className="font-semibold">Homepage</span> — Dining Area, Pool / Amenities, Exterior / View — feed the &quot;About this home&quot; photo collage on the storefront; the first photo in each becomes the one shown there.</p>
               {PHOTO_TOUR.map((cat) => {
                 const imgs = form.photo_tour_images[cat.key] || [];
                 const existing = existingTours.filter((t) => t.category === cat.key);
                 return (
-                  <div key={cat.key} className="rounded-xl border p-3" style={{ borderColor: "#EDE3D2" }}>
+                  <div key={cat.key} className="rounded-xl border p-3" style={{ borderColor: cat.usedOnHomepage ? "#B07848" : "#EDE3D2" }}>
                     <div className="flex items-center justify-between mb-2">
-                      <p className="text-sm font-semibold" style={{ color: "#1a1a1a" }}>
+                      <p className="text-sm font-semibold flex items-center gap-1.5" style={{ color: "#1a1a1a" }}>
                         {cat.label} {cat.required && <span style={{ color: "#B07848" }}>*</span>}
+                        {cat.usedOnHomepage && (
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: "#FBEEE0", color: "#B07848" }}>Homepage</span>
+                        )}
                       </p>
                       <label className="text-xs font-semibold cursor-pointer flex items-center gap-1" style={{ color: "#B07848" }}>
                         <Plus className="w-3.5 h-3.5" /> Add

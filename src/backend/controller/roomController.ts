@@ -295,12 +295,15 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
 
     if (havenImageUrls.length > 0) {
       for (const img of havenImageUrls) {
+        // First photo of a brand-new haven becomes the cover by default;
+        // the owner can change it later via the "Set as cover" action.
+        const isPrimary = img.display_order === 0;
         await pool.query(
           `
-                    INSERT INTO haven_images (haven_id, image_url, cloudinary_public_id, display_order, uploaded_at)
-                    VALUES ($1, $2, $3, $4, NOW())
+                    INSERT INTO haven_images (haven_id, image_url, cloudinary_public_id, display_order, is_primary, uploaded_at)
+                    VALUES ($1, $2, $3, $4, $5, NOW())
                 `,
-          [havenId, img.image_url, img.public_id, img.display_order]
+          [havenId, img.image_url, img.public_id, img.display_order, isPrimary]
         );
       }
     }
@@ -383,7 +386,7 @@ export const getAllHavens = async (req: NextRequest): Promise<NextResponse> => {
 
     let query = `
       SELECT h.*,
-        json_agg(DISTINCT jsonb_build_object('id', hi.id, 'image_url', hi.image_url, 'display_order', hi.display_order))
+        json_agg(DISTINCT jsonb_build_object('id', hi.id, 'image_url', hi.image_url, 'display_order', hi.display_order, 'is_primary', hi.is_primary))
           FILTER (WHERE hi.id IS NOT NULL) as images,
         json_agg(DISTINCT jsonb_build_object('category', pti.category, 'image_url', pti.image_url, 'display_order', pti.display_order))
           FILTER (WHERE pti.id IS NOT NULL) as photo_tours,
@@ -586,7 +589,7 @@ export const getHavenById = async (
       console.log("📝 Getting full haven data...");
       const fullQuery = `
         SELECT h.*,
-          json_agg(DISTINCT jsonb_build_object('id', hi.id, 'image_url', hi.image_url, 'display_order', hi.display_order))
+          json_agg(DISTINCT jsonb_build_object('id', hi.id, 'image_url', hi.image_url, 'display_order', hi.display_order, 'is_primary', hi.is_primary))
             FILTER (WHERE hi.id IS NOT NULL) as images,
           COALESCE(
             (
@@ -704,6 +707,9 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
       amenities,
       haven_images,
       existing_images,
+      // URL of the image (existing or newly uploaded) the owner picked as
+      // cover; undefined = leave whatever's currently primary alone.
+      primary_image_url,
       photo_tour_images,
       existing_photo_tours,
       blocked_dates,
@@ -936,6 +942,37 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
       }
     }
 
+    // Apply the owner's cover-photo pick, if they changed it. Matches against
+    // image_url since new uploads don't have a haven_images.id yet at the time
+    // the wizard builds this payload. Unset-then-set keeps the "at most one
+    // primary per haven" unique index satisfied throughout.
+    if (primary_image_url) {
+      await pool.query(
+        `UPDATE haven_images SET is_primary = false WHERE haven_id = $1 AND is_primary`,
+        [id]
+      );
+      await pool.query(
+        `UPDATE haven_images SET is_primary = true
+         WHERE id = (
+           SELECT id FROM haven_images WHERE haven_id = $1 AND image_url = $2 LIMIT 1
+         )`,
+        [id, primary_image_url]
+      );
+    }
+
+    // Every haven should have exactly one cover photo if it has any photos at
+    // all — guard against a haven ending up with none (e.g. the owner removed
+    // the photo that was previously primary without picking a new one).
+    await pool.query(
+      `UPDATE haven_images SET is_primary = true
+       WHERE id = (
+         SELECT id FROM haven_images WHERE haven_id = $1
+         ORDER BY display_order ASC, id ASC LIMIT 1
+       )
+       AND NOT EXISTS (SELECT 1 FROM haven_images WHERE haven_id = $1 AND is_primary)`,
+      [id]
+    );
+
     // Handle new photo tour images if provided
     if (photo_tour_images) {
       for (const [category, images] of Object.entries(photo_tour_images)) {
@@ -1114,7 +1151,8 @@ export const getAllAdminRooms = async (
           DISTINCT jsonb_build_object(
             'id', hi.id,
             'image_url', hi.image_url,
-            'display_order', hi.display_order
+            'display_order', hi.display_order,
+            'is_primary', hi.is_primary
           )
         ) FILTER (WHERE hi.id IS NOT NULL) AS images,
 
