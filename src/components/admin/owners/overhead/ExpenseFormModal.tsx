@@ -9,9 +9,11 @@ import {
   useCreateOverheadExpenseMutation,
   useUpdateOverheadExpenseMutation,
   useCreateOverheadCategoryMutation,
+  useCreateOverheadSpendMutation,
   type OverheadCategory,
   type OverheadExpense,
 } from "@/redux/api/overheadApi";
+import { manilaToday } from "@/lib/overheadSpend";
 
 const FREQUENCIES = [
   { id: "monthly", label: "Monthly" },
@@ -20,7 +22,6 @@ const FREQUENCIES = [
   { id: "annual", label: "Annually" },
   { id: "weekly", label: "Weekly" },
   { id: "daily", label: "Daily" },
-  { id: "one-time", label: "One-time" },
   { id: "custom", label: "Custom…" },
 ];
 
@@ -111,6 +112,17 @@ function ExpenseForm({
   const expenseId = expense?.id ?? null;
   const [createExpense, { isLoading: creating }] = useCreateOverheadExpenseMutation();
   const [updateExpense, { isLoading: updating }] = useUpdateOverheadExpenseMutation();
+  const [createSpend, { isLoading: savingSpend }] = useCreateOverheadSpendMutation();
+
+  // Editing always means a recurring rule: a one-off already has a period and a
+  // payment behind it, and its correction path is Delete, not Edit.
+  const [repeats, setRepeats] = useState(() => (expense ? true : false));
+
+  const [spend, setSpend] = useState(() => ({
+    spent_on: manilaToday(),
+    method: "",
+    reference: "",
+  }));
 
   const [form, setForm] = useState(() =>
     expense
@@ -165,6 +177,27 @@ function ExpenseForm({
     }
   };
 
+  const submitSpend = async () => {
+    try {
+      const res = await createSpend({
+        name: form.name,
+        category_id: form.category_id,
+        amount: Number(form.amount),
+        spent_on: spend.spent_on,
+        method: spend.method || undefined,
+        reference: spend.reference || undefined,
+        notes: form.notes || undefined,
+      }).unwrap();
+      if (res.success) {
+        toast.success("Expense recorded");
+        onClose();
+      }
+    } catch (err) {
+      const e = err as { data?: { message?: string } };
+      toast.error(e.data?.message ?? "Could not record the expense");
+    }
+  };
+
   const submit = async (confirmDuplicate = false) => {
     const body: Record<string, unknown> = {
       name: form.name,
@@ -209,6 +242,36 @@ function ExpenseForm({
   return (
     <Shell title={title} onClose={onClose}>
         <div style={{ display: "grid", gap: 16 }}>
+          {!expenseId && (
+            <div>
+              <label style={label}>Does this repeat?</label>
+              <div className="inline-flex" style={{ border: "1px solid #D4BFA0", background: "#F7F0E3" }}>
+                <button type="button" onClick={() => setRepeats(false)}
+                  aria-pressed={!repeats}
+                  className="cursor-pointer"
+                  style={{ padding: "9px 16px", fontSize: 13, fontWeight: 500, fontFamily: "inherit",
+                    color: !repeats ? "#1f1b16" : "#8a8276",
+                    background: !repeats ? "#fff" : "transparent", border: "none" }}>
+                  No — already paid
+                </button>
+                <button type="button" onClick={() => setRepeats(true)}
+                  aria-pressed={repeats}
+                  className="cursor-pointer"
+                  style={{ padding: "9px 16px", fontSize: 13, fontWeight: 500, fontFamily: "inherit",
+                    color: repeats ? "#1f1b16" : "#8a8276",
+                    background: repeats ? "#fff" : "transparent", border: "none",
+                    borderLeft: "1px solid #D4BFA0" }}>
+                  Yes — it&apos;s a recurring bill
+                </button>
+              </div>
+              <p style={{ fontSize: 11.5, color: "#8a8276", margin: "8px 0 0" }}>
+                {repeats
+                  ? "Creates a schedule that keeps generating bills you settle later."
+                  : "Records a cost you have already paid. No schedule, no due date."}
+              </p>
+            </div>
+          )}
+
           <div>
             <label style={label}>Expense name</label>
             <input style={input} value={form.name}
@@ -258,6 +321,7 @@ function ExpenseForm({
             </div>
           </div>
 
+          {repeats && (<>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
             <div>
               <label style={label}>Repeats</label>
@@ -307,6 +371,30 @@ function ExpenseForm({
                 onChange={(e) => setForm({ ...form, end_date: e.target.value })} />
             </div>
           </div>
+          </>)}
+
+          {!repeats && (<>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <div>
+                <label style={label}>Date paid</label>
+                <input style={input} className="dlx-date" type="date" value={spend.spent_on}
+                  max={manilaToday()}
+                  onChange={(e) => setSpend({ ...spend, spent_on: e.target.value })} />
+              </div>
+              <div>
+                <label style={label}>Method (optional)</label>
+                <input style={input} value={spend.method}
+                  onChange={(e) => setSpend({ ...spend, method: e.target.value })}
+                  placeholder="e.g. GCash" />
+              </div>
+            </div>
+            <div>
+              <label style={label}>Reference (optional)</label>
+              <input style={input} value={spend.reference}
+                onChange={(e) => setSpend({ ...spend, reference: e.target.value })}
+                placeholder="e.g. receipt or transaction no." />
+            </div>
+          </>)}
 
           {amountChanged && (
             <div style={{ background: "#F7F0E3", border: "1px solid #D4BFA0", padding: 16 }}>
@@ -355,14 +443,15 @@ function ExpenseForm({
               }}>
               Cancel
             </button>
-            <button type="button" onClick={() => submit(false)}
-              disabled={creating || updating} className="cursor-pointer"
+            <button type="button"
+              onClick={() => (repeats ? submit(false) : submitSpend())}
+              disabled={creating || updating || savingSpend} className="cursor-pointer"
               style={{
                 padding: "9px 18px", fontSize: 13, fontWeight: 500, color: "#faf7f1",
                 background: "#1f1b16", border: "none", fontFamily: "inherit",
-                opacity: creating || updating ? 0.6 : 1,
+                opacity: creating || updating || savingSpend ? 0.6 : 1,
               }}>
-              {expenseId ? "Save changes" : "Add expense"}
+              {expenseId ? "Save changes" : repeats ? "Add expense" : "Record expense"}
             </button>
           </div>
         </div>

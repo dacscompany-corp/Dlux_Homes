@@ -6,6 +6,7 @@ import { ExpenseList } from "./ExpenseList";
 import { ExpenseFormModal } from "./ExpenseFormModal";
 import { PeriodQueue } from "./PeriodQueue";
 import { OverheadDashboard } from "./OverheadDashboard";
+import { currentMonthKey } from "@/components/admin/owners/MonthNavigator";
 
 type Tab = "dashboard" | "expenses" | "payments";
 
@@ -19,7 +20,7 @@ export default function OverheadSection() {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
-  const [month] = useState(() => new Date().toISOString().slice(0, 7));
+  const [month, setMonth] = useState<string | null>(() => currentMonthKey());
 
   return (
     <div>
@@ -56,13 +57,15 @@ export default function OverheadSection() {
 
       {tab === "expenses" && (
         <ExpenseList
+          month={month}
+          onMonthChange={setMonth}
           onEdit={(id) => { setEditingId(id); setFormOpen(true); }}
           onCreate={() => { setEditingId(null); setFormOpen(true); }}
         />
       )}
 
-      {tab === "dashboard" && <OverheadDashboard month={month} />}
-      {tab === "payments" && <PeriodQueue month={month} />}
+      {tab === "dashboard" && <OverheadDashboard month={month ?? currentMonthKey()} />}
+      {tab === "payments" && <PeriodQueue month={month ?? currentMonthKey()} />}
 
       <ExpenseFormModal
         expenseId={editingId}

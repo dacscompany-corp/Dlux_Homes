@@ -300,6 +300,7 @@ export async function getExpenses(req: NextRequest): Promise<NextResponse> {
     const active = searchParams.get("active");
     const category = searchParams.get("category");
     const q = searchParams.get("q");
+    const month = searchParams.get("month");
 
     const conditions: string[] = [];
     const values: unknown[] = [];
@@ -313,6 +314,22 @@ export async function getExpenses(req: NextRequest): Promise<NextResponse> {
     if (q) {
       values.push(`%${q}%`);
       conditions.push(`e.name ILIKE $${values.length}`);
+    }
+    // Recurring rules are a standing configuration and always list. One-off
+    // entries belong to the month they were paid in — without this they would
+    // accumulate weekly and bury the recurring rules after a year.
+    if (month) {
+      if (!/^\d{4}-\d{2}$/.test(month)) {
+        return NextResponse.json(
+          { success: false, message: "month must be YYYY-MM" },
+          { status: 400 },
+        );
+      }
+      values.push(`${month}-01`);
+      conditions.push(
+        `(e.frequency <> 'one-time' OR (e.start_date >= $${values.length}::date ` +
+        `AND e.start_date < $${values.length}::date + INTERVAL '1 month'))`,
+      );
     }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
@@ -330,7 +347,10 @@ export async function getExpenses(req: NextRequest): Promise<NextResponse> {
          FROM overhead_expenses e
          JOIN overhead_categories c ON c.id = e.category_id
          ${where}
-        ORDER BY e.active DESC, c.sort_order, e.name`,
+        ORDER BY (e.frequency = 'one-time'),
+                 CASE WHEN e.frequency = 'one-time' THEN 0 ELSE c.sort_order END,
+                 CASE WHEN e.frequency = 'one-time' THEN '' ELSE e.name END,
+                 e.start_date DESC, e.name`,
       values,
     );
 

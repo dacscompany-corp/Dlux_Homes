@@ -103,7 +103,8 @@ export const overheadApi = createApi({
     }),
 
     getOverheadExpenses: builder.query<
-      Ok<OverheadExpense[]>, { active?: string; category?: string; q?: string } | void
+      Ok<OverheadExpense[]>,
+      { active?: string; category?: string; q?: string; month?: string } | void
     >({
       query: (params) => ({ url: "/expenses", params: params || undefined }),
       providesTags: ["OverheadExpense"],
@@ -124,6 +125,18 @@ export const overheadApi = createApi({
     }),
     deleteOverheadExpense: builder.mutation<Ok<{ id: string }>, string>({
       query: (id) => ({ url: `/expenses/${id}`, method: "DELETE" }),
+      invalidatesTags: ["OverheadExpense", "OverheadPeriod", "OverheadDashboard"],
+    }),
+    createOverheadSpend: builder.mutation<
+      Ok<{ id: string }>,
+      { name: string; category_id: string; amount: number; spent_on: string;
+        method?: string; reference?: string; notes?: string }
+    >({
+      query: (body) => ({ url: "/spend", method: "POST", body }),
+      invalidatesTags: ["OverheadExpense", "OverheadPeriod", "OverheadDashboard"],
+    }),
+    deleteOverheadSpend: builder.mutation<Ok<{ id: string }>, string>({
+      query: (id) => ({ url: `/spend/${id}`, method: "DELETE" }),
       invalidatesTags: ["OverheadExpense", "OverheadPeriod", "OverheadDashboard"],
     }),
 
@@ -170,6 +183,8 @@ export const {
   useCreateOverheadExpenseMutation,
   useUpdateOverheadExpenseMutation,
   useDeleteOverheadExpenseMutation,
+  useCreateOverheadSpendMutation,
+  useDeleteOverheadSpendMutation,
   useGetOverheadPeriodsQuery,
   useCancelOverheadPeriodMutation,
   useGetOverheadPaymentsQuery,

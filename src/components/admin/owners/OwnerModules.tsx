@@ -5,6 +5,8 @@ import toast from "react-hot-toast";
 import { imageFileError } from "@/lib/validateImageFile";
 import ImageThumb from "@/components/ImageThumb";
 import { MonthNavigator, currentMonthKey } from "@/components/admin/owners/MonthNavigator";
+import { useGetOverheadDashboardQuery } from "@/redux/api/overheadApi";
+import { useSession } from "next-auth/react";
 import { BarChart3, Calendar, CalendarOff, Sparkles, CreditCard, Headphones, UsersRound, Handshake, Plus, Trash2, Power, Pencil, X, Moon, Sun } from "lucide-react";
 import { useGetAnalyticsSummaryQuery, useGetMonthlyRevenueQuery, useGetRevenueByRoomQuery } from "@/redux/api/analyticsApi";
 import { useGetBookingsQuery } from "@/redux/api/bookingsApi";
@@ -149,11 +151,40 @@ export function AnalyticsSection() {
   // Cards name the span they cover, so the figures can never be read against
   // the wrong window.
   const span = selectedMonth ? monthLabel : "30d";
+  // Overhead and profit. Owner-only: the overhead endpoint 403s for a CSR, so
+  // an ungated Profit cell would read revenue minus zero and overstate the
+  // business badly. `skip` keeps a CSR from firing the request at all.
+  const { data: session } = useSession();
+  const isOwner = (session?.user as { role?: string } | undefined)?.role === "Owner";
+  const { data: overheadRes, isLoading: overheadLoading } = useGetOverheadDashboardQuery(
+    { month: selectedMonth ?? undefined },
+    { skip: !isOwner },
+  );
+  const oh = overheadRes?.data;
+  // Until the overhead payload lands, profit would briefly equal full revenue.
+  // Both cells render an em dash rather than a figure that is wrong for a frame.
+  const overheadReady = isOwner && !overheadLoading && !!oh;
+  // Pair like with like, as the Profitability tab does: collected revenue
+  // against bills actually settled, gross against everything due.
+  const overheadFigure = revenueBasis === "gross"
+    ? Number(oh?.accrued_total ?? 0)
+    : Number(oh?.paid ?? 0);
+  const revenueFigure = revenueBasis === "gross"
+    ? Number(s.total_gross_revenue ?? 0)
+    : Number(s.total_revenue ?? 0);
+  const profit = revenueFigure - overheadFigure;
+  const signedPeso = (n: number) => (n < 0 ? "-₱" : "₱") + Math.abs(n).toLocaleString();
+
   const stats = [
     { label: `${revenueBasis === "gross" ? "Gross Revenue" : "Revenue"} (${span})`, value: peso(revenueBasis === "gross" ? Number(s.total_gross_revenue ?? 0) : Number(s.total_revenue ?? 0)) },
     { label: `Bookings (${span})`, value: String(s.total_bookings ?? 0) },
     { label: `Occupancy (${span})`, value: `${Math.round(Number(s.occupancy_rate ?? 0))}%` },
     { label: `New Guests (${span})`, value: String(s.new_guests ?? 0) },
+    ...(isOwner ? [
+      { label: `${revenueBasis === "gross" ? "Overhead due" : "Overhead paid"} (${span})`,
+        value: overheadReady ? peso(overheadFigure) : "—" },
+      { label: `Profit (${span})`, value: overheadReady ? signedPeso(profit) : "—" },
+    ] : []),
   ];
   const totalRoomRev = Math.max(1, rooms.reduce((t, r) => t + (Number(r.revenue) || 0), 0));
   const SERIF = "'Instrument Serif', Georgia, serif";
@@ -185,10 +216,12 @@ export function AnalyticsSection() {
       </div>
 
       {/* stats — flat bordered cells */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 mb-6" style={{ gap: 1, background: "#ece5d4", border: "1px solid #ece5d4" }}>
+      {/* Six cells for an Owner (two clean rows of three), four for a CSR. */}
+      <div className={`grid grid-cols-2 ${isOwner ? "lg:grid-cols-3" : "lg:grid-cols-4"} mb-6`} style={{ gap: 1, background: "#ece5d4", border: "1px solid #ece5d4" }}>
         {stats.map((st) => (
           <div key={st.label} style={{ background: "#fff", padding: "20px 22px" }}>
-            <div style={{ fontFamily: MONO, fontSize: 24, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1, color: "#1f1b16" }}>{st.value}</div>
+            <div style={{ fontFamily: MONO, fontSize: 24, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1,
+              color: st.label.startsWith("Profit") && overheadReady && profit < 0 ? "#9a4a3a" : "#1f1b16" }}>{st.value}</div>
             <div style={{ fontSize: 12, color: "#8a8276", marginTop: 8 }}>{st.label}</div>
           </div>
         ))}

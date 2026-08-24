@@ -7,6 +7,7 @@ import Link from "next/link";
 import DluxMark from "@/components/brand/DluxMark";
 import toast from "react-hot-toast";
 import { useGetAnalyticsSummaryQuery, useGetMonthlyRevenueQuery, useGetRevenueByRoomQuery } from "@/redux/api/analyticsApi";
+import { useGetOverheadDashboardQuery } from "@/redux/api/overheadApi";
 import { useGetBookingsQuery, useUpdateBookingStatusMutation } from "@/redux/api/bookingsApi";
 import { updateDepositStatusByBookingId, approveDownPaymentByBookingId } from "@/app/admin/csr/actions";
 import {
@@ -32,6 +33,7 @@ import {
 import HavenWizard from "@/components/admin/owners/HavenWizard";
 import { MonthNavigator, currentMonthKey } from "@/components/admin/owners/MonthNavigator";
 import OverheadSection from "@/components/admin/owners/overhead/OverheadSection";
+import { ProfitabilitySection } from "@/components/admin/owners/finance/ProfitabilitySection";
 import NewBookingWizard from "@/components/admin/NewBookingWizard";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { DluxLoaderOverlay } from "@/components/brand/DluxLoader";
@@ -155,7 +157,7 @@ export default function OwnerDashboard() {
   // Booking guide starts open, matching the design — it is reference material an
   // owner can collapse once the flow is familiar.
   const [guideOpen, setGuideOpen] = useState(false);
-  const [financeTab, setFinanceTab]   = useState<"revenue"|"methods"|"promotions"|"overhead">("revenue");
+  const [financeTab, setFinanceTab]   = useState<"revenue"|"methods"|"promotions"|"overhead"|"profitability">("revenue");
   const [teamTab, setTeamTab]         = useState<"staff"|"users"|"partners">("staff");
 
   // ── Live data from the Supabase-backed API (RTK Query) ──
@@ -622,6 +624,29 @@ export default function OwnerDashboard() {
   // Revenue chart — normalize monthly revenue to bar heights (Overview + Finance)
   const monthly = (monthlyRes?.data as { month: string; revenue: number; gross_revenue: number }[]) || [];
 
+  // Overhead and profit. Owner-only: the overhead endpoint 403s for a CSR, so
+  // an ungated Profit card would read revenue minus zero and overstate the
+  // business badly. `skip` keeps a CSR from firing the request at all.
+  const { data: overheadRes, isLoading: overheadLoading } = useGetOverheadDashboardQuery(
+    { month: selectedMonth ?? undefined },
+    { skip: !isOwner },
+  );
+  const oh = overheadRes?.data;
+  // Until the overhead payload lands, profit would briefly equal full revenue.
+  // Both cards render an em dash rather than a figure that is wrong for a frame.
+  const overheadReady = isOwner && !overheadLoading && !!oh;
+  // Pair like with like, exactly as the Profitability tab does: collected
+  // revenue against bills actually settled, gross against everything due.
+  const overheadFigure = revenueBasis === "gross"
+    ? Number(oh?.accrued_total ?? 0)
+    : Number(oh?.paid ?? 0);
+  const revenueFigure = revenueBasis === "gross"
+    ? Number(s?.total_gross_revenue ?? 0)
+    : Number(s?.total_revenue ?? 0);
+  const profit = revenueFigure - overheadFigure;
+  const overheadCardLabel = revenueBasis === "gross" ? "Overhead · due" : "Overhead · paid";
+  const signedPeso = (n: number) => (n < 0 ? "-₱" : "₱") + Math.abs(n).toLocaleString();
+
   // Every KPI below comes from the summary endpoint, which is scoped by the
   // same `month` the navigator sets — so Occupancy and Guests follow the
   // selection too, and the % changes are genuine month-on-month figures
@@ -639,6 +664,13 @@ export default function OwnerDashboard() {
     { label: "Total Guests",   value: String(s?.new_guests ?? 0), change: pct(s?.guests_change ?? 0), icon: UserCheck, iconBg: "#ffedd5", iconColor: "#ea580c" },
     { label: "Reviews",        value: String(reviewsList.length), change: "—", icon: Star,      iconBg: "#fef9c3", iconColor: "#ca8a04" },
     { label: "Active Rooms",   value: String(havensList.length),  change: "—", icon: BedDouble, iconBg: "#ccfbf1", iconColor: "#0d9488" },
+    // No change percentage on these two: a real profit-versus-last-month figure
+    // needs last month's revenue as an absolute, which the summary endpoint does
+    // not return. An em dash beats an invented number.
+    ...(isOwner ? [
+      { label: overheadCardLabel, value: overheadReady ? peso(overheadFigure) : "—", change: "—", icon: Receipt, iconBg: "#F7F0E3", iconColor: "#B07848" },
+      { label: "Profit", value: overheadReady ? signedPeso(profit) : "—", change: "—", icon: Wallet, iconBg: "#e0f2fe", iconColor: "#0369a1" },
+    ] : []),
   ];
   const maxRev = Math.max(1, ...monthly.map((m) => Number(m.revenue) || 0));
   // Overview chart only: reads gross_revenue and its own max when the
@@ -1154,7 +1186,8 @@ export default function OwnerDashboard() {
           {overviewTab === "dashboard" && (<>
 
           {/* KPI Cards — flat bordered cells, mono numbers */}
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 mb-6" style={{ gap: 1, background: "#ece5d4", border: "1px solid #ece5d4" }}>
+          {/* Eight cards for an Owner (two clean rows of four), six for a CSR. */}
+          <div className={`grid grid-cols-2 md:grid-cols-3 ${isOwner ? "xl:grid-cols-4" : "xl:grid-cols-6"} mb-6`} style={{ gap: 1, background: "#ece5d4", border: "1px solid #ece5d4" }}>
             {kpis.map((kpi) => {
               const Icon = kpi.icon;
               const down = kpi.change.startsWith("-");
@@ -1166,7 +1199,8 @@ export default function OwnerDashboard() {
                     <Icon className="w-[18px] h-[18px]" strokeWidth={1.6} style={{ color: "#8a8276" }} />
                     <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 11, color: dc }}>{kpi.change}</span>
                   </div>
-                  <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 24, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1, color: "#1f1b16" }}>{kpi.value}</div>
+                  <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 24, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1,
+                    color: kpi.label === "Profit" && overheadReady && profit < 0 ? "#9a4a3a" : "#1f1b16" }}>{kpi.value}</div>
                   <div style={{ fontSize: 12, color: "#8a8276", marginTop: 6 }}>{kpi.label}</div>
                 </div>
               );
@@ -1869,8 +1903,16 @@ export default function OwnerDashboard() {
             { id: "methods", label: "Payment Methods", icon: CreditCard },
             { id: "promotions", label: "Promotions", icon: Sparkles },
             ...(isOwner ? [{ id: "overhead", label: "Overhead", icon: Receipt }] : []),
-          ], financeTab, (id) => setFinanceTab(id as "revenue" | "methods" | "promotions" | "overhead"))}
+            ...(isOwner ? [{ id: "profitability", label: "Profitability", icon: TrendingUp }] : []),
+          ], financeTab, (id) => setFinanceTab(id as "revenue" | "methods" | "promotions" | "overhead" | "profitability"))}
           {financeTab === "overhead" && isOwner && <OverheadSection />}
+          {financeTab === "profitability" && isOwner && (
+            <ProfitabilitySection
+              month={selectedMonth}
+              onMonthChange={setSelectedMonth}
+              onGoToOverhead={() => setFinanceTab("overhead")}
+            />
+          )}
           {financeTab === "methods" && <PaymentMethodsSection />}
           {financeTab === "promotions" && (<>
             <div className="flex items-center justify-between mb-6">
@@ -1941,16 +1983,31 @@ export default function OwnerDashboard() {
             </div>
           </>)}
           {financeTab === "revenue" && (<>
-            {/* stat cells */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 mb-6" style={{ gap: 1, background: "#ece5d4", border: "1px solid #ece5d4" }}>
+            {/* Shares `selectedMonth` with the Overview tab — these cells read the
+                same summary/room queries, so one selection drives both. */}
+            <div className="flex items-center flex-wrap mb-6" style={{ gap: 12 }}>
+              <MonthNavigator
+                value={selectedMonth}
+                onChange={setSelectedMonth}
+                monthsWithData={monthly.map((m) => m.month)}
+              />
+            </div>
+
+            {/* stat cells — labelled with the span they actually cover */}
+            <div className={`grid grid-cols-2 ${isOwner ? "lg:grid-cols-3" : "lg:grid-cols-4"} mb-6`} style={{ gap: 1, background: "#ece5d4", border: "1px solid #ece5d4" }}>
               {[
-                { label: "Revenue · 30d", value: peso(Number(s?.total_revenue ?? 0)) },
-                { label: "Bookings · 30d", value: String(s?.total_bookings ?? 0) },
-                { label: "Occupancy", value: `${Math.round(Number(s?.occupancy_rate ?? 0))}%` },
-                { label: "New guests", value: String(s?.new_guests ?? 0) },
+                { label: `Revenue · ${monthLabel ?? "30d"}`, value: peso(Number(s?.total_revenue ?? 0)) },
+                { label: `Bookings · ${monthLabel ?? "30d"}`, value: String(s?.total_bookings ?? 0) },
+                { label: `Occupancy · ${monthLabel ?? "30d"}`, value: `${Math.round(Number(s?.occupancy_rate ?? 0))}%` },
+                { label: `New guests · ${monthLabel ?? "30d"}`, value: String(s?.new_guests ?? 0) },
+                ...(isOwner ? [
+                  { label: `${overheadCardLabel} · ${monthLabel ?? "30d"}`, value: overheadReady ? peso(overheadFigure) : "—" },
+                  { label: `Profit · ${monthLabel ?? "30d"}`, value: overheadReady ? signedPeso(profit) : "—" },
+                ] : []),
               ].map((item) => (
                 <div key={item.label} style={{ background: "#fff", padding: "20px 22px" }}>
-                  <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 24, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1, color: "#1f1b16" }}>{item.value}</div>
+                  <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 24, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1,
+                    color: item.label.startsWith("Profit") && overheadReady && profit < 0 ? "#9a4a3a" : "#1f1b16" }}>{item.value}</div>
                   <div style={{ fontSize: 12, color: "#8a8276", marginTop: 8 }}>{item.label}</div>
                 </div>
               ))}
@@ -1960,6 +2017,7 @@ export default function OwnerDashboard() {
             <div style={{ background: "#fff", border: "1px solid #ece5d4" }}>
               <div style={{ padding: "18px 24px", borderBottom: "1px solid #ece5d4" }}>
                 <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, margin: 0, lineHeight: 1, color: "#1f1b16" }}>Revenue by haven</h3>
+                <p style={{ fontSize: 12, color: "#8a8276", margin: "8px 0 0" }}>{monthLabel ?? "Last 30 days"}</p>
               </div>
               <div className="grid" style={{ gridTemplateColumns: "2fr 1fr 1fr 1.4fr", gap: 16, padding: "12px 24px", background: "#faf7f1", borderBottom: "1px solid #ece5d4", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "#8a8276" }}>
                 <span>Haven</span><span style={{ textAlign: "right" }}>Bookings</span><span style={{ textAlign: "right" }}>Revenue</span><span>Share</span>
