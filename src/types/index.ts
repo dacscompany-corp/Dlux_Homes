@@ -41,6 +41,11 @@ export interface Room {
   basePax: number;
   maxPax: number;
   images: string[];
+  // "About this home" collage on the room detail page — sourced from the
+  // haven's Photo Tour categories (diningArea/pool/exterior), owner-editable
+  // in Haven Management without a code change. Falls back to static defaults
+  // when a haven has none uploaded yet.
+  aboutPhotos: { src: string; alt: string }[];
   amenities: string[];
   stayTypes: StayType[];
   // Check-in/out windows sourced from the haven's configured times. Optional so

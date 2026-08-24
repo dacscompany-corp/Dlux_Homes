@@ -43,6 +43,7 @@ CREATE TABLE haven_images (
     image_url TEXT NOT NULL,
     cloudinary_public_id VARCHAR(255),
     display_order INTEGER DEFAULT 0,
+    is_primary BOOLEAN NOT NULL DEFAULT false,
     uploaded_at TIMESTAMP DEFAULT NOW(),
 
     CONSTRAINT fk_haven_images
@@ -50,6 +51,10 @@ CREATE TABLE haven_images (
         REFERENCES havens(uuid_id)
         ON DELETE CASCADE
 );
+
+-- At most one primary (cover) image per haven.
+CREATE UNIQUE INDEX uniq_haven_primary_image
+    ON haven_images (haven_id) WHERE is_primary;
 
 
 -- ===============================================

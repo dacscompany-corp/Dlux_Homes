@@ -34,6 +34,11 @@ export const mockRooms = [
       "/images/rooms/8.jpg",
       "/images/rooms/10.jpg",
     ],
+    aboutPhotos: [
+      { src: "/images/rooms/dining.png", alt: "Dining area" },
+      { src: "/images/rooms/garden.jpg", alt: "Landscaped garden courtyard" },
+      { src: "/images/rooms/tower.jpg", alt: "Tower 4 Grass Residences" },
+    ],
     amenities: [
       "Free WiFi",
       "Air Conditioning",

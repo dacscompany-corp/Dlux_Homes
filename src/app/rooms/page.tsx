@@ -850,15 +850,11 @@ export default function BrowsePage() {
             </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gridAutoRows: "118px", gridAutoFlow: "dense", gap: 16 }}>
-            {[
-              { src: "/images/rooms/dining.png", alt: "Dining area with TV", span: 3 },
-              { src: "/images/rooms/garden.jpg", alt: "Landscaped garden courtyard", span: 2 },
-              { src: "/images/rooms/tower.jpg", alt: "Tower 4 Grass Residences at dusk", span: 2 },
-            ].map((p, i) => (
+            {room.aboutPhotos.map((p, i) => (
               <div
                 key={i}
                 className="about-photo"
-                style={{ transitionDelay: `${120 + i * 100}ms`, borderRadius: 20, overflow: "hidden", background: "var(--bg-2)", gridRow: `span ${p.span}`, position: "relative" }}
+                style={{ transitionDelay: `${120 + i * 100}ms`, borderRadius: 20, overflow: "hidden", background: "var(--bg-2)", gridRow: `span ${i === 0 ? 3 : 2}`, position: "relative" }}
               >
                 <Image className="about-photo__img" src={p.src} alt={p.alt} fill unoptimized style={{ objectFit: "cover" }} />
                 <span className="about-photo__overlay" />
