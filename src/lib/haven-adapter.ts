@@ -17,11 +17,32 @@ type RoomExtras = {
 export function havenToRoom(h: Record<string, unknown>): Room & RoomExtras {
   const m = mockRooms[0] as unknown as RoomExtras;
   const imageRows = Array.isArray(h.images) ? (h.images as Record<string, unknown>[]) : [];
+  // The owner-picked cover photo (is_primary) always leads, regardless of
+  // display_order — see 2026-08-24-add-primary-flag-to-haven-images.sql.
   const images = imageRows
     .slice()
-    .sort((a, b) => Number(a.display_order ?? 0) - Number(b.display_order ?? 0))
+    .sort((a, b) => {
+      const primaryDiff = Number(b.is_primary === true) - Number(a.is_primary === true);
+      if (primaryDiff !== 0) return primaryDiff;
+      return Number(a.display_order ?? 0) - Number(b.display_order ?? 0);
+    })
     .map((i) => String(i.image_url ?? ""))
     .filter(Boolean);
+
+  // "About this home" collage: one photo each from the diningArea, pool, and
+  // exterior Photo Tour categories (uploaded via Haven Management → Photo
+  // Tour step), lowest display_order per category. Falls back to the static
+  // launch photos for any category the owner hasn't uploaded yet.
+  const tourRows = Array.isArray(h.photo_tours) ? (h.photo_tours as Record<string, unknown>[]) : [];
+  const firstOfCategory = (category: string): string | undefined =>
+    tourRows
+      .filter((t) => t.category === category && t.image_url)
+      .sort((a, b) => Number(a.display_order ?? 0) - Number(b.display_order ?? 0))[0]?.image_url as string | undefined;
+  const aboutPhotos = [
+    { src: firstOfCategory("diningArea") ?? "/images/rooms/dining.png", alt: "Dining area" },
+    { src: firstOfCategory("pool") ?? "/images/rooms/garden.jpg", alt: "Landscaped garden courtyard" },
+    { src: firstOfCategory("exterior") ?? "/images/rooms/tower.jpg", alt: "Tower 4 Grass Residences" },
+  ];
 
   const amenityRows = Array.isArray(h.verified_amenities) ? (h.verified_amenities as Record<string, unknown>[]) : [];
   const amenities = amenityRows.map((a) => String(a.label ?? a.key ?? "")).filter(Boolean);
@@ -92,6 +113,7 @@ export function havenToRoom(h: Record<string, unknown>): Room & RoomExtras {
     // Keep a local placeholder if the haven has no uploaded images yet, so the
     // storefront never renders broken/empty galleries.
     images: images.length ? images : ["/images/rooms/1.jpg"],
+    aboutPhotos,
     amenities,
     stayTypes: ["10-Hour", "21-Hour"],
     windows,
