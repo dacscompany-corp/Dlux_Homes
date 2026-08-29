@@ -1,6 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import pool from "@/backend/config/db";
+import { parseGuestMessage } from "@/lib/messenger-intent";
+import {
+  availabilityReply,
+  priceReply,
+  openDatesReply,
+  overCapacityReply,
+  askForDatesReply,
+} from "@/lib/messenger-reply";
+import {
+  loadHavenContext,
+  loadCalendarRules,
+  openWindowsOn,
+  isRangeOpen,
+  openDatesAhead,
+} from "@/lib/availability";
+import { havenToRoom } from "@/lib/haven-adapter";
 
 // Facebook Messenger webhook for the D'Lux Homes page.
 // A guest sends their booking ID (e.g. "DL-BK1762050261") and the bot replies with
@@ -70,23 +86,94 @@ async function handleMessage(senderId: string, text: string): Promise<void> {
     await send(senderId, `Your Messenger PSID is:\n${senderId}\n\nSet this as MESSENGER_ADMIN_PSID to receive booking alerts here.`);
     return;
   }
-  const match = text.match(/DL-BK\d{6,}/i);
-  if (match) {
-    await send(senderId, await lookupReply(match[0].toUpperCase()));
+  const intent = parseGuestMessage(text, new Date());
+
+  if (intent.kind === "bookingId") {
+    await send(senderId, await lookupReply(intent.id));
     return;
   }
-  // Asking about a booking but no ID given — prompt for it.
-  if (ASKS_ABOUT_BOOKING.test(text)) {
-    await send(senderId, "Sure! 👋 Please send your Booking ID and I'll check it for you — it looks like DL-BK1762050261 and is in your D'Lux Homes confirmation email.");
+  // Rates and availability used to be left entirely to the page inbox. The bot
+  // answers those now; anything it cannot read is still left alone rather than
+  // guessed at, so staff keep the general conversation.
+  if (intent.kind === "none") return;
+
+  const pax = "pax" in intent && intent.pax ? intent.pax : DEFAULT_PAX;
+  if (pax > CAPACITY) {
+    await send(senderId, overCapacityReply(pax, CAPACITY));
     return;
   }
-  // Everything else (rates, availability, general inquiries) is left to the
-  // page inbox — staff answer those, and a bot reply would talk over them.
+
+  try {
+    const [ctx, rules, room] = await Promise.all([
+      loadHavenContext(),
+      loadCalendarRules(),
+      loadRoom(),
+    ]);
+    if (!ctx || !room) return;
+
+    if (intent.kind === "openDates") {
+      const dates = await openDatesAhead(OPEN_DATES_HORIZON, ctx);
+      await send(senderId, openDatesReply(dates, OPEN_DATES_HORIZON));
+      return;
+    }
+
+    if (intent.kind === "price") {
+      await send(
+        senderId,
+        priceReply({ rates: room, windows: ctx.windows, extraPaxFee: room.additionalPaxFee }),
+      );
+      return;
+    }
+
+    // A 10-hour session cannot span nights, so a date RANGE offers Overnight only.
+    const nights = intent.to ? nightsBetween(intent.from, intent.to) : 1;
+    const open =
+      nights > 1
+        ? (
+            await Promise.all(
+              ctx.windows.map(async (w) =>
+                w.stayType === "21" && (await isRangeOpen(intent.from, nights, w, ctx)) ? w : null,
+              ),
+            )
+          ).filter((w): w is NonNullable<typeof w> => w !== null)
+        : await openWindowsOn(intent.from, ctx);
+
+    await send(
+      senderId,
+      availabilityReply({
+        from: intent.from,
+        to: intent.to,
+        nights,
+        pax,
+        windows: open,
+        rates: room,
+        extraPaxFee: room.additionalPaxFee,
+        bookingUrl: BOOKING_URL,
+        rules,
+      }),
+    );
+  } catch (e) {
+    console.error("[messenger] availability error", e);
+    await send(senderId, askForDatesReply());
+  }
 }
 
-// "check my booking status", "pa-check po ng reservation", etc.
-const ASKS_ABOUT_BOOKING =
-  /\b(booking|reservation|reserbasyon)\b[\s\S]{0,30}\b(status|check|tsek)\b|\b(status|check|tsek)\b[\s\S]{0,30}\b(booking|reservation|reserbasyon)\b/i;
+const OPEN_DATES_HORIZON = 14;
+const CAPACITY = 4;
+const DEFAULT_PAX = 2;
+const BOOKING_URL = "dlux-homes.vercel.app";
+
+/** Whole nights between two Manila calendar dates. */
+function nightsBetween(fromISO: string, toISO: string): number {
+  const ms = Date.parse(`${toISO}T00:00:00Z`) - Date.parse(`${fromISO}T00:00:00Z`);
+  return Math.max(1, Math.round(ms / 86_400_000));
+}
+
+/** The single haven, mapped to the storefront's rate fields. */
+async function loadRoom() {
+  const r = await pool.query(`SELECT * FROM havens LIMIT 1`);
+  return r.rows[0] ? havenToRoom(r.rows[0]) : null;
+}
 
 async function lookupReply(bookingId: string): Promise<string> {
   try {

@@ -53,3 +53,19 @@ export function occupyingBookingSql(alias = "b"): string {
     )
   )`;
 }
+
+/**
+ * SQL for an existing booking's start and end timestamps.
+ *
+ * These lived as private constants in bookingController, which meant anything
+ * else needing the same conflict test had to retype them — and a retyped copy
+ * is a copy that drifts. They sit here beside occupyingBookingSql() because
+ * they answer the same question: which span of time does this booking hold?
+ *
+ * '00:00' checkout means end-of-day midnight, so it belongs to the NEXT day.
+ * Both are interpolated raw and reference the alias `b` — never pass user input.
+ */
+export const EXISTING_START_SQL = `(b.check_in_date::DATE + b.check_in_time::TIME)::TIMESTAMP`;
+export const EXISTING_END_SQL = `(CASE WHEN b.check_out_time = '00:00'
+        THEN (b.check_out_date::DATE + INTERVAL '1 day')::TIMESTAMP
+        ELSE (b.check_out_date::DATE + b.check_out_time::TIME)::TIMESTAMP END)`;
