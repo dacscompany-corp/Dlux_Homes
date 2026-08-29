@@ -1,0 +1,168 @@
+import { describe, it, expect } from "vitest";
+import {
+  peso,
+  quoteFor,
+  availabilityReply,
+  priceReply,
+  openDatesReply,
+  overCapacityReply,
+  askForDatesReply,
+  type StayWindow,
+} from "./messenger-reply";
+
+const RATES = {
+  price10hr: 1499,
+  price10hrWeekend: 1799,
+  price21hr: 1899,
+  price21hrWeekend: 2099,
+  longtermActive: false,
+};
+
+// Mirrors the LIVE owner config: pricing_settings.weekend_days is [5,6], so
+// Fri/Sat price as weekend and SUNDAY DOES NOT. Passed explicitly rather than
+// defaulted so these tests never depend on the database.
+const RULES = {
+  weekendDays: new Set([5, 6]),
+  holidays: new Set(["2026-12-25"]),
+};
+
+const OVERNIGHT: StayWindow = { stayType: "21", label: "Overnight", checkIn: "19:00", checkOut: "17:00" };
+const DAYCATION: StayWindow = { stayType: "10", label: "Daycation", checkIn: "07:00", checkOut: "17:00" };
+const NIGHTCATION: StayWindow = { stayType: "10", label: "Nightcation", checkIn: "19:00", checkOut: "05:00" };
+
+describe("peso", () => {
+  it("formats with a thousands separator and no decimals", () => {
+    expect(peso(2099)).toBe("₱2,099");
+    expect(peso(12500)).toBe("₱12,500");
+  });
+});
+
+describe("quoteFor", () => {
+  // 2026-08-29 is a Saturday -> weekend rate.
+  it("prices a weekend overnight at the weekend rate", () => {
+    expect(quoteFor(OVERNIGHT, "2026-08-29", 1, 2, RATES, 200, RULES)).toBe(2099);
+  });
+
+  // 2026-09-02 is a Wednesday -> weekday rate.
+  it("prices a weekday overnight at the weekday rate", () => {
+    expect(quoteFor(OVERNIGHT, "2026-09-02", 1, 2, RATES, 200, RULES)).toBe(1899);
+  });
+
+  // Guards the live Fri/Sat config: a Sunday is NOT a weekend day here, even
+  // though agent_docs/business-rules.md describes weekends as Fri/Sat/Sun.
+  // If the owner ever adds Sunday in the admin, this test flips — by design.
+  it("prices a Sunday at the weekday rate under the live Fri/Sat rule", () => {
+    expect(quoteFor(OVERNIGHT, "2026-08-30", 1, 2, RATES, 200, RULES)).toBe(1899);
+  });
+
+  it("prices a holiday at the weekend rate", () => {
+    expect(quoteFor(OVERNIGHT, "2026-12-25", 1, 2, RATES, 200, RULES)).toBe(2099);
+  });
+
+  it("prices a weekend daycation at the 10-hour weekend rate", () => {
+    expect(quoteFor(DAYCATION, "2026-08-29", 1, 2, RATES, 200, RULES)).toBe(1799);
+  });
+
+  it("adds the extra-pax fee per night", () => {
+    // 2 nights weekday overnight = 1899*2, plus 1 extra pax * 200 * 2 nights.
+    expect(quoteFor(OVERNIGHT, "2026-09-02", 2, 3, RATES, 200, RULES)).toBe(1899 * 2 + 400);
+  });
+
+  it("charges a 10-hour session's extra pax once, not per night", () => {
+    expect(quoteFor(DAYCATION, "2026-09-02", 1, 3, RATES, 200, RULES)).toBe(1499 + 200);
+  });
+
+  it("prices each night of a range by that night's own day", () => {
+    // Thu 2026-09-03 (weekday) + Fri 2026-09-04 (weekend).
+    expect(quoteFor(OVERNIGHT, "2026-09-03", 2, 2, RATES, 200, RULES)).toBe(1899 + 2099);
+  });
+});
+
+describe("availabilityReply", () => {
+  it("lists every open window with its price", () => {
+    // Saturday, so every line carries the weekend rate.
+    const msg = availabilityReply({
+      from: "2026-08-29",
+      nights: 1,
+      pax: 2,
+      windows: [OVERNIGHT, DAYCATION, NIGHTCATION],
+      rates: RATES,
+      extraPaxFee: 200,
+      bookingUrl: "dlux-homes.vercel.app",
+      rules: RULES,
+    });
+    expect(msg).toContain("Available po kami");
+    expect(msg).toContain("Overnight");
+    expect(msg).toContain("₱2,099");
+    expect(msg).toContain("Daycation");
+    expect(msg).toContain("Nightcation");
+    expect(msg).toContain("₱1,799");
+    expect(msg).toContain("50%");
+  });
+
+  it("says fully booked when nothing is open", () => {
+    const msg = availabilityReply({
+      from: "2026-08-30",
+      nights: 1,
+      pax: 2,
+      windows: [],
+      rates: RATES,
+      extraPaxFee: 200,
+      bookingUrl: "dlux-homes.vercel.app",
+      rules: RULES,
+    });
+    expect(msg).toContain("fully booked");
+    expect(msg).not.toContain("₱");
+  });
+
+  it("states the night count for a multi-night range", () => {
+    const msg = availabilityReply({
+      from: "2026-09-04",
+      to: "2026-09-06",
+      nights: 2,
+      pax: 2,
+      windows: [OVERNIGHT],
+      rates: RATES,
+      extraPaxFee: 200,
+      bookingUrl: "dlux-homes.vercel.app",
+      rules: RULES,
+    });
+    expect(msg).toContain("2 nights");
+  });
+});
+
+describe("priceReply", () => {
+  it("lists both weekday and weekend rates for every stay type", () => {
+    const msg = priceReply({ rates: RATES, windows: [OVERNIGHT, DAYCATION, NIGHTCATION], extraPaxFee: 200 });
+    expect(msg).toContain("₱1,899");
+    expect(msg).toContain("₱2,099");
+    expect(msg).toContain("₱1,499");
+    expect(msg).toContain("₱1,799");
+    expect(msg).toContain("₱200");
+  });
+});
+
+describe("openDatesReply", () => {
+  it("lists the open dates", () => {
+    const msg = openDatesReply(["2026-08-30", "2026-09-01"], 14);
+    expect(msg).toContain("Aug 30");
+    expect(msg).toContain("Sep 1");
+    expect(msg).toContain("Daycation");
+  });
+
+  it("says fully booked when the horizon has no open date", () => {
+    expect(openDatesReply([], 14)).toContain("fully booked");
+  });
+});
+
+describe("guard replies", () => {
+  it("explains the 4-pax cap and hands off to staff", () => {
+    const msg = overCapacityReply(6, 4);
+    expect(msg).toContain("4");
+    expect(msg).toContain("6");
+  });
+
+  it("asks for dates in Taglish", () => {
+    expect(askForDatesReply()).toMatch(/dates/i);
+  });
+});

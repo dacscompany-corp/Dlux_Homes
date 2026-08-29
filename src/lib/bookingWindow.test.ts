@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { isStartBookable, occupyingBookingSql, MIN_LEAD_MINUTES } from "./bookingWindow";
+import {
+  isStartBookable,
+  occupyingBookingSql,
+  MIN_LEAD_MINUTES,
+  EXISTING_START_SQL,
+  EXISTING_END_SQL,
+} from "./bookingWindow";
 
 const at = (iso: string) => new Date(iso).getTime();
 
@@ -67,5 +73,17 @@ describe("occupyingBookingSql", () => {
 
   it("defaults to the b alias used by the booking queries", () => {
     expect(occupyingBookingSql()).toContain("b.status");
+  });
+});
+
+describe("shared conflict SQL fragments", () => {
+  it("expresses an existing booking's start from its check-in columns", () => {
+    expect(EXISTING_START_SQL).toContain("b.check_in_date");
+    expect(EXISTING_START_SQL).toContain("b.check_in_time");
+  });
+
+  it("treats a '00:00' checkout as the next day's midnight", () => {
+    expect(EXISTING_END_SQL).toContain("'00:00'");
+    expect(EXISTING_END_SQL).toContain("INTERVAL '1 day'");
   });
 });
