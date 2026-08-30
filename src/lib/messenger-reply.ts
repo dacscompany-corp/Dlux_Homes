@@ -208,13 +208,12 @@ export function availabilityReply(args: {
   windows: StayWindow[];
   rates: RateFields;
   extraPaxFee: number;
-  bookingUrl: string;
   rules: CalendarRules;
   stay?: StayLabel;
   timeAsk?: boolean;
   requestedTime?: string;
 }): string {
-  const { from, to, nights, pax, windows, rates, bookingUrl, rules, stay } = args;
+  const { from, to, nights, pax, windows, rates, rules, stay } = args;
   const span = to
     ? `${shortDate(from)}–${shortDate(to)} (${nights} nights)`
     : `${shortDate(from)} (${dayName(from)})`;
@@ -269,8 +268,43 @@ export function availabilityReply(args: {
     (args.timeAsk
       ? `${timeNote(quoted.length === 1 ? quoted[0] : undefined, args.requestedTime)}\n\n`
       : "") +
-    `${rateNote} 50% down payment po para ma-reserve. ` +
-    `Book po kayo dito: ${bookingUrl}`
+    rateNote
+  );
+}
+
+/**
+ * The four "before you pay" terms, sent as its own message after a quote.
+ *
+ * A guest used to see only the down payment before being handed a booking
+ * link — the no-refund rule, the date-change window and the fact that the form
+ * is a request rather than a confirmed booking all went unmentioned until the
+ * checkout page. Sending it separately keeps the quote scannable: Messenger
+ * renders consecutive sends as their own bubbles, which separates the two far
+ * better than blank lines inside one wall of text.
+ *
+ * These are editorial summaries of §2, §7 and §8, the same four cards as
+ * HERO_CARDS in app/terms/page.tsx — REVIEW BOTH whenever those clauses change.
+ * The Terms page remains the authority; this only warns the guest earlier.
+ */
+export function bookingTermsReply(bookingUrl: string): string {
+  return (
+    `📌 BASAHIN PO BAGO MAG-BOOK\n\n` +
+    `💳 BAYAD\n` +
+    `50% down payment po para ma-reserve ang date niyo. Ang natitirang 50% at ` +
+    `ang ₱1,000 refundable deposit ay babayaran po sa check-in. GCash o BPI po.\n\n` +
+    `🚫 WALANG CANCELLATION AT REFUND\n` +
+    `Kapag confirmed na po ang booking, hindi na po ito pwedeng i-cancel at hindi ` +
+    `na po maibabalik ang bayad — down payment man o balance. Kapag hindi po kayo ` +
+    `dumating, mawawala po ang binayad niyo.\n\n` +
+    `📅 ISANG LIBRENG DATE CHANGE\n` +
+    `Kung magbabago po ang plano, mag-message po kayo nang 7 araw man lang bago ang ` +
+    `check-in. Ang bagong date po ay dapat nasa loob ng 1 buwan mula sa orihinal. ` +
+    `Lampas po doon, nasa amin na ang desisyon.\n\n` +
+    `📝 REQUEST PA LANG ANG FORM\n` +
+    `Ang pag-send po ng booking form ay request, hindi pa po confirmed na booking. ` +
+    `Kung hindi po ma-approve o mag-expire ito, ibabalik po namin nang buo ang ` +
+    `down payment niyo.\n\n` +
+    `Kung ready na po kayo, book po kayo dito:\n${bookingUrl}`
   );
 }
 

@@ -8,6 +8,7 @@ import {
   overCapacityReply,
   askForDatesReply,
   stayTimeReply,
+  bookingTermsReply,
   type StayWindow,
 } from "./messenger-reply";
 
@@ -137,7 +138,6 @@ describe("availabilityReply", () => {
       windows: [OVERNIGHT, DAYCATION, NIGHTCATION],
       rates: RATES,
       extraPaxFee: 200,
-      bookingUrl: "dlux-homes.vercel.app",
       rules: RULES,
     });
     expect(msg).toContain("Available po kami");
@@ -146,7 +146,8 @@ describe("availabilityReply", () => {
     expect(msg).toContain("Daycation");
     expect(msg).toContain("Nightcation");
     expect(msg).toContain("₱1,799");
-    expect(msg).toContain("50%");
+    // The payment terms now travel in bookingTermsReply, as their own message.
+    expect(msg).toContain("Weekend/holiday rate po ang date na 'yan.");
   });
 
   it("says fully booked when nothing is open", () => {
@@ -157,7 +158,6 @@ describe("availabilityReply", () => {
       windows: [],
       rates: RATES,
       extraPaxFee: 200,
-      bookingUrl: "dlux-homes.vercel.app",
       rules: RULES,
     });
     expect(msg).toContain("fully booked");
@@ -173,7 +173,6 @@ describe("availabilityReply", () => {
       windows: [OVERNIGHT],
       rates: LONGTERM,
       extraPaxFee: 200,
-      bookingUrl: "dlux-homes.vercel.app",
       rules: RULES,
     });
     expect(msg).toContain("₱25,186");
@@ -190,7 +189,6 @@ describe("availabilityReply", () => {
       windows: [OVERNIGHT],
       rates: RATES,
       extraPaxFee: 200,
-      bookingUrl: "dlux-homes.vercel.app",
       rules: RULES,
     });
     expect(msg).toContain("2 nights");
@@ -287,7 +285,6 @@ describe("availabilityReply — time note", () => {
       windows: [DAYCATION],
       rates: RATES,
       extraPaxFee: 200,
-      bookingUrl: "dlux-homes.vercel.app",
       rules: RULES,
       timeAsk: true,
     });
@@ -303,7 +300,6 @@ describe("availabilityReply — time note", () => {
       windows: [OVERNIGHT],
       rates: RATES,
       extraPaxFee: 200,
-      bookingUrl: "dlux-homes.vercel.app",
       rules: RULES,
       stay: "Overnight",
       timeAsk: true,
@@ -321,7 +317,6 @@ describe("availabilityReply — time note", () => {
       windows: [DAYCATION, NIGHTCATION, OVERNIGHT],
       rates: RATES,
       extraPaxFee: 200,
-      bookingUrl: "dlux-homes.vercel.app",
       rules: RULES,
       timeAsk: true,
     });
@@ -337,7 +332,6 @@ describe("availabilityReply — time note", () => {
       windows: [DAYCATION],
       rates: RATES,
       extraPaxFee: 200,
-      bookingUrl: "dlux-homes.vercel.app",
       rules: RULES,
     });
     expect(out).not.toContain("fixed po ang check-out");
@@ -352,7 +346,6 @@ describe("availabilityReply — narrowed to the stay type the guest named", () =
     pax: 4,
     rates: RATES,
     extraPaxFee: 200,
-    bookingUrl: "dlux-homes.vercel.app",
     rules: RULES,
   };
 
@@ -421,5 +414,48 @@ describe("priceReply — narrowed and pax-aware", () => {
     expect(out).toContain("good for 2 pax");
     expect(out).toContain("Weekday ₱1,899 · Weekend/Holiday ₱2,099");
     expect(out).toContain("Extra pax po ₱200");
+  });
+});
+
+describe("bookingTermsReply", () => {
+  const out = bookingTermsReply("dlux-homes.vercel.app");
+
+  it("covers all four before-you-pay cards", () => {
+    expect(out).toContain("50% down payment"); // 02 what you pay
+    expect(out).toContain("₱1,000 refundable deposit");
+    expect(out).toContain("WALANG CANCELLATION AT REFUND"); // 01 most important
+    expect(out).toContain("ISANG LIBRENG DATE CHANGE"); // 03 if plans change
+    expect(out).toContain("7 araw man lang bago ang check-in");
+    expect(out).toContain("1 buwan mula sa orihinal");
+    expect(out).toContain("REQUEST PA LANG ANG FORM"); // 04 before you book
+  });
+
+  it("closes with the ready prompt and the booking link", () => {
+    expect(out).toContain("Kung ready na po kayo, book po kayo dito:\ndlux-homes.vercel.app");
+  });
+
+  it("separates each section with a blank line", () => {
+    expect(out.split("\n\n").length).toBeGreaterThanOrEqual(6);
+  });
+
+  it("fits in a single Messenger message", () => {
+    expect(out.length).toBeLessThan(2000);
+  });
+});
+
+describe("availabilityReply — no longer carries the CTA", () => {
+  it("ends on the rate note, leaving the link to the terms message", () => {
+    const out = availabilityReply({
+      from: "2026-12-01",
+      nights: 1,
+      pax: 2,
+      windows: [OVERNIGHT],
+      rates: RATES,
+      extraPaxFee: 200,
+      rules: RULES,
+      stay: "Overnight",
+    });
+    expect(out).not.toContain("dlux-homes.vercel.app");
+    expect(out.trimEnd().endsWith("Weekday rate po ang date na 'yan.")).toBe(true);
   });
 });

@@ -9,6 +9,7 @@ import {
   overCapacityReply,
   askForDatesReply,
   stayTimeReply,
+  bookingTermsReply,
 } from "@/lib/messenger-reply";
 import {
   loadHavenContext,
@@ -162,13 +163,16 @@ async function handleMessage(senderId: string, text: string): Promise<void> {
         windows: open,
         rates: room,
         extraPaxFee: room.additionalPaxFee,
-        bookingUrl: BOOKING_URL,
         rules,
         stay: intent.stay,
         timeAsk: intent.timeAsk,
         requestedTime: intent.requestedTime,
       }),
     );
+
+    // The terms follow the quote as their own bubble, and only when there is
+    // something to book — a fully-booked date has no payment terms to warn about.
+    if (open.length > 0) await send(senderId, bookingTermsReply(BOOKING_URL));
   } catch (e) {
     console.error("[messenger] availability error", e);
     await send(senderId, askForDatesReply());
