@@ -19,6 +19,8 @@ import {
   openDatesAhead,
 } from "@/lib/availability";
 import { havenToRoom } from "@/lib/haven-adapter";
+import { mergeContext, nextContext } from "@/lib/messenger-context";
+import { loadContext, saveContext, armFollowUp } from "@/backend/utils/messengerContext";
 
 // Facebook Messenger webhook for the D'Lux Homes page.
 // A guest sends their booking ID (e.g. "DL-BK1762050261") and the bot replies with
@@ -88,7 +90,18 @@ async function handleMessage(senderId: string, text: string): Promise<void> {
     await send(senderId, `Your Messenger PSID is:\n${senderId}\n\nSet this as MESSENGER_ADMIN_PSID to receive booking alerts here.`);
     return;
   }
-  const intent = parseGuestMessage(text, new Date());
+  // A guest's second message is usually a fragment — "4 pax po kami" — that
+  // only makes sense against the date they gave a moment ago. Folding the
+  // remembered enquiry in turns those fragments back into whole questions.
+  const remembered = await loadContext(senderId);
+  const intent = mergeContext(parseGuestMessage(text, new Date()), remembered);
+
+  // Written before any reply is attempted: the guest has spoken, so a pending
+  // follow-up nudge must be disarmed even if answering them fails below. Skipped
+  // only when there is nothing on either side, so passing chatter from someone
+  // who never enquired does not create a row.
+  const remember = nextContext(intent, remembered);
+  if (remember || remembered) await saveContext(senderId, remember);
 
   if (intent.kind === "bookingId") {
     await send(senderId, await lookupReply(intent.id));
@@ -172,7 +185,12 @@ async function handleMessage(senderId: string, text: string): Promise<void> {
 
     // The terms follow the quote as their own bubble, and only when there is
     // something to book — a fully-booked date has no payment terms to warn about.
-    if (open.length > 0) await send(senderId, bookingTermsReply(BOOKING_URL));
+    // The same condition arms the follow-up nudge: chasing someone who was told
+    // "fully booked", or who only looked up a booking ID, would make no sense.
+    if (open.length > 0) {
+      await send(senderId, bookingTermsReply(BOOKING_URL));
+      await armFollowUp(senderId);
+    }
   } catch (e) {
     console.error("[messenger] availability error", e);
     await send(senderId, askForDatesReply());
