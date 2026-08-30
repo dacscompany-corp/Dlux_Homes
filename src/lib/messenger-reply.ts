@@ -16,6 +16,7 @@ import {
   isWeekendOrHoliday,
   type CalendarRules,
 } from "./pricing";
+import { spanHours } from "./stay-window";
 
 /**
  * The rate fields pricing.ts needs. Declared here rather than imported because
@@ -115,6 +116,70 @@ export function quoteFor(
   return room + paxFee;
 }
 
+/**
+ * The house rule in one sentence, for a guest who asked about a date and a time
+ * in the same message. The full schedule block would bury the quote they came
+ * for, so the date reply gets only this.
+ */
+export function timeNote(): string {
+  return (
+    `Pwede po kayong mag-check in nang mas huli, pero fixed po ang check-out ` +
+    `time at ang rate.`
+  );
+}
+
+/** The `count` whole hours after `hhmm`, as "8AM, 9AM, 10AM, 11AM". */
+function laterHours(hhmm: string, count: number): string {
+  const m = hhmm.match(/^(\d{1,2}):/);
+  if (!m) return "";
+  const start = Number(m[1]);
+  return Array.from({ length: count }, (_, i) =>
+    t12(`${String((start + i + 1) % 24).padStart(2, "0")}:00`),
+  ).join(", ");
+}
+
+/**
+ * "Anong oras ang check-in?" — and the rule behind the answer.
+ *
+ * Check-in is the only flexible part: a guest may arrive later than the
+ * scheduled hour, but the check-out time and the rate never move with them. A
+ * noon arrival on a Daycation still leaves at the posted check-out and still
+ * pays the full rate, so the reply states both times outright before explaining
+ * that a late arrival only shortens the stay.
+ *
+ * Every time comes from the haven's own windows, so editing the schedule in the
+ * admin changes this reply too — the old copy's literal "7AM–5PM" would have
+ * gone stale silently.
+ */
+export function stayTimeReply(windows: StayWindow[]): string {
+  if (windows.length === 0) {
+    return (
+      `Fixed po ang check-out time at ang rate namin — hindi po nagbabago kahit ` +
+      `mas huli kayo mag-check in. Mag-message lang po kayo dito para sa exact schedule.`
+    );
+  }
+
+  const lines = windows.map((w) => {
+    const span = spanHours(w.checkIn, w.checkOut);
+    return (
+      `• ${w.label} — Check-in ${t12(w.checkIn)} · Check-out ${t12(w.checkOut)}` +
+      (span == null ? "" : ` (${span}h)`)
+    );
+  });
+
+  // Name a real window in the example so it cannot contradict the list above.
+  const sample = windows.find((w) => w.label === "Daycation") ?? windows[0];
+
+  return (
+    `Standard po ang schedule namin:\n\n` +
+    `${lines.join("\n")}\n\n` +
+    `Fixed po ang check-out time at ang rate. Pwede po kayong mag-check in nang ` +
+    `mas huli — ${laterHours(sample.checkIn, 4)} — pero ${t12(sample.checkOut)} pa rin ` +
+    `po ang check-out ng ${sample.label}, at ganoon pa rin po ang bayad.\n\n` +
+    `Kaya mas maaga po kayo mag-check in, mas sulit po ang stay niyo. 🙂`
+  );
+}
+
 export function availabilityReply(args: {
   from: string;
   to?: string;
@@ -125,6 +190,7 @@ export function availabilityReply(args: {
   extraPaxFee: number;
   bookingUrl: string;
   rules: CalendarRules;
+  timeAsk?: boolean;
 }): string {
   const { from, to, nights, pax, windows, rates, bookingUrl, rules } = args;
   const span = to
@@ -156,6 +222,7 @@ export function availabilityReply(args: {
   return (
     `Available po kami sa ${span} for ${pax} pax:\n\n` +
     `${lines.join("\n")}\n\n` +
+    (args.timeAsk ? `${timeNote()}\n\n` : "") +
     `${rateNote} 50% down payment po para ma-reserve. ` +
     `Book po kayo dito: ${bookingUrl}`
   );

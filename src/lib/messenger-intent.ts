@@ -7,9 +7,10 @@
  * UTC, because a guest saying "aug 30" means the Manila day.
  */
 export type Intent =
-  | { kind: "availability"; from: string; to?: string; pax?: number }
+  | { kind: "availability"; from: string; to?: string; pax?: number; timeAsk?: true }
   | { kind: "price"; nights?: number; pax?: number }
   | { kind: "openDates" }
+  | { kind: "stayTime" }
   | { kind: "bookingId"; id: string }
   | { kind: "none" };
 
@@ -28,6 +29,14 @@ const AVAILABILITY = /\b(available|availability|meron|bakante|vacant|open)\b|\bm
 const PRICE = /\brates?\b|\bhow\s+much\b|\bhm\b|\bmagkano\b|\bpresyo\b|\bprice\b/i;
 const NIGHTS = /(\d+)\s*(?:nights?|gabi)\b/i;
 const PAX_NUMERIC = /(\d+)\s*(?:pax|persons?|people|adults?|guests?|tao)\b|\bfor\s+(\d+)\b/i;
+
+// "what time do we check in", asked in either language. `late` carries a word
+// boundary so it cannot swallow "later", which parseDates reads as a date.
+// `gabi` is deliberately absent from CLOCK: NIGHTS already claims it, so
+// "3 gabi" must stay a count of nights rather than become 3 o'clock.
+const TIME_ASK =
+  /\bcheck[\s-]?(?:in|out)\b|\bcheckin\b|\bcheckout\b|\bpasok\b|\banong\s+oras\b|\bwhat\s+time\b|\bilang\s+oras\b|\bearly\b|\blate\b|\bextend\b/i;
+const CLOCK = /\b\d{1,2}(?::\d{2})?\s*(?:am|pm|nn)\b/i;
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const iso = (y: number, m: number, d: number) => `${y}-${pad(m)}-${pad(d)}`;
@@ -61,20 +70,33 @@ function resolveYear(month: number, day: number, today: { y: number; m: number; 
   return candidate >= todayISO ? candidate : iso(today.y + 1, month, day);
 }
 
+// "sept 4-6", "aug 30", "sep 4 to 6". Global so a rejected "may" can be skipped
+// and a genuine date further along the message still found.
+const MONTH_DAY =
+  /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s*(\d{1,2})(?:\s*(?:-|–|to|hanggang)\s*(\d{1,2}))?/gi;
+
+/**
+ * What can follow "may <number>" and prove the guest meant Tagalog "there is"
+ * rather than the month. Without this, "may 5pm check out ba?" quoted May 5 of
+ * next year and "may 4 pax available ba?" quoted May 4 — both dates the guest
+ * never typed. Only "may" needs the guard; no other month name doubles as a
+ * common Tagalog word.
+ */
+const MAY_IS_NOT_MONTH =
+  /^\s*(?::|am|pm|nn|pax|tao|persons?|people|guests?|adults?|nights?|gabi|oras|available|bakante|vacant)\b/i;
+
 function parseDates(
   text: string,
   today: { y: number; m: number; d: number },
 ): { from: string; to?: string } | undefined {
-  // "sept 4-6", "aug 30", "sep 4 to 6"
-  const named = text.match(
-    /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s*(\d{1,2})(?:\s*(?:-|–|to|hanggang)\s*(\d{1,2}))?/i,
-  );
-  if (named) {
-    const month = MONTHS[named[1].toLowerCase()];
-    const from = resolveYear(month, Number(named[2]), today);
-    if (named[3]) {
+  for (const m of text.matchAll(MONTH_DAY)) {
+    const word = m[1].toLowerCase();
+    if (word === "may" && MAY_IS_NOT_MONTH.test(text.slice(m.index + m[0].length))) continue;
+    const month = MONTHS[word];
+    const from = resolveYear(month, Number(m[2]), today);
+    if (m[3]) {
       const [y] = from.split("-").map(Number);
-      return { from, to: iso(y, month, Number(named[3])) };
+      return { from, to: iso(y, month, Number(m[3])) };
     }
     return { from };
   }
@@ -109,7 +131,7 @@ function parseNights(text: string): number | undefined {
 }
 
 /**
- * Precedence: bookingId → openDates → availability → price → none.
+ * Precedence: bookingId → openDates → availability → stayTime → price → none.
  *
  * A concrete date outranks a bare price keyword, so "rates for sept 4" is read
  * as an availability question about Sept 4 — the reply quotes prices anyway, so
@@ -129,15 +151,23 @@ export function parseGuestMessage(text: string, now: Date): Intent {
   const pax = parsePax(t);
   const nights = parseNights(t);
 
-  if (dates || AVAILABILITY.test(t)) {
-    // "may available po kayo?" with no date at all is really "when are you open?"
-    if (!dates) return { kind: "openDates" };
+  // A time question stands alone only when no date came with it. A guest who
+  // names both wants the date quoted AND the schedule rule, so the flag rides
+  // along on the availability intent rather than replacing it.
+  const timeAsk = TIME_ASK.test(t) || CLOCK.test(t);
 
+  if (dates) {
     const out: Intent = { kind: "availability", from: dates.from };
     if (dates.to) out.to = dates.to;
     if (pax !== undefined) out.pax = pax;
+    if (timeAsk) out.timeAsk = true;
     return out;
   }
+
+  if (timeAsk) return { kind: "stayTime" };
+
+  // "may available po kayo?" with no date at all is really "when are you open?"
+  if (AVAILABILITY.test(t)) return { kind: "openDates" };
 
   // A bare pax/night count with no keyword at all — "2 pax for 3 nights" — is a
   // quote request. Guests routinely send only these numbers, expecting a price

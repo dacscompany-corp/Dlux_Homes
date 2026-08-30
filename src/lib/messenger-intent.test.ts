@@ -84,3 +84,57 @@ describe("parseGuestMessage — other cases", () => {
     expect(parseGuestMessage("   ", NOW)).toEqual({ kind: "none" });
   });
 });
+
+describe("parseGuestMessage — check-in / check-out time questions", () => {
+  it("reads a bare clock time as a stay-time question", () => {
+    expect(parseGuestMessage("pwede po ba 10AM check in?", NOW)).toEqual({ kind: "stayTime" });
+  });
+
+  it("reads anong oras as a stay-time question", () => {
+    expect(parseGuestMessage("anong oras po ang check in?", NOW)).toEqual({ kind: "stayTime" });
+  });
+
+  it("reads an English check-out question", () => {
+    expect(parseGuestMessage("what time is checkout?", NOW)).toEqual({ kind: "stayTime" });
+  });
+
+  it("reads an early check-in question", () => {
+    expect(parseGuestMessage("pwede po ba early check in?", NOW)).toEqual({ kind: "stayTime" });
+  });
+
+  it("flags a date question that also asks about time", () => {
+    const r = parseGuestMessage("sept 5 daycation, ok lang ba 11am?", NOW);
+    expect(r).toEqual({ kind: "availability", from: "2026-09-05", timeAsk: true });
+  });
+
+  it("does not flag a date question with no time in it", () => {
+    expect(parseGuestMessage("aug 30 for 2 pax", NOW)).toEqual({
+      kind: "availability",
+      from: "2026-08-30",
+      pax: 2,
+    });
+  });
+});
+
+describe("parseGuestMessage — Tagalog may is not the month May", () => {
+  it("reads may 5pm as a time question, not May 5", () => {
+    expect(parseGuestMessage("may 5pm check out ba?", NOW)).toEqual({ kind: "stayTime" });
+  });
+
+  it("does not read may 4 pax as May 4", () => {
+    expect(parseGuestMessage("may 4 pax available ba?", NOW)).toEqual({ kind: "openDates" });
+  });
+
+  it("still finds a real date after a Tagalog may", () => {
+    const r = parseGuestMessage("may 2 pax po kami, available ba sept 5?", NOW);
+    expect(r).toEqual({ kind: "availability", from: "2026-09-05", pax: 2 });
+  });
+
+  it("still reads a genuine May date", () => {
+    expect(parseGuestMessage("may 5", NOW)).toEqual({ kind: "availability", from: "2027-05-05" });
+  });
+
+  it("keeps 3 gabi as a night count, not a clock time", () => {
+    expect(parseGuestMessage("3 gabi", NOW)).toEqual({ kind: "price", nights: 3 });
+  });
+});

@@ -8,6 +8,7 @@ import {
   openDatesReply,
   overCapacityReply,
   askForDatesReply,
+  stayTimeReply,
 } from "@/lib/messenger-reply";
 import {
   loadHavenContext,
@@ -117,6 +118,13 @@ async function handleMessage(senderId: string, text: string): Promise<void> {
       return;
     }
 
+    // Check-in is flexible, check-out and rate are not. Answered from the
+    // haven's own windows so it tracks the schedule the owner has saved.
+    if (intent.kind === "stayTime") {
+      await send(senderId, stayTimeReply(ctx.windows));
+      return;
+    }
+
     if (intent.kind === "price") {
       await send(
         senderId,
@@ -150,6 +158,7 @@ async function handleMessage(senderId: string, text: string): Promise<void> {
         extraPaxFee: room.additionalPaxFee,
         bookingUrl: BOOKING_URL,
         rules,
+        timeAsk: intent.timeAsk,
       }),
     );
   } catch (e) {

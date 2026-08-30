@@ -7,6 +7,7 @@ import {
   openDatesReply,
   overCapacityReply,
   askForDatesReply,
+  stayTimeReply,
   type StayWindow,
 } from "./messenger-reply";
 
@@ -229,5 +230,81 @@ describe("guard replies", () => {
 
   it("asks for dates in Taglish", () => {
     expect(askForDatesReply()).toMatch(/dates/i);
+  });
+});
+
+describe("stayTimeReply", () => {
+  const ALL = [DAYCATION, NIGHTCATION, OVERNIGHT];
+
+  it("states the fixed check-in and check-out of every window", () => {
+    const out = stayTimeReply(ALL);
+    expect(out).toContain("Daycation — Check-in 7AM · Check-out 5PM");
+    expect(out).toContain("Nightcation — Check-in 7PM · Check-out 5AM");
+    expect(out).toContain("Overnight — Check-in 7PM · Check-out 5PM");
+  });
+
+  it("shows each window's real length", () => {
+    const out = stayTimeReply(ALL);
+    expect(out).toContain("Check-out 5PM (10h)"); // Daycation 7AM-5PM
+    expect(out).toContain("Check-out 5AM (10h)"); // Nightcation 7PM-5AM
+    expect(out).toContain("Check-out 5PM (22h)"); // Overnight 7PM-5PM
+  });
+
+  it("says the check-out time and the rate are both fixed", () => {
+    const out = stayTimeReply(ALL);
+    expect(out).toContain("Fixed po ang check-out time at ang rate");
+    expect(out).toContain("ganoon pa rin po ang bayad");
+  });
+
+  it("offers later check-in hours drawn from the Daycation window", () => {
+    const out = stayTimeReply(ALL);
+    expect(out).toContain("8AM, 9AM, 10AM, 11AM");
+    expect(out).toContain("5PM pa rin po ang check-out ng Daycation");
+  });
+
+  it("follows an edited schedule instead of hardcoding 7AM-5PM", () => {
+    const shifted: StayWindow[] = [
+      { stayType: "10", label: "Daycation", checkIn: "08:00", checkOut: "18:00" },
+    ];
+    const out = stayTimeReply(shifted);
+    expect(out).toContain("Daycation — Check-in 8AM · Check-out 6PM (10h)");
+    expect(out).toContain("9AM, 10AM, 11AM, 12PM");
+    expect(out).not.toContain("7AM");
+  });
+
+  it("still answers when the haven has no windows saved", () => {
+    const out = stayTimeReply([]);
+    expect(out).toContain("Fixed po ang check-out time");
+  });
+});
+
+describe("availabilityReply — time note", () => {
+  it("appends the fixed check-out rule when the guest asked about time", () => {
+    const out = availabilityReply({
+      from: "2026-09-02",
+      nights: 1,
+      pax: 2,
+      windows: [DAYCATION],
+      rates: RATES,
+      extraPaxFee: 200,
+      bookingUrl: "dlux-homes.vercel.app",
+      rules: RULES,
+      timeAsk: true,
+    });
+    expect(out).toContain("fixed po ang check-out time at ang rate");
+  });
+
+  it("leaves the note out when no time was mentioned", () => {
+    const out = availabilityReply({
+      from: "2026-09-02",
+      nights: 1,
+      pax: 2,
+      windows: [DAYCATION],
+      rates: RATES,
+      extraPaxFee: 200,
+      bookingUrl: "dlux-homes.vercel.app",
+      rules: RULES,
+    });
+    expect(out).not.toContain("fixed po ang check-out");
   });
 });
