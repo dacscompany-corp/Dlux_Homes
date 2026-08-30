@@ -308,3 +308,83 @@ describe("availabilityReply — time note", () => {
     expect(out).not.toContain("fixed po ang check-out");
   });
 });
+
+describe("availabilityReply — narrowed to the stay type the guest named", () => {
+  const ALL = [DAYCATION, NIGHTCATION, OVERNIGHT];
+  const base = {
+    from: "2026-12-01", // a Tuesday -> weekday rate
+    nights: 1,
+    pax: 4,
+    rates: RATES,
+    extraPaxFee: 200,
+    bookingUrl: "dlux-homes.vercel.app",
+    rules: RULES,
+  };
+
+  it("quotes only the window that was asked for", () => {
+    const out = availabilityReply({ ...base, windows: ALL, stay: "Overnight" });
+    expect(out).toContain("Overnight (7PM–5PM) — ₱2,299");
+    expect(out).not.toContain("Daycation");
+    expect(out).not.toContain("Nightcation");
+  });
+
+  it("still lists everything when no stay type was named", () => {
+    const out = availabilityReply({ ...base, windows: ALL });
+    expect(out).toContain("Daycation");
+    expect(out).toContain("Nightcation");
+    expect(out).toContain("Overnight");
+  });
+
+  it("says the requested window is taken and offers what is left", () => {
+    const out = availabilityReply({ ...base, windows: [DAYCATION], stay: "Overnight" });
+    expect(out).toContain("hindi po available ang Overnight");
+    expect(out).toContain("Daycation (7AM–5PM) — ₱1,899");
+  });
+
+  it("falls back to the fully-booked reply when nothing is open", () => {
+    const out = availabilityReply({ ...base, windows: [], stay: "Overnight" });
+    expect(out).toContain("fully booked");
+  });
+
+  it("explains that a Daycation cannot span a date range", () => {
+    const out = availabilityReply({
+      ...base,
+      to: "2026-12-04",
+      nights: 3,
+      windows: [OVERNIGHT],
+      stay: "Daycation",
+    });
+    expect(out).toContain("Isang araw lang po ang Daycation");
+    expect(out).toContain("Overnight");
+  });
+});
+
+describe("priceReply — narrowed and pax-aware", () => {
+  const ALL = [DAYCATION, NIGHTCATION, OVERNIGHT];
+
+  it("shows only the named stay type", () => {
+    const out = priceReply({ rates: RATES, windows: ALL, extraPaxFee: 200, stay: "Overnight" });
+    expect(out).toContain("Overnight (7PM–5PM)");
+    expect(out).not.toContain("Daycation");
+  });
+
+  it("quotes the rate for the pax the guest gave, not the 2-pax base", () => {
+    const out = priceReply({
+      rates: RATES,
+      windows: ALL,
+      extraPaxFee: 200,
+      stay: "Overnight",
+      pax: 4,
+    });
+    expect(out).toContain("for 4 pax");
+    expect(out).toContain("Weekday ₱2,299 · Weekend/Holiday ₱2,499");
+    expect(out).not.toContain("good for 2 pax");
+  });
+
+  it("keeps the 2-pax rate card when no larger group was named", () => {
+    const out = priceReply({ rates: RATES, windows: ALL, extraPaxFee: 200, pax: 2 });
+    expect(out).toContain("good for 2 pax");
+    expect(out).toContain("Weekday ₱1,899 · Weekend/Holiday ₱2,099");
+    expect(out).toContain("Extra pax po ₱200");
+  });
+});

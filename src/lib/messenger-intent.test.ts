@@ -104,7 +104,12 @@ describe("parseGuestMessage — check-in / check-out time questions", () => {
 
   it("flags a date question that also asks about time", () => {
     const r = parseGuestMessage("sept 5 daycation, ok lang ba 11am?", NOW);
-    expect(r).toEqual({ kind: "availability", from: "2026-09-05", timeAsk: true });
+    expect(r).toEqual({
+      kind: "availability",
+      from: "2026-09-05",
+      stay: "Daycation",
+      timeAsk: true,
+    });
   });
 
   it("does not flag a date question with no time in it", () => {
@@ -136,5 +141,63 @@ describe("parseGuestMessage — Tagalog may is not the month May", () => {
 
   it("keeps 3 gabi as a night count, not a clock time", () => {
     expect(parseGuestMessage("3 gabi", NOW)).toEqual({ kind: "price", nights: 3 });
+  });
+});
+
+describe("parseGuestMessage — stay type", () => {
+  it("reads the stay type alongside a date and pax", () => {
+    const r = parseGuestMessage("december 1 overnight 4 pax how much?", NOW);
+    expect(r).toEqual({
+      kind: "availability",
+      from: "2026-12-01",
+      pax: 4,
+      stay: "Overnight",
+    });
+  });
+
+  it("reads a stay type on a dateless price question", () => {
+    expect(parseGuestMessage("overnight 4 pax", NOW)).toEqual({
+      kind: "price",
+      pax: 4,
+      stay: "Overnight",
+    });
+  });
+
+  it("treats a bare stay type as a price question", () => {
+    expect(parseGuestMessage("nightcation po", NOW)).toEqual({
+      kind: "price",
+      stay: "Nightcation",
+    });
+  });
+
+  it("does not mistake nightcation for overnight", () => {
+    expect(parseGuestMessage("nightcation", NOW)).toEqual({ kind: "price", stay: "Nightcation" });
+    expect(parseGuestMessage("night cation", NOW)).toEqual({ kind: "price", stay: "Nightcation" });
+  });
+
+  it("reads the tour wordings", () => {
+    expect(parseGuestMessage("day tour", NOW)).toEqual({ kind: "price", stay: "Daycation" });
+    expect(parseGuestMessage("night tour", NOW)).toEqual({ kind: "price", stay: "Nightcation" });
+    expect(parseGuestMessage("over night", NOW)).toEqual({ kind: "price", stay: "Overnight" });
+  });
+
+  it("carries the stay type onto a date question", () => {
+    expect(parseGuestMessage("daycation sept 5", NOW)).toEqual({
+      kind: "availability",
+      from: "2026-09-05",
+      stay: "Daycation",
+    });
+  });
+
+  it("leaves stay unset when the guest named no type", () => {
+    expect(parseGuestMessage("aug 30 for 2 pax", NOW)).toEqual({
+      kind: "availability",
+      from: "2026-08-30",
+      pax: 2,
+    });
+  });
+
+  it("keeps a night count from being read as Nightcation", () => {
+    expect(parseGuestMessage("2 nights", NOW)).toEqual({ kind: "price", nights: 2 });
   });
 });

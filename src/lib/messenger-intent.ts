@@ -6,9 +6,19 @@
  * Dates are Manila calendar dates as "YYYY-MM-DD" — the bot never reasons in
  * UTC, because a guest saying "aug 30" means the Manila day.
  */
+/** The stay windows a guest can name, spelled as `havens` labels them. */
+export type StayLabel = "Daycation" | "Nightcation" | "Overnight";
+
 export type Intent =
-  | { kind: "availability"; from: string; to?: string; pax?: number; timeAsk?: true }
-  | { kind: "price"; nights?: number; pax?: number }
+  | {
+      kind: "availability";
+      from: string;
+      to?: string;
+      pax?: number;
+      stay?: StayLabel;
+      timeAsk?: true;
+    }
+  | { kind: "price"; nights?: number; pax?: number; stay?: StayLabel }
   | { kind: "openDates" }
   | { kind: "stayTime" }
   | { kind: "bookingId"; id: string }
@@ -37,6 +47,13 @@ const PAX_NUMERIC = /(\d+)\s*(?:pax|persons?|people|adults?|guests?|tao)\b|\bfor
 const TIME_ASK =
   /\bcheck[\s-]?(?:in|out)\b|\bcheckin\b|\bcheckout\b|\bpasok\b|\banong\s+oras\b|\bwhat\s+time\b|\bilang\s+oras\b|\bearly\b|\blate\b|\bextend\b/i;
 const CLOCK = /\b\d{1,2}(?::\d{2})?\s*(?:am|pm|nn)\b/i;
+
+// A guest who names one window wants that window quoted, not the whole card.
+// Ordered longest-first so "nightcation" cannot be read as "overnight", and
+// anchored on `over`/`day`/`night` + a suffix so a bare "2 nights" stays a
+// night count.
+const STAY_TYPE =
+  /\bnight\s?cation\b|\bnight\s?tour\b|\bover\s?night\b|\bday\s?cation\b|\bday\s?tour\b/i;
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const iso = (y: number, m: number, d: number) => `${y}-${pad(m)}-${pad(d)}`;
@@ -123,6 +140,15 @@ function parsePax(text: string): number | undefined {
   return undefined;
 }
 
+function parseStay(text: string): StayLabel | undefined {
+  const m = text.match(STAY_TYPE);
+  if (!m) return undefined;
+  const word = m[0].toLowerCase().replace(/\s+/g, "");
+  if (word === "nightcation" || word === "nighttour") return "Nightcation";
+  if (word === "overnight") return "Overnight";
+  return "Daycation";
+}
+
 function parseNights(text: string): number | undefined {
   const m = text.match(NIGHTS);
   if (!m) return undefined;
@@ -150,6 +176,7 @@ export function parseGuestMessage(text: string, now: Date): Intent {
   const dates = parseDates(t, today);
   const pax = parsePax(t);
   const nights = parseNights(t);
+  const stay = parseStay(t);
 
   // A time question stands alone only when no date came with it. A guest who
   // names both wants the date quoted AND the schedule rule, so the flag rides
@@ -160,6 +187,7 @@ export function parseGuestMessage(text: string, now: Date): Intent {
     const out: Intent = { kind: "availability", from: dates.from };
     if (dates.to) out.to = dates.to;
     if (pax !== undefined) out.pax = pax;
+    if (stay !== undefined) out.stay = stay;
     if (timeAsk) out.timeAsk = true;
     return out;
   }
@@ -172,10 +200,12 @@ export function parseGuestMessage(text: string, now: Date): Intent {
   // A bare pax/night count with no keyword at all — "2 pax for 3 nights" — is a
   // quote request. Guests routinely send only these numbers, expecting a price
   // back, so requiring the word "rate" here would drop a common real message.
-  if (PRICE.test(t) || pax !== undefined || nights !== undefined) {
+  // A bare window name ("overnight") is the same kind of message.
+  if (PRICE.test(t) || pax !== undefined || nights !== undefined || stay !== undefined) {
     const out: Intent = { kind: "price" };
     if (nights !== undefined) out.nights = nights;
     if (pax !== undefined) out.pax = pax;
+    if (stay !== undefined) out.stay = stay;
     return out;
   }
 

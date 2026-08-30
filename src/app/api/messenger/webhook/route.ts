@@ -128,7 +128,13 @@ async function handleMessage(senderId: string, text: string): Promise<void> {
     if (intent.kind === "price") {
       await send(
         senderId,
-        priceReply({ rates: room, windows: ctx.windows, extraPaxFee: room.additionalPaxFee }),
+        priceReply({
+          rates: room,
+          windows: ctx.windows,
+          extraPaxFee: room.additionalPaxFee,
+          stay: intent.stay,
+          pax: intent.pax,
+        }),
       );
       return;
     }
@@ -158,6 +164,7 @@ async function handleMessage(senderId: string, text: string): Promise<void> {
         extraPaxFee: room.additionalPaxFee,
         bookingUrl: BOOKING_URL,
         rules,
+        stay: intent.stay,
         timeAsk: intent.timeAsk,
       }),
     );

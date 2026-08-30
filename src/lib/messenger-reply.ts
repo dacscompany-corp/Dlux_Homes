@@ -17,6 +17,7 @@ import {
   type CalendarRules,
 } from "./pricing";
 import { spanHours } from "./stay-window";
+import type { StayLabel } from "./messenger-intent";
 
 /**
  * The rate fields pricing.ts needs. Declared here rather than imported because
@@ -45,6 +46,9 @@ export type StayWindow = {
 };
 
 const BASE_PAX = 2;
+
+/** Windows that are a single session and so cannot cover more than one night. */
+const SHORT_STAYS = new Set<StayLabel>(["Daycation", "Nightcation"]);
 
 export function peso(n: number): string {
   return `₱${Math.round(n).toLocaleString("en-PH")}`;
@@ -190,9 +194,10 @@ export function availabilityReply(args: {
   extraPaxFee: number;
   bookingUrl: string;
   rules: CalendarRules;
+  stay?: StayLabel;
   timeAsk?: boolean;
 }): string {
-  const { from, to, nights, pax, windows, rates, bookingUrl, rules } = args;
+  const { from, to, nights, pax, windows, rates, bookingUrl, rules, stay } = args;
   const span = to
     ? `${shortDate(from)}–${shortDate(to)} (${nights} nights)`
     : `${shortDate(from)} (${dayName(from)})`;
@@ -204,13 +209,33 @@ export function availabilityReply(args: {
     );
   }
 
-  const lines = windows.map(
-    (w) => `• ${windowLine(w)} — ${peso(quoteFor(w, from, nights, pax, rates, args.extraPaxFee, rules))}`,
-  );
+  const price = (w: StayWindow) =>
+    `• ${windowLine(w)} — ${peso(quoteFor(w, from, nights, pax, rates, args.extraPaxFee, rules))}`;
+
+  // A guest who named one window gets that window, not the whole card. Two
+  // things can still make the narrowed list empty, and each needs its own
+  // answer — silence would read as "fully booked", which is not what happened.
+  let quoted: StayWindow[];
+  let lead = `Available po kami sa ${span} for ${pax} pax:`;
+
+  if (stay && SHORT_STAYS.has(stay) && nights > 1) {
+    // A 10-hour session is one day; the route has already narrowed `windows` to
+    // Overnight, so quote that rather than answering a question with nothing.
+    lead =
+      `Isang araw lang po ang ${stay} — hindi po ito pwedeng pang-${nights} nights. ` +
+      `Para po sa ${span}, Overnight po ang available:`;
+    quoted = windows;
+  } else if (stay && !windows.some((w) => w.label === stay)) {
+    lead = `Pasensya na po, hindi po available ang ${stay} sa ${span}. Pero open pa po ang:`;
+    quoted = windows;
+  } else {
+    quoted = stay ? windows.filter((w) => w.label === stay) : windows;
+  }
+  const lines = quoted.map(price);
   // A stay that reached a long-term tier is priced flat across the whole stay,
   // so naming a weekday/weekend rate would describe pricing that did not apply.
   const bundled =
-    windows.some((w) => w.stayType === "21") &&
+    quoted.some((w) => w.stayType === "21") &&
     bundleNightlyRate(nights, from, rates, rules) != null;
 
   const rateNote = bundled
@@ -220,7 +245,7 @@ export function availabilityReply(args: {
       : "Weekday rate po ang date na 'yan.";
 
   return (
-    `Available po kami sa ${span} for ${pax} pax:\n\n` +
+    `${lead}\n\n` +
     `${lines.join("\n")}\n\n` +
     (args.timeAsk ? `${timeNote()}\n\n` : "") +
     `${rateNote} 50% down payment po para ma-reserve. ` +
@@ -228,22 +253,48 @@ export function availabilityReply(args: {
   );
 }
 
+/**
+ * The rate card, narrowed to what the guest actually asked about.
+ *
+ * Naming a window ("overnight") drops the other two, and naming a group larger
+ * than the base pax folds the extra-pax fee into the figures shown. A guest who
+ * asked "overnight 4 pax how much?" should not have to add ₱200 × 2 themselves
+ * to find out.
+ */
 export function priceReply(args: {
   rates: RateFields;
   windows: StayWindow[];
   extraPaxFee: number;
+  stay?: StayLabel;
+  pax?: number;
 }): string {
-  const { rates, windows, extraPaxFee: fee } = args;
-  const lines = windows.map((w) => {
-    const weekday = w.stayType === "10" ? rates.price10hr : rates.price21hr;
-    const weekend = w.stayType === "10" ? rates.price10hrWeekend : rates.price21hrWeekend;
+  const { rates, windows, extraPaxFee: fee, stay, pax } = args;
+
+  // An unknown label would otherwise blank the card; fall back to all windows.
+  const narrowed = stay ? windows.filter((w) => w.label === stay) : windows;
+  const shown = narrowed.length > 0 ? narrowed : windows;
+
+  // A 10-hour session charges the fee once, an Overnight once per night — but
+  // this card quotes a single night either way, so one session covers both.
+  const surcharge = pax && pax > BASE_PAX ? extraPaxFee(pax, BASE_PAX, fee, 1) : 0;
+
+  const lines = shown.map((w) => {
+    const weekday = (w.stayType === "10" ? rates.price10hr : rates.price21hr) + surcharge;
+    const weekend =
+      (w.stayType === "10" ? rates.price10hrWeekend : rates.price21hrWeekend) + surcharge;
     return `• ${windowLine(w)}\n   Weekday ${peso(weekday)} · Weekend/Holiday ${peso(weekend)}`;
   });
+
+  const head = surcharge > 0 ? `Rates po namin for ${pax} pax:` : `Rates po namin (good for 2 pax):`;
+  const terms =
+    surcharge > 0
+      ? `Kasama na po ang extra pax dito. Max 4 pax po. `
+      : `Extra pax po ${peso(fee)} each per night, max 4 pax. `;
+
   return (
-    `Rates po namin (good for 2 pax):\n\n` +
+    `${head}\n\n` +
     `${lines.join("\n")}\n\n` +
-    `Extra pax po ${peso(fee)} each per night, max 4 pax. ` +
-    `50% down payment po para ma-reserve.\n\n` +
+    `${terms}50% down payment po para ma-reserve.\n\n` +
     `Anong date po ang balak niyo? I-che-check ko po agad kung available.`
   );
 }
