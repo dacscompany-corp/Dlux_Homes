@@ -8,7 +8,14 @@
  * Every reply is Taglish with `po` regardless of the language the guest wrote
  * in. Prices come from src/lib/pricing.ts and are never recomputed here.
  */
-import { pickRate, extraPaxFee, isWeekendOrHoliday, type CalendarRules } from "./pricing";
+import {
+  stayTotal,
+  bundleNightlyRate,
+  bundleExtraPaxFee,
+  extraPaxFee,
+  isWeekendOrHoliday,
+  type CalendarRules,
+} from "./pricing";
 
 /**
  * The rate fields pricing.ts needs. Declared here rather than imported because
@@ -51,14 +58,6 @@ function t12(hhmm: string): string {
   return m[2] === "00" ? `${h}${ap}` : `${h}:${m[2]}${ap}`;
 }
 
-function addDays(dateISO: string, n: number): string {
-  const [y, m, d] = dateISO.split("-").map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  dt.setUTCDate(dt.getUTCDate() + n);
-  const pad = (x: number) => String(x).padStart(2, "0");
-  return `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`;
-}
-
 function shortDate(dateISO: string): string {
   const [y, m, d] = dateISO.split("-").map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d));
@@ -79,9 +78,19 @@ function windowLine(w: StayWindow): string {
 }
 
 /**
- * Total for one stay window. A 10-hour Daycation/Nightcation is a single
- * session, so it is always one "night" for pricing and its extra-pax fee is
- * charged once — matching stayTotal()'s own treatment.
+ * Total for one stay window — the same number the storefront's checkout shows.
+ *
+ * Delegates the room total to stayTotal() rather than looping over pickRate(),
+ * because a long Overnight stay does NOT price night-by-night: once it reaches
+ * 3 / 11 / 18 / 26 nights the WHOLE stay reprices at a flat long-term rate.
+ * Quoting per-night on a bundled stay overcharged a 14-night booking by ₱8,000.
+ *
+ * The extra-pax fee then has to follow the same fork. pricing.ts is explicit
+ * that bundleExtraPaxFee() REPLACES extraPaxFee() on a bundled stay — adding
+ * both double-bills the same guest — so the tier decides which one applies.
+ *
+ * A 10-hour Daycation/Nightcation is a single session: one "night" for pricing,
+ * and its extra-pax fee is charged once rather than per night.
  */
 export function quoteFor(
   w: StayWindow,
@@ -93,11 +102,17 @@ export function quoteFor(
   rules: CalendarRules,
 ): number {
   const sessions = w.stayType === "10" ? 1 : Math.max(1, nights);
-  let room = 0;
-  for (let i = 0; i < sessions; i++) {
-    room += pickRate(w.stayType, addDays(checkInISO, i), rates, rules);
-  }
-  return room + extraPaxFee(pax, BASE_PAX, feePerPax, sessions);
+  const room = stayTotal(w.stayType, checkInISO, sessions, rates, rules);
+
+  // Only an Overnight can reach a tier; a 10-hour session never does.
+  const bundled =
+    w.stayType === "21" && bundleNightlyRate(sessions, checkInISO, rates, rules) != null;
+
+  const paxFee = bundled
+    ? bundleExtraPaxFee(pax, BASE_PAX, sessions, rates)
+    : extraPaxFee(pax, BASE_PAX, feePerPax, sessions);
+
+  return room + paxFee;
 }
 
 export function availabilityReply(args: {
@@ -126,9 +141,17 @@ export function availabilityReply(args: {
   const lines = windows.map(
     (w) => `• ${windowLine(w)} — ${peso(quoteFor(w, from, nights, pax, rates, args.extraPaxFee, rules))}`,
   );
-  const rateNote = isWeekendOrHoliday(from, rules)
-    ? "Weekend/holiday rate po ang date na 'yan."
-    : "Weekday rate po ang date na 'yan.";
+  // A stay that reached a long-term tier is priced flat across the whole stay,
+  // so naming a weekday/weekend rate would describe pricing that did not apply.
+  const bundled =
+    windows.some((w) => w.stayType === "21") &&
+    bundleNightlyRate(nights, from, rates, rules) != null;
+
+  const rateNote = bundled
+    ? `Long-term rate po ito para sa ${nights} nights.`
+    : isWeekendOrHoliday(from, rules)
+      ? "Weekend/holiday rate po ang date na 'yan."
+      : "Weekday rate po ang date na 'yan.";
 
   return (
     `Available po kami sa ${span} for ${pax} pax:\n\n` +

@@ -26,6 +26,18 @@ const RULES = {
   holidays: new Set(["2026-12-25"]),
 };
 
+// Same rates with long-term pricing switched ON, as the live haven has it.
+// Tier floors are 3 / 11 / 18 / 26 nights (BUNDLE_TIER*_NIGHTS in pricing.ts).
+const LONGTERM = {
+  ...RATES,
+  longtermActive: true,
+  longtermTier1Rate: 1799,
+  longtermTier2Rate: 1599,
+  longtermTier3Rate: 1499,
+  longtermTier4Rate: 1399,
+  longtermExtraPaxFee: 100,
+};
+
 const OVERNIGHT: StayWindow = { stayType: "21", label: "Overnight", checkIn: "19:00", checkOut: "17:00" };
 const DAYCATION: StayWindow = { stayType: "10", label: "Daycation", checkIn: "07:00", checkOut: "17:00" };
 const NIGHTCATION: StayWindow = { stayType: "10", label: "Nightcation", checkIn: "19:00", checkOut: "05:00" };
@@ -78,6 +90,42 @@ describe("quoteFor", () => {
   });
 });
 
+describe("quoteFor — long-term stays", () => {
+  // The bug this exists for: the bot quoted ₱33,186 for Dec 1–15 / 4 pax while
+  // the site's own checkout showed ₱25,186. quoteFor() was pricing every night
+  // individually and never checking bundleNightlyRate(), so a stay that the
+  // storefront reprices flat was overquoted by ₱8,000.
+  it("reprices a 14-night stay at the flat tier-2 rate, matching checkout", () => {
+    const room = 1599 * 14; // 22,386
+    const pax = 2 * 100 * 14; // 2,800 — bundleExtraPaxFee, NOT extraPaxFee
+    expect(quoteFor(OVERNIGHT, "2026-12-01", 14, 4, LONGTERM, 200, RULES)).toBe(room + pax);
+    expect(quoteFor(OVERNIGHT, "2026-12-01", 14, 4, LONGTERM, 200, RULES)).toBe(25186);
+  });
+
+  it("uses the tier-1 rate at exactly 3 nights", () => {
+    expect(quoteFor(OVERNIGHT, "2026-12-01", 3, 2, LONGTERM, 200, RULES)).toBe(1799 * 3);
+  });
+
+  it("stays on normal per-night pricing below the first tier", () => {
+    // Tue 2026-12-01 + Wed 2026-12-02, both weekdays.
+    expect(quoteFor(OVERNIGHT, "2026-12-01", 2, 2, LONGTERM, 200, RULES)).toBe(1899 * 2);
+  });
+
+  it("never stacks the normal extra-pax fee onto a bundled stay", () => {
+    // A bundled stay owes bundleExtraPaxFee ONLY. Charging both would add
+    // 2 x 200 x 14 = 5,600 on top and double-bill the same two guests.
+    const bundled = quoteFor(OVERNIGHT, "2026-12-01", 14, 4, LONGTERM, 200, RULES);
+    expect(bundled).toBeLessThan(1599 * 14 + 2 * 100 * 14 + 2 * 200 * 14);
+  });
+
+  it("ignores tiers when the owner has long-term pricing switched off", () => {
+    const off = { ...LONGTERM, longtermActive: false };
+    // Falls back to per-night: Dec 1-14 has Fri/Sat on the 4th, 5th, 11th, 12th.
+    const expected = quoteFor(OVERNIGHT, "2026-12-01", 14, 2, RATES, 200, RULES);
+    expect(quoteFor(OVERNIGHT, "2026-12-01", 14, 2, off, 200, RULES)).toBe(expected);
+  });
+});
+
 describe("availabilityReply", () => {
   it("lists every open window with its price", () => {
     // Saturday, so every line carries the weekend rate.
@@ -113,6 +161,23 @@ describe("availabilityReply", () => {
     });
     expect(msg).toContain("fully booked");
     expect(msg).not.toContain("₱");
+  });
+
+  it("calls a bundled stay a long-term rate, not a weekday one", () => {
+    const msg = availabilityReply({
+      from: "2026-12-01",
+      to: "2026-12-15",
+      nights: 14,
+      pax: 4,
+      windows: [OVERNIGHT],
+      rates: LONGTERM,
+      extraPaxFee: 200,
+      bookingUrl: "dlux-homes.vercel.app",
+      rules: RULES,
+    });
+    expect(msg).toContain("₱25,186");
+    expect(msg).toContain("Long-term rate");
+    expect(msg).not.toContain("Weekday rate");
   });
 
   it("states the night count for a multi-night range", () => {
