@@ -40,6 +40,19 @@ function addDays(dateISO: string, n: number): string {
 }
 
 /**
+ * Is this availability question about the date already on the table?
+ *
+ * A remembered enquiry with no date at all counts as the same one — the guest
+ * gave pax or a window first and is only now naming the day.
+ */
+function sameDate(
+  intent: Extract<Intent, { kind: "availability" }>,
+  remembered: Remembered,
+): boolean {
+  return remembered.from === undefined || remembered.from === intent.from;
+}
+
+/**
  * Fold a remembered enquiry into a freshly parsed intent.
  *
  * A `price` intent is the interesting case. It means the guest sent pax, nights
@@ -55,11 +68,17 @@ export function mergeContext(intent: Intent, remembered: Remembered | null): Int
   if (!remembered) return intent;
 
   if (intent.kind === "availability") {
-    // A newly named date replaces the remembered one outright; only the details
-    // the guest left out this time are filled in.
     const out = { ...intent };
+    // Pax describes the party, not the enquiry, so it survives a date change.
     if (out.pax === undefined && remembered.pax !== undefined) out.pax = remembered.pax;
-    if (out.stay === undefined && remembered.stay !== undefined) out.stay = remembered.stay;
+    // The window does NOT. "Is December 1 available?" asks what is open that
+    // day; answering with the one window they narrowed to for a different date
+    // hides the rest. This shipped the other way and quoted Overnight alone for
+    // a Dec 1 with all three windows free. A named date reopens the choice; the
+    // guest re-narrows by saying so ("dec 1 overnight") or in the next message.
+    if (out.stay === undefined && remembered.stay !== undefined && sameDate(intent, remembered)) {
+      out.stay = remembered.stay;
+    }
     return out;
   }
 
@@ -97,10 +116,14 @@ export function nextContext(intent: Intent, remembered: Remembered | null): Reme
   const base: Remembered = { ...(remembered ?? {}) };
 
   if (intent.kind === "availability") {
+    const movedOn = !sameDate(intent, remembered ?? {});
     base.from = intent.from;
     base.to = intent.to;
     if (intent.pax !== undefined) base.pax = intent.pax;
     if (intent.stay !== undefined) base.stay = intent.stay;
+    // Forget the old window along with the old date, or it would resurface the
+    // moment the guest asks about that new date a second time.
+    else if (movedOn) delete base.stay;
   } else if (intent.kind === "price") {
     if (intent.pax !== undefined) base.pax = intent.pax;
     if (intent.stay !== undefined) base.stay = intent.stay;

@@ -124,3 +124,82 @@ describe("followUpMessage", () => {
     expect(out).toContain("May we know po if interested pa po sila to book?");
   });
 });
+
+describe("mergeContext — a new date reopens the window choice", () => {
+  // The live bug: after narrowing to Overnight for Sep 2, asking "December 1 is
+  // available?" answered with Overnight alone, hiding a Daycation and a
+  // Nightcation that were both free that day.
+  it("drops the remembered stay when a different date is named", () => {
+    const out = mergeContext(
+      { kind: "availability", from: "2026-12-01" },
+      { from: "2026-09-02", pax: 4, stay: "Overnight" },
+    );
+    expect(out).toEqual({ kind: "availability", from: "2026-12-01", pax: 4 });
+  });
+
+  it("keeps the remembered stay when the same date is asked again", () => {
+    const out = mergeContext(
+      { kind: "availability", from: "2026-09-02" },
+      { from: "2026-09-02", pax: 4, stay: "Overnight" },
+    );
+    expect(out).toEqual({
+      kind: "availability",
+      from: "2026-09-02",
+      pax: 4,
+      stay: "Overnight",
+    });
+  });
+
+  it("lets the guest re-narrow the new date in the same breath", () => {
+    const out = mergeContext(
+      { kind: "availability", from: "2026-12-01", stay: "Daycation" },
+      { from: "2026-09-02", pax: 4, stay: "Overnight" },
+    );
+    expect(out).toMatchObject({ from: "2026-12-01", stay: "Daycation", pax: 4 });
+  });
+
+  it("still narrows a dateless fragment, which is the same enquiry continuing", () => {
+    const out = mergeContext({ kind: "price", pax: 5 }, { from: "2026-09-02", stay: "Overnight" });
+    expect(out).toEqual({
+      kind: "availability",
+      from: "2026-09-02",
+      pax: 5,
+      stay: "Overnight",
+    });
+  });
+
+  it("carries pax across a date change, since the party did not change", () => {
+    const out = mergeContext(
+      { kind: "availability", from: "2026-12-05" },
+      { from: "2026-12-01", pax: 4, stay: "Nightcation" },
+    );
+    expect(out).toEqual({ kind: "availability", from: "2026-12-05", pax: 4 });
+  });
+});
+
+describe("nextContext — a new date forgets the old narrowing", () => {
+  it("clears the remembered stay so it cannot resurface next message", () => {
+    const out = nextContext(
+      { kind: "availability", from: "2026-12-01", pax: 4 },
+      { from: "2026-09-02", pax: 4, stay: "Overnight" },
+    );
+    expect(out).toEqual({ from: "2026-12-01", to: undefined, pax: 4 });
+    expect(out).not.toHaveProperty("stay");
+  });
+
+  it("keeps the stay when the date did not change", () => {
+    const out = nextContext(
+      { kind: "availability", from: "2026-09-02", pax: 4 },
+      { from: "2026-09-02", pax: 4, stay: "Overnight" },
+    );
+    expect(out).toMatchObject({ stay: "Overnight" });
+  });
+
+  it("records a stay named alongside a new date", () => {
+    const out = nextContext(
+      { kind: "availability", from: "2026-12-01", stay: "Daycation" },
+      { from: "2026-09-02", stay: "Overnight" },
+    );
+    expect(out).toMatchObject({ from: "2026-12-01", stay: "Daycation" });
+  });
+});
