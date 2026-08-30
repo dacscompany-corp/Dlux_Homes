@@ -109,6 +109,7 @@ describe("parseGuestMessage — check-in / check-out time questions", () => {
       from: "2026-09-05",
       stay: "Daycation",
       timeAsk: true,
+      requestedTime: "11AM",
     });
   });
 
@@ -199,5 +200,51 @@ describe("parseGuestMessage — stay type", () => {
 
   it("keeps a night count from being read as Nightcation", () => {
     expect(parseGuestMessage("2 nights", NOW)).toEqual({ kind: "price", nights: 2 });
+  });
+});
+
+describe("parseGuestMessage — check time phrasings and the named hour", () => {
+  it("reads check time as a time question instead of going silent", () => {
+    expect(parseGuestMessage("check time is 9", NOW)).toEqual({ kind: "stayTime" });
+  });
+
+  it("flags check time on a date question", () => {
+    const r = parseGuestMessage("december 1 overnight 4 pax check time is 9 how much?", NOW);
+    expect(r).toEqual({
+      kind: "availability",
+      from: "2026-12-01",
+      pax: 4,
+      stay: "Overnight",
+      timeAsk: true,
+    });
+  });
+
+  it("carries an unambiguous arrival time", () => {
+    const r = parseGuestMessage("december 1 overnight 9pm check in", NOW);
+    expect(r).toEqual({
+      kind: "availability",
+      from: "2026-12-01",
+      stay: "Overnight",
+      timeAsk: true,
+      requestedTime: "9PM",
+    });
+  });
+
+  it("normalises minutes and noon", () => {
+    expect(parseGuestMessage("dec 1 check in 11:30 am", NOW)).toMatchObject({
+      requestedTime: "11:30AM",
+    });
+    expect(parseGuestMessage("dec 1 check in 12nn", NOW)).toMatchObject({
+      requestedTime: "12NN",
+    });
+  });
+
+  it("refuses to guess an hour with no AM/PM", () => {
+    const r = parseGuestMessage("december 1 overnight 4 pax check time is 9 how much?", NOW);
+    expect(r).not.toHaveProperty("requestedTime");
+  });
+
+  it("reads oras on its own", () => {
+    expect(parseGuestMessage("oras po ng check in?", NOW)).toEqual({ kind: "stayTime" });
   });
 });

@@ -166,6 +166,7 @@ async function handleMessage(senderId: string, text: string): Promise<void> {
         rules,
         stay: intent.stay,
         timeAsk: intent.timeAsk,
+        requestedTime: intent.requestedTime,
       }),
     );
   } catch (e) {

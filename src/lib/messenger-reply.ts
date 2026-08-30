@@ -121,15 +121,31 @@ export function quoteFor(
 }
 
 /**
- * The house rule in one sentence, for a guest who asked about a date and a time
- * in the same message. The full schedule block would bury the quote they came
- * for, so the date reply gets only this.
+ * The house rule, for a guest who asked about a date and a time in the same
+ * message. The full schedule block would bury the quote they came for, so the
+ * date reply gets this instead.
+ *
+ * Naming the window's real check-in and check-out beats a vague "fixed po ang
+ * check-out": a guest who asked to arrive at 9 wants to see 7PM–5PM spelled out
+ * before being told it does not move. `requestedTime` is echoed only when the
+ * guest wrote an unambiguous one; see parseRequestedTime in messenger-intent.
  */
-export function timeNote(): string {
-  return (
-    `Pwede po kayong mag-check in nang mas huli, pero fixed po ang check-out ` +
-    `time at ang rate.`
-  );
+export function timeNote(w?: StayWindow, requestedTime?: string): string {
+  if (!w) {
+    return (
+      `Pwede po kayong mag-check in nang mas huli, pero fixed po ang check-out ` +
+      `time at ang rate.`
+    );
+  }
+  const schedule =
+    `Standard po ang schedule ng ${w.label}: ${t12(w.checkIn)} check-in, ` +
+    `${t12(w.checkOut)} check-out.`;
+  const flexible = requestedTime
+    ? `Kahit ${requestedTime} po kayo dumating, ${t12(w.checkOut)} pa rin po ang ` +
+      `check-out at ganoon pa rin ang rate.`
+    : `Kahit ibang oras po ang gusto niyong dumating, hindi po nagbabago ang ` +
+      `check-out time at ang rate.`;
+  return `${schedule} ${flexible}`;
 }
 
 /** The `count` whole hours after `hhmm`, as "8AM, 9AM, 10AM, 11AM". */
@@ -196,6 +212,7 @@ export function availabilityReply(args: {
   rules: CalendarRules;
   stay?: StayLabel;
   timeAsk?: boolean;
+  requestedTime?: string;
 }): string {
   const { from, to, nights, pax, windows, rates, bookingUrl, rules, stay } = args;
   const span = to
@@ -247,7 +264,11 @@ export function availabilityReply(args: {
   return (
     `${lead}\n\n` +
     `${lines.join("\n")}\n\n` +
-    (args.timeAsk ? `${timeNote()}\n\n` : "") +
+    // Only a single quoted window can have its times named; with several on
+    // offer the generic wording stands, and each line already shows its own.
+    (args.timeAsk
+      ? `${timeNote(quoted.length === 1 ? quoted[0] : undefined, args.requestedTime)}\n\n`
+      : "") +
     `${rateNote} 50% down payment po para ma-reserve. ` +
     `Book po kayo dito: ${bookingUrl}`
   );

@@ -17,6 +17,8 @@ export type Intent =
       pax?: number;
       stay?: StayLabel;
       timeAsk?: true;
+      /** The arrival time the guest named, e.g. "9PM". Only set when unambiguous. */
+      requestedTime?: string;
     }
   | { kind: "price"; nights?: number; pax?: number; stay?: StayLabel }
   | { kind: "openDates" }
@@ -45,8 +47,16 @@ const PAX_NUMERIC = /(\d+)\s*(?:pax|persons?|people|adults?|guests?|tao)\b|\bfor
 // `gabi` is deliberately absent from CLOCK: NIGHTS already claims it, so
 // "3 gabi" must stay a count of nights rather than become 3 o'clock.
 const TIME_ASK =
-  /\bcheck[\s-]?(?:in|out)\b|\bcheckin\b|\bcheckout\b|\bpasok\b|\banong\s+oras\b|\bwhat\s+time\b|\bilang\s+oras\b|\bearly\b|\blate\b|\bextend\b/i;
+  /\bcheck[\s-]?(?:in|out|time)\b|\bcheckin\b|\bcheckout\b|\bpasok\b|\btime\b|\boras\b|\bearly\b|\blate\b|\bextend\b/i;
 const CLOCK = /\b\d{1,2}(?::\d{2})?\s*(?:am|pm|nn)\b/i;
+
+/**
+ * An arrival time only counts as named when the guest wrote a meridiem. In
+ * "overnight 4 pax check time is 9" three numbers compete and none says morning
+ * or evening, so echoing one back would risk confidently repeating a time the
+ * guest never meant — the reply falls back to "kahit ibang oras" instead.
+ */
+const CLOCK_EXACT = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|nn)\b/i;
 
 // A guest who names one window wants that window quoted, not the whole card.
 // Ordered longest-first so "nightcation" cannot be read as "overnight", and
@@ -140,6 +150,18 @@ function parsePax(text: string): number | undefined {
   return undefined;
 }
 
+/** "9pm" → "9PM", "11:30 am" → "11:30AM", "12nn" → "12NN". */
+function parseRequestedTime(text: string): string | undefined {
+  const m = text.match(CLOCK_EXACT);
+  if (!m) return undefined;
+  const hour = Number(m[1]);
+  if (hour < 1 || hour > 12) return undefined;
+  const meridiem = m[3].toUpperCase();
+  if (meridiem === "NN") return "12NN";
+  const minutes = m[2] && m[2] !== "00" ? `:${m[2]}` : "";
+  return `${hour}${minutes}${meridiem}`;
+}
+
 function parseStay(text: string): StayLabel | undefined {
   const m = text.match(STAY_TYPE);
   if (!m) return undefined;
@@ -188,7 +210,11 @@ export function parseGuestMessage(text: string, now: Date): Intent {
     if (dates.to) out.to = dates.to;
     if (pax !== undefined) out.pax = pax;
     if (stay !== undefined) out.stay = stay;
-    if (timeAsk) out.timeAsk = true;
+    if (timeAsk) {
+      out.timeAsk = true;
+      const at = parseRequestedTime(t);
+      if (at) out.requestedTime = at;
+    }
     return out;
   }
 

@@ -291,7 +291,42 @@ describe("availabilityReply — time note", () => {
       rules: RULES,
       timeAsk: true,
     });
+    expect(out).toContain("Standard po ang schedule ng Daycation: 7AM check-in, 5PM check-out.");
+    expect(out).toContain("Kahit ibang oras po ang gusto niyong dumating");
+  });
+
+  it("echoes an unambiguous arrival time back to the guest", () => {
+    const out = availabilityReply({
+      from: "2026-12-01",
+      nights: 1,
+      pax: 4,
+      windows: [OVERNIGHT],
+      rates: RATES,
+      extraPaxFee: 200,
+      bookingUrl: "dlux-homes.vercel.app",
+      rules: RULES,
+      stay: "Overnight",
+      timeAsk: true,
+      requestedTime: "9PM",
+    });
+    expect(out).toContain("Standard po ang schedule ng Overnight: 7PM check-in, 5PM check-out.");
+    expect(out).toContain("Kahit 9PM po kayo dumating, 5PM pa rin po ang check-out");
+  });
+
+  it("keeps the generic wording when several windows are quoted at once", () => {
+    const out = availabilityReply({
+      from: "2026-12-01",
+      nights: 1,
+      pax: 2,
+      windows: [DAYCATION, NIGHTCATION, OVERNIGHT],
+      rates: RATES,
+      extraPaxFee: 200,
+      bookingUrl: "dlux-homes.vercel.app",
+      rules: RULES,
+      timeAsk: true,
+    });
     expect(out).toContain("fixed po ang check-out time at ang rate");
+    expect(out).not.toContain("Standard po ang schedule ng");
   });
 
   it("leaves the note out when no time was mentioned", () => {
