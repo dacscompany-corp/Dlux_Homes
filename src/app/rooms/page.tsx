@@ -66,6 +66,20 @@ function IcoArrowRight({ size = 16 }: { size?: number }) {
 function IcoClock() {
   return <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>;
 }
+function IcoSun() {
+  return <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4.5" /><path d="M12 2.5v2.4M12 19.1v2.4M4.2 4.2l1.7 1.7M18.1 18.1l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.2 19.8l1.7-1.7M18.1 5.9l1.7-1.7" /></svg>;
+}
+function IcoMoon() {
+  return <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M20 14.2A8.5 8.5 0 1 1 9.8 4a6.6 6.6 0 0 0 10.2 10.2z" /></svg>;
+}
+function IcoCalendar() {
+  return <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M8 3v4M16 3v4M3 10h18" /></svg>;
+}
+function StayBadgeIcon({ i }: { i: number }) {
+  if (i === 0) return <IcoSun />;
+  if (i === 1) return <IcoMoon />;
+  return <IcoCalendar />;
+}
 function IcoCheck() {
   return <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>;
 }
@@ -869,30 +883,46 @@ export default function BrowsePage() {
         <div style={{ maxWidth: 1320, margin: "0 auto" }}>
           <div className="hm-2col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 60, alignItems: "end", marginBottom: 44 }}>
             <div>
-              <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: "var(--gold)", marginBottom: 16 }}>Choose your time</div>
-              <h2 className="serif hm-h2" style={{ fontSize: 64, fontWeight: 400, letterSpacing: "-.03em", lineHeight: 0.95, margin: 0 }}>
-                Pick the <em>time</em> that fits your day.
+              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: "var(--gold)", whiteSpace: "nowrap" }}>Choose your time</span>
+                <span style={{ flex: 1, maxWidth: 120, height: 1, background: "linear-gradient(to right, var(--gold), transparent)" }} />
+              </div>
+              <h2 className="serif hm-h2" style={{ fontSize: 64, fontWeight: 400, letterSpacing: "-.03em", lineHeight: 1.02, margin: 0 }}>
+                Pick the <em style={{ fontStyle: "italic", color: "var(--gold)" }}>time</em> that fits<br />
+                <span style={{ position: "relative", display: "inline-block" }}>
+                  your day.
+                  <svg width="100%" height="14" viewBox="0 0 320 14" preserveAspectRatio="none" style={{ position: "absolute", left: 0, bottom: -12, width: "100%" }}>
+                    <path d="M2 9c60-14 220-14 300 0" fill="none" stroke="var(--gold)" strokeWidth="2.5" strokeLinecap="round" opacity={0.85} />
+                  </svg>
+                </span>
               </h2>
             </div>
-            <p style={{ fontSize: 16, color: "rgba(255,255,252,.75)", lineHeight: 1.6, margin: 0 }}>
-              Three simple check-in times to choose from. The prices here are for regular days &mdash; weekends and holidays cost a little more. Don&rsquo;t worry, we&rsquo;ll show you the full price before you book.
-            </p>
+            <div style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
+              <span style={{ flex: "none", width: 2, alignSelf: "stretch", background: "var(--gold)", opacity: 0.6, borderRadius: 2 }} />
+              <p style={{ fontSize: 16, color: "rgba(255,255,252,.75)", lineHeight: 1.6, margin: 0 }}>
+                Three simple check-in times to choose from. The prices here are for regular days &mdash; weekends and holidays cost a little more. Don&rsquo;t worry, we&rsquo;ll show you the full price before you book.
+              </p>
+            </div>
           </div>
           <div ref={stayCardsRef} className="hm-stay" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
             {displayWindows.map((w, i) => (
               <Link
                 key={i}
                 href={`/rooms/${room.id}?win=${i}`}
-                className={`stay-card${stayCardsVisible ? " stay-card--in" : ""}`}
+                className={`stay-card stay-card--warm${stayCardsVisible ? " stay-card--in" : ""}`}
                 style={{ textDecoration: "none", transitionDelay: `${i * 110}ms` }}
               >
-                <div className="stay-card__inner">
+                <div className="stay-card__inner stay-card__inner--warm">
                   <div className="stay-card__sheen" />
+                  <div className="stay-card__glow" />
                   <div style={{ position: "relative", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--gold)" }}>{spanHours(w.checkIn, w.checkOut) ?? w.stayType}-hours</div>
-                    <span className="stay-card__arrow"><IcoArrowRight size={16} /></span>
+                    <span className="stay-card__badge">
+                      <StayBadgeIcon i={i} />
+                      {spanHours(w.checkIn, w.checkOut) ?? w.stayType}-hours
+                    </span>
+                    <span className="stay-card__arrow stay-card__arrow--warm"><IcoArrowRight size={16} /></span>
                   </div>
-                  <div className="serif" style={{ position: "relative", fontSize: 36, fontWeight: 400, letterSpacing: "-.02em", marginTop: 14, lineHeight: 1 }}>{w.label}</div>
+                  <div className="serif" style={{ position: "relative", fontSize: 36, fontWeight: 400, letterSpacing: "-.02em", marginTop: 20, lineHeight: 1 }}>{w.label}</div>
                   <div style={{ position: "relative", fontSize: 13, color: "rgba(255,255,255,.7)", marginTop: 14, display: "flex", alignItems: "center", gap: 8 }}>
                     <IcoClock /> {w.checkIn} → {w.checkOut}
                   </div>

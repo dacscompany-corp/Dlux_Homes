@@ -265,6 +265,48 @@
 .stay-card:hover .stay-card__arrow {
   transform: translateX(5px);
 }
+
+/* Warm variant — resting state already carries the amber tint/border instead of
+   picking it up only on hover, plus a pill badge and a soft corner glow. */
+.stay-card__inner--warm {
+  background: linear-gradient(160deg, rgba(212, 169, 106, 0.1), rgba(255, 255, 255, 0.04));
+  border-color: rgba(212, 169, 106, 0.35);
+}
+.stay-card--warm:hover .stay-card__inner {
+  background: linear-gradient(160deg, rgba(212, 169, 106, 0.16), rgba(255, 255, 255, 0.07));
+  border-color: var(--gold);
+}
+.stay-card__glow {
+  position: absolute;
+  left: -20%;
+  bottom: -30%;
+  width: 65%;
+  height: 65%;
+  background: radial-gradient(circle, rgba(212, 169, 106, 0.22), transparent 70%);
+  pointer-events: none;
+  transition: opacity 0.32s ease;
+}
+.stay-card__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(212, 169, 106, 0.16);
+  color: var(--gold);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+.stay-card__arrow--warm {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid rgba(212, 169, 106, 0.4);
+  align-items: center;
+  justify-content: center;
+}
 @media (prefers-reduced-motion: reduce) {
   .stay-card,
   .stay-card__inner,
