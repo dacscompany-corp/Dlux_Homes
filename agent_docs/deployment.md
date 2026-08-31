@@ -39,6 +39,16 @@ Configure one HTTP monitor per route (cron-job.org, UptimeRobot, GitHub Actions
 Same shape for `send-checkout-reminders` and `sync-icals`, except that neither
 is lead-sensitive — every 15 minutes is fine for those two.
 
+A fourth route, `send-messenger-followups`, nudges guests who were quoted on
+Messenger and went quiet. It is lead-sensitive the same way: the nudge is due
+`MESSENGER_FOLLOWUP_MINUTES` (10, in `src/lib/messenger-context.ts`) after the
+quote, so a 15-minute ping delivers it 10–25 minutes late while **every 5
+minutes** keeps it to 10–15. It returns `{"success":true,"due":N,"sent":N,
+"skipped":N}` rather than the `summary` shape above, and is idempotent by a
+claim-before-send guard, so overlapping pings cannot double-message a guest.
+Without a pinger no nudge is ever sent — there is no in-app fallback for this
+one.
+
 A healthy call returns `{"success":true,"summary":{"due":N,"sent":N,"failed":0}}`.
 `due: 0` is normal and means nothing was ready to send yet — the jobs are
 idempotent (`self_checkin_email_sent_at` is stamped only after a successful

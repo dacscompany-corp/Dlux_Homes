@@ -6,18 +6,13 @@ import { validateImageDataUrl } from "../utils/imageGuard";
 import { validateDiscount } from "../utils/validateDiscount";
 import { createCalendarEvent, createCalendarEventWithResult, updateCalendarEvent, CalendarEventData } from "../utils/googleCalendar";
 import { turnoverSql, TURNOVER_BLURB } from "@/lib/turnover";
-import { occupyingBookingSql } from "@/lib/bookingWindow";
+import { occupyingBookingSql, EXISTING_START_SQL, EXISTING_END_SQL } from "@/lib/bookingWindow";
 import { securityDepositFor } from "@/lib/pricing";
 import { dispatchTransactionalEmail, type EmailDispatchResult } from "../utils/dispatchEmail";
 
-// The existing booking's start/end as timestamps, for the availability check.
-// A '00:00' checkout means end-of-day, i.e. midnight starting the NEXT day —
-// spelled out once here because the expression appears three times in the
-// query (as the end itself, and twice inside the turnover CASE).
-const EXISTING_START_SQL = `(b.check_in_date::DATE + b.check_in_time::TIME)::TIMESTAMP`;
-const EXISTING_END_SQL = `(CASE WHEN b.check_out_time = '00:00'
-        THEN (b.check_out_date::DATE + INTERVAL '1 day')::TIMESTAMP
-        ELSE (b.check_out_date::DATE + b.check_out_time::TIME)::TIMESTAMP END)`;
+// EXISTING_START_SQL / EXISTING_END_SQL now live in @/lib/bookingWindow beside
+// occupyingBookingSql(), so the Messenger availability module shares the exact
+// same strings rather than a copy that could drift from this query.
 
 // Run bookkeeping that is allowed to fail without taking the booking with it.
 //

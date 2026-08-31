@@ -1,6 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import pool from "@/backend/config/db";
+import { parseGuestMessage } from "@/lib/messenger-intent";
+import {
+  availabilityReply,
+  priceReply,
+  openDatesReply,
+  overCapacityReply,
+  askForDatesReply,
+  stayTimeReply,
+  bookingTermsReply,
+} from "@/lib/messenger-reply";
+import {
+  loadHavenContext,
+  loadCalendarRules,
+  openWindowsOn,
+  isRangeOpen,
+  openDatesAhead,
+} from "@/lib/availability";
+import { havenToRoom } from "@/lib/haven-adapter";
+import { mergeContext, nextContext } from "@/lib/messenger-context";
+import { loadContext, saveContext, armFollowUp } from "@/backend/utils/messengerContext";
 
 // Facebook Messenger webhook for the D'Lux Homes page.
 // A guest sends their booking ID (e.g. "DL-BK1762050261") and the bot replies with
@@ -70,23 +90,129 @@ async function handleMessage(senderId: string, text: string): Promise<void> {
     await send(senderId, `Your Messenger PSID is:\n${senderId}\n\nSet this as MESSENGER_ADMIN_PSID to receive booking alerts here.`);
     return;
   }
-  const match = text.match(/DL-BK\d{6,}/i);
-  if (match) {
-    await send(senderId, await lookupReply(match[0].toUpperCase()));
+  // A guest's second message is usually a fragment — "4 pax po kami" — that
+  // only makes sense against the date they gave a moment ago. Folding the
+  // remembered enquiry in turns those fragments back into whole questions.
+  const remembered = await loadContext(senderId);
+  const intent = mergeContext(parseGuestMessage(text, new Date()), remembered);
+
+  // Written before any reply is attempted: the guest has spoken, so a pending
+  // follow-up nudge must be disarmed even if answering them fails below. Skipped
+  // only when there is nothing on either side, so passing chatter from someone
+  // who never enquired does not create a row.
+  const remember = nextContext(intent, remembered);
+  if (remember || remembered) await saveContext(senderId, remember);
+
+  if (intent.kind === "bookingId") {
+    await send(senderId, await lookupReply(intent.id));
     return;
   }
-  // Asking about a booking but no ID given — prompt for it.
-  if (ASKS_ABOUT_BOOKING.test(text)) {
-    await send(senderId, "Sure! 👋 Please send your Booking ID and I'll check it for you — it looks like DL-BK1762050261 and is in your D'Lux Homes confirmation email.");
+  // Rates and availability used to be left entirely to the page inbox. The bot
+  // answers those now; anything it cannot read is still left alone rather than
+  // guessed at, so staff keep the general conversation.
+  if (intent.kind === "none") return;
+
+  const pax = "pax" in intent && intent.pax ? intent.pax : DEFAULT_PAX;
+  if (pax > CAPACITY) {
+    await send(senderId, overCapacityReply(pax, CAPACITY));
     return;
   }
-  // Everything else (rates, availability, general inquiries) is left to the
-  // page inbox — staff answer those, and a bot reply would talk over them.
+
+  try {
+    const [ctx, rules, room] = await Promise.all([
+      loadHavenContext(),
+      loadCalendarRules(),
+      loadRoom(),
+    ]);
+    if (!ctx || !room) return;
+
+    if (intent.kind === "openDates") {
+      const dates = await openDatesAhead(OPEN_DATES_HORIZON, ctx);
+      await send(senderId, openDatesReply(dates, OPEN_DATES_HORIZON));
+      return;
+    }
+
+    // Check-in is flexible, check-out and rate are not. Answered from the
+    // haven's own windows so it tracks the schedule the owner has saved.
+    if (intent.kind === "stayTime") {
+      await send(senderId, stayTimeReply(ctx.windows));
+      return;
+    }
+
+    if (intent.kind === "price") {
+      await send(
+        senderId,
+        priceReply({
+          rates: room,
+          windows: ctx.windows,
+          extraPaxFee: room.additionalPaxFee,
+          stay: intent.stay,
+          pax: intent.pax,
+        }),
+      );
+      return;
+    }
+
+    // A 10-hour session cannot span nights, so a date RANGE offers Overnight only.
+    const nights = intent.to ? nightsBetween(intent.from, intent.to) : 1;
+    const open =
+      nights > 1
+        ? (
+            await Promise.all(
+              ctx.windows.map(async (w) =>
+                w.stayType === "21" && (await isRangeOpen(intent.from, nights, w, ctx)) ? w : null,
+              ),
+            )
+          ).filter((w): w is NonNullable<typeof w> => w !== null)
+        : await openWindowsOn(intent.from, ctx);
+
+    await send(
+      senderId,
+      availabilityReply({
+        from: intent.from,
+        to: intent.to,
+        nights,
+        pax,
+        windows: open,
+        rates: room,
+        extraPaxFee: room.additionalPaxFee,
+        rules,
+        stay: intent.stay,
+        timeAsk: intent.timeAsk,
+        requestedTime: intent.requestedTime,
+      }),
+    );
+
+    // The terms follow the quote as their own bubble, and only when there is
+    // something to book — a fully-booked date has no payment terms to warn about.
+    // The same condition arms the follow-up nudge: chasing someone who was told
+    // "fully booked", or who only looked up a booking ID, would make no sense.
+    if (open.length > 0) {
+      await send(senderId, bookingTermsReply(BOOKING_URL));
+      await armFollowUp(senderId);
+    }
+  } catch (e) {
+    console.error("[messenger] availability error", e);
+    await send(senderId, askForDatesReply());
+  }
 }
 
-// "check my booking status", "pa-check po ng reservation", etc.
-const ASKS_ABOUT_BOOKING =
-  /\b(booking|reservation|reserbasyon)\b[\s\S]{0,30}\b(status|check|tsek)\b|\b(status|check|tsek)\b[\s\S]{0,30}\b(booking|reservation|reserbasyon)\b/i;
+const OPEN_DATES_HORIZON = 14;
+const CAPACITY = 4;
+const DEFAULT_PAX = 2;
+const BOOKING_URL = "dlux-homes.vercel.app";
+
+/** Whole nights between two Manila calendar dates. */
+function nightsBetween(fromISO: string, toISO: string): number {
+  const ms = Date.parse(`${toISO}T00:00:00Z`) - Date.parse(`${fromISO}T00:00:00Z`);
+  return Math.max(1, Math.round(ms / 86_400_000));
+}
+
+/** The single haven, mapped to the storefront's rate fields. */
+async function loadRoom() {
+  const r = await pool.query(`SELECT * FROM havens LIMIT 1`);
+  return r.rows[0] ? havenToRoom(r.rows[0]) : null;
+}
 
 async function lookupReply(bookingId: string): Promise<string> {
   try {
