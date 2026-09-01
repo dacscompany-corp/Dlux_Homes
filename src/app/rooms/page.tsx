@@ -66,6 +66,44 @@ function IcoArrowRight({ size = 16 }: { size?: number }) {
 function IcoClock() {
   return <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>;
 }
+// Small amenity-tag marks for the "About this home" pill chips.
+function IcoAtBalcony() {
+  return <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"><path d="M4 21V9M20 21V9M4 9c2-3 14-3 16 0" /><path d="M4 21h16M7 15h10M9 15v6M15 15v6" /></svg>;
+}
+function IcoAtCityView() {
+  return <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"><path d="M4 21V7l4-3v17M12 21V4l4 2v15M20 21V10l-4-2" /></svg>;
+}
+function IcoAtPool() {
+  return <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"><path d="M4 8v6a3 3 0 0 0 3 3" /><path d="M7 4a3 3 0 0 1 3 3v10" /><path d="M2 20c1.5-1.2 3-1.2 4.5 0s3 1.2 4.5 0 3-1.2 4.5 0 3 1.2 4.5 0" /></svg>;
+}
+function IcoAtGarden() {
+  return <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"><path d="M12 21v-9" /><path d="M12 12c0-4 2-6 5-7-1 4-2 7-5 7z" /><path d="M12 14c0-3.5-2-5-4.5-6 .8 3.5 1.8 6 4.5 6z" /></svg>;
+}
+// Snapshot-strip marks (size, capacity, window, rate).
+function IcoSnapSize() {
+  return <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6" /><path d="M9 21H3v-6" /><path d="M21 3l-7 7" /><path d="M3 21l7-7" /></svg>;
+}
+function IcoSnapGuests() {
+  return <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="8" r="3.2" /><path d="M2.5 20c0-3.6 2.9-5.8 6.5-5.8s6.5 2.2 6.5 5.8" /><circle cx="17" cy="8.5" r="2.4" /><path d="M15.7 14.6c2.6.4 4.3 2.2 4.3 5.4" /></svg>;
+}
+function IcoSnapWindow() {
+  return <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M15 9l-4.2 2.8L9 16l4.2-2.8z" /></svg>;
+}
+function IcoSnapRate() {
+  return <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><path d="M20.6 12.6 12.7 20.5a2 2 0 0 1-2.8 0l-6.4-6.4a2 2 0 0 1 0-2.8l7.9-7.9a2 2 0 0 1 1.4-.6H19a2 2 0 0 1 2 2v5.6a2 2 0 0 1-.4 1.2z" /><circle cx="14" cy="8" r="1.4" /></svg>;
+}
+function SnapshotIcon({ i }: { i: number }) {
+  if (i === 0) return <IcoSnapSize />;
+  if (i === 1) return <IcoSnapGuests />;
+  if (i === 2) return <IcoSnapWindow />;
+  return <IcoSnapRate />;
+}
+function AboutTagIcon({ label }: { label: string }) {
+  if (label === "Balcony") return <IcoAtBalcony />;
+  if (label === "City view") return <IcoAtCityView />;
+  if (label === "Swimming pool") return <IcoAtPool />;
+  return <IcoAtGarden />;
+}
 function IcoSun() {
   return <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4.5" /><path d="M12 2.5v2.4M12 19.1v2.4M4.2 4.2l1.7 1.7M18.1 18.1l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.2 19.8l1.7-1.7M18.1 5.9l1.7-1.7" /></svg>;
 }
@@ -828,26 +866,37 @@ export default function BrowsePage() {
         </div>
       </section>
 
-      {/* SNAPSHOT STRIP */}
-      <section style={{ maxWidth: 1320, margin: "0 auto", padding: "56px 28px 0" }}>
-        <div className="hm-4col" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 28, paddingBottom: 40, borderBottom: "1px solid var(--line)" }}>
-          {[
-            { h: "28 sqm", s: "1 bedroom · balcony" },
-            { h: "Up to 4", s: "Full double + pull-out" },
-            { h: "10 or 22 hrs", s: "Pick your window" },
-            { h: `₱${Math.min(room.price10hr, room.price21hr).toLocaleString()}`, s: "Starting rate" },
-          ].map((item) => (
-            <div key={item.h}>
-              <div className="serif" style={{ fontSize: 36, fontWeight: 400, letterSpacing: "-.025em", lineHeight: 1, color: "var(--ink)" }}>{item.h}</div>
-              <div style={{ fontSize: 13, color: "var(--ink)", marginTop: 6 }}>{item.s}</div>
-            </div>
-          ))}
-        </div>
-      </section>
+      {/* SNAPSHOT STRIP + EDITORIAL 2-COL — share one continuous background so
+          the illustration doesn't visibly seam between the two sections. The
+          scroll-reveal ref sits on the about-grid content below (not this
+          whole tall wrapper), so the fade-in still fires once that content is
+          actually the thing in view rather than the snapshot strip above it. */}
+      <section style={{ position: "relative", overflow: "hidden" }}>
+        <Image src="/images/about-bg.png" alt="" fill sizes="100vw" style={{ objectFit: "cover", objectPosition: "center" }} aria-hidden />
 
-      {/* EDITORIAL 2-COL */}
-      <section ref={aboutRef} style={{ maxWidth: 1320, margin: "0 auto", padding: "80px 28px" }}>
-        <div className={`about-grid${aboutVisible ? " about-grid--in" : ""}`} style={{ display: "grid", gridTemplateColumns: "1fr 1.05fr", gap: 80, alignItems: "center" }}>
+        <div style={{ position: "relative", maxWidth: 1320, margin: "0 auto", padding: "40px 28px 0" }}>
+          <div className="hm-4col" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 20, paddingBottom: 32, borderBottom: "1px solid var(--line-2)" }}>
+            {[
+              { h: "28 sqm", s: "1 bedroom · balcony" },
+              { h: "Up to 4", s: "Full double + pull-out" },
+              { h: "10 or 22 hrs", s: "Pick your window" },
+              { h: `₱${Math.min(room.price10hr, room.price21hr).toLocaleString()}`, s: "Starting rate" },
+            ].map((item, i) => (
+              <div key={item.h} style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                <div style={{ flex: "none", width: 44, height: 44, borderRadius: 12, border: "1px solid var(--dlux-accent)", background: "var(--white)", boxShadow: "var(--shadow-sm)", display: "grid", placeItems: "center", color: "var(--accent-deep)" }}>
+                  <SnapshotIcon i={i} />
+                </div>
+                <div>
+                  <div className="serif" style={{ fontSize: 30, fontWeight: 400, letterSpacing: "-.02em", lineHeight: 1, color: "var(--ink)" }}>{item.h}</div>
+                  <div style={{ fontSize: 12.5, color: "var(--ink-2)", marginTop: 4 }}>{item.s}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ position: "relative", maxWidth: 1320, margin: "0 auto", padding: "80px 28px" }}>
+        <div ref={aboutRef} className={`about-grid${aboutVisible ? " about-grid--in" : ""}`} style={{ display: "grid", gridTemplateColumns: "1fr 1.05fr", gap: 80, alignItems: "center" }}>
           <div className="about-copy">
             <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: "var(--accent-ink)", marginBottom: 18 }}>About this home</div>
             <h2 className="serif hm-h2" style={{ fontSize: 56, fontWeight: 400, letterSpacing: "-.025em", lineHeight: 1, margin: 0 }}>
@@ -859,7 +908,10 @@ export default function BrowsePage() {
             </p>
             <div style={{ marginTop: 28, display: "flex", gap: 8, flexWrap: "wrap" }}>
               {["Balcony", "City view", "Swimming pool", "Garden"].map((t, i) => (
-                <span key={t} className="about-tag" style={{ transitionDelay: `${300 + i * 90}ms`, display: "inline-flex", alignItems: "center", padding: "8px 14px", fontSize: 13, fontWeight: 500, borderRadius: 999, border: "1px solid var(--line-2)", background: "var(--white)", color: "var(--ink-2)" }}>{t}</span>
+                <span key={t} className="about-tag" style={{ transitionDelay: `${300 + i * 90}ms`, display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 14px", fontSize: 13, fontWeight: 500, borderRadius: 999, border: "1px solid var(--line-2)", background: "var(--white)", color: "var(--ink-2)" }}>
+                  <span className="about-tag__icon" style={{ color: "var(--dlux-accent)", display: "inline-flex" }}><AboutTagIcon label={t} /></span>
+                  {t}
+                </span>
               ))}
             </div>
           </div>
@@ -875,6 +927,7 @@ export default function BrowsePage() {
               </div>
             ))}
           </div>
+        </div>
         </div>
       </section>
 
@@ -937,37 +990,79 @@ export default function BrowsePage() {
         </div>
       </section>
 
-      {/* PROMOTIONS */}
-      <section ref={promoRef} style={{ maxWidth: 1320, margin: "0 auto", padding: "64px 28px 72px" }}>
-        <PromoBanner promotions={activePromotions} roomId={room.id} rates={room} variant="desktop" visible={promoVisible} />
-      </section>
+      {/* PROMOTIONS + AMENITIES — share one continuous boho background. */}
+      <section style={{ position: "relative", overflow: "hidden" }}>
+        <Image src="/images/about-bg.png" alt="" fill sizes="100vw" style={{ objectFit: "cover", objectPosition: "center" }} aria-hidden />
 
-      {/* AMENITIES */}
-      <section ref={amenitiesRef} style={{ maxWidth: 1320, margin: "0 auto", padding: "80px 28px" }}>
-        <div className={`amen-grid${amenitiesVisible ? " amen-grid--in" : ""}`} style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr", gap: 64 }}>
+        {activePromotions && activePromotions.length > 0 && (
+          <div style={{ position: "relative", maxWidth: 1320, margin: "0 auto", padding: "40px 28px 0" }}>
+            {/* Floating outer card — glassy rather than opaque, so the
+                illustration reads through behind the promo content instead of
+                being fully hidden under a solid panel. */}
+            <div
+              ref={promoRef}
+              style={{
+                background: "rgba(255,252,244,0.72)",
+                backdropFilter: "blur(6px)",
+                WebkitBackdropFilter: "blur(6px)",
+                border: "1px solid var(--line-2)",
+                borderRadius: 28,
+                padding: "28px 32px",
+                boxShadow: "var(--shadow-md)",
+              }}
+            >
+              <PromoBanner promotions={activePromotions} roomId={room.id} rates={room} variant="desktop" visible={promoVisible} />
+            </div>
+          </div>
+        )}
+
+        <div style={{ position: "relative", maxWidth: 1320, margin: "0 auto", padding: "48px 28px" }}>
+        <div ref={amenitiesRef} className={`amen-grid${amenitiesVisible ? " amen-grid--in" : ""}`} style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr", gap: 64 }}>
           <div className="amen-copy">
             <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: "var(--accent-ink)", marginBottom: 16 }}>What&apos;s inside</div>
-            <h2 className="serif hm-h2" style={{ fontSize: 52, fontWeight: 400, letterSpacing: "-.025em", lineHeight: 1, margin: "0 0 20px" }}>Everything you&apos;d reach for.</h2>
+            <h2 className="serif hm-h2" style={{ fontSize: 52, fontWeight: 400, letterSpacing: "-.025em", lineHeight: 1, margin: "0 0 20px" }}>Everything you&apos;d <em>reach</em> for.</h2>
             <p style={{ fontSize: 15, color: "var(--ink-2)", lineHeight: 1.65 }}>Kitchenette, balcony, Netflix, videoke — and a welcome pack that means you can walk in with just a backpack.</p>
-            <div style={{ marginTop: 28, padding: 20, background: "var(--bg-2)", borderRadius: 16 }}>
+            <div style={{ marginTop: 24, padding: 18, background: "rgba(239,228,206,0.6)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", borderRadius: 16 }}>
               <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--ink)", marginBottom: 12 }}>On the house</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {WELCOME_PACK.map((w, i) => (
                   <div key={w} className="amen-pack" style={{ transitionDelay: `${300 + i * 80}ms`, fontSize: 14, display: "flex", alignItems: "center", gap: 10 }}>
-                    <span style={{ color: "var(--accent-ink)" }}><IcoCheck /></span> {w}
+                    <span style={{ color: "#5C8A5C" }}><IcoCheck /></span> {w}
                   </div>
                 ))}
               </div>
             </div>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 2, background: "var(--line)", borderRadius: 20, overflow: "hidden", alignSelf: "start" }}>
-            {AMENITIES.map((a, i) => (
-              <div key={a.label} className="amen-tile" style={{ transitionDelay: `${i * 70}ms`, padding: "24px 18px", background: "var(--white)", display: "flex", flexDirection: "column", gap: 8 }}>
-                <div className="amen-tile__icon" style={{ width: 40, height: 40, borderRadius: 10, background: "var(--bg-2)", display: "grid", placeItems: "center", color: "var(--ink-2)" }}><a.icon /></div>
-                <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.3 }}>{a.label}</div>
-              </div>
-            ))}
+          <div
+            style={{
+              display: "grid", gridTemplateColumns: "repeat(3,1fr)",
+              background: "rgba(255,252,244,0.72)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
+              border: "1px solid var(--line)", borderRadius: 20, overflow: "hidden", alignSelf: "start",
+            }}
+          >
+            {AMENITIES.map((a, i) => {
+              const col = i % 3;
+              const row = Math.floor(i / 3);
+              const lastRow = row === Math.ceil(AMENITIES.length / 3) - 1;
+              return (
+                <div
+                  key={a.label}
+                  className="amen-tile"
+                  style={{
+                    transitionDelay: `${i * 70}ms`,
+                    padding: "22px 20px",
+                    display: "flex", flexDirection: "column", gap: 12,
+                    borderRight: col < 2 ? "1px solid var(--line)" : "none",
+                    borderBottom: lastRow ? "none" : "1px solid var(--line)",
+                  }}
+                >
+                  <div className="amen-tile__icon" style={{ width: 42, height: 42, borderRadius: 12, background: "var(--bg-2)", display: "grid", placeItems: "center", color: "var(--ink-2)" }}><a.icon /></div>
+                  <div style={{ fontSize: 14, fontWeight: 700, lineHeight: 1.3, color: "var(--ink)" }}>{a.label}</div>
+                </div>
+              );
+            })}
           </div>
+        </div>
         </div>
       </section>
 
