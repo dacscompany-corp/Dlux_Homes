@@ -871,9 +871,18 @@ export default function BrowsePage() {
           scroll-reveal ref sits on the about-grid content below (not this
           whole tall wrapper), so the fade-in still fires once that content is
           actually the thing in view rather than the snapshot strip above it. */}
-      <section style={{ position: "relative", overflow: "hidden" }}>
-        <Image src="/images/about-bg.png" alt="" fill sizes="100vw" style={{ objectFit: "cover", objectPosition: "center" }} aria-hidden />
-
+      <section
+        style={{
+          position: "relative",
+          overflow: "hidden",
+          minHeight: "min(53vw, 46vh)",
+          backgroundColor: "#F3E7D7",
+          backgroundImage: "url(/images/about-bg.png)",
+          backgroundSize: "cover",
+          backgroundRepeat: "no-repeat",
+          backgroundPosition: "center",
+        }}
+      >
         <div style={{ position: "relative", maxWidth: 1320, margin: "0 auto", padding: "40px 28px 0" }}>
           <div className="hm-4col" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 20, paddingBottom: 32, borderBottom: "1px solid var(--line-2)" }}>
             {[
@@ -990,9 +999,28 @@ export default function BrowsePage() {
         </div>
       </section>
 
-      {/* PROMOTIONS + AMENITIES — share one continuous boho background. */}
-      <section style={{ position: "relative", overflow: "hidden" }}>
-        <Image src="/images/about-bg.png" alt="" fill sizes="100vw" style={{ objectFit: "cover", objectPosition: "center" }} aria-hidden />
+      {/* PROMOTIONS + AMENITIES + REVIEWS + FINAL CTA — share one continuous
+          boho background, painted once on this outer section so it's a
+          single image with no seam between blocks. This section runs much taller
+          than the artwork's own 1718:915 ratio (amenities + promo + reviews
+          stacked), and the decoration in the source image only lives near
+          its top/bottom edges — a single `cover` stretch over that height
+          would blow the art up and leave a long flat stretch in the middle.
+          Tiling it instead (fixed-width, auto-height, repeat-y) keeps every
+          tile at its natural scale and repeats the vase/plant/macramé motifs
+          down the section — seamless because it's one image repeating
+          against itself, not two different scaled copies meeting. */}
+      <section
+        style={{
+          position: "relative",
+          overflow: "hidden",
+          backgroundColor: "#F3E7D7",
+          backgroundImage: "url(/images/about-bg.png)",
+          backgroundSize: "100% auto",
+          backgroundRepeat: "repeat-y",
+          backgroundPosition: "top center",
+        }}
+      >
 
         {activePromotions && activePromotions.length > 0 && (
           <div style={{ position: "relative", maxWidth: 1320, margin: "0 auto", padding: "40px 28px 0" }}>
@@ -1064,11 +1092,12 @@ export default function BrowsePage() {
           </div>
         </div>
         </div>
-      </section>
 
-      {/* REVIEWS */}
-      <section style={{ background: "var(--bg-2)", padding: "80px 28px" }}>
-        <div style={{ maxWidth: 1320, margin: "0 auto" }}>
+        {/* REVIEWS — folded into the same section as the amenities block
+            above (rather than a separate <section> repainting its own copy
+            of the image) so the background is one continuous, single-scaled
+            illustration with no seam where the two used to meet. */}
+        <div style={{ position: "relative", maxWidth: 1320, margin: "0 auto", padding: "32px 28px 80px" }}>
           <div style={{ marginBottom: 40 }}>
             <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: "var(--accent-ink)", marginBottom: 14 }}>Guests say</div>
             <h2 className="serif hm-h2" style={{ fontSize: 52, fontWeight: 400, letterSpacing: "-.025em", lineHeight: 1, margin: 0, display: "flex", alignItems: "center", gap: 12 }}>
@@ -1091,19 +1120,21 @@ export default function BrowsePage() {
             ))}
           </div>
         </div>
-      </section>
 
-      {/* FINAL CTA */}
-      <section ref={ctaRef} className={`cta-sec${ctaVisible ? " cta-sec--in" : ""}`} style={{ maxWidth: 1320, margin: "0 auto", padding: "100px 28px 80px", textAlign: "center" }}>
-        <h2 className="serif cta-title" style={{ fontSize: "clamp(48px,7vw,96px)", fontWeight: 400, letterSpacing: "-.03em", lineHeight: 0.95, margin: 0 }}>
-          Ready to <em style={{ color: "var(--accent-ink)" }}>pause?</em>
-        </h2>
-        <p className="cta-text" style={{ fontSize: 17, color: "var(--ink-2)", maxWidth: 520, margin: "22px auto 32px", lineHeight: 1.55 }}>
-          Our calendar fills up 2–3 weeks out. Pick your window and we&apos;ll hold it.
-        </p>
-        <Link href={`/rooms/${room.id}`} className="booknow-btn cta-btn" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 999, background: "var(--dlux-accent)", color: "var(--white)", fontSize: 15, fontWeight: 600, textDecoration: "none" }}>
-          See the home · Book now <IcoArrowRight size={18} />
-        </Link>
+        {/* FINAL CTA — folded into the same tiling boho section as amenities
+            + reviews above (rather than its own <section>) so the background
+            keeps repeating without a seam where it would otherwise end. */}
+        <div ref={ctaRef} className={`cta-sec${ctaVisible ? " cta-sec--in" : ""}`} style={{ position: "relative", maxWidth: 1320, margin: "0 auto", padding: "100px 28px 80px", textAlign: "center" }}>
+          <h2 className="serif cta-title" style={{ fontSize: "clamp(48px,7vw,96px)", fontWeight: 400, letterSpacing: "-.03em", lineHeight: 0.95, margin: 0 }}>
+            Ready to <em style={{ color: "var(--accent-ink)" }}>pause?</em>
+          </h2>
+          <p className="cta-text" style={{ fontSize: 17, color: "var(--ink-2)", maxWidth: 520, margin: "22px auto 32px", lineHeight: 1.55 }}>
+            Our calendar fills up 2–3 weeks out. Pick your window and we&apos;ll hold it.
+          </p>
+          <Link href={`/rooms/${room.id}`} className="booknow-btn cta-btn" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 999, background: "var(--dlux-accent)", color: "var(--white)", fontSize: 15, fontWeight: 600, textDecoration: "none" }}>
+            See the home · Book now <IcoArrowRight size={18} />
+          </Link>
+        </div>
       </section>
 
       {/* FOOTER */}
