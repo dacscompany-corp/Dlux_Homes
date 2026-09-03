@@ -638,6 +638,13 @@ export const createBooking = async (
       // Automatic (codeless) promotion applied at checkout. Recorded against
       // the account below so it can only ever be used once per guest.
       promotion_id,
+      // Guest Terms acceptance, captured at checkout BEFORE the payment step
+      // (see 2026-08-19-add-terms-acceptance-to-booking.sql). §22 of the Terms
+      // makes the accepted VERSION the operative one for the booking, so it
+      // has to be persisted here — the published document moves on, and a
+      // later read of TERMS_AND_CONDITIONS.md cannot reconstruct it.
+      terms_version,
+      terms_accepted_at,
       // Add-ons (frontend sends snake_case `add_ons`)
       add_ons: addOns = {},
     } = body;
@@ -918,9 +925,10 @@ export const createBooking = async (
       INSERT INTO booking (
         booking_id, user_id, room_name, check_in_date, check_out_date,
         check_in_time, check_out_time, adults, children, infants, status,
-        has_security_deposit, google_event_id, created_at, updated_at
+        has_security_deposit, google_event_id, terms_version, terms_accepted_at,
+        created_at, updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
       RETURNING id
     `;
 
@@ -938,6 +946,11 @@ export const createBooking = async (
       "pending", // Ensure status matches "pending" default
       security_deposit > 0, // has_security_deposit flag
       googleEventId, // Added column for google calendar sync
+      // NULL, not a synthesized value, when a client didn't send acceptance:
+      // the migration defines NULL as "taken before acceptance was captured",
+      // and inventing a version would forge a consent record.
+      terms_version || null,
+      terms_accepted_at || null,
     ];
 
     console.log("📝 [BOOKING] Inserting booking record...");

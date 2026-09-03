@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
-import { createNotificationForUser } from "@/backend/utils/notificationHelper";
+import { pushCalendarUpdate } from "@/backend/controller/bookingController";
+import { dispatchTransactionalEmail } from "@/backend/utils/dispatchEmail";
+import { movedStayDates } from "@/lib/dateChange";
 import { requireAdmin } from "@/backend/utils/requireAdmin";
 
 export const runtime = "nodejs";
@@ -10,7 +12,6 @@ export const runtime = "nodejs";
 // (created by /api/bookings/[id]/request-date-change).
 //
 // Body: { action: "approve" | "reject" }
-const DAY = 24 * 60 * 60 * 1000;
 const ACTIVE = ["pending", "approved", "confirmed", "on-going"];
 // Postgres exclusion-violation code — raised by booking_no_double_book_active
 // when the approved dates collide with another active booking for the room.
@@ -36,9 +37,18 @@ export async function PATCH(req: NextRequest, { params }: RouteContext): Promise
 
     await client.query("BEGIN");
 
+    // DATE/TIME columns are cast to ::text here on purpose. node-postgres
+    // returns them as JS Date objects, and the string arithmetic below (and the
+    // email formatting after it) needs the calendar date Postgres actually
+    // means, not a timezone-aware Date that can report the neighbouring day.
+    // FOR UPDATE only locks `booking`, so the guest join is a separate read.
     const found = await client.query(
-      `SELECT id, booking_id, status, room_name, check_in_date, check_out_date,
-              requested_new_date, user_id
+      `SELECT id, booking_id, status, room_name, user_id,
+              check_in_date::text  AS check_in_date,
+              check_out_date::text AS check_out_date,
+              check_in_time::text  AS check_in_time,
+              check_out_time::text AS check_out_time,
+              requested_new_date::text AS requested_new_date
          FROM booking
         WHERE id::text = $1 OR booking_id = $1
         FOR UPDATE`,
@@ -63,13 +73,25 @@ export async function PATCH(req: NextRequest, { params }: RouteContext): Promise
 
     let updated;
     if (action === "approve") {
-      const oldCheckIn = new Date(booking.check_in_date + "T00:00:00");
-      const oldCheckOut = new Date(booking.check_out_date + "T00:00:00");
-      const stayDays = Math.round((oldCheckOut.getTime() - oldCheckIn.getTime()) / DAY);
-
-      const newCheckIn = new Date(booking.requested_new_date + "T00:00:00");
-      const newCheckOut = new Date(newCheckIn.getTime() + stayDays * DAY);
-      const newCheckOutStr = newCheckOut.toISOString().slice(0, 10);
+      // Keep the stay the same LENGTH, just start it on the requested day.
+      // movedStayDates throws rather than guessing on unusable input — this
+      // writes to a paid booking, so a silent fallback would move a real
+      // guest's stay to a date nobody picked.
+      let newCheckOutStr: string;
+      try {
+        newCheckOutStr = movedStayDates(
+          booking.check_in_date,
+          booking.check_out_date,
+          booking.requested_new_date,
+        ).checkOut;
+      } catch (dateError) {
+        await client.query("ROLLBACK");
+        console.error("date-change: bad stored dates", dateError);
+        return NextResponse.json(
+          { error: "This booking's dates are unreadable, so it can't be moved automatically. Please check the record." },
+          { status: 422 }
+        );
+      }
 
       updated = await client.query(
         `UPDATE booking
@@ -78,7 +100,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext): Promise
                 requested_new_date = NULL,
                 date_change_count = date_change_count + 1
           WHERE id = $1
-          RETURNING id, booking_id, check_in_date, check_out_date`,
+          RETURNING id, booking_id, check_in_date::text AS check_in_date, check_out_date::text AS check_out_date`,
         [booking.id, booking.requested_new_date, newCheckOutStr]
       );
     } else {
@@ -86,31 +108,74 @@ export async function PATCH(req: NextRequest, { params }: RouteContext): Promise
         `UPDATE booking
             SET requested_new_date = NULL
           WHERE id = $1
-          RETURNING id, booking_id, check_in_date, check_out_date`,
+          RETURNING id, booking_id, check_in_date::text AS check_in_date, check_out_date::text AS check_out_date`,
         [booking.id]
       );
     }
 
     await client.query("COMMIT");
 
-    if (booking.user_id) {
-      try {
-        const fmt = (s: string) => new Date(s + "T00:00:00").toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
-        const row = updated.rows[0];
-        await createNotificationForUser(booking.user_id, {
-          title: action === "approve" ? "Date Change Approved" : "Date Change Not Approved",
-          message:
-            action === "approve"
-              ? `Your booking ${booking.booking_id} (${booking.room_name || "room"}) has been moved to ${fmt(row.check_in_date)} – ${fmt(row.check_out_date)}.`
-              : `Your requested date change for booking ${booking.booking_id} could not be accommodated. Please message us if you have questions.`,
-          notificationType: "Booking",
-        });
-      } catch (notifyError) {
-        console.error("date-change decision notification failed:", notifyError);
-      }
+    // Move the Google Calendar event to match. Without this the DB says one
+    // thing and the host's calendar says another — the host prepares the unit
+    // for the wrong night, which is the whole failure this feature exists to
+    // avoid. Only on approve: a rejection leaves the booking exactly as it was.
+    // pushCalendarUpdate never throws and never blocks, so a calendar outage
+    // cannot undo a date change that is already committed.
+    if (action === "approve") {
+      await pushCalendarUpdate(booking.id);
     }
 
-    return NextResponse.json({ ok: true, data: updated.rows[0] });
+    // Tell the guest. This used to write a `notifications` row, which could
+    // NEVER work for a guest: that table's FK targets employees(id) and its read
+    // route inner-joins employees, so it is a staff inbox. Every guest insert
+    // failed the FK and was swallowed by the catch below it — the change went
+    // through and nobody told them. Email is the only channel a guest has.
+    //
+    // A send failure must not fail the decision (the dates are already
+    // committed), so the status is reported back instead of thrown — the caller
+    // can tell the operator to follow up by hand.
+    const row = updated.rows[0];
+    const guest = await client
+      .query(
+        `SELECT first_name, last_name, email
+           FROM booking_guests
+          WHERE booking_id = $1
+          ORDER BY guest_index ASC NULLS LAST
+          LIMIT 1`,
+        [booking.id]
+      )
+      .catch(() => ({ rows: [] as Array<{ first_name?: string; last_name?: string; email?: string }> }));
+
+    const recipient = guest.rows[0];
+    let emailStatus;
+    if (recipient?.email) {
+      emailStatus = await dispatchTransactionalEmail(
+        action === "approve" ? "date-change approved" : "date-change rejected",
+        "/api/send-date-change-email",
+        {
+          decision: action === "approve" ? "approved" : "rejected",
+          email: recipient.email,
+          firstName: recipient.first_name,
+          lastName: recipient.last_name,
+          bookingId: booking.booking_id,
+          roomName: booking.room_name,
+          // `booking` holds the pre-decision values, `row` the post-decision
+          // ones — on a rejection the two are identical, which is the point.
+          oldCheckInDate: booking.check_in_date,
+          oldCheckOutDate: booking.check_out_date,
+          newCheckInDate: row.check_in_date,
+          newCheckOutDate: row.check_out_date,
+          checkInTime: booking.check_in_time,
+          checkOutTime: booking.check_out_time,
+        },
+      );
+    } else {
+      const detail = `No guest email on booking ${booking.booking_id} — the guest was NOT notified of this date change.`;
+      console.error(`❌ ${detail}`);
+      emailStatus = { kind: "date-change", ok: false, detail };
+    }
+
+    return NextResponse.json({ ok: true, data: row, emailStatus });
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     console.error("admin date-change decision error:", error);
