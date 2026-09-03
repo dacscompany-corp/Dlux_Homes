@@ -1135,10 +1135,12 @@ export default function BrowsePage() {
             See the home · Book now <IcoArrowRight size={18} />
           </Link>
         </div>
-      </section>
 
-      {/* FOOTER */}
-      <footer ref={footerRef} className={`footer-sec${footerVisible ? " footer-sec--in" : ""}`} style={{ borderTop: "1px solid var(--line)", background: "var(--bg)" }}>
+        {/* FOOTER — folded into the same tiling boho section as everything
+            above (rather than its own <footer> with a flat background and a
+            border-top) so the pattern runs unbroken all the way to the page
+            bottom, with no seam where it would otherwise cut off. */}
+        <footer ref={footerRef} className={`footer-sec${footerVisible ? " footer-sec--in" : ""}`} style={{ position: "relative" }}>
         <div style={{ maxWidth: 1320, margin: "0 auto", padding: "48px 28px 28px" }}>
           <div className="hm-foot" style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 40 }}>
             <div className="footer-col" style={{ animationDelay: "0ms" }}>
@@ -1201,7 +1203,8 @@ export default function BrowsePage() {
             <div>Made with care for rest.</div>
           </div>
         </div>
-      </footer>
+        </footer>
+      </section>
       </div>{/* end .rm-desktop */}
     </div>
   );
