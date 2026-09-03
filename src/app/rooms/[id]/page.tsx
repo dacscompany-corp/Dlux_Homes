@@ -23,7 +23,7 @@ import { fmtClock, spanHours } from "@/lib/stay-window";
 import { turnoverMs } from "@/lib/turnover";
 import { isStartBookable } from "@/lib/bookingWindow";
 import DluxLoader, { DluxLoaderPage } from "@/components/brand/DluxLoader";
-import { stayTotal, isWeekendOrHoliday, extraPaxFee, bundleNightlyRate, bundleExtraPaxFee, addDaysISO } from "@/lib/pricing";
+import { stayTotal, isWeekendOrHoliday, extraPaxFee, bundleNightlyRate, bundleExtraPaxFee, addDaysISO, pickRate } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import type { Room } from "@/types";
 
@@ -947,15 +947,54 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   // `pickedStillFree` guards the case where the rate was chosen and then the
   // night count changed, making that window overlap an existing booking.
   const canProceed = stayChosen && date && guests.adults >= 1;
+  // The rate ACTUALLY charged for a stay type on the chosen date.
+  //
+  // room.price10hr / room.price21hr are the WEEKDAY rates — reading them
+  // directly is what made the rate list quote ₱1,899 under a heading that said
+  // "Rates for Fri, Sep 11" while checkout charged the ₱2,099 weekend rate.
+  // pickRate() applies the owner's weekend/holiday calendar (weekend_days +
+  // pricing_holidays), which is the same rule stayTotal() prices the booking
+  // with and the same one the server bills. Every price this page shows for a
+  // known date must come through here, or the storefront and the invoice
+  // disagree again.
+  //
+  // With no date yet there is no weekend/weekday answer to give, so the weekday
+  // rate stands as the "from" floor.
+  const rateOn = (stayType: string, iso: string = date) =>
+    iso
+      ? pickRate(stayType, iso, room, calendarRules)
+      : stayType === "10" ? room.price10hr : room.price21hr;
+
   // Shown before a stay type is picked — advertising one option's rate as "the"
   // price would be the same silent default we just removed.
-  const fromPrice = Math.min(room.price10hr, room.price21hr);
+  const fromPrice = Math.min(rateOn("10"), rateOn("21"));
+
+  // "₱X × N nights" under the night stepper.
+  //
+  // Each night of an overnight stay is priced by ITS OWN date (stayTotal does
+  // exactly this), so a Fri–Sun stay mixes a weekend night with a weekday one.
+  // A single "rate × nights" is then arithmetic that does not reach the total
+  // the guest is about to be charged, so only show it when every night really
+  // does cost the same; otherwise state the total, which is always true.
+  // A long-term stay overrides all of it with one flat nightly rate.
+  const nightlyRates = date && isOvernight
+    ? Array.from({ length: stayNights }, (_, i) => pickRate("21", addDaysISO(date, i), room, calendarRules))
+    : [];
+  const nightsBreakdown = (() => {
+    if (nightlyRates.length === 0) return "";
+    const plural = `night${stayNights > 1 ? "s" : ""}`;
+    if (bundleRate != null) return `${peso(bundleRate)} × ${stayNights} ${plural}`;
+    if (nightlyRates.every((r) => r === nightlyRates[0])) {
+      return `${peso(nightlyRates[0])} × ${stayNights} ${plural}`;
+    }
+    return `${peso(basePrice)} total · ${stayNights} ${plural}`;
+  })();
 
   // The offer the price panel is allowed to act on. The card above advertises
   // whatever promo is running; this narrows to one that actually covers the
   // stay type the guest picked, so an overnight-only promo never discounts a
   // Daycation quote. Only meaningful once a stay type is chosen.
-  const stayRate = selectedWindow.stayType === "10" ? room.price10hr : room.price21hr;
+  const stayRate = rateOn(selectedWindow.stayType);
   // Is this voucher's code actually in play for this visit? Reserve only
   // forwards ?promo= to checkout when it arrived in the URL, so a voucher the
   // guest hasn't opted into must NOT move the price here — showing ₱1,199 and
@@ -1140,7 +1179,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
         <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, background: "#FAF7F1", borderTop: "1px solid #ECE5D4", padding: "14px 18px calc(16px + env(safe-area-inset-bottom))", boxShadow: "0 -12px 30px -18px rgba(20,15,9,.35)", display: "flex", alignItems: "center", gap: 14 }}>
           <div style={{ flex: "none" }}>
             <div style={{ fontSize: 10.5, color: "#8B7458" }}>{canProceed ? "Total" : "From"}</div>
-            <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: "-.01em" }}>{peso(canProceed ? total : stayChosen ? (selectedWindow.stayType === "10" ? room.price10hr : room.price21hr) : fromPrice)}</div>
+            <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: "-.01em" }}>{peso(canProceed ? total : stayChosen ? rateOn(selectedWindow.stayType) : fromPrice)}</div>
           </div>
           <button
             onClick={() => {
@@ -1243,7 +1282,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
               </CardStep>
 
               {/* 2. RATE — only what is bookable on that date. */}
-              <CardStep n={2} title="Choose your rate" active={cardStep === 2} done={stayChosen && cardStep > 2} summary={stayChosen ? `${selectedWindow.label} · ${peso(selectedWindow.stayType === "10" ? room.price10hr : room.price21hr)}` : undefined} onOpen={() => { setCardStep(2); setDateOpen(false); setGuestOpen(false); }}>
+              <CardStep n={2} title="Choose your rate" active={cardStep === 2} done={stayChosen && cardStep > 2} summary={stayChosen ? `${selectedWindow.label} · ${peso(rateOn(selectedWindow.stayType))}` : undefined} onOpen={() => { setCardStep(2); setDateOpen(false); setGuestOpen(false); }}>
                 {!date ? (
                   <div style={{ fontSize: 13, color: "#8B7458", padding: "10px 2px" }}>
                     Pick a date first — the rates open on that day will appear here.
@@ -1263,7 +1302,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                   {windows.map((w) => {
                     const free = isWindowFreeOn(date, w, 1);
                     const active = free && stayChosen && selectedWindow.checkIn === w.checkIn && selectedWindow.checkOut === w.checkOut;
-                    const price = w.stayType === "10" ? room.price10hr : room.price21hr;
+                    const price = rateOn(w.stayType);
                     const i = windows.indexOf(w); // icon follows the original order
                     const ic = i === 0
                       ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
@@ -1301,7 +1340,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                   <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", border: "1px solid #E0CEB2", borderRadius: 14, padding: "12px 16px", background: "#FAF7F1" }}>
                     <div>
                       <div style={{ fontSize: 14, fontWeight: 600 }}>How many nights?</div>
-                      <div style={{ fontSize: 11.5, color: "#8B7458", marginTop: 1 }}>{peso(selectedWindow.stayType === "10" ? room.price10hr : room.price21hr)} × {stayNights} night{stayNights > 1 ? "s" : ""}</div>
+                      <div style={{ fontSize: 11.5, color: "#8B7458", marginTop: 1 }}>{nightsBreakdown}</div>
                       {/* A night count alone leaves the guest counting forward on
                           a calendar to find out when they have to be out. */}
                       <div style={{ fontSize: 11.5, color: "#1F160E", fontWeight: 600, marginTop: 3 }}>Check-out {formatDateMedium(checkOutDate)}</div>
@@ -1762,7 +1801,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                   </CardStep>
 
                   {/* 2. RATE — only what is bookable on that date. */}
-                  <CardStep n={2} title="Choose your rate" active={cardStep === 2} done={stayChosen && cardStep > 2} summary={stayChosen ? `${selectedWindow.label} · ${peso(selectedWindow.stayType === "10" ? room.price10hr : room.price21hr)}` : undefined} onOpen={() => { setCardStep(2); setDateOpen(false); setGuestOpen(false); }}>
+                  <CardStep n={2} title="Choose your rate" active={cardStep === 2} done={stayChosen && cardStep > 2} summary={stayChosen ? `${selectedWindow.label} · ${peso(rateOn(selectedWindow.stayType))}` : undefined} onOpen={() => { setCardStep(2); setDateOpen(false); setGuestOpen(false); }}>
                     {!date ? (
                       <div style={{ fontSize: 13.5, color: "#8B7458", padding: "10px 2px" }}>
                         Pick a date first — the rates open on that day will appear here.
@@ -1780,7 +1819,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                       {windows.map((w) => {
                         const free = isWindowFreeOn(date, w, 1);
                         const active = free && stayChosen && selectedWindow.checkIn === w.checkIn && selectedWindow.checkOut === w.checkOut;
-                        const price = w.stayType === "10" ? room.price10hr : room.price21hr;
+                        const price = rateOn(w.stayType);
                         const i = windows.indexOf(w); // icon follows the original order
                     const ic = i === 0
                           ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
@@ -1814,7 +1853,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                       <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", border: "1px solid #E0CEB2", borderRadius: 14, padding: "12px 16px", background: "#FAF7F1" }}>
                         <div>
                           <div style={{ fontSize: 14, fontWeight: 600 }}>How many nights?</div>
-                          <div style={{ fontSize: 12, color: "#8B7458", marginTop: 1 }}>{peso(selectedWindow.stayType === "10" ? room.price10hr : room.price21hr)} × {stayNights} night{stayNights > 1 ? "s" : ""}</div>
+                          <div style={{ fontSize: 12, color: "#8B7458", marginTop: 1 }}>{nightsBreakdown}</div>
                           {/* A night count alone leaves the guest counting forward on
                               a calendar to find out when they have to be out. */}
                           <div style={{ fontSize: 12, color: "#1F160E", fontWeight: 600, marginTop: 3 }}>Check-out {formatDateMedium(checkOutDate)}</div>

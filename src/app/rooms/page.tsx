@@ -990,7 +990,11 @@ export default function BrowsePage() {
                   </div>
                   <div style={{ position: "relative", marginTop: 24, paddingTop: 18, borderTop: "1px solid rgba(255,255,255,.12)", display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                     <span style={{ fontSize: 12, color: "rgba(255,255,255,.6)" }}>From</span>
-                    <span style={{ fontSize: 22, fontWeight: 700 }}>₱{(w.stayType === "10" ? room.price10hr : room.price21hr).toLocaleString()}</span>
+                    {/* rateFor(), not the raw weekday field — this card sits on
+                        the same page as the Weekday/Weekend toggle, and reading
+                        the weekday rate directly left it frozen at ₱1,499 while
+                        the toggle said Weekend. */}
+                    <span style={{ fontSize: 22, fontWeight: 700 }}>₱{rateFor(w.stayType).toLocaleString()}</span>
                   </div>
                 </div>
               </Link>
