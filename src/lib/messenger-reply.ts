@@ -273,7 +273,7 @@ export function availabilityReply(args: {
 }
 
 /**
- * The two "before you pay" terms, sent as its own message after a quote.
+ * The "before you pay" terms, sent as its own message after a quote.
  *
  * A guest used to see only the down payment before being handed a booking
  * link, with the no-refund rule unmentioned until the checkout page. Sending
@@ -281,23 +281,33 @@ export function availabilityReply(args: {
  * sends as their own bubbles, which separates the two far better than blank
  * lines inside one wall of text.
  *
- * Owner's call (2026-09-04): the date-change window and the "the form is only a
- * request" card were dropped from this bubble to keep it short. Both rules still
- * APPLY and still appear on the Terms page — HERO_CARDS in app/terms/page.tsx,
- * summarising §2, §7 and §8, which remains the authority. This message is an
- * early warning, not the full policy, so it is deliberately narrower than that
- * card set; do not treat the two as needing to match card-for-card.
+ * The wording here is the OWNER'S OWN COPY (given verbatim 2026-09-04) — edit it
+ * only when they supply new text, not to tidy the phrasing or make it match the
+ * Terms page. It intentionally covers less than HERO_CARDS in app/terms/page.tsx
+ * (the "form is only a request" card is not repeated here); the Terms page,
+ * summarising §2, §7 and §8, remains the authority, and this is an early warning
+ * rather than the full policy.
+ *
+ * The closing link is the ONLY place the booking URL reaches the guest — the
+ * quote bubble no longer carries it. Removing that line strands the guest with
+ * no way to book.
  */
 export function bookingTermsReply(bookingUrl: string): string {
   return (
     `📌 BASAHIN PO BAGO MAG-BOOK\n\n` +
-    `💳 BAYAD\n` +
-    `50% down payment po para ma-reserve ang date niyo. Ang natitirang 50% at ` +
-    `ang ₱1,000 refundable deposit ay babayaran po sa check-in. GCash o BPI po.\n\n` +
-    `🚫 WALANG CANCELLATION AT REFUND\n` +
-    `Kapag confirmed na po ang booking, hindi na po ito pwedeng i-cancel at hindi ` +
-    `na po maibabalik ang bayad — down payment man o balance. Kapag hindi po kayo ` +
-    `dumating, mawawala po ang binayad niyo.\n\n` +
+    `💳 PARAAN NG PAG BAYAD\n` +
+    `- 50% down payment po para ma-reserve ang date niyo.\n` +
+    `- Ang 50% na remaining balance at 1,000 pesos na security deposit po ay ` +
+    `babayaran upon check-in.\n` +
+    `- Ang 1,000.00 security deposit po ay refundable once na ma check ang unit ` +
+    `if no certain damages upon check-out.\n` +
+    `- Maari niyo po itong mabayaran thru GCash or BPI po.\n\n` +
+    `🚫 No Cancellation/Refund – Once confirmed na po ang booking, hindi na po ` +
+    `puwedeng i-cancel at hindi na rin refundable ang payment. Kapag hindi po ` +
+    `kayo dumating, forfeited po ang payment.\n\n` +
+    `📅 1 Free Date Change – Isang beses lang po puwedeng mag-change ng date. ` +
+    `Mag-message at least 7 days before check-in, at dapat within 1 month ang ` +
+    `bagong date.\n\n` +
     `Kung ready na po kayo, book po kayo dito:\n${bookingUrl}`
   );
 }

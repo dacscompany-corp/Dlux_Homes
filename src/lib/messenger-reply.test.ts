@@ -420,18 +420,26 @@ describe("priceReply — narrowed and pax-aware", () => {
 describe("bookingTermsReply", () => {
   const out = bookingTermsReply("dlux-homes.vercel.app");
 
-  it("covers the two before-you-pay cards the owner kept", () => {
-    expect(out).toContain("50% down payment"); // 02 what you pay
-    expect(out).toContain("₱1,000 refundable deposit");
-    expect(out).toContain("WALANG CANCELLATION AT REFUND"); // 01 most important
+  it("covers the payment terms the owner wrote", () => {
+    expect(out).toContain("PARAAN NG PAG BAYAD");
+    expect(out).toContain("50% down payment po para ma-reserve ang date niyo.");
+    expect(out).toContain("1,000 pesos na security deposit");
+    expect(out).toContain("refundable once na ma check ang unit");
+    expect(out).toContain("GCash or BPI");
   });
 
-  // Owner's call (2026-09-04): dropped from this bubble to keep it short. The
-  // rules still apply and still appear on the Terms page — this asserts the
-  // removal stays deliberate rather than creeping back in unnoticed.
-  it("omits the date-change and request-form cards", () => {
-    expect(out).not.toContain("ISANG LIBRENG DATE CHANGE");
-    expect(out).not.toContain("7 araw man lang bago ang check-in");
+  it("covers the cancellation and date-change rules", () => {
+    expect(out).toContain("No Cancellation/Refund");
+    expect(out).toContain("forfeited po ang payment");
+    expect(out).toContain("1 Free Date Change");
+    expect(out).toContain("at least 7 days before check-in");
+    expect(out).toContain("within 1 month ang bagong date");
+  });
+
+  // Owner's call (2026-09-04): this card was dropped from the bubble. The rule
+  // still applies and still appears on the Terms page — asserting its absence
+  // keeps the removal deliberate rather than letting it creep back unnoticed.
+  it("omits the request-form card", () => {
     expect(out).not.toContain("REQUEST PA LANG ANG FORM");
   });
 
