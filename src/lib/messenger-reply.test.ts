@@ -420,14 +420,19 @@ describe("priceReply — narrowed and pax-aware", () => {
 describe("bookingTermsReply", () => {
   const out = bookingTermsReply("dlux-homes.vercel.app");
 
-  it("covers all four before-you-pay cards", () => {
+  it("covers the two before-you-pay cards the owner kept", () => {
     expect(out).toContain("50% down payment"); // 02 what you pay
     expect(out).toContain("₱1,000 refundable deposit");
     expect(out).toContain("WALANG CANCELLATION AT REFUND"); // 01 most important
-    expect(out).toContain("ISANG LIBRENG DATE CHANGE"); // 03 if plans change
-    expect(out).toContain("7 araw man lang bago ang check-in");
-    expect(out).toContain("1 buwan mula sa orihinal");
-    expect(out).toContain("REQUEST PA LANG ANG FORM"); // 04 before you book
+  });
+
+  // Owner's call (2026-09-04): dropped from this bubble to keep it short. The
+  // rules still apply and still appear on the Terms page — this asserts the
+  // removal stays deliberate rather than creeping back in unnoticed.
+  it("omits the date-change and request-form cards", () => {
+    expect(out).not.toContain("ISANG LIBRENG DATE CHANGE");
+    expect(out).not.toContain("7 araw man lang bago ang check-in");
+    expect(out).not.toContain("REQUEST PA LANG ANG FORM");
   });
 
   it("closes with the ready prompt and the booking link", () => {
@@ -435,7 +440,8 @@ describe("bookingTermsReply", () => {
   });
 
   it("separates each section with a blank line", () => {
-    expect(out.split("\n\n").length).toBeGreaterThanOrEqual(6);
+    // Header, BAYAD, WALANG CANCELLATION, closing prompt.
+    expect(out.split("\n\n").length).toBeGreaterThanOrEqual(4);
   });
 
   it("fits in a single Messenger message", () => {

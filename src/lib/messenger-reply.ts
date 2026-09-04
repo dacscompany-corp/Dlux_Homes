@@ -273,18 +273,20 @@ export function availabilityReply(args: {
 }
 
 /**
- * The four "before you pay" terms, sent as its own message after a quote.
+ * The two "before you pay" terms, sent as its own message after a quote.
  *
  * A guest used to see only the down payment before being handed a booking
- * link — the no-refund rule, the date-change window and the fact that the form
- * is a request rather than a confirmed booking all went unmentioned until the
- * checkout page. Sending it separately keeps the quote scannable: Messenger
- * renders consecutive sends as their own bubbles, which separates the two far
- * better than blank lines inside one wall of text.
+ * link, with the no-refund rule unmentioned until the checkout page. Sending
+ * this separately keeps the quote scannable: Messenger renders consecutive
+ * sends as their own bubbles, which separates the two far better than blank
+ * lines inside one wall of text.
  *
- * These are editorial summaries of §2, §7 and §8, the same four cards as
- * HERO_CARDS in app/terms/page.tsx — REVIEW BOTH whenever those clauses change.
- * The Terms page remains the authority; this only warns the guest earlier.
+ * Owner's call (2026-09-04): the date-change window and the "the form is only a
+ * request" card were dropped from this bubble to keep it short. Both rules still
+ * APPLY and still appear on the Terms page — HERO_CARDS in app/terms/page.tsx,
+ * summarising §2, §7 and §8, which remains the authority. This message is an
+ * early warning, not the full policy, so it is deliberately narrower than that
+ * card set; do not treat the two as needing to match card-for-card.
  */
 export function bookingTermsReply(bookingUrl: string): string {
   return (
@@ -296,14 +298,6 @@ export function bookingTermsReply(bookingUrl: string): string {
     `Kapag confirmed na po ang booking, hindi na po ito pwedeng i-cancel at hindi ` +
     `na po maibabalik ang bayad — down payment man o balance. Kapag hindi po kayo ` +
     `dumating, mawawala po ang binayad niyo.\n\n` +
-    `📅 ISANG LIBRENG DATE CHANGE\n` +
-    `Kung magbabago po ang plano, mag-message po kayo nang 7 araw man lang bago ang ` +
-    `check-in. Ang bagong date po ay dapat nasa loob ng 1 buwan mula sa orihinal. ` +
-    `Lampas po doon, nasa amin na ang desisyon.\n\n` +
-    `📝 REQUEST PA LANG ANG FORM\n` +
-    `Ang pag-send po ng booking form ay request, hindi pa po confirmed na booking. ` +
-    `Kung hindi po ma-approve o mag-expire ito, ibabalik po namin nang buo ang ` +
-    `down payment niyo.\n\n` +
     `Kung ready na po kayo, book po kayo dito:\n${bookingUrl}`
   );
 }
