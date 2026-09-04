@@ -33,6 +33,16 @@ export function P({ children }: { children: React.ReactNode }) {
   return <p style={{ margin: "0 0 12px" }}>{children}</p>;
 }
 
+/**
+ * A bulleted list.
+ *
+ * Plain strings need nothing. Any item written as JSX must carry its OWN `key`
+ * — `<span key="cloudinary">…</span>`, not a bare fragment. The `key` on the
+ * `<li>` below does not cover it: these pages are Server Components, so the
+ * array is built in the caller and React validates it during RSC serialisation,
+ * before this component ever sees it. A bare `<>…</>` there logs "Each child in
+ * a list should have a unique key prop" pointing at the caller's array.
+ */
 export function Bullets({ items }: { items: React.ReactNode[] }) {
   return (
     <ul style={{ margin: "0 0 12px", paddingLeft: 20, display: "grid", gap: 7 }}>

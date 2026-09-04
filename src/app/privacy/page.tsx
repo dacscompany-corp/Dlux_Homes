@@ -112,24 +112,24 @@ export default function PrivacyPage() {
         <P>We use these service providers, and share only what each one needs:</P>
         <Bullets
           items={[
-            <>
+            <span key="supabase">
               <strong>Supabase</strong> — hosts the database holding your booking record
-            </>,
-            <>
+            </span>,
+            <span key="vercel">
               <strong>Vercel</strong> — hosts the website and its server functions
-            </>,
-            <>
+            </span>,
+            <span key="cloudinary">
               <strong>Cloudinary</strong> — stores the ID and receipt images you upload
-            </>,
-            <>
+            </span>,
+            <span key="meta">
               <strong>Meta (Facebook)</strong> — delivers Messenger conversations to and from our Page
-            </>,
-            <>
+            </span>,
+            <span key="google">
               <strong>Google</strong> — calendar sync for our own scheduling, and sign-in if you choose it
-            </>,
-            <>
+            </span>,
+            <span key="email">
               <strong>Our email provider</strong> — delivers booking and check-in emails to you
-            </>,
+            </span>,
           ]}
         />
         <P>

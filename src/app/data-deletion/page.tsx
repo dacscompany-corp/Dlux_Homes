@@ -35,14 +35,14 @@ export default function DataDeletionPage() {
         <P>Send us a request by either route:</P>
         <Bullets
           items={[
-            <>
+            <span key="email">
               Email <a href={`mailto:${EMAIL}?subject=Data%20deletion%20request`} style={{ color: "#1F160E" }}>{EMAIL}</a>{" "}
               with the subject &ldquo;Data deletion request&rdquo;
-            </>,
-            <>
+            </span>,
+            <span key="messenger">
               Or message the <strong>D&rsquo; Lux Homes</strong> Facebook Page and say you want your
               data deleted
-            </>,
+            </span>,
           ]}
         />
         <P>So we can find the right records, please include:</P>
