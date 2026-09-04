@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { mergeContext, nextContext, followUpMessage } from "./messenger-context";
+import {
+  mergeContext,
+  nextContext,
+  followUpMessage,
+  MESSENGER_FOLLOWUP_STAGES,
+} from "./messenger-context";
 import type { Intent } from "./messenger-intent";
 
 describe("mergeContext — continuing an enquiry", () => {
@@ -122,6 +127,70 @@ describe("followUpMessage", () => {
     const out = followUpMessage(new Date("2026-12-01T14:00:00+08:00"));
     expect(out).toContain("Hello Ma'am/Sir");
     expect(out).toContain("May we know po if interested pa po sila to book?");
+  });
+});
+
+describe("MESSENGER_FOLLOWUP_STAGES", () => {
+  it("nudges at 10 minutes, 1 hour, then 23 hours", () => {
+    expect(MESSENGER_FOLLOWUP_STAGES).toEqual([10, 60, 1380]);
+  });
+
+  // 1440 would fire at 24h00-24h15 with the 15-minute pinger, past Meta's
+  // 24-hour standard messaging window, and Graph would reject every third
+  // nudge. 23 hours still reads as "next day" and always sends.
+  it("keeps the last nudge inside Meta's 24-hour messaging window", () => {
+    const last = MESSENGER_FOLLOWUP_STAGES[MESSENGER_FOLLOWUP_STAGES.length - 1];
+    expect(last).toBeLessThan(24 * 60);
+    // Even after a full pinger cycle of slack, still inside the window.
+    expect(last + 15).toBeLessThan(24 * 60);
+  });
+});
+
+describe("followUpMessage — per stage", () => {
+  const AFTERNOON = new Date("2026-12-01T14:00:00+08:00");
+  const URL = "dlux-homes.vercel.app";
+
+  it("stage 1 is the owner's original wording, with no link", () => {
+    const out = followUpMessage(AFTERNOON, 1, URL);
+    expect(out).toContain("May we know po if interested pa po sila to book?");
+    expect(out).not.toContain(URL);
+  });
+
+  it("stage 2 invites questions and carries the booking link", () => {
+    const out = followUpMessage(AFTERNOON, 2, URL);
+    expect(out).toContain("Hello po ulit!");
+    expect(out).toContain("tanong pa kayo tungkol sa rates o sa unit");
+    expect(out).toContain("Kung interested pa rin po kayo");
+    expect(out).toContain(URL);
+  });
+
+  it("stage 2 does not claim the date is being held", () => {
+    // Owner's call: nothing is reserved yet, so a hold reminder would describe
+    // a booking the guest never made.
+    expect(followUpMessage(AFTERNOON, 2, URL)).not.toContain("naka-hold");
+  });
+
+  it("stage 3 signals it is the last message and offers another date", () => {
+    const out = followUpMessage(AFTERNOON, 3, URL);
+    expect(out).toContain("Last follow-up");
+    expect(out).toContain("ibang date");
+    expect(out).toContain(URL);
+  });
+
+  // Stage 2 opens "Hello po ulit!" by the owner's wording, so only the stages
+  // that actually greet are checked for the Manila time-of-day word.
+  it("greets by Manila time on the stages that greet", () => {
+    const morning = new Date("2026-12-01T07:00:00+08:00");
+    const evening = new Date("2026-12-01T20:00:00+08:00");
+    for (const stage of [1, 3] as const) {
+      expect(followUpMessage(morning, stage, URL)).toContain("magandang umaga");
+      expect(followUpMessage(evening, stage, URL)).toContain("magandang gabi");
+    }
+    expect(followUpMessage(morning, 2, URL)).toContain("Hello po ulit!");
+  });
+
+  it("defaults to stage 1 so existing callers keep working", () => {
+    expect(followUpMessage(AFTERNOON)).toContain("May we know po if interested");
   });
 });
 

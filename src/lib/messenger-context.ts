@@ -20,8 +20,22 @@ import type { Intent, StayLabel } from "./messenger-intent";
 /** How long a quiet conversation stays warm. Past this, it is a new enquiry. */
 export const MESSENGER_CONTEXT_TTL_MINUTES = 30;
 
-/** How long after a quote to nudge a guest who has not replied. */
-export const MESSENGER_FOLLOWUP_MINUTES = 10;
+/**
+ * Minutes after the quote at which each nudge becomes due — three, then stop.
+ *
+ * The last one is 23 HOURS, not 24, and that is deliberate. `sendMessenger()`
+ * posts with `messaging_type: "RESPONSE"` and no tag, which Meta only permits
+ * inside the 24-hour standard messaging window measured from the guest's last
+ * message. The quote goes out moments after they speak, so a 1440-minute alarm
+ * fires at 24h00-24h15 once the pinger's ~15-minute slack is added — outside
+ * the window, and Graph rejects it. No message tag legitimately covers "are you
+ * still interested?" either; that is re-engagement, which the tags forbid.
+ * 23 hours still reads as "next day" to the guest and always sends.
+ *
+ * Index 0 is the first nudge. A row's `follow_up_stage` counts how many have
+ * gone out, so stage N is due once `quoted_at` is older than STAGES[N].
+ */
+export const MESSENGER_FOLLOWUP_STAGES = [10, 60, 1380] as const;
 
 export type Remembered = {
   from?: string;
@@ -143,7 +157,11 @@ export function nextContext(intent: Intent, remembered: Remembered | null): Reme
  * The owner's wording hardcoded "good afternoon", which a 2AM enquiry would
  * have received verbatim.
  */
-export function followUpMessage(now: Date = new Date()): string {
+export function followUpMessage(
+  now: Date = new Date(),
+  stage: 1 | 2 | 3 = 1,
+  bookingUrl = "dlux-homes.vercel.app",
+): string {
   const hour = Number(
     new Intl.DateTimeFormat("en-PH", {
       timeZone: "Asia/Manila",
@@ -152,6 +170,26 @@ export function followUpMessage(now: Date = new Date()): string {
     }).format(now),
   );
   const greeting = hour < 12 ? "umaga" : hour < 18 ? "hapon" : "gabi";
+
+  // Each nudge earns its place by saying something the previous one did not:
+  // the first asks, the second offers to answer questions and hands over the
+  // link, the third says plainly that it is the last and offers another date
+  // as an exit that is not "no". Owner's wording — change only when they ask.
+  if (stage === 2) {
+    return (
+      `Hello po ulit! 😊 Baka po may tanong pa kayo tungkol sa rates o sa unit ` +
+      `— sagutin po namin agad. Kung interested pa rin po kayo, book po kayo dito:\n` +
+      `${bookingUrl}`
+    );
+  }
+  if (stage === 3) {
+    return (
+      `Hello Ma'am/Sir, magandang ${greeting} po! Last follow-up na po namin — ` +
+      `baka po gusto niyong i-check ang ibang date, o may naitanong pa kayo. ` +
+      `Nandito lang po kami anytime. 😊\n` +
+      `Book po kayo dito:\n${bookingUrl}`
+    );
+  }
   return (
     `Hello Ma'am/Sir, magandang ${greeting} po! ` +
     `May we know po if interested pa po sila to book?`

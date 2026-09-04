@@ -13,6 +13,7 @@
 import pool from "@/backend/config/db";
 import {
   MESSENGER_CONTEXT_TTL_MINUTES,
+  MESSENGER_FOLLOWUP_STAGES,
   type Remembered,
 } from "@/lib/messenger-context";
 
@@ -61,22 +62,22 @@ export async function loadContext(psid: string): Promise<Remembered | null> {
  * Save what the guest is asking about, and disarm the follow-up.
  *
  * The guest has just spoken, so any pending nudge is moot — `quoted_at` is
- * cleared and `follow_up_sent` reset here, which is what gives them a fresh
- * nudge on their next quiet spell rather than one per lifetime.
+ * cleared and the stage reset to 0 here, which is what restarts the whole
+ * sequence on their next quiet spell rather than allowing one per lifetime.
  */
 export async function saveContext(psid: string, ctx: Remembered | null): Promise<void> {
   try {
     await pool.query(
       `INSERT INTO messenger_context (psid, from_date, to_date, pax, stay,
-                                      quoted_at, follow_up_sent, updated_at)
-            VALUES ($1, $2, $3, $4, $5, NULL, FALSE, NOW())
+                                      quoted_at, follow_up_stage, updated_at)
+            VALUES ($1, $2, $3, $4, $5, NULL, 0, NOW())
        ON CONFLICT (psid) DO UPDATE
             SET from_date = EXCLUDED.from_date,
                 to_date = EXCLUDED.to_date,
                 pax = EXCLUDED.pax,
                 stay = EXCLUDED.stay,
                 quoted_at = NULL,
-                follow_up_sent = FALSE,
+                follow_up_stage = 0,
                 updated_at = NOW()`,
       [psid, ctx?.from ?? null, ctx?.to ?? null, ctx?.pax ?? null, ctx?.stay ?? null],
     );
@@ -93,7 +94,7 @@ export async function armFollowUp(psid: string): Promise<void> {
   try {
     await pool.query(
       `UPDATE messenger_context
-          SET quoted_at = NOW(), follow_up_sent = FALSE
+          SET quoted_at = NOW(), follow_up_stage = 0
         WHERE psid = $1`,
       [psid],
     );
@@ -103,39 +104,48 @@ export async function armFollowUp(psid: string): Promise<void> {
 }
 
 /**
- * Conversations quoted at least `minutes` ago that have had no reply since and
- * have not been nudged. `quoted_at` is NULLed on any inbound message, so a row
- * appearing here really has gone quiet.
+ * Conversations whose NEXT nudge is now due, with the stage they are waiting on.
+ *
+ * `follow_up_stage` counts nudges already sent, so a row is due once `quoted_at`
+ * is older than MESSENGER_FOLLOWUP_STAGES[stage]. Postgres arrays are 1-indexed,
+ * hence the `+ 1`. Rows that finished the sequence fall out via the length
+ * check, and `quoted_at` is NULLed on any inbound message, so a row appearing
+ * here really has gone quiet.
  */
-export async function dueForFollowUp(minutes: number): Promise<string[]> {
+export async function dueForFollowUp(): Promise<{ psid: string; stage: number }[]> {
   const r = await pool.query(
-    `SELECT psid
+    `SELECT psid, follow_up_stage
        FROM messenger_context
       WHERE quoted_at IS NOT NULL
-        AND follow_up_sent = FALSE
-        AND quoted_at < NOW() - ($1 || ' minutes')::INTERVAL
+        AND follow_up_stage < array_length($1::INT[], 1)
+        AND quoted_at < NOW() - (($1::INT[])[follow_up_stage + 1] * INTERVAL '1 minute')
       ORDER BY quoted_at
       LIMIT 100`,
-    [String(minutes)],
+    [[...MESSENGER_FOLLOWUP_STAGES]],
   );
-  return r.rows.map((row) => String(row.psid));
+  return r.rows.map((row) => ({
+    psid: String(row.psid),
+    stage: Number(row.follow_up_stage),
+  }));
 }
 
 /**
- * Stamp the nudge as sent. Guarded on `follow_up_sent = FALSE` so two overlapping
- * cron runs cannot both claim the same conversation; returns false when another
- * run got there first, and the caller then skips the send.
+ * Advance the sequence by one. Guarded on the stage the caller believes the row
+ * is at, so two overlapping cron runs cannot both claim the same nudge; returns
+ * false when another run got there first, and the caller then skips the send.
  *
  * `updated_at` is deliberately left alone: it measures time since the GUEST
  * last spoke, and the bot nudging itself is not the guest speaking. Refreshing
  * it here would keep a one-sided conversation warm past its TTL.
  */
-export async function claimFollowUp(psid: string): Promise<boolean> {
+export async function claimFollowUp(psid: string, stage: number): Promise<boolean> {
   const r = await pool.query(
     `UPDATE messenger_context
-        SET follow_up_sent = TRUE
-      WHERE psid = $1 AND follow_up_sent = FALSE AND quoted_at IS NOT NULL`,
-    [psid],
+        SET follow_up_stage = $2 + 1
+      WHERE psid = $1
+        AND follow_up_stage = $2
+        AND quoted_at IS NOT NULL`,
+    [psid, stage],
   );
   return (r.rowCount ?? 0) > 0;
 }
