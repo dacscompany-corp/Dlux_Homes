@@ -168,7 +168,22 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
           .sh-desknav { display: none !important; }
           .sh-menubtn { display: inline-flex !important; }
         }
-        @media (max-width: 560px) { .sh-bar { padding: 0 16px !important; } }
+        /* Narrow phones: the back label + 200px wordmark + "Menu" word don't
+           fit across a 390px bar, and DluxMark takes a fixed pixel width so it
+           can't shrink to make room — the wordmark ran under the Menu button.
+           Both controls drop to icon-only here (their labels move to
+           aria-label), which is the standard mobile app-bar pattern and leaves
+           the wordmark whole. */
+        @media (max-width: 560px) {
+          .sh-bar { padding: 0 16px !important; gap: 12px !important; }
+          .sh-back { padding: 8px !important; }
+          .sh-back-text, .sh-menubtn-text { display: none !important; }
+        }
+        /* Smallest phones still in the wild — buy back the last ~24px. */
+        @media (max-width: 380px) {
+          .sh-bar { padding: 0 12px !important; gap: 8px !important; }
+          .sh-backdiv { display: none !important; }
+        }
       `}</style>
 
       <div className="sh-bar" style={{ maxWidth: 1320, margin: "0 auto", height: 72, padding: "0 32px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24 }}>
@@ -177,11 +192,13 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
         <div style={{ display: "flex", alignItems: "center", gap: 14, flex: "1 1 auto", minWidth: 0 }}>
           {backHref && (
             <>
-              <Link href={backHref} className="sh-back" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 12px", textDecoration: "none", color: MUTED, fontSize: 14, flex: "none" }}>
+              {/* aria-label, not just the text: the label is hidden on narrow
+                  phones, which would otherwise leave this link unnamed. */}
+              <Link href={backHref} aria-label={backLabel} className="sh-back" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 12px", textDecoration: "none", color: MUTED, fontSize: 14, flex: "none" }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>
                 <span className="sh-back-text" style={{ whiteSpace: "nowrap" }}>{backLabel}</span>
               </Link>
-              <span style={{ width: 1, height: 24, background: "#e8e1d2" }} />
+              <span className="sh-backdiv" style={{ width: 1, height: 24, background: "#e8e1d2" }} />
             </>
           )}
           <Link href="/rooms" style={{ display: "flex", alignItems: "center", textDecoration: "none", color: "inherit", minWidth: 0 }}>
@@ -279,8 +296,8 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
         </div>
 
         {/* MOBILE — Menu button (Guest Header 2c) */}
-        <button className="sh-menubtn" onClick={() => setMenuOpen(true)} style={{ display: "none", alignItems: "center", gap: 9, background: "transparent", border: 0, cursor: "pointer", color: INK, font: "inherit", fontSize: 14.5, fontWeight: 600, flex: "none" }}>
-          Menu
+        <button className="sh-menubtn" onClick={() => setMenuOpen(true)} aria-label="Open menu" style={{ display: "none", alignItems: "center", gap: 9, background: "transparent", border: 0, cursor: "pointer", color: INK, font: "inherit", fontSize: 14.5, fontWeight: 600, flex: "none" }}>
+          <span className="sh-menubtn-text">Menu</span>
           <svg width="22" height="16" viewBox="0 0 22 16" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><line x1="1" y1="2" x2="21" y2="2" /><line x1="1" y1="8" x2="21" y2="8" /><line x1="1" y1="14" x2="21" y2="14" /></svg>
         </button>
       </div>

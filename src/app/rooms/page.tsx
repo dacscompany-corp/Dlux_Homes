@@ -1,5 +1,8 @@
 "use client";
 
+// The mobile "Where you'll be" card renders a Leaflet map inline, so this page
+// needs the same stylesheet /location pulls in.
+import "leaflet/dist/leaflet.css";
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
@@ -53,6 +56,27 @@ const AMENITIES = [
 ];
 
 const WELCOME_PACK = ["Dental kit", "Shampoo & bath soap", "Drinking water", "Fresh towels"];
+
+// ── Mobile "Where you'll be" card ──────────────────────────────
+// Same property coordinates, pin and getting-around distances the /location
+// page shows; the mobile view answers "how far is it really" in place rather
+// than sending the guest off the listing to find out.
+const MAP_COORDS: [number, number] = [14.659186800125402, 121.02701538724116];
+const MAP_ADDRESS = "Tower 4, Grass Residences, SM North EDSA, Mother Ignacia Ave, Quezon City, 1105 Metro Manila";
+const MAP_PIN_SVG = `<svg xmlns='http://www.w3.org/2000/svg' width='40' height='48' viewBox='0 0 48 58'><path d='M24 1C11.85 1 2 10.85 2 23c0 15.5 22 34 22 34s22-18.5 22-34C46 10.85 36.15 1 24 1z' fill='#1F160E' stroke='#FAF7F1' stroke-width='2.5'/><text x='24' y='31' font-family='Georgia, serif' font-style='italic' font-weight='600' font-size='24' fill='#FAF7F1' text-anchor='middle'>D</text></svg>`;
+const MOBILE_TRANSIT = [
+  { name: "MRT-3 North Avenue", meta: "5 min · 400 m" },
+  { name: "SM North EDSA", meta: "3 min · 250 m" },
+  { name: "EDSA Carousel Busway", meta: "6 min · 500 m" },
+  { name: "NAIA Airport (T3)", meta: "35 min · 18 km" },
+];
+const MOBILE_NEARBY = ["The Block", "TriNoma", "Vertis North", "QC Circle"];
+
+// Promo scope key per stay window, in the same day/night/overnight order as
+// `stayWindows`. Lets the mobile stay cards price each window against the
+// offer that actually covers it — promoCoversStay() collapses Daycation and
+// Nightcation into stay type "10" and can't tell those two apart.
+const WINDOW_PROMO_SCOPE: PromoStayType[] = ["day", "night", "overnight"];
 
 function IcoMapPin() {
   return <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg>;
@@ -162,6 +186,19 @@ function IcoCopy({ size = 13 }: { size?: number }) {
 }
 function IcoChevronRight({ size = 18, stroke = 1.8 }: { size?: number; stroke?: number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>;
+}
+// ── Mobile-only marks (header actions, expanders, directions) ──
+function IcoChevronDown({ size = 14 }: { size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9" /></svg>;
+}
+function IcoCalBox({ size = 17 }: { size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="3" /><path d="M8 2v4M16 2v4M3 10h18" /></svg>;
+}
+function IcoUser({ size = 17 }: { size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>;
+}
+function IcoNavigate({ size = 15 }: { size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="#B07848" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11" /></svg>;
 }
 
 // Small shared pieces of the offer card, so the mobile and desktop variants
@@ -502,11 +539,66 @@ export default function BrowsePage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [bookingCount, setBookingCount] = useState(0);
   const router = useRouter();
-  const { status: authStatus } = useSession();
+  const { data: session, status: authStatus } = useSession();
   const signedIn = authStatus === "authenticated";
   useEffect(() => { setBookingCount(getMyBookingIds().length); }, []);
   const [wished, setWished] = useState(false);
   const { data: activePromotions } = useGetActivePromotionsQuery();
+
+  // ── Mobile view state ────────────────────────────────────────
+  // Hero and review carousels are scroll-driven (snap tracks), so the dots
+  // follow the track rather than the other way round.
+  const [heroIdx, setHeroIdx] = useState(0);
+  const [revIdx, setRevIdx] = useState(0);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [amenOpen, setAmenOpen] = useState(false);
+  const [addrCopied, setAddrCopied] = useState(false);
+  const mHeroRef = useRef<HTMLDivElement>(null);
+  const mRevRef = useRef<HTMLDivElement>(null);
+  const mLocationRef = useRef<HTMLDivElement>(null);
+  const mMapRef = useRef<HTMLDivElement>(null);
+
+  // Initials for the header account chip, from the signed-in name (falling
+  // back to the email) — two letters, matching the review avatars.
+  const accountInitials = (() => {
+    const name = session?.user?.name?.trim();
+    if (name) {
+      const parts = name.split(/\s+/);
+      return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
+    }
+    return (session?.user?.email?.[0] ?? "?").toUpperCase();
+  })();
+
+  const onHeroScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const t = e.currentTarget;
+    const i = Math.round(t.scrollLeft / Math.max(1, t.clientWidth));
+    setHeroIdx((prev) => (i === prev ? prev : i));
+  };
+  // Review cards are a fixed 268px wide plus a 12px gap.
+  const onRevScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const i = Math.round(e.currentTarget.scrollLeft / 280);
+    const c = Math.max(0, Math.min(mockReviews.length - 1, i));
+    setRevIdx((prev) => (c === prev ? prev : c));
+  };
+
+  const scrollToLocation = () => {
+    mLocationRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const copyAddress = async () => {
+    try {
+      await navigator.clipboard.writeText(MAP_ADDRESS);
+      setAddrCopied(true);
+    } catch {
+      // Clipboard can be blocked (insecure origin, permissions). The address
+      // is on screen and Get directions still works, so stay quiet.
+    }
+  };
+  useEffect(() => {
+    if (!addrCopied) return;
+    const t = setTimeout(() => setAddrCopied(false), 2000);
+    return () => clearTimeout(t);
+  }, [addrCopied]);
 
   // Reveal the stay-window cards once they scroll into view
   const stayCardsRef = useRef<HTMLDivElement>(null);
@@ -558,6 +650,51 @@ export default function BrowsePage() {
       ? (weekendRates ? room.price10hrWeekend || room.price10hr : room.price10hr)
       : (weekendRates ? room.price21hrWeekend || room.price21hr : room.price21hr);
 
+  // ── Mobile stay-card pricing ─────────────────────────────────
+  // The offer that covers a given window, if any. Only enforceable promos
+  // count: an announcement has no mechanism that lowers the charge, so it
+  // must never strike a price through (same rule the offer card follows).
+  const winPromo = (i: number): ActivePromotion | null => {
+    const scopeKey = WINDOW_PROMO_SCOPE[i];
+    return (activePromotions || []).find((p) => {
+      if (!isEnforceable(p)) return false;
+      const scope = scopedStayTypes(p);
+      return !scope || scope.includes(scopeKey);
+    }) ?? null;
+  };
+
+  const winPrice = (i: number) => {
+    const promo = winPromo(i);
+    const base = rateFor(displayWindows[i].stayType);
+    const net = promo ? offerPriceFor(base, promo) : base;
+    return { promo, base, net, cut: net < base };
+  };
+
+  // Where a window's card sends the guest. A voucher only lowers the charge
+  // once its code is in play, so the code rides along on the link — otherwise
+  // the struck-through price on the card wouldn't be the price at checkout.
+  const winHref = (i: number) => {
+    const { promo, cut } = winPrice(i);
+    const code = cut && promo?.discount_code ? `&promo=${encodeURIComponent(promo.discount_code)}` : "";
+    return `/rooms/${room.id}?win=${i}${code}`;
+  };
+
+  // Sticky bottom bar. The stay cards navigate on a single tap, so there's no
+  // selection for the bar to reflect — it stands as the standing "from" quote,
+  // showing the cheapest window under the current day type (and the price it's
+  // cut down from, when an offer covers that window).
+  const bar = (() => {
+    const best = displayWindows.map((_, i) => winPrice(i)).reduce((a, b) => (b.net < a.net ? b : a));
+    return {
+      label: "From",
+      was: best.cut ? pesoAmount(best.base) : "",
+      price: pesoAmount(best.net),
+      sub: "No charge today",
+      cta: "Book now",
+      href: `/rooms/${room.id}`,
+    };
+  })();
+
   useEffect(() => {
     const id = setInterval(() => setHeroImg((i) => (i + 1) % room.images.length), 5500);
     return () => clearInterval(id);
@@ -592,6 +729,51 @@ export default function BrowsePage() {
     return () => cleanups.forEach((c) => c());
   }, []);
 
+  // Mobile scroll reveal. One observer for every [data-rise] section rather
+  // than a ref + state pair each — the mobile view has a dozen of them, and
+  // they all want the identical fade-up. Toggling on both edges replays the
+  // animation when a section scrolls back into view, matching the desktop.
+  useEffect(() => {
+    const sections = document.querySelectorAll<HTMLElement>(".rm-mobile [data-rise]");
+    if (!sections.length) return;
+    const io = new IntersectionObserver(
+      (entries) => entries.forEach((e) => e.target.classList.toggle("rmv-in", e.isIntersecting)),
+      { threshold: 0, rootMargin: "0px 0px -8% 0px" },
+    );
+    sections.forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  }, []);
+
+  // Mobile location map. Skipped above the mobile breakpoint, where the card
+  // is display:none — Leaflet measures a zero-size container and renders a
+  // grey box it never recovers from.
+  useEffect(() => {
+    if (!window.matchMedia("(max-width: 860px)").matches) return;
+    let cancelled = false;
+    let map: import("leaflet").Map | null = null;
+
+    import("leaflet").then((mod) => {
+      const L = mod.default;
+      if (cancelled || !mMapRef.current) return;
+      map = L.map(mMapRef.current, { zoomControl: false, scrollWheelZoom: false, attributionControl: false }).setView(MAP_COORDS, 16);
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
+      L.marker(MAP_COORDS, {
+        icon: L.icon({
+          iconUrl: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(MAP_PIN_SVG),
+          iconSize: [40, 48],
+          iconAnchor: [20, 48],
+        }),
+      }).addTo(map);
+      // The card sizes after the images above it settle; recheck once laid out.
+      setTimeout(() => map?.invalidateSize(), 200);
+    });
+
+    return () => {
+      cancelled = true;
+      if (map) map.remove();
+    };
+  }, []);
+
   return (
     <div className="page-enter hm-root" style={{ minHeight: "100vh", backgroundColor: "var(--bg)", color: "var(--ink)" }}>
 
@@ -606,8 +788,10 @@ export default function BrowsePage() {
         @media (max-width: 860px) {
           .rm-desktop, .rm-deskhdr { display: none !important; }
           .rm-mobile { display: block; }
-          /* Clears the fixed bottom CTA bar for the floating Messenger button. */
-          :root { --dlux-bottom-inset: calc(92px + env(safe-area-inset-bottom)); }
+          /* Clears the fixed bottom CTA bar for the floating Messenger button.
+             The bar now carries a price block beside the button, so it's taller
+             than the old button-only strip. */
+          :root { --dlux-bottom-inset: calc(108px + env(safe-area-inset-bottom)); }
         }
         @media (max-width: 900px) {
           .hm-4col { grid-template-columns: repeat(2,1fr) !important; }
@@ -644,18 +828,76 @@ export default function BrowsePage() {
       `}</style>
 
       {/* ═══════════ MOBILE HOME (D'Lux Mobile Guest View) ═══════════ */}
-      <div className="rm-mobile" style={{ background: "#F6EFE2", paddingBottom: 92 }}>
-        <style>{`@keyframes gOverlay{from{opacity:0;transform:scale(1.03)}to{opacity:1;transform:scale(1)}} .g2c-row:active{background:#F3EEE2}`}</style>
+      {/* No `overflow: hidden` on this wrapper — it would make itself the
+          sticky header's scroll container, and the header would scroll away
+          instead of pinning. The background wash clips inside its own layer. */}
+      <div className="rm-mobile" style={{ position: "relative", background: "#F6EFE2", paddingBottom: 112 }}>
+        <style>{`
+          @keyframes gOverlay{from{opacity:0;transform:scale(1.03)}to{opacity:1;transform:scale(1)}}
+          @keyframes rmvDrift{0%,100%{transform:translate3d(0,0,0)}50%{transform:translate3d(0,-10px,0)}}
+          @keyframes rmvFlourish{from{stroke-dashoffset:300}to{stroke-dashoffset:0}}
+          @keyframes rmvFadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+          .g2c-row:active{background:#F3EEE2}
+          /* Horizontal snap tracks (hero, reviews) — no visible scrollbar. */
+          .rmv-track::-webkit-scrollbar{display:none}
+          .rmv-track{scrollbar-width:none;-webkit-overflow-scrolling:touch}
+          /* Scroll reveal: each [data-rise] section fades up as it enters view. */
+          .rmv-rise{opacity:0;transform:translateY(16px);transition:opacity .6s cubic-bezier(.2,.8,.2,1),transform .6s cubic-bezier(.2,.8,.2,1)}
+          .rmv-rise.rmv-in{opacity:1;transform:none}
+          /* Stay cards. Resting look lives here rather than inline so :active
+             can override it — inline styles would win over the pressed state. */
+          .rmv-staycard{display:block;width:100%;padding:16px 16px 0;border-radius:18px;text-decoration:none;color:inherit;background:linear-gradient(155deg,#3A2A1B 0%,#2A2015 48%,#1E160E 100%);border:1px solid rgba(212,169,106,.16);box-shadow:0 10px 26px -22px rgba(0,0,0,.8);transition:background .2s ease,border-color .2s ease,transform .2s ease,box-shadow .2s ease}
+          .rmv-staycard__arrow{width:30px;height:30px;flex:none;border-radius:50%;display:grid;place-items:center;border:1px solid rgba(212,169,106,.4);background:transparent;color:#D4A96A;transition:background .2s ease,color .2s ease,border-color .2s ease}
+          .rmv-staycard:active{transform:translateY(-2px);border-color:#D4A96A;background:linear-gradient(155deg,#4A3520 0%,#33261A 46%,#241A11 100%);box-shadow:0 14px 34px -20px rgba(0,0,0,.9)}
+          .rmv-staycard:active .rmv-staycard__arrow{background:#D4A96A;color:#1F160E;border-color:#D4A96A}
+          .rmv-staycard:focus-visible{outline:2px solid #D4A96A;outline-offset:3px}
+          .rmv-in [data-card="stay"]{animation:rmvFadeUp .55s cubic-bezier(.2,.8,.2,1) both}
+          .rmv-in [data-card="stay"]:nth-child(1){animation-delay:.12s}
+          .rmv-in [data-card="stay"]:nth-child(2){animation-delay:.21s}
+          .rmv-in [data-card="stay"]:nth-child(3){animation-delay:.30s}
+          .rmv-in [data-flourish] path{animation:rmvFlourish 1.1s ease-out .25s forwards}
+          @media (prefers-reduced-motion: reduce){
+            .rmv-rise{opacity:1;transform:none;transition:none}
+            .rmv-in [data-card="stay"]{animation:none}
+            .rmv-in [data-flourish] path{animation:none;stroke-dashoffset:0}
+            .rmv-drift{animation:none !important}
+          }
+          /* Leaflet inside the location card inherits the page's warm ground. */
+          .rm-mobile .leaflet-container{background:#EFE4CE;font:inherit}
+        `}</style>
 
-        {/* HEADER — Guest Header 2c: clean bar, logo + labeled Menu */}
-        <div style={{ position: "sticky", top: 0, zIndex: 20, background: "#FAF7F1", borderBottom: "1px solid #ECE5D4", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        {/* Boho background wash for the upper half (hero → photo collage),
+            drifting slowly behind the editorial blocks. From "What's inside"
+            down, the tiling background on the wrapper below takes over, so
+            there's only this one pass here — a second drift layer would have
+            doubled up under it. Clipped in its own layer so the page wrapper
+            stays free of the overflow that would break the sticky header. */}
+        <div aria-hidden style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: 0 }}>
+          <Image src="/images/about-bg.png" alt="" width={860} height={458} unoptimized className="rmv-drift"
+            style={{ position: "absolute", top: 420, left: 0, width: "100%", height: "auto", opacity: 0.5, animation: "rmvDrift 18s ease-in-out infinite" }} />
+        </div>
+
+        {/* HEADER — logo, bookings shortcut, account, menu */}
+        <div style={{ position: "sticky", top: 0, zIndex: 20, background: "rgba(250,247,241,.94)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", borderBottom: "1px solid #ECE5D4", padding: "12px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
           <Link href="/rooms" style={{ display: "flex", alignItems: "center", minWidth: 0, textDecoration: "none", color: "inherit" }}>
-            <DluxMark layout="compact" accent="clay" width={190} ambient={false} />
+            <DluxMark layout="compact" accent="clay" width={168} ambient={false} />
           </Link>
-          <button onClick={() => setMenuOpen(true)} style={{ display: "inline-flex", alignItems: "center", gap: 9, background: "transparent", border: 0, cursor: "pointer", color: "#1F160E", font: "inherit", fontSize: 14.5, fontWeight: 600 }}>
-            Menu
-            <svg width="22" height="16" viewBox="0 0 22 16" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><line x1="1" y1="2" x2="21" y2="2" /><line x1="1" y1="8" x2="21" y2="8" /><line x1="1" y1="14" x2="21" y2="14" /></svg>
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
+            <Link href="/my-bookings" aria-label={bookingCount > 0 ? `My bookings (${bookingCount})` : "My bookings"}
+              style={{ position: "relative", width: 40, height: 40, borderRadius: "50%", border: "1px solid #E0CEB2", background: "#FFFCF4", display: "grid", placeItems: "center", color: "#1F160E", textDecoration: "none" }}>
+              <IcoCalBox />
+              {bookingCount > 0 && (
+                <span style={{ position: "absolute", top: -2, right: -2, minWidth: 17, height: 17, padding: "0 4px", borderRadius: 999, background: "#B07848", color: "#FFFCF4", fontSize: 10, fontWeight: 700, display: "grid", placeItems: "center", border: "2px solid #FAF7F1" }}>{bookingCount}</span>
+              )}
+            </Link>
+            <Link href={signedIn ? "/my-bookings" : "/login"} aria-label={signedIn ? "My account" : "Sign in"}
+              style={{ width: 40, height: 40, borderRadius: "50%", border: signedIn ? "none" : "1px solid #E0CEB2", background: signedIn ? "#6B3F1C" : "#FFFCF4", color: signedIn ? "#FFFCF4" : "#1F160E", display: "grid", placeItems: "center", fontSize: 12.5, fontWeight: 700, textDecoration: "none" }}>
+              {signedIn ? accountInitials : <IcoUser />}
+            </Link>
+            <button onClick={() => setMenuOpen(true)} aria-label="Open menu" style={{ display: "inline-flex", alignItems: "center", background: "transparent", border: 0, cursor: "pointer", color: "#1F160E", padding: "8px 0 8px 4px" }}>
+              <svg width="22" height="16" viewBox="0 0 22 16" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><line x1="1" y1="2" x2="21" y2="2" /><line x1="1" y1="8" x2="21" y2="8" /><line x1="1" y1="14" x2="21" y2="14" /></svg>
+            </button>
+          </div>
         </div>
 
         {/* MOBILE MENU — Guest Header 2c: calm full-screen list */}
@@ -703,116 +945,377 @@ export default function BrowsePage() {
           </div>
         )}
 
-        {/* BOTTOM BOOK-NOW BAR — Guest Header 2c: primary action always in thumb reach */}
-        <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, background: "#FAF7F1", borderTop: "1px solid #ECE5D4", padding: "14px 18px calc(16px + env(safe-area-inset-bottom))", boxShadow: "0 -12px 30px -18px rgba(20,15,9,.35)" }}>
-          <button onClick={() => router.push(`/rooms/${room.id}`)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, background: "#B8754A", color: "#FAF7F1", border: 0, padding: 16, borderRadius: 14, font: "inherit", fontSize: 16, fontWeight: 600, cursor: "pointer" }}>
-            Book now
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
-          </button>
-        </div>
-        <div style={{ padding: "16px 16px 0" }}>
-          <div onClick={() => setHeroImg((i) => (i + 1) % room.images.length)} style={{ position: "relative", height: 356, borderRadius: 22, overflow: "hidden", cursor: "pointer" }}>
-            <Image src={room.images[heroImg]} alt="" fill unoptimized style={{ objectFit: "cover" }} />
-            <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(31,22,14,.3) 0%, rgba(31,22,14,0) 32%, rgba(31,22,14,.5) 100%)" }} />
-            <div style={{ position: "absolute", top: 14, left: 14, right: 14, display: "flex", justifyContent: "space-between" }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999, background: "rgba(255,255,255,.18)", backdropFilter: "blur(8px)", color: "#fff", fontSize: 11.5, fontWeight: 600 }}><IcoMapPin /> Grass Residences</span>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999, background: "rgba(255,255,255,.18)", backdropFilter: "blur(8px)", color: "#fff", fontSize: 11.5, fontWeight: 600 }}><IcoStar size={12} /> {room.rating}</span>
-            </div>
-            <div style={{ position: "absolute", left: 0, right: 0, bottom: 16, display: "flex", justifyContent: "center", gap: 6 }}>
-              {room.images.map((_, i) => (
-                <button key={i} onClick={(e) => { e.stopPropagation(); setHeroImg(i); }} aria-label={`Photo ${i + 1}`} style={{ width: i === heroImg ? 22 : 6, height: 6, borderRadius: 99, border: "none", padding: 0, cursor: "pointer", background: i === heroImg ? "#fff" : "rgba(255,255,255,.5)" }} />
+        {/* HERO — swipeable photo track. Replaces the tap-to-cycle single frame:
+            a snap track is the gesture guests already expect from a listing, and
+            it exposes the whole gallery without leaving the page. */}
+        <div style={{ position: "relative", zIndex: 1, padding: "14px 16px 0" }}>
+          <div style={{ position: "relative", borderRadius: 22, overflow: "hidden" }}>
+            <div ref={mHeroRef} onScroll={onHeroScroll} className="rmv-track" style={{ display: "flex", overflowX: "auto", scrollSnapType: "x mandatory", height: 372 }}>
+              {room.images.map((src, i) => (
+                <div key={i} style={{ position: "relative", flex: "0 0 100%", width: "100%", height: "100%", scrollSnapAlign: "start" }}>
+                  <Image src={src} alt="" fill unoptimized sizes="100vw" priority={i === 0} style={{ objectFit: "cover" }} />
+                </div>
               ))}
             </div>
+            <div style={{ position: "absolute", inset: 0, pointerEvents: "none", background: "linear-gradient(180deg, rgba(31,22,14,.34) 0%, rgba(31,22,14,0) 30%, rgba(31,22,14,.55) 100%)" }} />
+            <div style={{ position: "absolute", top: 14, left: 14, right: 14, display: "flex", justifyContent: "space-between", gap: 8, pointerEvents: "none" }}>
+              <button onClick={scrollToLocation} style={{ pointerEvents: "auto", display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999, border: "1px solid rgba(255,255,255,.34)", background: "rgba(255,255,255,.18)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", color: "#fff", font: "inherit", fontSize: 11.5, fontWeight: 600, whiteSpace: "nowrap", cursor: "pointer" }}>
+                <IcoMapPin /> Grass Residences <IcoChevronRight size={12} stroke={2} />
+              </button>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999, background: "rgba(255,255,255,.18)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", color: "#fff", fontSize: 11.5, fontWeight: 600, whiteSpace: "nowrap" }}>
+                <IcoStar size={12} /> {room.rating}
+              </span>
+            </div>
+            <div style={{ position: "absolute", bottom: 14, left: 16, right: 16, display: "flex", alignItems: "center", justifyContent: "space-between", pointerEvents: "none" }}>
+              <div style={{ display: "flex", gap: 5 }}>
+                {room.images.map((_, i) => (
+                  <span key={i} style={{ width: i === heroIdx ? 18 : 5, height: 5, borderRadius: 99, background: i === heroIdx ? "#fff" : "rgba(255,255,255,.45)", transition: "width .25s ease, background .25s ease" }} />
+                ))}
+              </div>
+              <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 11, letterSpacing: ".06em", padding: "5px 10px", borderRadius: 999, background: "rgba(31,22,14,.45)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", color: "#fff" }}>{heroIdx + 1} / {room.images.length}</span>
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, marginTop: 10, fontSize: 11.5, color: "#9B8B73" }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
+            Swipe through the home
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
           </div>
         </div>
 
-        <div style={{ padding: "26px 24px 0" }}>
+        {/* HEADLINE */}
+        <div data-rise className="rmv-rise" style={{ position: "relative", zIndex: 1, padding: "26px 24px 0" }}>
           <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".2em", color: "#8C5A2E" }}>A staycation in the sky</div>
           <h1 style={{ fontFamily: "'Fraunces', serif", fontWeight: 400, fontSize: 42, lineHeight: 0.98, letterSpacing: "-.03em", margin: "14px 0 0" }}>The city, <em style={{ color: "#8C5A2E" }}>on pause.</em></h1>
-          <p style={{ fontSize: 14.5, lineHeight: 1.55, color: "#4A3A2A", margin: "14px 0 0" }}>One quiet home on the 12th floor of Grass Residences. Book by the hour, check in within minutes, leave rested.</p>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 20, fontSize: 12.5, color: "#4A3A2A", fontWeight: 500 }}><span>28 sqm</span><span style={{ width: 3, height: 3, borderRadius: "50%", background: "#C4B69C" }} /><span>Up to 4 guests</span><span style={{ width: 3, height: 3, borderRadius: "50%", background: "#C4B69C" }} /><span>10 / 22 hrs</span></div>
+          <p style={{ fontSize: 14.5, lineHeight: 1.55, color: "#4A3A2A", margin: "14px 0 0", textWrap: "pretty" }}>One quiet home on the 12th floor of Grass Residences. Book by the hour, check in within minutes, leave rested.</p>
         </div>
 
-        <div style={{ padding: "30px 24px 0" }}>
-          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-            <h2 style={{ fontFamily: "'Fraunces', serif", fontWeight: 500, fontSize: 23, margin: 0, letterSpacing: "-.01em" }}>Choose your stay</h2>
-            <span style={{ fontSize: 12, color: "#8B7458" }}>from ₱{room.price10hr.toLocaleString()}</span>
+        {/* SNAPSHOT — the four facts guests check before any price. */}
+        <div data-rise className="rmv-rise" style={{ position: "relative", zIndex: 1, padding: "22px 24px 0" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1, background: "#E0CEB2", borderRadius: 18, overflow: "hidden" }}>
+            {[
+              { h: room.size || "28 sqm", s: "1 bedroom · balcony" },
+              { h: `Up to ${room.capacity}`, s: "2 included · ₱200 each" },
+              { h: "10 or 22 hrs", s: "Pick your window" },
+              { h: `₱${Math.min(room.price10hr, room.price21hr).toLocaleString()}`, s: "Starting rate" },
+            ].map((item, i) => (
+              <div key={item.h} style={{ background: "#FFFCF4", padding: "16px 16px 14px" }}>
+                <span style={{ display: "grid", placeItems: "center", width: 30, height: 30, borderRadius: 9, border: "1px solid #E0CEB2", color: "#8C5A2E", marginBottom: 11 }}><SnapshotIcon i={i} /></span>
+                <div style={{ fontFamily: "'Fraunces', serif", fontSize: 26, fontWeight: 400, letterSpacing: "-.025em", lineHeight: 1 }}>{item.h}</div>
+                <div style={{ fontSize: 12, color: "#6B5C4A", marginTop: 5 }}>{item.s}</div>
+              </div>
+            ))}
           </div>
-          <p style={{ fontSize: 13.5, lineHeight: 1.5, color: "#6B5C4A", margin: "10px 0 0" }}>
+        </div>
+
+        {/* OFFERS */}
+        <div data-rise className="rmv-rise" style={{ position: "relative", zIndex: 1, padding: "22px 24px 0" }}>
+          <PromoBanner promotions={activePromotions} roomId={room.id} rates={room} variant="mobile" />
+        </div>
+
+        {/* CHOOSE YOUR TIME — dark band, matching the desktop "Pick your window"
+            section. Tapping a card selects it; the sticky bar below then quotes
+            that window's price and carries the guest through to checkout. */}
+        <div data-rise className="rmv-rise" style={{ position: "relative", zIndex: 1, marginTop: 30, background: "#1F160E", color: "#FFFCF4", padding: "30px 24px 32px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".18em", color: "#D4A96A", whiteSpace: "nowrap" }}>Choose your time</span>
+            <span style={{ flex: 1, height: 1, background: "linear-gradient(90deg, rgba(212,169,106,.55), rgba(212,169,106,0))" }} />
+          </div>
+          <h2 style={{ fontFamily: "'Fraunces', serif", fontWeight: 400, fontSize: 32, letterSpacing: "-.03em", lineHeight: 0.98, margin: "14px 0 0" }}>Pick the <em style={{ color: "#D4A96A" }}>time</em> that fits your day.</h2>
+          <svg data-flourish viewBox="0 0 220 14" style={{ display: "block", width: 190, height: 14, marginTop: 6, overflow: "visible" }}>
+            <path d="M2 9c34 5 74 3 104-2 26-4 66-5 112 3" fill="none" stroke="#D4A96A" strokeWidth="2" strokeLinecap="round" strokeDasharray="300" strokeDashoffset="300" />
+          </svg>
+          <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "rgba(255,255,252,.68)", margin: "12px 0 0", textWrap: "pretty" }}>
             Prices below depend on which day you check in. Tell us which kind of day, and we&rsquo;ll show the right price.
           </p>
 
-          {/* Day-type switch — weekday vs weekend/holiday rate card */}
-          <div role="group" aria-label="Rate type" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, marginTop: 16, padding: 4, borderRadius: 16, background: "#E9DAC0" }}>
+          <div role="group" aria-label="Rate type" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, marginTop: 18, padding: 4, borderRadius: 16, background: "rgba(255,252,244,.08)" }}>
             {[
               { on: false, title: "Weekday", sub: "Sun – Thu" },
               { on: true, title: "Weekend & Holiday", sub: "Fri – Sat" },
             ].map((opt) => {
               const active = weekendRates === opt.on;
               return (
-                <button
-                  key={opt.title}
-                  type="button"
-                  onClick={() => setWeekendRates(opt.on)}
-                  aria-pressed={active}
-                  style={{
-                    border: "none", cursor: "pointer", font: "inherit", padding: "11px 8px", borderRadius: 12,
-                    background: active ? "#B0754A" : "transparent",
-                    color: active ? "#FFFCF4" : "#1F160E",
-                    boxShadow: active ? "0 6px 16px -10px rgba(31,22,14,.7)" : "none",
-                    transition: "background .18s ease, color .18s ease",
-                  }}
-                >
-                  <span style={{ display: "block", fontSize: 14.5, fontWeight: 600, letterSpacing: "-.005em" }}>{opt.title}</span>
-                  <span style={{ display: "block", fontSize: 11.5, marginTop: 2, color: active ? "rgba(255,252,244,.78)" : "#8B7458" }}>{opt.sub}</span>
+                <button key={opt.title} type="button" onClick={() => setWeekendRates(opt.on)} aria-pressed={active}
+                  style={{ border: "none", cursor: "pointer", font: "inherit", padding: "11px 8px", borderRadius: 12, transition: "background .18s ease", background: active ? "#B0754A" : "transparent", color: "#FFFCF4" }}>
+                  <span style={{ display: "block", fontSize: 14.5, fontWeight: 600 }}>{opt.title}</span>
+                  <span style={{ display: "block", fontSize: 11.5, marginTop: 2, opacity: 0.72 }}>{opt.sub}</span>
                 </button>
               );
             })}
           </div>
 
-          <div style={{ marginTop: 18, borderTop: "1px solid #E0CEB2" }}>
-            {displayWindows.map((w, i) => (
-              <Link key={i} href={`/rooms/${room.id}?win=${i}`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, width: "100%", padding: "17px 0", borderBottom: "1px solid #E0CEB2", textDecoration: "none", color: "inherit" }}>
-                <span><span style={{ display: "block", fontFamily: "'Fraunces', serif", fontSize: 18, color: "#1F160E" }}>{w.label}</span><span style={{ display: "block", fontSize: 12, color: "#8B7458", marginTop: 3 }}>{w.checkIn} → {w.checkOut}</span></span>
-                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ textAlign: "right" }}>
-                    <span style={{ display: "block", fontSize: 16, fontWeight: 700, color: "#1F160E", letterSpacing: "-.01em" }}>₱{rateFor(w.stayType).toLocaleString()}</span>
-                    <span style={{ display: "block", fontSize: 11.5, color: "#8C5A2E", marginTop: 3 }}>{weekendRates ? "Weekend / holiday" : "Weekday rate"}</span>
+          <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+            {displayWindows.map((w, i) => {
+              const { base, net, cut } = winPrice(i);
+              return (
+                // A link, not a select-then-confirm button: one tap goes
+                // straight to the room page with this window preselected (and
+                // the offer code attached when one applies). The press state
+                // lives in CSS :active so the card still lights up under the
+                // thumb on the way out.
+                <Link key={i} href={winHref(i)} data-card="stay" className="rmv-staycard">
+                  <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "6px 11px", borderRadius: 999, background: "rgba(212,169,106,.14)", border: "1px solid rgba(212,169,106,.28)", color: "#D4A96A", fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 9.5, letterSpacing: ".14em" }}>
+                      <StayBadgeIcon i={i} />
+                      {spanHours(w.checkIn, w.checkOut) ?? w.stayType}-HOURS
+                    </span>
+                    <span className="rmv-staycard__arrow">
+                      <IcoArrowRight size={14} />
+                    </span>
                   </span>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#B07848" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
-                </span>
-              </Link>
+                  <span style={{ display: "block", fontFamily: "'Fraunces', serif", fontSize: 26, letterSpacing: "-.02em", lineHeight: 1.05, marginTop: 14 }}>{w.label}</span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: "rgba(255,255,252,.62)", marginTop: 8 }}>
+                    <IcoClock /> {w.checkIn} → {w.checkOut}
+                  </span>
+                  <span style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, marginTop: 14, padding: "13px 0", borderTop: "1px solid rgba(212,169,106,.16)" }}>
+                    <span style={{ fontSize: 12, color: "rgba(255,255,252,.5)" }}>From</span>
+                    <span style={{ display: "flex", alignItems: "baseline", gap: 7 }}>
+                      {cut && <span style={{ fontSize: 12.5, color: "rgba(255,255,252,.45)", textDecoration: "line-through" }}>{pesoAmount(base)}</span>}
+                      <span style={{ fontSize: 22, fontWeight: 700, letterSpacing: "-.015em", color: cut ? "#D4A96A" : "#FFFCF4" }}>{pesoAmount(net)}</span>
+                    </span>
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: 11.5, color: "rgba(255,255,252,.6)", marginTop: 14 }}>
+            Weekends and holidays cost a little more. Extra guests beyond 2 are ₱200 each. We&rsquo;ll show the full price before you book.
+          </div>
+        </div>
+
+        {/* ABOUT THIS HOME */}
+        <div data-rise className="rmv-rise" style={{ position: "relative", zIndex: 1, padding: "34px 24px 0" }}>
+          <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".18em", color: "#8C5A2E" }}>About this home</div>
+          <h2 style={{ fontFamily: "'Fraunces', serif", fontWeight: 400, fontSize: 30, lineHeight: 1.02, letterSpacing: "-.025em", margin: "12px 0 0" }}>A corner of the sky, <em>set aside for you.</em></h2>
+          <p style={{ fontSize: 14, lineHeight: 1.65, color: "#4A3A2A", margin: "14px 0 0", textWrap: "pretty" }}>{room.description}</p>
+          {aboutOpen && (
+            <p style={{ fontSize: 14, lineHeight: 1.65, color: "#4A3A2A", margin: "12px 0 0", textWrap: "pretty" }}>
+              We keep it small on purpose — one home, obsessively looked after, so every guest gets the version we&rsquo;d want to stay in ourselves. Hosted since 2022.
+            </p>
+          )}
+          <div style={{ display: "flex", gap: 6, marginTop: 16 }}>
+            {["Balcony", "City view", "Swimming pool", "Garden"].map((t) => (
+              <span key={t} style={{ flex: "0 1 auto", minWidth: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "8px 9px", fontSize: 11, fontWeight: 500, borderRadius: 999, border: "1px solid #D4BE9A", background: "#FFFCF4", color: "#4A3A2A", whiteSpace: "nowrap" }}>
+                <span style={{ color: "#8C5A2E", display: "inline-flex", flex: "none" }}><AboutTagIcon label={t} /></span>
+                {t}
+              </span>
+            ))}
+          </div>
+          <button type="button" onClick={() => setAboutOpen((v) => !v)}
+            style={{ marginTop: 14, background: "transparent", border: 0, padding: "4px 0", font: "inherit", fontSize: 13, fontWeight: 600, color: "#8C5A2E", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+            {aboutOpen ? "Show less" : "Read more about the home"}
+            <span style={{ display: "inline-flex", transition: "transform .25s ease", transform: aboutOpen ? "rotate(180deg)" : "none" }}><IcoChevronDown size={14} /></span>
+          </button>
+        </div>
+
+        {/* PHOTO COLLAGE — the same Photo Tour shots the desktop about-grid uses. */}
+        <div data-rise className="rmv-rise" style={{ position: "relative", zIndex: 1, marginTop: 18, padding: "0 24px" }}>
+          {room.aboutPhotos[0] && (
+            <figure style={{ margin: 0 }}>
+              <div style={{ position: "relative", width: "100%", height: 216, borderRadius: 18, overflow: "hidden" }}>
+                <Image src={room.aboutPhotos[0].src} alt={room.aboutPhotos[0].alt} fill unoptimized sizes="100vw" style={{ objectFit: "cover" }} />
+              </div>
+              <figcaption style={{ fontSize: 11.5, color: "#8B7458", marginTop: 8 }}>{room.aboutPhotos[0].alt}</figcaption>
+            </figure>
+          )}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 14 }}>
+            {room.aboutPhotos.slice(1, 3).map((p) => (
+              <figure key={p.src} style={{ margin: 0 }}>
+                <div style={{ position: "relative", width: "100%", height: 150, borderRadius: 18, overflow: "hidden" }}>
+                  <Image src={p.src} alt={p.alt} fill unoptimized sizes="50vw" style={{ objectFit: "cover" }} />
+                </div>
+                <figcaption style={{ fontSize: 11.5, color: "#8B7458", marginTop: 8, lineHeight: 1.35 }}>{p.alt}</figcaption>
+              </figure>
             ))}
           </div>
         </div>
 
-        <div style={{ padding: "22px 24px 0" }}>
-          <PromoBanner promotions={activePromotions} roomId={room.id} rates={room} variant="mobile" />
+        {/* WHAT'S INSIDE → FOOTER — one continuous boho background, the same
+            treatment the desktop section uses: the artwork tiled at its natural
+            scale (fixed width, auto height, repeat-y) rather than stretched, so
+            the motifs repeat down the run instead of blowing up over a block
+            far taller than the image's own 1718:915 ratio. Painted once on this
+            wrapper so there's no seam where the sections meet. */}
+        <div style={{
+          position: "relative",
+          zIndex: 1,
+          backgroundColor: "#F3E7D7",
+          backgroundImage: "url(/images/about-bg.png)",
+          backgroundSize: "100% auto",
+          backgroundRepeat: "repeat-y",
+          backgroundPosition: "top center",
+        }}>
+
+        {/* WHAT'S INSIDE — the full amenity list, collapsed to four until asked. */}
+        <div data-rise className="rmv-rise" style={{ position: "relative", zIndex: 1, padding: "34px 24px 0" }}>
+          <h2 style={{ fontFamily: "'Fraunces', serif", fontWeight: 500, fontSize: 23, margin: 0, letterSpacing: "-.01em" }}>What&rsquo;s inside</h2>
+          <p style={{ fontSize: 13.5, lineHeight: 1.55, color: "#6B5C4A", margin: "10px 0 0", textWrap: "pretty" }}>
+            Kitchenette, balcony, Netflix, videoke — and a welcome pack that means you can walk in with just a backpack.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 16 }}>
+            {AMENITIES.slice(0, amenOpen ? AMENITIES.length : 4).map((a) => {
+              const Icon = a.icon;
+              return (
+                <div key={a.label} style={{ display: "flex", alignItems: "center", gap: 11, background: "#FFFCF4", border: "1px solid #EFE4CE", borderRadius: 14, padding: "12px 13px" }}>
+                  <span style={{ width: 34, height: 34, flex: "none", borderRadius: 10, background: "#EFE4CE", color: "#6B3F1C", display: "grid", placeItems: "center" }}><Icon /></span>
+                  <span style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.3 }}>{a.label}</span>
+                </div>
+              );
+            })}
+          </div>
+          <button type="button" onClick={() => setAmenOpen((v) => !v)}
+            style={{ marginTop: 12, width: "100%", padding: 13, borderRadius: 14, border: "1px solid #D4BE9A", background: "transparent", font: "inherit", fontSize: 13.5, fontWeight: 600, color: "#8C5A2E", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+            {amenOpen ? "Show fewer amenities" : `Show all ${AMENITIES.length} amenities`}
+            <span style={{ display: "inline-flex", transition: "transform .25s ease", transform: amenOpen ? "rotate(180deg)" : "none" }}><IcoChevronDown size={15} /></span>
+          </button>
+          {/* Translucent, like the desktop welcome-pack panel — a solid fill
+              here would punch a hole in the illustration behind it. */}
+          <div style={{ marginTop: 16, padding: 18, background: "rgba(239,228,206,0.6)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", borderRadius: 18 }}>
+            <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: "#1F160E", marginBottom: 12 }}>On the house</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              {WELCOME_PACK.map((p) => (
+                <div key={p} style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 9 }}>
+                  <span style={{ color: "#8C5A2E", display: "inline-flex" }}><IcoCheck /></span> {p}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
 
-        <div style={{ padding: "30px 24px 0" }}>
-          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 18 }}>
-            <h2 style={{ fontFamily: "'Fraunces', serif", fontWeight: 500, fontSize: 23, margin: 0, letterSpacing: "-.01em" }}>What&rsquo;s inside</h2>
-            <Link href={`/rooms/${room.id}`} style={{ fontSize: 12.5, color: "#8C5A2E", textDecoration: "none" }}>See all</Link>
+        {/* WHERE YOU'LL BE — map, directions, and the walking distances that
+            answer "how far is it really" without a trip to /location. */}
+        <div ref={mLocationRef} data-rise className="rmv-rise" style={{ position: "relative", zIndex: 1, padding: "34px 24px 0", scrollMarginTop: 76 }}>
+          <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".18em", color: "#8C5A2E" }}>Where you&rsquo;ll be</div>
+          <h2 style={{ fontFamily: "'Fraunces', serif", fontWeight: 400, fontSize: 29, lineHeight: 1.02, letterSpacing: "-.025em", margin: "12px 0 0" }}>Tower 4,<br />Grass Residences.</h2>
+          <p style={{ fontSize: 14, lineHeight: 1.6, color: "#4A3A2A", margin: "12px 0 0", textWrap: "pretty" }}>SM North EDSA, EDSA cor. Mother Ignacia Ave, Quezon City, 1105 Metro Manila.</p>
+          <div style={{ marginTop: 16, borderRadius: 20, overflow: "hidden", border: "1px solid #E0CEB2", background: "#EFE4CE" }}>
+            <div ref={mMapRef} style={{ width: "100%", height: 216 }} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1, background: "#E0CEB2" }}>
+              <a href={`https://www.google.com/maps/dir/?api=1&destination=${MAP_COORDS[0]},${MAP_COORDS[1]}`} target="_blank" rel="noopener noreferrer"
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px 10px", background: "#FFFCF4", color: "#1F160E", textDecoration: "none", fontSize: 13, fontWeight: 600 }}>
+                <IcoNavigate /> Get directions
+              </a>
+              <button type="button" onClick={copyAddress}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px 10px", background: "#FFFCF4", border: 0, cursor: "pointer", font: "inherit", fontSize: 13, fontWeight: 600, color: "#1F160E" }}>
+                <span style={{ color: "#B07848", display: "inline-flex" }}><IcoCopy size={15} /></span>
+                {addrCopied ? "Address copied" : "Copy address"}
+              </button>
+            </div>
           </div>
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            {AMENITIES.slice(0, 4).map((a, i) => { const Icon = a.icon; return (
-              <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 9, flex: 1 }}>
-                <div style={{ width: 46, height: 46, borderRadius: "50%", background: "#EFE4CE", display: "grid", placeItems: "center", color: "#6B3F1C" }}><Icon /></div>
-                <span style={{ fontSize: 11.5, color: "#4A3A2A", fontWeight: 500, textAlign: "center" }}>{["WiFi", "Aircon", "Smart TV", "Balcony"][i]}</span>
+          <div style={{ marginTop: 18, borderTop: "1px solid #E0CEB2" }}>
+            {MOBILE_TRANSIT.map((t) => (
+              <div key={t.name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "14px 0", borderBottom: "1px solid #E0CEB2" }}>
+                <span style={{ fontSize: 13.5, fontWeight: 500 }}>{t.name}</span>
+                <span style={{ fontSize: 12, color: "#8B7458", fontFamily: "'Geist Mono', ui-monospace, monospace", whiteSpace: "nowrap" }}>{t.meta}</span>
               </div>
-            ); })}
+            ))}
+          </div>
+          {/* One row, all four visible. Sized to the same 11px chip the About
+              tags above use, which is what lets four of them sit across a phone
+              without wrapping or running off the edge. overflow-x is a safety
+              net for very narrow screens, not the intended reading. */}
+          <div className="rmv-track" style={{ display: "flex", flexWrap: "nowrap", gap: 6, marginTop: 16, overflowX: "auto" }}>
+            {MOBILE_NEARBY.map((n) => (
+              <span key={n} style={{ flex: "0 1 auto", minWidth: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "8px 10px", fontSize: 11, fontWeight: 500, borderRadius: 999, border: "1px solid #D4BE9A", background: "#FFFCF4", color: "#4A3A2A", whiteSpace: "nowrap" }}>{n}</span>
+            ))}
           </div>
         </div>
 
-        <div style={{ padding: "30px 24px 30px" }}>
-          <div style={{ display: "flex", gap: 3, marginBottom: 14, color: "#1F160E" }}>{[0, 1, 2, 3, 4].map((i) => <IcoStar key={i} size={14} />)}</div>
-          <p style={{ fontFamily: "'Fraunces', serif", fontWeight: 400, fontSize: 20, lineHeight: 1.4, letterSpacing: "-.01em", color: "#1F160E", margin: 0 }}>&ldquo;{mockReviews[0].comment}&rdquo;</p>
-          <div style={{ display: "flex", alignItems: "center", gap: 11, marginTop: 18 }}><div style={{ width: 34, height: 34, borderRadius: "50%", background: "#6B3F1C", color: "#fff", display: "grid", placeItems: "center", fontSize: 12, fontWeight: 700 }}>{mockReviews[0].avatar}</div><div><div style={{ fontSize: 13, fontWeight: 600 }}>{mockReviews[0].author}</div><div style={{ fontSize: 11.5, color: "#8B7458" }}>{room.rating} from {room.reviewCount} stays</div></div></div>
+        {/* GUESTS SAY — swipeable review cards. No band fill of its own: the
+            reviews sit on the shared boho wash, same as the desktop section. */}
+        <div data-rise className="rmv-rise" style={{ position: "relative", zIndex: 1, marginTop: 34, padding: "30px 0" }}>
+          <div style={{ padding: "0 24px" }}>
+            <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".18em", color: "#8C5A2E" }}>Guests say</div>
+            <h2 style={{ fontFamily: "'Fraunces', serif", fontWeight: 400, fontSize: 28, letterSpacing: "-.025em", lineHeight: 1, margin: "12px 0 0", display: "flex", alignItems: "center", gap: 10 }}>
+              <IcoStar size={24} /> {room.rating} from {room.reviewCount} stays
+            </h2>
+          </div>
+          <div ref={mRevRef} onScroll={onRevScroll} className="rmv-track" style={{ display: "flex", gap: 12, overflowX: "auto", scrollSnapType: "x mandatory", padding: "18px 24px 4px" }}>
+            {mockReviews.map((r) => (
+              <div key={r.id} style={{ flex: "0 0 268px", scrollSnapAlign: "center", background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 18, padding: 18 }}>
+                <span style={{ color: "#D4BE9A", display: "inline-flex" }}><IcoQuote /></span>
+                <p style={{ fontSize: 13.5, lineHeight: 1.6, margin: "10px 0 16px", color: "#4A3A2A", textWrap: "pretty" }}>&ldquo;{r.comment}&rdquo;</p>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 32, height: 32, flex: "none", borderRadius: "50%", background: "#6B3F1C", color: "#FFFCF4", display: "grid", placeItems: "center", fontSize: 11, fontWeight: 700 }}>{r.avatar}</div>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{r.author}</div>
+                    <div style={{ fontSize: 11, color: "#8B7458" }}>{r.date}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", justifyContent: "center", gap: 6, marginTop: 14 }}>
+            {mockReviews.map((r, i) => (
+              <span key={r.id} style={{ width: i === revIdx ? 18 : 5, height: 5, borderRadius: 99, background: i === revIdx ? "#8C5A2E" : "#D4BE9A", transition: "width .25s ease, background .25s ease" }} />
+            ))}
+          </div>
         </div>
 
-        <div style={{ padding: "0 24px 40px" }}>
-          <Link href={`/rooms/${room.id}`} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", padding: 16, borderRadius: 16, background: "#B07848", color: "#FFFCF4", fontSize: 15, fontWeight: 600, textDecoration: "none" }}>Book your stay <IcoArrowRight size={16} /></Link>
+        {/* FINAL CTA */}
+        <div data-rise className="rmv-rise" style={{ position: "relative", zIndex: 1, padding: "40px 24px 34px", textAlign: "center" }}>
+          <h2 style={{ fontFamily: "'Fraunces', serif", fontWeight: 400, fontSize: 38, letterSpacing: "-.03em", lineHeight: 0.98, margin: 0 }}>Ready to <em style={{ color: "#8C5A2E" }}>pause?</em></h2>
+          <p style={{ fontSize: 14.5, color: "#4A3A2A", lineHeight: 1.55, margin: "14px 0 20px", textWrap: "pretty" }}>Our calendar fills up 2&ndash;3 weeks out. Pick your window and we&rsquo;ll hold it.</p>
+          <Link href={`/rooms/${room.id}`} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "15px 26px", borderRadius: 999, background: "#B07848", color: "#FFFCF4", fontSize: 15, fontWeight: 600, textDecoration: "none" }}>
+            See the home · Book now <IcoArrowRight size={17} />
+          </Link>
+        </div>
+
+        {/* FOOTER */}
+        <footer style={{ position: "relative", zIndex: 1, borderTop: "1px solid #E0CEB2", padding: "28px 24px 30px" }}>
+          <div style={{ fontFamily: "'Fraunces', serif", fontSize: 26, fontWeight: 500, letterSpacing: "-.02em", lineHeight: 1 }}>Come home to <em>rest.</em></div>
+          <p style={{ fontSize: 12.5, color: "#4A3A2A", lineHeight: 1.6, margin: "12px 0 0", textWrap: "pretty" }}>
+            One staycation unit at Grass Residences, SM North EDSA, Quezon City. Book by the hour. Leave rested.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, marginTop: 24 }}>
+            <div>
+              <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".12em", color: "#1F160E", fontWeight: 600, marginBottom: 12 }}>Stay</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 9, fontSize: 12.5 }}>
+                <Link href={`/rooms/${room.id}?win=0`} style={{ color: "#4A3A2A", textDecoration: "none" }}>10-Hour Daycation</Link>
+                <Link href={`/rooms/${room.id}?win=1`} style={{ color: "#4A3A2A", textDecoration: "none" }}>10-Hour Nightcation</Link>
+                <Link href={`/rooms/${room.id}?win=2`} style={{ color: "#4A3A2A", textDecoration: "none" }}>22-Hour Full Stay</Link>
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".12em", color: "#1F160E", fontWeight: 600, marginBottom: 12 }}>Social Media</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 9, fontSize: 12.5 }}>
+                <a href="https://www.facebook.com/profile.php?id=61557644293485" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, color: "#4A3A2A", textDecoration: "none" }}><IcoFacebook /> Facebook</a>
+                <a href="https://www.tiktok.com/@dluxhomes2024/video/7631110590492101906" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, color: "#4A3A2A", textDecoration: "none" }}><IcoTikTok /> TikTok</a>
+                <a href="https://www.instagram.com/homesdlux/" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, color: "#4A3A2A", textDecoration: "none" }}><IcoInstagram /> Instagram</a>
+              </div>
+            </div>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".12em", color: "#1F160E", fontWeight: 600, marginBottom: 12 }}>Contact</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 9, fontSize: 12.5 }}>
+                <a href="mailto:homesdlux@gmail.com" style={{ display: "inline-flex", alignItems: "center", gap: 8, color: "#4A3A2A", textDecoration: "none" }}><IcoMail /> homesdlux@gmail.com</a>
+                <Link href="/location" style={{ display: "inline-flex", alignItems: "center", gap: 8, color: "#4A3A2A", textDecoration: "none" }}><IcoMapPin /> Tower 4, Grass Residences, QC</Link>
+              </div>
+            </div>
+          </div>
+          <div style={{ marginTop: 26, paddingTop: 16, borderTop: "1px solid #E0CEB2", display: "flex", flexDirection: "column", gap: 4, fontSize: 11.5, color: "#8B7458" }}>
+            <div>© 2026 D&rsquo; Lux Homes · Metro Manila, PH</div>
+            <div>Made with care for rest.</div>
+          </div>
+        </footer>
+
+        </div>{/* end boho-background run */}
+
+        {/* BOTTOM BAR — quotes the picked window (or the starting rate) so the
+            price the guest is about to commit to is never off-screen. */}
+        <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, background: "rgba(250,247,241,.96)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", borderTop: "1px solid #ECE5D4", padding: "12px 18px calc(16px + env(safe-area-inset-bottom))", boxShadow: "0 -12px 30px -18px rgba(20,15,9,.35)", display: "flex", alignItems: "center", gap: 14 }}>
+          <div style={{ flex: "none" }}>
+            <div style={{ fontSize: 10.5, color: "#8B7458" }}>{bar.label}</div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+              {bar.was && <span style={{ fontSize: 12.5, color: "#9B8B73", textDecoration: "line-through" }}>{bar.was}</span>}
+              <span style={{ fontSize: 18, fontWeight: 700, letterSpacing: "-.01em" }}>{bar.price}</span>
+            </div>
+            <div style={{ fontSize: 10.5, color: "#8C5A2E", marginTop: 1 }}>{bar.sub}</div>
+          </div>
+          <button onClick={() => router.push(bar.href)}
+            style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, background: "#B8754A", color: "#FAF7F1", border: 0, padding: 15, borderRadius: 14, font: "inherit", fontSize: 15.5, fontWeight: 600, cursor: "pointer" }}>
+            {bar.cta}
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
+          </button>
         </div>
       </div>
 
