@@ -422,25 +422,6 @@ export default function AdminLoginPage() {
               <span>{loading ? "Signing in…" : `Sign in as ${activeRole.label}`}</span>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
             </button>
-
-            {/* demo credentials */}
-            <details className="ad-demo">
-              <summary>
-                <span className="ad-demo__dot" />
-                <span>Demo credentials · {activeRole.label}</span>
-                <span className="ad-demo__hint">click to reveal</span>
-              </summary>
-              <div className="ad-demo__box">
-                <div className="ad-demo__line">
-                  <span>email</span>
-                  <span>{staticAccounts[selectedRole].email}</span>
-                </div>
-                <div className="ad-demo__line">
-                  <span>password</span>
-                  <span>{staticAccounts[selectedRole].password}</span>
-                </div>
-              </div>
-            </details>
           </form>
           </div>
         </div>
