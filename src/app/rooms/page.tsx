@@ -13,6 +13,7 @@ import { useSession, signOut } from "next-auth/react";
 import { getMyBookingIds } from "@/lib/booking-store";
 import { mockRooms, mockReviews } from "@/lib/mock-data";
 import { useGetHavensQuery } from "@/redux/api/roomApi";
+import { useGetHavenReviewsQuery } from "@/redux/api/reviewsApi";
 import { spanHours } from "@/lib/stay-window";
 import { IcoZoom, PromoLightbox } from "@/components/PromoLightbox";
 import { havenToRoom } from "@/lib/haven-adapter";
@@ -577,7 +578,7 @@ export default function BrowsePage() {
   // Review cards are a fixed 268px wide plus a 12px gap.
   const onRevScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const i = Math.round(e.currentTarget.scrollLeft / 280);
-    const c = Math.max(0, Math.min(mockReviews.length - 1, i));
+    const c = Math.max(0, Math.min(displayReviews.length - 1, i));
     setRevIdx((prev) => (c === prev ? prev : c));
   };
 
@@ -622,6 +623,9 @@ export default function BrowsePage() {
   // Reveal the "Guests say" reviews section on scroll
   const reviewsRef = useRef<HTMLDivElement>(null);
   const [reviewsVisible, setReviewsVisible] = useState(false);
+  // Desktop review carousel — one comment slides in after another, same
+  // auto-advance pattern as the hero image (see heroImg effect below).
+  const [deskRevIdx, setDeskRevIdx] = useState(0);
 
   // Reveal the final CTA + footer on scroll
   const ctaRef = useRef<HTMLDivElement>(null);
@@ -633,6 +637,24 @@ export default function BrowsePage() {
   const { data: havensData } = useGetHavensQuery({});
   const liveHaven = (havensData as Record<string, unknown>[] | undefined)?.[0];
   const room = liveHaven ? havenToRoom(liveHaven) : mockRooms[0];
+
+  // Real guest reviews for this haven, published + public only (see /api/reviews
+  // GET), shown alongside the curated mock testimonials rather than replacing
+  // them — newest real reviews lead, mock cards fill out the rest of the row.
+  const { data: liveReviewsData } = useGetHavenReviewsQuery(
+    { haven_id: room.id },
+    { skip: !liveHaven }
+  );
+  const liveReviews = (liveReviewsData?.reviews ?? [])
+    .filter((r) => r.comment)
+    .map((r) => ({
+      id: r.id,
+      author: `${r.guest_first_name ?? ""} ${r.guest_last_name ?? ""}`.trim() || "Guest",
+      comment: r.comment ?? "",
+      date: r.created_at?.slice(0, 10) ?? "",
+      avatar: ((r.guest_first_name?.[0] ?? "") + (r.guest_last_name?.[0] ?? "")).toUpperCase() || "G",
+    }));
+  const displayReviews = [...liveReviews, ...mockReviews];
   // Display windows: keep the listing's labels/stayType but take the actual
   // check-in/out times from the live haven (room.windows, same day/night/overnight
   // order), so the cards always reflect what the owner configured in admin.
@@ -699,6 +721,29 @@ export default function BrowsePage() {
     const id = setInterval(() => setHeroImg((i) => (i + 1) % room.images.length), 5500);
     return () => clearInterval(id);
   }, [room.images.length]);
+
+  useEffect(() => {
+    // Slide one card at a time, holding the last full row of 4 in place
+    // (rather than sliding past it into blank space) before looping back.
+    const maxIdx = Math.max(0, displayReviews.length - 4);
+    if (maxIdx <= 0) return;
+    const id = setInterval(() => setDeskRevIdx((i) => (i >= maxIdx ? 0 : i + 1)), 4500);
+    return () => clearInterval(id);
+  }, [displayReviews.length]);
+
+  // Mobile review carousel auto-advance — scrolls the snap track itself so
+  // manual swiping (via onRevScroll) still works and stays in sync.
+  useEffect(() => {
+    if (displayReviews.length <= 1) return;
+    const id = setInterval(() => {
+      const track = mRevRef.current;
+      if (!track) return;
+      const next = (revIdx + 1) % displayReviews.length;
+      track.scrollTo({ left: next * 280, behavior: "smooth" });
+      setRevIdx(next);
+    }, 4500);
+    return () => clearInterval(id);
+  }, [displayReviews.length, revIdx]);
 
   useEffect(() => {
     // Toggle visibility on every scroll in/out so the animation replays
@@ -799,7 +844,6 @@ export default function BrowsePage() {
           .amen-grid { grid-template-columns: 1fr !important; gap: 36px !important; }
           .hm-stay { grid-template-columns: 1fr !important; }
           .hm-2col { grid-template-columns: 1fr !important; gap: 24px !important; }
-          .review-grid { grid-template-columns: repeat(2,1fr) !important; }
           .hm-foot { grid-template-columns: 1fr 1fr !important; gap: 28px !important; }
           .hm-h2 { font-size: 40px !important; }
           .hm-sec { padding-left: 18px !important; padding-right: 18px !important; }
@@ -1231,7 +1275,7 @@ export default function BrowsePage() {
             </h2>
           </div>
           <div ref={mRevRef} onScroll={onRevScroll} className="rmv-track" style={{ display: "flex", gap: 12, overflowX: "auto", scrollSnapType: "x mandatory", padding: "18px 24px 4px" }}>
-            {mockReviews.map((r) => (
+            {displayReviews.map((r) => (
               <div key={r.id} style={{ flex: "0 0 268px", scrollSnapAlign: "center", background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 18, padding: 18 }}>
                 <span style={{ color: "#D4BE9A", display: "inline-flex" }}><IcoQuote /></span>
                 <p style={{ fontSize: 13.5, lineHeight: 1.6, margin: "10px 0 16px", color: "#4A3A2A", textWrap: "pretty" }}>&ldquo;{r.comment}&rdquo;</p>
@@ -1246,7 +1290,7 @@ export default function BrowsePage() {
             ))}
           </div>
           <div style={{ display: "flex", justifyContent: "center", gap: 6, marginTop: 14 }}>
-            {mockReviews.map((r, i) => (
+            {displayReviews.map((r, i) => (
               <span key={r.id} style={{ width: i === revIdx ? 18 : 5, height: 5, borderRadius: 99, background: i === revIdx ? "#8C5A2E" : "#D4BE9A", transition: "width .25s ease, background .25s ease" }} />
             ))}
           </div>
@@ -1611,19 +1655,39 @@ export default function BrowsePage() {
               <IcoStar size={36} /> {room.rating} from {room.reviewCount} stays
             </h2>
           </div>
-          <div ref={reviewsRef} className={`review-grid${reviewsVisible ? " review-grid--in" : ""}`} style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16 }}>
-            {mockReviews.map((r, i) => (
-              <div key={r.id} className="review-card" style={{ animationDelay: `${i * 120}ms`, background: "var(--white)", borderRadius: 18, padding: 22, border: "1px solid var(--line)" }}>
-                <span style={{ color: "var(--line-2)" }}><IcoQuote /></span>
-                <p style={{ fontSize: 14, lineHeight: 1.65, margin: "10px 0 16px", color: "var(--ink-2)" }}>&ldquo;{r.comment}&rdquo;</p>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ width: 32, height: 32, borderRadius: "50%", background: "var(--accent-deep)", color: "var(--white)", display: "grid", placeItems: "center", fontSize: 11, fontWeight: 700 }}>{r.avatar}</div>
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 600 }}>{r.author}</div>
-                    <div style={{ fontSize: 11, color: "var(--muted)" }}>{r.date}</div>
+          <div ref={reviewsRef} className={`review-grid${reviewsVisible ? " review-grid--in" : ""}`} style={{ overflow: "hidden" }}>
+            <div
+              style={{
+                display: "flex",
+                gap: 16,
+                transform: `translateX(calc(-${deskRevIdx} * (25% + 12px)))`,
+                transition: "transform 0.6s cubic-bezier(0.65,0,0.35,1)",
+              }}
+            >
+              {displayReviews.map((r, i) => (
+                <div key={r.id} className="review-card" style={{ animationDelay: `${i * 120}ms`, flex: "0 0 calc(25% - 12px)", background: "var(--white)", borderRadius: 18, padding: 22, border: "1px solid var(--line)" }}>
+                  <span style={{ color: "var(--line-2)" }}><IcoQuote /></span>
+                  <p style={{ fontSize: 14, lineHeight: 1.65, margin: "10px 0 16px", color: "var(--ink-2)" }}>&ldquo;{r.comment}&rdquo;</p>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ width: 32, height: 32, borderRadius: "50%", background: "var(--accent-deep)", color: "var(--white)", display: "grid", placeItems: "center", fontSize: 11, fontWeight: 700 }}>{r.avatar}</div>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{r.author}</div>
+                      <div style={{ fontSize: 11, color: "var(--muted)" }}>{r.date}</div>
+                    </div>
                   </div>
                 </div>
-              </div>
+              ))}
+            </div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "center", gap: 6, marginTop: 20 }}>
+            {displayReviews.slice(0, Math.max(1, displayReviews.length - 3)).map((r, i) => (
+              <button
+                key={r.id}
+                type="button"
+                aria-label={`Show review ${i + 1}`}
+                onClick={() => setDeskRevIdx(i)}
+                style={{ width: i === deskRevIdx ? 18 : 5, height: 5, borderRadius: 99, border: 0, padding: 0, cursor: "pointer", background: i === deskRevIdx ? "var(--accent-ink)" : "var(--line-2)", transition: "width .25s ease, background .25s ease" }}
+              />
             ))}
           </div>
         </div>
