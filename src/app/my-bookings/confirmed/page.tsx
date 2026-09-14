@@ -137,10 +137,12 @@ function ConfirmedInner() {
     let active = true;
     fetch(`/api/bookings/${encodeURIComponent(bookingId)}`)
       .then((r) => {
-        // A signed-out guest opening a shared link (e.g. the review link in the
-        // check-out email) 401s here. Bounce them through sign-in and back to
-        // this exact URL — otherwise they'd land on "We couldn't find that
-        // booking", which reads as a broken link rather than "please log in".
+        // Guest (no-account) bookings are viewable while signed out — see
+        // requireBookingAccess. This 401 only fires for an account-owned
+        // booking opened signed-out (e.g. the check-out email's review link).
+        // Bounce through sign-in and back to this exact URL — otherwise
+        // they'd land on "We couldn't find that booking", which reads as a
+        // broken link rather than "please log in".
         if (r.status === 401) {
           if (active) {
             const back = `${window.location.pathname}${window.location.search}`;

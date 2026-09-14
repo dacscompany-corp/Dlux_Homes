@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import type { PoolClient } from "pg";
+import bcrypt from "bcryptjs";
 import pool from "../config/db";
 import { upload_file } from "../utils/cloudinary";
 import { validateImageDataUrl } from "../utils/imageGuard";
@@ -13,6 +14,56 @@ import { dispatchTransactionalEmail, type EmailDispatchResult } from "../utils/d
 // EXISTING_START_SQL / EXISTING_END_SQL now live in @/lib/bookingWindow beside
 // occupyingBookingSql(), so the Messenger availability module shares the exact
 // same strings rather than a copy that could drift from this query.
+
+// haven_id is queried against UUID columns (blocked_dates.haven_id,
+// havens.uuid_id) — a non-UUID value (e.g. a mock/demo room id like "mock-1"
+// or "1") 500s instead of erroring gracefully. Treat it the same as a missing
+// haven_id rather than let it reach Postgres.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Password every auto-created guest account starts with. Guests can change it
+// any time via the existing /forgot-password flow (src/app/api/auth/reset-password) —
+// this is only ever a starting point, never re-applied to an existing account.
+const DEFAULT_GUEST_PASSWORD = "guest123";
+
+/**
+ * A guest who checks out without signing in still typed an email into "How
+ * can we reach you?" — this turns that into a real account so the same
+ * person can track this (and future) bookings by signing in, without forcing
+ * them through registration first.
+ *
+ * - No account for that email yet: create one (bcrypt-hashed DEFAULT_GUEST_PASSWORD,
+ *   role "Guest") and report it as newly created so the confirmation email can
+ *   surface the starting password.
+ * - An account already exists: link to it as-is. Its password is NEVER
+ *   touched — overwriting it on every guest checkout would let anyone hijack
+ *   an existing account just by typing its email at checkout.
+ *
+ * Runs inside the booking's own transaction so the account only persists if
+ * the booking itself commits.
+ */
+async function resolveOrCreateGuestAccount(
+  client: PoolClient,
+  email: string,
+  name: string,
+): Promise<{ userId: string; created: boolean }> {
+  const existing = await client.query(
+    `SELECT user_id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1`,
+    [email],
+  );
+  if (existing.rows.length > 0) {
+    return { userId: existing.rows[0].user_id, created: false };
+  }
+
+  const hashedPassword = await bcrypt.hash(DEFAULT_GUEST_PASSWORD, 10);
+  const inserted = await client.query(
+    `INSERT INTO users (email, password, name, user_role, last_login)
+     VALUES ($1, $2, $3, 'Guest', CURRENT_TIMESTAMP)
+     RETURNING user_id`,
+    [email, hashedPassword, name],
+  );
+  return { userId: inserted.rows[0].user_id, created: true };
+}
 
 // Run bookkeeping that is allowed to fail without taking the booking with it.
 //
@@ -583,19 +634,15 @@ export interface Booking {
 export const createBooking = async (
   req: NextRequest,
 ): Promise<NextResponse> => {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  const body = await req.json();
+  console.log("📥 [BOOKING] createBooking body received");
+  console.log("📋 [BOOKING] Booking ID:", body.booking_id);
+  console.log("📋 [BOOKING] Guest:", `${body.guest_first_name} ${body.guest_last_name}`);
+  console.log("📋 [BOOKING] Dates:", `${body.check_in_date} to ${body.check_out_date}`);
+  console.log("📋 [BOOKING] Room:", body.room_name);
+  console.log("📋 [BOOKING] Amount:", body.total_amount);
 
-    const body = await req.json();
-    console.log("📥 [BOOKING] createBooking body received");
-    console.log("📋 [BOOKING] Booking ID:", body.booking_id);
-    console.log("📋 [BOOKING] Guest:", `${body.guest_first_name} ${body.guest_last_name}`);
-    console.log("📋 [BOOKING] Dates:", `${body.check_in_date} to ${body.check_out_date}`);
-    console.log("📋 [BOOKING] Room:", body.room_name);
-    console.log("📋 [BOOKING] Amount:", body.total_amount);
-
-    const {
+  const {
       booking_id,
       user_id,
       room_name,
@@ -648,6 +695,85 @@ export const createBooking = async (
       // Add-ons (frontend sends snake_case `add_ons`)
       add_ons: addOns = {},
     } = body;
+
+  // Resolve every photo (payment proof, main guest ID(s), each additional
+  // guest's ID(s)) BEFORE touching Postgres. These are Cloudinary round
+  // trips, not database work — running them after BEGIN held a transaction
+  // (and a connection out of the pool) open for the entire upload, on top of
+  // being sequential per guest. All of it now runs in parallel up front, so
+  // the transaction below is nothing but fast DB writes against already-known
+  // URLs.
+  let paymentProofUrl: string | null = null;
+  if (payment_proof) {
+    const proofCheck = validateImageDataUrl(payment_proof);
+    if (!proofCheck.ok) {
+      return NextResponse.json(
+        { success: false, message: `Payment proof must be an image: ${proofCheck.reason}` },
+        { status: 400 },
+      );
+    }
+  }
+  const mainIdCount = Array.isArray(valid_ids)
+    ? valid_ids.filter((v: unknown) => typeof v === "string" && v.trim()).length
+    : (typeof valid_id === "string" && valid_id.trim() ? 1 : 0);
+  console.log(`🪪 [BOOKING] Main guest ID photos received from client: ${mainIdCount}`);
+
+  let validIdUrl: string | null = null;
+  let guestIdUrls: (string | null)[] = [];
+  try {
+    [paymentProofUrl, validIdUrl, guestIdUrls] = await Promise.all([
+      payment_proof
+        ? upload_file(payment_proof, "dlux-homes/payment-proofs")
+            .then((r) => r.url as string)
+            .catch((err: unknown) => {
+              // Non-fatal, same as before: a failed/misconfigured image upload
+              // must not block the booking — the guest has already paid.
+              console.error(
+                "[booking] payment proof upload failed (continuing without it):",
+                err instanceof Error ? err.message : err,
+              );
+              return null;
+            })
+        : Promise.resolve(null),
+      resolveValidIdUrls(valid_ids, valid_id),
+      Promise.all(
+        (additional_guests as Array<{ validIds?: unknown; validId?: unknown }>).map((g) =>
+          resolveValidIdUrls(g.validIds, g.validId),
+        ),
+      ),
+    ]);
+  } catch (err: unknown) {
+    const e = err as { message?: string; http_code?: number; name?: string };
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Failed to upload valid ID.",
+        details: { message: e?.message, name: e?.name, http_code: e?.http_code },
+      },
+      { status: 500 },
+    );
+  }
+
+  // The client sent photos but NONE survived validation/upload. Deliberately
+  // not fatal — the guest has already paid the down payment by this point, and
+  // blocking them over an image the sniffer disliked is worse for the business
+  // than a missing document the host can chase. But it must be loud: the host
+  // otherwise finds out only by opening the booking and seeing "Not uploaded".
+  if (mainIdCount > 0 && !validIdUrl) {
+    console.error(
+      `❌ [BOOKING] ${booking_id}: ${mainIdCount} main-guest ID photo(s) were sent but NONE were stored ` +
+        `— every one was rejected by the image guard or failed to upload. Booking saved WITHOUT an ID.`,
+    );
+  } else if (mainIdCount === 0) {
+    console.warn(
+      `⚠️ [BOOKING] ${booking_id}: client sent NO main-guest ID photo. ` +
+        `Checkout requires one for guests aged 10+, so this points at a client-side bug or a bypassed step.`,
+    );
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
 
     // --- GENERAL ROOM AVAILABILITY CHECK (time-aware) ---
     // '00:00' checkout means end-of-day midnight, so treat it as the start of the next day.
@@ -734,7 +860,7 @@ export const createBooking = async (
     // Without this check, guests can book over external reservations and partner-blocked
     // windows. Skipped if haven_id is missing (e.g. legacy clients that send only
     // room_name) so we don't regress those callers.
-    if (body.haven_id) {
+    if (body.haven_id && UUID_RE.test(body.haven_id)) {
       const blockedCheck = await client.query(
         `SELECT id, from_date, to_date, block_type, reason
          FROM blocked_dates
@@ -760,7 +886,7 @@ export const createBooking = async (
 
     // --- BOOKING WINDOW VALIDATION ---
     const { stay_type, haven_id } = body;
-    if (stay_type && haven_id) {
+    if (stay_type && haven_id && UUID_RE.test(haven_id)) {
       // Only the lookup is best-effort. The checks below it are pure JS and
       // must keep the ability to reject the booking outright — wrapping them
       // too would swallow a 400 the guest needs to see.
@@ -852,31 +978,7 @@ export const createBooking = async (
     }
     // --- END CHECK ---
 
-    // Upload payment proof first to get the URL for calendar event.
-    // Non-fatal: a failed/misconfigured image upload must not roll back the booking.
-    let paymentProofUrl = null;
-    if (payment_proof) {
-      const proofCheck = validateImageDataUrl(payment_proof);
-      if (!proofCheck.ok) {
-        await client.query("ROLLBACK");
-        return NextResponse.json(
-          { success: false, message: `Payment proof must be an image: ${proofCheck.reason}` },
-          { status: 400 },
-        );
-      }
-      try {
-        const uploadResult = await upload_file(
-          payment_proof,
-          "dlux-homes/payment-proofs",
-        );
-        paymentProofUrl = uploadResult.url;
-      } catch (err: unknown) {
-        console.error(
-          "[booking] payment proof upload failed (continuing without it):",
-          err instanceof Error ? err.message : err,
-        );
-      }
-    }
+    // paymentProofUrl was already uploaded above, before BEGIN.
 
     // Create Google Calendar event with payment proof URL
     const calendarEventData: CalendarEventData = {
@@ -920,6 +1022,20 @@ export const createBooking = async (
     // WHERE google_event_id IS NULL.
     const googleEventId = null;
 
+    // A guest who didn't sign in still gets an account: auto-create (or reuse)
+    // one keyed off the email they gave under "How can we reach you?", so this
+    // booking is tied to it exactly like a signed-in booking is. See
+    // resolveOrCreateGuestAccount() for why an existing account's password is
+    // never touched.
+    let resolvedUserId: string | null = user_id || null;
+    let guestAccountCreated = false;
+    if (!resolvedUserId && guest_email) {
+      const guestName = `${guest_first_name || ""} ${guest_last_name || ""}`.trim() || guest_email;
+      const account = await resolveOrCreateGuestAccount(client, guest_email, guestName);
+      resolvedUserId = account.userId;
+      guestAccountCreated = account.created;
+    }
+
     // Step 1: Create main booking record
     const bookingQuery = `
       INSERT INTO booking (
@@ -934,7 +1050,7 @@ export const createBooking = async (
 
     const bookingValues = [
       booking_id,
-      user_id || null, // NULL for guest bookings
+      resolvedUserId, // guest bookings now resolve to an auto-created/reused account instead of NULL
       room_name,
       check_in_date,
       check_out_date,
@@ -959,61 +1075,7 @@ export const createBooking = async (
     console.log("✅ [BOOKING] Booking record created with ID:", bookingId);
 
     // Step 2: Create main guest record
-    //
-    // Log what actually arrived BEFORE resolving. A booking was once saved with
-    // the main guest's ID missing while both additional guests' IDs uploaded
-    // fine, and nothing in the logs could distinguish "the client sent nothing"
-    // from "the image was rejected by the magic-byte guard" — both end as a
-    // silent NULL. These two lines make the next occurrence self-explaining.
-    const mainIdCount = Array.isArray(valid_ids)
-      ? valid_ids.filter((v: unknown) => typeof v === "string" && v.trim()).length
-      : (typeof valid_id === "string" && valid_id.trim() ? 1 : 0);
-    console.log(`🪪 [BOOKING] Main guest ID photos received from client: ${mainIdCount}`);
-
-    let validIdUrl: string | null = null;
-    try {
-      validIdUrl = await resolveValidIdUrls(valid_ids, valid_id);
-    } catch (err: unknown) {
-      const e = err as {
-        message?: string;
-        http_code?: number;
-        name?: string;
-      };
-      // Every other bail-out in this function rolls back first. This one did
-      // not, so the connection went back to the pool mid-transaction — holding
-      // a booking row nobody would ever commit, for the next request to
-      // inherit.
-      await client.query("ROLLBACK");
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Failed to upload valid ID.",
-          details: {
-            message: e?.message,
-            name: e?.name,
-            http_code: e?.http_code,
-          },
-        },
-        { status: 500 },
-      );
-    }
-
-    // The client sent photos but NONE survived validation/upload. Deliberately
-    // not fatal — the guest has already paid the down payment by this point, and
-    // blocking them over an image the sniffer disliked is worse for the business
-    // than a missing document the host can chase. But it must be loud: the host
-    // otherwise finds out only by opening the booking and seeing "Not uploaded".
-    if (mainIdCount > 0 && !validIdUrl) {
-      console.error(
-        `❌ [BOOKING] ${booking_id}: ${mainIdCount} main-guest ID photo(s) were sent but NONE were stored ` +
-          `— every one was rejected by the image guard or failed to upload. Booking saved WITHOUT an ID.`,
-      );
-    } else if (mainIdCount === 0) {
-      console.warn(
-        `⚠️ [BOOKING] ${booking_id}: client sent NO main-guest ID photo. ` +
-          `Checkout requires one for guests aged 10+, so this points at a client-side bug or a bypassed step.`,
-      );
-    }
+    // validIdUrl was already resolved above, before BEGIN (see mainIdCount logging there too).
 
     // guest_index 0 marks the booker. The primary key is a random UUID, so
     // without this column there is no way to tell afterwards who booked — which
@@ -1044,17 +1106,8 @@ export const createBooking = async (
     console.log("✅ [BOOKING] Main guest record created");
 
     // Step 3: Create additional guests records
+    // guestIdUrls was already resolved above, in parallel, before BEGIN.
     if (additional_guests && additional_guests.length > 0) {
-      // Resolve EVERY additional guest's photos up front, in parallel. Doing it
-      // inside the insert loop meant guest 4's uploads didn't start until guest
-      // 3's finished — the slowest possible ordering, and the main reason a
-      // family booking took so much longer to submit than a solo one.
-      const guestIdUrls = await Promise.all(
-        additional_guests.map((g: { validIds?: unknown; validId?: unknown }) =>
-          resolveValidIdUrls(g.validIds, g.validId),
-        ),
-      );
-
       for (const [gi, guest] of additional_guests.entries()) {
         const guestIdUrl = guestIdUrls[gi];
 
@@ -1474,6 +1527,10 @@ export const createBooking = async (
         totalAmount: booking.booking_payment?.total_amount,
         rentableItems,
         addonCategories,
+        // Only set when this booking just auto-created the guest's account —
+        // an existing account's password was never touched, so there's
+        // nothing new to tell them.
+        newAccountPassword: guestAccountCreated ? DEFAULT_GUEST_PASSWORD : undefined,
       };
 
       // Runs inside after(), so there is no response left to report into — the
