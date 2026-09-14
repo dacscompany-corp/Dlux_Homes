@@ -21,10 +21,47 @@ import { dispatchTransactionalEmail, type EmailDispatchResult } from "../utils/d
 // haven_id rather than let it reach Postgres.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Password every auto-created guest account starts with. Guests can change it
-// any time via the existing /forgot-password flow (src/app/api/auth/reset-password) —
-// this is only ever a starting point, never re-applied to an existing account.
-const DEFAULT_GUEST_PASSWORD = "guest123";
+// Starting password for auto-created guest accounts. Guests can change it any
+// time via /forgot-password (src/app/api/auth/reset-password) — it is only ever
+// a starting point, never re-applied to an existing account.
+//
+// Read from the environment, with NO literal fallback in this file: the value
+// that used to be hard-coded here is in this repo's git history for good, so
+// keeping any real password in source would just publish the next one too.
+// Set GUEST_DEFAULT_PASSWORD in .env and in the Vercel project, and set it to
+// something OTHER than the old value — hiding a string that is already public
+// protects nothing.
+//
+// Be clear about what this does and does not buy: the password is emailed to
+// every guest in cleartext, so it is disclosed by design and an attacker needs
+// a guest's email address, not this repo. Moving it out of source keeps it off
+// GitHub; it does not make it secret.
+const GUEST_DEFAULT_PASSWORD = process.env.GUEST_DEFAULT_PASSWORD?.trim() || null;
+
+/**
+ * The password to set on an account being created now.
+ *
+ * With GUEST_DEFAULT_PASSWORD configured, every new guest account starts on
+ * that shared value — the owner's choice, so support can read it out over
+ * Messenger.
+ *
+ * With it unset, each guest gets their own random password instead of the
+ * process falling back to a guessable constant. Nothing about the guest's
+ * experience changes (it is emailed to them either way); the owner just loses
+ * the ability to recite it. That is the right way round for a missing setting:
+ * a forgotten env var should not silently hand every account one password.
+ */
+function newGuestPassword(): string {
+  if (GUEST_DEFAULT_PASSWORD) return GUEST_DEFAULT_PASSWORD;
+  const bytes = new Uint8Array(9);
+  globalThis.crypto.getRandomValues(bytes);
+  const generated = Buffer.from(bytes).toString("base64url");
+  console.warn(
+    "⚠️ GUEST_DEFAULT_PASSWORD is not set — issuing this guest a random password. " +
+      "It is in their confirmation email, but you will not be able to tell them what it is.",
+  );
+  return generated;
+}
 
 /**
  * A guest who checks out without signing in still typed an email into "How
@@ -32,7 +69,7 @@ const DEFAULT_GUEST_PASSWORD = "guest123";
  * person can track this (and future) bookings by signing in, without forcing
  * them through registration first.
  *
- * - No account for that email yet: create one (bcrypt-hashed DEFAULT_GUEST_PASSWORD,
+ * - No account for that email yet: create one (bcrypt-hashed newGuestPassword(),
  *   role "Guest") and report it as newly created so the confirmation email can
  *   surface the starting password.
  * - An account already exists: link to it as-is. Its password is NEVER
@@ -46,7 +83,7 @@ async function resolveOrCreateGuestAccount(
   client: PoolClient,
   email: string,
   name: string,
-): Promise<{ userId: string; created: boolean }> {
+): Promise<{ userId: string; created: boolean; password: string | null }> {
   // Store the address lowercased. The lookup below is case-insensitive, but
   // `users_email_key` and sign-in (`WHERE LOWER(email) = LOWER($1)` in auth.ts)
   // are keyed on the stored value — so an address saved as "Maria@Gmail.com"
@@ -68,10 +105,14 @@ async function resolveOrCreateGuestAccount(
       `⚠️ [BOOKING] ${normalizedEmail} already has an account — attaching this booking to it. ` +
         `If the guest mistyped their email, the booking now belongs to the address's owner.`,
     );
-    return { userId: existing.rows[0].user_id, created: false };
+    return { userId: existing.rows[0].user_id, created: false, password: null };
   }
 
-  const hashedPassword = await bcrypt.hash(DEFAULT_GUEST_PASSWORD, 10);
+  // The plaintext is returned to the caller so the confirmation email can show
+  // it. It is generated here, once, and never read back out of the database —
+  // the stored copy is a bcrypt hash and cannot be reversed.
+  const password = newGuestPassword();
+  const hashedPassword = await bcrypt.hash(password, 10);
   // ON CONFLICT closes the check-then-act race between the SELECT above and
   // this INSERT: two first-time bookings on one address both saw no account,
   // both inserted, and the loser's unique violation (23505) surfaced to the
@@ -85,14 +126,16 @@ async function resolveOrCreateGuestAccount(
     [normalizedEmail, hashedPassword, name],
   );
   if (inserted.rows.length > 0) {
-    return { userId: inserted.rows[0].user_id, created: true };
+    return { userId: inserted.rows[0].user_id, created: true, password };
   }
 
   const raced = await client.query(
     `SELECT user_id FROM users WHERE LOWER(email) = $1 LIMIT 1`,
     [normalizedEmail],
   );
-  return { userId: raced.rows[0].user_id, created: false };
+  // Lost the race: the winner set its own password, so this caller has none to
+  // show. The guest gets the winner's mail.
+  return { userId: raced.rows[0].user_id, created: false, password: null };
 }
 
 // Run bookkeeping that is allowed to fail without taking the booking with it.
@@ -2222,7 +2265,8 @@ export const updateBookingStatus = async (
         // Best-effort by design: if any of it fails the guest still gets their
         // confirmation, just without sign-in details, and the booking stays
         // reachable by its emailed link. Never hold up a confirmation for it.
-        let showSignInDetails = false;
+        // The plaintext password to show the guest, or null to omit the block.
+        let signInPassword: string | null = null;
         if (!booking.user_id && booking.email) {
           const acctClient = await pool.connect();
           try {
@@ -2240,21 +2284,24 @@ export const updateBookingStatus = async (
             );
             await acctClient.query("COMMIT");
 
-            // Show the starting password when we just created the account, and
-            // also when we reused one that is still on it — a guest whose
-            // account was auto-created by an earlier stay needs it just as much
-            // to open this booking. Once they set their own, this goes quiet.
-            showSignInDetails = account.created;
-            if (!account.created) {
+            // Show the password we just set. For a REUSED account we have no
+            // plaintext — the stored value is a hash — so the only case we can
+            // still help with is an account sitting on the configured shared
+            // password, which we can test for. A reused account on its own
+            // password (or on a random one issued while the env var was unset)
+            // correctly gets no sign-in block: we cannot recover it, and
+            // guessing would be worse than staying quiet.
+            signInPassword = account.password;
+            if (!account.created && GUEST_DEFAULT_PASSWORD) {
               const acct = await pool.query(
                 `SELECT password FROM users WHERE user_id = $1 LIMIT 1`,
                 [account.userId],
               );
-              if (acct.rows[0]?.password) {
-                showSignInDetails = await bcrypt.compare(
-                  DEFAULT_GUEST_PASSWORD,
-                  acct.rows[0].password,
-                );
+              if (
+                acct.rows[0]?.password &&
+                (await bcrypt.compare(GUEST_DEFAULT_PASSWORD, acct.rows[0].password))
+              ) {
+                signInPassword = GUEST_DEFAULT_PASSWORD;
               }
             }
             console.log(
@@ -2278,7 +2325,7 @@ export const updateBookingStatus = async (
           email: booking.email,
           // Set when this confirmation just created the guest's account (or
           // reused one still on the starting password).
-          newAccountPassword: showSignInDetails ? DEFAULT_GUEST_PASSWORD : undefined,
+          newAccountPassword: signInPassword ?? undefined,
           bookingId: booking.booking_id,
           roomName: booking.room_name,
           checkInDate: new Date(booking.check_in_date).toLocaleDateString(),
