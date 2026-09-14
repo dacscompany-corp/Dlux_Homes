@@ -56,8 +56,9 @@ export async function POST(request: NextRequest) {
       ? `₱${Number(bookingData.remainingBalance).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
       : '';
     // Deep link to the review card on the guest's own confirmation page.
-    // It's login-gated (requireBookingAccess) — a signed-out guest is bounced
-    // to /login?callbackUrl=… and lands back here after signing in.
+    // requireBookingAccess allows this without signing in for guest bookings
+    // (user_id NULL); an account-owned booking still bounces a signed-out
+    // visitor to /login?callbackUrl=… and back here after signing in.
     const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000';
     const reviewUrl = `${baseUrl}/my-bookings/confirmed?id=${encodeURIComponent(bookingData.bookingId)}&review=1`;
     const emailHtml = `
