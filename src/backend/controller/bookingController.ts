@@ -580,8 +580,16 @@ export interface Booking {
 }
 
 // CREATE Booking
+//
+// `awaitPendingEmail` decides WHEN the pending-approval email is sent, not
+// whether. Guest checkout leaves it false: the send stays in `after()` so the
+// guest isn't held behind an SMTP handshake for mail they read minutes later.
+// Admin-created bookings (the New Booking wizard) pass true, which awaits the
+// dispatch and returns its `emailStatus` in the response — the owner is sitting
+// in front of the modal and needs to be told when the guest was NOT reached.
 export const createBooking = async (
   req: NextRequest,
+  opts: { awaitPendingEmail?: boolean } = {},
 ): Promise<NextResponse> => {
   const client = await pool.connect();
   try {
@@ -1377,14 +1385,18 @@ export const createBooking = async (
       }
     });
 
-    // Send pending approval email to guest — AFTER the response is sent.
+    // Send the pending-approval email to the guest.
     //
-    // This block used to be awaited on the critical path: two more DB queries to
-    // build the pamphlet, then an HTTP round trip in which the server calls its
-    // OWN public URL, which pays a second serverless invocation plus a Gmail SMTP
-    // handshake. The guest stared at a spinner for all of it, for an email they
-    // read minutes later. `after()` runs it once the response has been flushed.
-    after(async () => {
+    // This block used to be awaited on the critical path for EVERY booking: two
+    // more DB queries to build the pamphlet, then an HTTP round trip in which
+    // the server calls its OWN public URL, which pays a second serverless
+    // invocation plus a Gmail SMTP handshake. The guest stared at a spinner for
+    // all of it, for an email they read minutes later.
+    //
+    // It is now a named function so the caller can choose: `after()` for guests
+    // (runs once the response has been flushed — the spinner fix stands), or
+    // awaited for an admin, whose response then carries the real send result.
+    const sendPendingEmail = async (): Promise<EmailDispatchResult> => {
     try {
       const booking = completeResult.rows[0];
 
@@ -1476,19 +1488,36 @@ export const createBooking = async (
         addonCategories,
       };
 
-      // Runs inside after(), so there is no response left to report into — the
-      // log line from dispatchTransactionalEmail is the only record, which is
-      // exactly why it now carries the URL and the failure body.
-      await dispatchTransactionalEmail(
+      // On the after() path there is no response left to report into, so the
+      // log line from dispatchTransactionalEmail is the only record — which is
+      // exactly why it carries the URL and the failure body. On the awaited
+      // path this same result reaches the admin UI.
+      return await dispatchTransactionalEmail(
         "pending approval",
         "/api/send-pending-email",
         emailData,
       );
     } catch (emailError) {
+      // A mail failure must never fail an already-committed booking. But it
+      // must not vanish either: an awaiting caller turns this into the owner's
+      // warning, so report the reason rather than only logging it.
       console.error("❌ Email sending error:", emailError);
-      // Don't fail the whole request if email fails
+      return {
+        kind: "pending approval",
+        ok: false,
+        detail: emailError instanceof Error ? emailError.message : String(emailError),
+      };
     }
-    });
+    };
+
+    // Guests: fire-and-forget past the flushed response. Admins: await it, so
+    // the 201 below can tell the owner the guest was never emailed.
+    let pendingEmailStatus: EmailDispatchResult | null = null;
+    if (opts.awaitPendingEmail) {
+      pendingEmailStatus = await sendPendingEmail();
+    } else {
+      after(sendPendingEmail);
+    }
 
     // The transaction was already committed above (before the email). Everything
     // from the COMMIT onward is post-commit, best-effort work — it must never
@@ -1506,6 +1535,9 @@ export const createBooking = async (
         success: true,
         data: completeResult.rows[0],
         message: "Booking created successfully. Waiting for admin approval.",
+        // Only present for admin callers, who waited for the send. Null on the
+        // guest path means "not measured" — never "it worked".
+        emailStatus: pendingEmailStatus,
       },
       { status: 201 },
     );

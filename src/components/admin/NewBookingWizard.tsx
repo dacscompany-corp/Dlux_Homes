@@ -142,6 +142,10 @@ export default function NewBookingWizard({
   const [saving, setSaving] = useState(false);
   const [showErrors, setShowErrors] = useState(false);
   const [bookingRef, setBookingRef] = useState("");
+  // Whether the guest was actually emailed. The booking is saved either way —
+  // this is a separate outcome the owner has to see, because a guest who was
+  // never told their booking exists is a problem only staff can fix.
+  const [emailFailed, setEmailFailed] = useState(false);
   const set = (patch: Partial<typeof empty>) => setForm((f) => ({ ...f, ...patch }));
 
   const rules = useCalendarRules();
@@ -149,7 +153,7 @@ export default function NewBookingWizard({
   // Single property → auto-select the first haven (same as the storefront).
   useEffect(() => {
     if (!open) return;
-    setPhase("active"); setStep(0); setForm(empty); setExtras([]); setShowErrors(false); setBookingRef("");
+    setPhase("active"); setStep(0); setForm(empty); setExtras([]); setShowErrors(false); setBookingRef(""); setEmailFailed(false);
     fetch("/api/haven")
       .then((r) => (r.ok ? r.json() : { data: [] }))
       .then((j) => {
@@ -359,6 +363,22 @@ export default function NewBookingWizard({
       const json = await res.json().catch(() => ({}));
       if (!res.ok || json.success === false) { toast.error(json.error || "Could not create booking"); setSaving(false); return; }
       setBookingRef(json.data?.booking_id || fallbackRef);
+
+      // The booking is saved; the email is a second, independent outcome.
+      // emailStatus is only returned to admin callers (who wait for the send) —
+      // a missing one means "not measured", so only an explicit ok:false is a
+      // failure. Mirrors reportStatusChange() on the owners page.
+      const emailStatus = json.emailStatus as { kind?: string; ok?: boolean; detail?: string } | null | undefined;
+      const mailFailed = emailStatus ? emailStatus.ok === false : false;
+      setEmailFailed(mailFailed);
+      if (mailFailed) {
+        toast(`Booking created, but the ${emailStatus?.kind || "pending approval"} email did NOT reach ${form.email}.`,
+          { icon: "⚠️", duration: 9000 });
+        // Carries the URL and failure body — what actually identifies a
+        // misconfigured NEXTAUTH_URL or a blocked self-call.
+        console.error("Email send failed (pending approval):", emailStatus?.detail);
+      }
+
       setPhase("done");
       onCreated?.();
     } catch {
@@ -431,9 +451,25 @@ export default function NewBookingWizard({
               <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="#1F8A5B" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
             </div>
             <h2 style={{ margin: "20px 0 6px", fontSize: 21, fontWeight: 800, color: DARK }}>Booking created</h2>
+            {/* The booking lands as "pending" like any guest-submitted one, so
+                what goes out here is the pending-approval email — NOT the
+                confirmation, which only sends on Approve. This copy used to
+                promise a confirmation that never left. */}
             <p style={{ margin: 0, fontSize: 13.5, color: TEXTBROWN, lineHeight: 1.5, maxWidth: 340 }}>
-              {form.name}&apos;s {stay?.multiNight ? "overnight stay" : stay?.label.toLowerCase()} is reserved. A confirmation has been sent to {form.email}.
+              {form.name}&apos;s {stay?.multiNight ? "overnight stay" : stay?.label.toLowerCase()} is reserved.{" "}
+              {emailFailed
+                ? "Approve the booking on the board to send their confirmation."
+                : <>A pending-approval email has been sent to {form.email} — approve the booking to send their confirmation.</>}
             </p>
+
+            {emailFailed && (
+              <div style={{ width: "100%", marginTop: 16, borderRadius: 14, background: "#FDF3E7", border: "1px solid #E8C89A", padding: "12px 14px", textAlign: "left", display: "flex", gap: 10 }}>
+                <span style={{ fontSize: 15, lineHeight: 1.3 }}>⚠️</span>
+                <div style={{ fontSize: 12.5, color: "#7A5525", lineHeight: 1.5 }}>
+                  <strong style={{ fontWeight: 700 }}>The guest was not emailed.</strong> The booking is saved, but nothing reached {form.email}. Tell them another way, and check the email settings before the next booking.
+                </div>
+              </div>
+            )}
 
             <div style={{ width: "100%", marginTop: 24, borderRadius: 16, background: "#FAFAF7", border: `1px solid ${BORDER}`, padding: "18px 20px", textAlign: "left" }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}><span style={{ color: TEXTBROWN }}>Booking ref</span><span style={{ color: DARK, fontWeight: 700, fontFamily: "ui-monospace,Menlo,monospace" }}>{bookingRef}</span></div>
@@ -445,7 +481,7 @@ export default function NewBookingWizard({
             </div>
 
             <div style={{ display: "flex", gap: 10, width: "100%", marginTop: 22 }}>
-              <button type="button" onClick={() => { setPhase("active"); setStep(0); setForm(empty); setBookingRef(""); }} style={{ flex: 1, padding: 12, borderRadius: 13, fontSize: 13.5, fontWeight: 700, border: `1px solid ${BORDER}`, background: "#fff", color: TEXTBROWN, cursor: "pointer" }}>New booking</button>
+              <button type="button" onClick={() => { setPhase("active"); setStep(0); setForm(empty); setBookingRef(""); setEmailFailed(false); }} style={{ flex: 1, padding: 12, borderRadius: 13, fontSize: 13.5, fontWeight: 700, border: `1px solid ${BORDER}`, background: "#fff", color: TEXTBROWN, cursor: "pointer" }}>New booking</button>
               <button type="button" onClick={onClose} style={{ flex: 1, padding: 12, borderRadius: 13, fontSize: 13.5, fontWeight: 700, border: "none", background: ACCENT, color: "#fff", cursor: "pointer" }}>Done</button>
             </div>
           </div>

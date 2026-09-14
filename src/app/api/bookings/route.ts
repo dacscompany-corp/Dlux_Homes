@@ -21,11 +21,19 @@ export async function GET(req: NextRequest) {
   return getAllBookings(req);
 }
 
-// POST /api/bookings
+// POST /api/bookings — PUBLIC. Guests book here; so does the admin New Booking
+// wizard.
 export async function POST(req: NextRequest) {
   // Read the body up-front (for the admin alert) before the controller consumes it.
   const body = await req.clone().json().catch(() => null);
-  const res = await createBooking(req);
+  // A SOFT admin check — deliberately NOT a guard. Failing it is the normal
+  // guest case and must not 401; it only decides whether the caller waits for
+  // the pending-approval email so its result can come back in the response.
+  // Derived from the session rather than a body flag, so a guest can't opt
+  // themselves into the slow path. Owner and CSR both qualify — both mount the
+  // wizard.
+  const guard = await requireAdmin();
+  const res = await createBooking(req, { awaitPendingEmail: guard.ok });
   // On success, ping the admin's Messenger that a new request arrived (best-effort).
   try {
     const json = await res.clone().json();
