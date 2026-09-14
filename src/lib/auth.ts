@@ -413,7 +413,11 @@ export const authOptions: NextAuthOptions = {
           // If not found in employees, check users table (for regular users)
           console.log("📊 Querying users table...");
           const userResult = await pool.query(
-            "SELECT user_id, email, password, user_role, name FROM users WHERE email = $1",
+            // Case-insensitive: guest accounts auto-created at checkout are
+            // stored lowercased, but people type their address however they
+            // like at sign-in. Matching exactly meant "Maria@Gmail.com" could
+            // not sign in to the account that checkout had just made for them.
+            "SELECT user_id, email, password, user_role, name FROM users WHERE LOWER(email) = LOWER($1)",
             [credentials.email]
           );
 
@@ -522,7 +526,11 @@ export const authOptions: NextAuthOptions = {
           // Check regular users table (not employees)
           console.log("📊 Querying users table...");
           const userResult = await pool.query(
-            "SELECT user_id, email, password, user_role, name FROM users WHERE email = $1",
+            // Case-insensitive: guest accounts auto-created at checkout are
+            // stored lowercased, but people type their address however they
+            // like at sign-in. Matching exactly meant "Maria@Gmail.com" could
+            // not sign in to the account that checkout had just made for them.
+            "SELECT user_id, email, password, user_role, name FROM users WHERE LOWER(email) = LOWER($1)",
             [credentials?.email || '']
           );
 
@@ -618,7 +626,9 @@ export const authOptions: NextAuthOptions = {
           if ((!token.role || token.role === account?.provider) && user.email) {
             try {
               const result = await pool.query(
-                "SELECT user_id, facebook_id, google_id FROM users WHERE email = $1",
+                // Case-insensitive for the same reason as the sign-in lookups:
+                // the OAuth provider's casing need not match how the row was stored.
+                "SELECT user_id, facebook_id, google_id FROM users WHERE LOWER(email) = LOWER($1)",
                 [user.email]
               );
               if (result.rows[0]) {

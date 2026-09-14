@@ -49,7 +49,7 @@ export default function DataDeletionPage() {
         <Bullets
           items={[
             "The name and email address you booked with",
-            "Your booking ID if you have one — it looks like DL-BK1762050261 and is in your confirmation email",
+            "Your booking ID if you have one — it looks like DL-BK1762050261480392 and is in your confirmation email",
             "If you only ever messaged us on Facebook, just say so — we will match you by the conversation",
           ]}
         />

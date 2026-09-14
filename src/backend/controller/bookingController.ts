@@ -47,22 +47,52 @@ async function resolveOrCreateGuestAccount(
   email: string,
   name: string,
 ): Promise<{ userId: string; created: boolean }> {
+  // Store the address lowercased. The lookup below is case-insensitive, but
+  // `users_email_key` and sign-in (`WHERE LOWER(email) = LOWER($1)` in auth.ts)
+  // are keyed on the stored value — so an address saved as "Maria@Gmail.com"
+  // used to create an account the guest could never sign in to by typing
+  // "maria@gmail.com". Normalizing on write makes one address mean one account.
+  const normalizedEmail = email.trim().toLowerCase();
+
   const existing = await client.query(
-    `SELECT user_id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1`,
-    [email],
+    `SELECT user_id FROM users WHERE LOWER(email) = $1 LIMIT 1`,
+    [normalizedEmail],
   );
   if (existing.rows.length > 0) {
+    // Reusing an account nobody proved they own. Usually the same person
+    // booking again — but a mistyped address silently attaches this booking
+    // (guest names, phone, uploaded IDs) to a stranger's My Bookings, and the
+    // real booker never sees it. Nothing here can tell those two apart, so say
+    // so in the log: it is the only trace if a guest ever reports it.
+    console.warn(
+      `⚠️ [BOOKING] ${normalizedEmail} already has an account — attaching this booking to it. ` +
+        `If the guest mistyped their email, the booking now belongs to the address's owner.`,
+    );
     return { userId: existing.rows[0].user_id, created: false };
   }
 
   const hashedPassword = await bcrypt.hash(DEFAULT_GUEST_PASSWORD, 10);
+  // ON CONFLICT closes the check-then-act race between the SELECT above and
+  // this INSERT: two first-time bookings on one address both saw no account,
+  // both inserted, and the loser's unique violation (23505) surfaced to the
+  // guest as "this booking looks like it was already submitted" — a message
+  // about the wrong thing entirely. The loser now re-reads the winner's row.
   const inserted = await client.query(
     `INSERT INTO users (email, password, name, user_role, last_login)
      VALUES ($1, $2, $3, 'Guest', CURRENT_TIMESTAMP)
+     ON CONFLICT (email) DO NOTHING
      RETURNING user_id`,
-    [email, hashedPassword, name],
+    [normalizedEmail, hashedPassword, name],
   );
-  return { userId: inserted.rows[0].user_id, created: true };
+  if (inserted.rows.length > 0) {
+    return { userId: inserted.rows[0].user_id, created: true };
+  }
+
+  const raced = await client.query(
+    `SELECT user_id FROM users WHERE LOWER(email) = $1 LIMIT 1`,
+    [normalizedEmail],
+  );
+  return { userId: raced.rows[0].user_id, created: false };
 }
 
 // Run bookkeeping that is allowed to fail without taking the booking with it.
@@ -1030,19 +1060,18 @@ export const createBooking = async (
     // WHERE google_event_id IS NULL.
     const googleEventId = null;
 
-    // A guest who didn't sign in still gets an account: auto-create (or reuse)
-    // one keyed off the email they gave under "How can we reach you?", so this
-    // booking is tied to it exactly like a signed-in booking is. See
-    // resolveOrCreateGuestAccount() for why an existing account's password is
-    // never touched.
-    let resolvedUserId: string | null = user_id || null;
-    let guestAccountCreated = false;
-    if (!resolvedUserId && guest_email) {
-      const guestName = `${guest_first_name || ""} ${guest_last_name || ""}`.trim() || guest_email;
-      const account = await resolveOrCreateGuestAccount(client, guest_email, guestName);
-      resolvedUserId = account.userId;
-      guestAccountCreated = account.created;
-    }
+    // A guest who didn't sign in gets NO account here — the account is created
+    // when the booking is CONFIRMED (see updateBookingStatus), not when it is
+    // requested. A request that is never approved should not leave a login
+    // behind, and the guest has nothing to sign in for until there is a
+    // confirmed stay to look at.
+    //
+    // So user_id stays NULL through the pending window. That is what lets the
+    // guest open their own booking from the emailed link without an account
+    // (requireBookingAccess treats a NULL-owner booking as reachable by id);
+    // confirmation then creates the account and backfills this column, after
+    // which the booking is account-owned and viewing it requires signing in.
+    const resolvedUserId: string | null = user_id || null;
 
     // Step 1: Create main booking record
     const bookingQuery = `
@@ -1539,10 +1568,9 @@ export const createBooking = async (
         totalAmount: booking.booking_payment?.total_amount,
         rentableItems,
         addonCategories,
-        // Only set when this booking just auto-created the guest's account —
-        // an existing account's password was never touched, so there's
-        // nothing new to tell them.
-        newAccountPassword: guestAccountCreated ? DEFAULT_GUEST_PASSWORD : undefined,
+        // No sign-in details here on purpose: at this point the booking is only
+        // requested, and no account exists yet. They go out with the
+        // confirmation, which is when the account is created.
       };
 
       // On the after() path there is no response left to report into, so the
@@ -2181,10 +2209,76 @@ export const updateBookingStatus = async (
           console.error("⚠️ Could not fetch add-ons for pamphlet:", rentErr);
         }
 
+        // THIS is where a guest's account comes into being — on confirmation,
+        // not at booking time. A request that never gets approved leaves no
+        // login behind, and until there is a confirmed stay there is nothing
+        // to sign in and look at.
+        //
+        // Runs only for a booking with no owner yet (a guest who checked out
+        // without signing in). Account creation and the user_id backfill share
+        // one transaction so the booking can never point at an account that
+        // failed to commit.
+        //
+        // Best-effort by design: if any of it fails the guest still gets their
+        // confirmation, just without sign-in details, and the booking stays
+        // reachable by its emailed link. Never hold up a confirmation for it.
+        let showSignInDetails = false;
+        if (!booking.user_id && booking.email) {
+          const acctClient = await pool.connect();
+          try {
+            await acctClient.query("BEGIN");
+            const guestName =
+              `${booking.first_name || ""} ${booking.last_name || ""}`.trim() || booking.email;
+            const account = await resolveOrCreateGuestAccount(
+              acctClient,
+              booking.email,
+              guestName,
+            );
+            await acctClient.query(
+              `UPDATE booking SET user_id = $1, updated_at = NOW() WHERE id = $2`,
+              [account.userId, booking.id],
+            );
+            await acctClient.query("COMMIT");
+
+            // Show the starting password when we just created the account, and
+            // also when we reused one that is still on it — a guest whose
+            // account was auto-created by an earlier stay needs it just as much
+            // to open this booking. Once they set their own, this goes quiet.
+            showSignInDetails = account.created;
+            if (!account.created) {
+              const acct = await pool.query(
+                `SELECT password FROM users WHERE user_id = $1 LIMIT 1`,
+                [account.userId],
+              );
+              if (acct.rows[0]?.password) {
+                showSignInDetails = await bcrypt.compare(
+                  DEFAULT_GUEST_PASSWORD,
+                  acct.rows[0].password,
+                );
+              }
+            }
+            console.log(
+              `👤 [BOOKING] ${booking.booking_id}: guest account ${account.created ? "created" : "reused"} on confirmation`,
+            );
+          } catch (acctErr) {
+            try { await acctClient.query("ROLLBACK"); } catch { /* already broken */ }
+            console.error(
+              `⚠️ [BOOKING] ${booking.booking_id}: could not create the guest account on confirmation — ` +
+                `sending the confirmation without sign-in details:`,
+              acctErr,
+            );
+          } finally {
+            acctClient.release();
+          }
+        }
+
         const emailData = {
           firstName: booking.first_name,
           lastName: booking.last_name,
           email: booking.email,
+          // Set when this confirmation just created the guest's account (or
+          // reused one still on the starting password).
+          newAccountPassword: showSignInDetails ? DEFAULT_GUEST_PASSWORD : undefined,
           bookingId: booking.booking_id,
           roomName: booking.room_name,
           checkInDate: new Date(booking.check_in_date).toLocaleDateString(),

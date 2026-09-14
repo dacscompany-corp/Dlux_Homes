@@ -26,25 +26,6 @@ export async function POST(request: NextRequest) {
     const paymentMethodLabel = bookingData.paymentMethod === 'gcash' ? 'GCash' : bookingData.paymentMethod === 'bank_transfer' ? 'Bank Transfer' : bookingData.paymentMethod;
     const downPaymentFormatted = `₱${Number(bookingData.downPayment).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     const totalAmountFormatted = `₱${Number(bookingData.totalAmount).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    // Only present when this booking just auto-created the guest's account
-    // (see resolveOrCreateGuestAccount in bookingController.ts) — an existing
-    // account's password is never touched, so returning guests never see this.
-    const accountBlockHtml = bookingData.newAccountPassword ? `
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#faf5ec;border:1px dashed #d9c8a9;border-radius:12px;margin-bottom:20px;">
-        <tr>
-          <td style="padding:16px 20px;">
-            <div style="font-size:13px;font-weight:600;color:#2b1b12;margin-bottom:6px;">We made you an account</div>
-            <div style="font-size:13px;line-height:1.5;color:#5c4a3c;">
-              Sign in anytime to track this booking with the email you gave us and a default password:
-            </div>
-            <div style="font-size:13px;margin-top:8px;">
-              <span style="color:#9c8974;">Email:</span> <strong style="color:#2b1b12;">${bookingData.email}</strong><br/>
-              <span style="color:#9c8974;">Password:</span> <strong style="color:#2b1b12;">${bookingData.newAccountPassword}</strong>
-            </div>
-            <div style="font-size:12px;color:#9c8974;margin-top:8px;">We recommend changing this password after you sign in.</div>
-          </td>
-        </tr>
-      </table>` : '';
     const emailHtml = `
       <!DOCTYPE html>
       <html lang="en">
@@ -168,9 +149,6 @@ export async function POST(request: NextRequest) {
                   <td valign="top" style="padding-left:10px;padding-bottom:8px;font-size:13px;line-height:1.45;color:#5c4a3c;">You&rsquo;ll get another email once it&rsquo;s approved, usually within a day.</td>
                 </tr>
               </table>
-
-              <!-- Account created for this guest (omitted when they already had one) -->
-              ${accountBlockHtml}
 
               <!-- Contact us — email + Facebook, as tappable buttons. -->
               ${contactBlockHtml("light", `Booking ${bookingData.bookingId}`)}

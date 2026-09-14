@@ -41,8 +41,29 @@ export function updateStoredBookingStatus(id: string, status: StoredBooking["sta
   localStorage.setItem(BOOKINGS_KEY, JSON.stringify(updated));
 }
 
+// The booking id is not just a label — it is the only thing standing between a
+// stranger and a guest's booking. A guest who checks out without signing in
+// owns no account until the stay is confirmed, so until then requireBookingAccess
+// lets anyone holding this id read the record: names, phone, and the uploaded
+// government IDs of every guest on the booking.
+//
+// It used to be `Date.now()` alone, which is not a secret at all — it is a
+// clock reading, so one id tells you roughly where every other id sits, and a
+// booking made in a known hour had only a few million neighbours to try. The
+// random half is what makes it unguessable; the timestamp half is kept only so
+// ids still sort by age when the owner scans the board.
+//
+// Digits ONLY, and no separator inside the number. The Messenger bot finds a
+// quoted booking id with /DL-BK\d{6,}/ (src/lib/messenger-intent.ts), so a
+// letter or a hyphen would silently truncate the match and the bot would look
+// up the wrong booking.
 export function generateBookingId(): string {
-  return "DL-BK" + Date.now().toString().slice(-10);
+  const random = new Uint32Array(1);
+  globalThis.crypto.getRandomValues(random);
+  // 6 digits, zero-padded so every id is the same length. Modulo bias across
+  // 10^6 out of 2^32 is immaterial here — this is a lookup secret, not a key.
+  const suffix = (random[0] % 1_000_000).toString().padStart(6, "0");
+  return "DL-BK" + Date.now().toString().slice(-10) + suffix;
 }
 
 // ── "My bookings on this device" ────────────────────────────────────────────

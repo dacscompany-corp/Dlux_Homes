@@ -55,6 +55,27 @@ export async function POST(request: NextRequest) {
     const dueAtCheckIn = remainingBalance + SECURITY_DEPOSIT;
 
     const totalAmountFormatted = peso(totalAmount);
+    // Sign-in details, repeated from the pending email. Only sent while the
+    // account still holds the starting password (the caller checks), so this
+    // stops appearing once the guest sets their own. Markup mirrors the block
+    // in send-pending-email/route.ts — same inline-only styling rules, since
+    // several clients strip <style> blocks entirely.
+    const accountBlockHtml = bookingData.newAccountPassword ? `
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#faf5ec;border:1px dashed #d9c8a9;border-radius:12px;margin-bottom:20px;">
+        <tr>
+          <td style="padding:16px 20px;">
+            <div style="font-size:13px;font-weight:600;color:#2b1b12;margin-bottom:6px;">Your account</div>
+            <div style="font-size:13px;line-height:1.5;color:#5c4a3c;">
+              Sign in any time to view this booking and your stay history:
+            </div>
+            <div style="font-size:13px;margin-top:8px;">
+              <span style="color:#9c8974;">Email:</span> <strong style="color:#2b1b12;">${bookingData.email}</strong><br/>
+              <span style="color:#9c8974;">Password:</span> <strong style="color:#2b1b12;">${bookingData.newAccountPassword}</strong>
+            </div>
+            <div style="font-size:12px;color:#9c8974;margin-top:8px;">We recommend changing this password after you sign in.</div>
+          </td>
+        </tr>
+      </table>` : '';
     const emailHtml = `
       <!DOCTYPE html>
       <html lang="en">
@@ -211,6 +232,9 @@ export async function POST(request: NextRequest) {
                 </tr>
               </table>
 
+              <!-- Sign-in details (omitted once the guest sets their own password) -->
+              ${accountBlockHtml}
+
               <!-- Contact us — email + Facebook, as tappable buttons. Light
                    theme: the payment breakdown above is already a dark panel. -->
               ${contactBlockHtml("light", `Booking ${bookingData.bookingId}`)}
@@ -278,6 +302,17 @@ export async function POST(request: NextRequest) {
       `  7 days before the scheduled date. You can choose a date within a month`,
       `  from your original scheduled date.`,
       ``,
+      // Mirrors accountBlockHtml — same condition, same facts.
+      ...(bookingData.newAccountPassword
+        ? [
+            `YOUR ACCOUNT`,
+            `Sign in any time to view this booking and your stay history:`,
+            `Email     ${bookingData.email}`,
+            `Password  ${bookingData.newAccountPassword}`,
+            `We recommend changing this password after you sign in.`,
+            ``,
+          ]
+        : []),
       `Questions? Just reply to this email.`,
       `D'Lux Homes · Tower 4, Grass Residences, QC · homesdlux@gmail.com`,
     ].join("\n");
