@@ -109,44 +109,62 @@ export async function requireOwner(): Promise<GuardResult> {
   return requireRole(OWNER_ROLES);
 }
 
+// Result of requireBookingAccess. Distinct from GuardResult because a guest
+// booking is deliberately viewable with NO session at all — `session` on
+// success is therefore nullable, unlike every other guard in this file.
+export type BookingAccessResult =
+  | { ok: true; session: AuthedSession | null; role: string }
+  | { ok: false; response: NextResponse };
+
 // Ownership-aware guard for per-booking routes (/api/bookings/[id]). Closes the
 // IDOR where any signed-in user could read/modify ANY booking by id.
 //   - Owner/CSR  → may access any booking.
 //   - Regular user → only their OWN booking (booking.user_id === session id).
-//   - Unauthenticated / mismatched owner → 401 / 403.
+//   - Unauthenticated → allowed ONLY for guest bookings (booking.user_id IS
+//     NULL — see Dual Booking Access / "Continue as Guest" at checkout).
+//     The friendly booking_id (DL-BK…) is the shared secret here, the same
+//     way it works in the booking-confirmation email; account-owned bookings
+//     still require signing in.
+//   - Mismatched owner → 403.
 // `id` may be the booking UUID (booking.id) or the friendly booking_id.
-export async function requireBookingAccess(id: string): Promise<GuardResult> {
+export async function requireBookingAccess(id: string): Promise<BookingAccessResult> {
   const session = await getServerSession(authOptions);
+  const role = (session?.user as { role?: string } | undefined)?.role ?? "";
 
-  if (!session?.user) {
-    return {
-      ok: false,
-      response: NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 }),
-    };
-  }
-
-  const role = (session.user as { role?: string }).role ?? "";
   // Admins (Owner/CSR) may access any booking.
-  if (ADMIN_ROLES.has(role)) {
+  if (session?.user && ADMIN_ROLES.has(role)) {
     return { ok: true, session: session as AuthedSession, role };
   }
 
-  // Otherwise the caller must own the booking.
-  const userId = (session.user as { id?: string }).id;
-  if (userId && id) {
+  if (id) {
     try {
       // id::text avoids a UUID cast error when `id` is the friendly booking_id.
       const result = await pool.query(
         `SELECT user_id FROM booking WHERE booking_id = $1 OR id::text = $1 LIMIT 1`,
         [id],
       );
-      const ownerId = result.rows[0]?.user_id;
-      if (ownerId != null && String(ownerId) === String(userId)) {
-        return { ok: true, session: session as AuthedSession, role };
+      if (result.rows.length > 0) {
+        const ownerId = result.rows[0].user_id;
+        // Guest booking (no account attached) — anyone holding the booking id may view it.
+        if (ownerId == null) {
+          return { ok: true, session: (session as AuthedSession) ?? null, role };
+        }
+        // Account-owned booking — the caller must be signed in as that owner.
+        const userId = (session?.user as { id?: string } | undefined)?.id;
+        if (userId && String(ownerId) === String(userId)) {
+          return { ok: true, session: session as AuthedSession, role };
+        }
       }
     } catch (err) {
       console.error("requireBookingAccess lookup failed:", err);
     }
+  }
+
+  if (!session?.user) {
+    return {
+      ok: false,
+      response: NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 }),
+    };
   }
 
   return {

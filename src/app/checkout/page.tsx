@@ -562,14 +562,6 @@ function CheckoutInner() {
   const router = useRouter();
   const { data: session, status: authStatus } = useSession();
 
-  // Checkout requires an account: send guests to sign in/up first, then back here.
-  useEffect(() => {
-    if (authStatus === "unauthenticated") {
-      const cb = encodeURIComponent(window.location.pathname + window.location.search);
-      router.replace(`/login?callbackUrl=${cb}`);
-    }
-  }, [authStatus, router]);
-
   const roomId = sp.get("roomId") || "1";
   const stayType = sp.get("stayType") || "21";
   const checkInTime = sp.get("checkIn") || "7:00 PM";
@@ -979,7 +971,7 @@ function CheckoutInner() {
     const payload = {
       booking_id: bookingId,
       user_id: session?.user?.id ?? null, // tie the booking to the signed-in account
-      haven_id: roomId, // enables the blocked-dates check on the server
+      haven_id: isUuid ? roomId : null, // enables the blocked-dates check on the server; a non-UUID (mock/demo room) would 500 on the uuid columns below
       room_name: room.name,
       check_in_date: checkInDate,
       check_out_date: checkOutDate,
@@ -1096,12 +1088,11 @@ function CheckoutInner() {
     </div>
   );
 
-  // Gate: until the session is confirmed (and the guest is signed in), don't
-  // render the form — unauthenticated users are redirected to sign in/up above.
-  if (authStatus !== "authenticated") {
+  // Gate: while the session is still resolving, don't render the form yet.
+  if (authStatus === "loading") {
     return (
       <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--bg)", color: "var(--muted)", fontSize: 14 }}>
-        {authStatus === "loading" ? "Checking your session…" : "Please sign in to continue — redirecting…"}
+        Checking your session…
       </div>
     );
   }

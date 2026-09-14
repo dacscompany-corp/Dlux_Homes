@@ -60,17 +60,25 @@ Home (/) → Rooms Listing (/rooms) → Room Details (/rooms/[id]) → Checkout 
 **User actions:**
 - Select a stay type + dates + guests
 - Click **Book Now** → redirects to `/checkout`
-  - If not logged in → redirects to `/login?callbackUrl=/checkout`
 
 ---
 
-## Step 4 — Authentication (if not logged in)
+## Step 4 — Dual Booking Access (if not logged in)
 
-**Route:** `/login`
+**Route:** `/checkout`
+
+An unauthenticated visitor is shown a choice before the checkout form renders — no forced redirect:
+
+- **Sign In & Book** → sends them to `/login?callbackUrl=/checkout?...`, then back to checkout via `callbackUrl` once signed in. The booking is tied to their account (`booking.user_id`).
+- **Continue as Guest** → skips authentication entirely. The checkout form renders immediately and the booking is created with `user_id = NULL` (see `bookingController.ts`). The guest gets a booking reference (`booking_id`, e.g. `DL-BK…`) and the id is remembered in this browser via `localStorage` (`addMyBookingId`, see `src/lib/booking-store.ts`) so `/my-bookings` can list it without an account.
+
+**Route:** `/login` (Sign In & Book path only)
 
 - Login with email & password (credentials)
 - Login with Google OAuth (`/api/google-login`)
 - On success → redirects back to checkout via `callbackUrl`
+
+A guest booking (`user_id IS NULL`) stays viewable at `/my-bookings/confirmed?id=...` and `/api/bookings/[id]` without signing in — access is guarded by knowing the booking id (see `requireBookingAccess` in `src/backend/utils/requireAdmin.ts`). An account-owned booking still requires signing in as its owner (or Owner/CSR).
 
 ---
 
@@ -139,8 +147,9 @@ After a booking is submitted with status **Pending**:
 
 **Route:** `/my-bookings`
 
-- Requires authentication (redirects to `/login` if unauthenticated)
-- Lists all bookings for the logged-in user
+- Signed-in users see bookings tied to their account (`GET /api/bookings/user/[id]`)
+- Guest bookings made on this device are also listed, via the booking ids stored in `localStorage` (`getMyBookingIds`) — no account required
+- Both sources are merged into one list
 - Booking statuses: `Pending` → `Confirmed` → `Checked In` → `Checked Out` / `Rejected` / `Cancelled`
 
 **User actions:**
