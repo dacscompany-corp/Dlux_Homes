@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
 import bcrypt from "bcryptjs";
 import { hashResetToken } from "@/backend/utils/resetToken";
+import { validateNewPassword } from "@/lib/password-policy";
 
 export const runtime = "nodejs";
 
@@ -13,8 +14,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     if (!token) {
       return NextResponse.json({ error: "This reset link is invalid or has expired." }, { status: 400 });
     }
-    if (!password || String(password).length < 8) {
-      return NextResponse.json({ error: "Password must be at least 8 characters." }, { status: 400 });
+    // Same rules as the signed-in form (api/auth/change-password) — including
+    // refusing the shared starting password, which a reset shouldn't restore.
+    const check = validateNewPassword(password, {
+      sharedPassword: process.env.GUEST_DEFAULT_PASSWORD?.trim() || null,
+    });
+    if (!check.ok) {
+      return NextResponse.json({ error: check.error }, { status: 400 });
     }
 
     const tokenHash = hashResetToken(String(token));

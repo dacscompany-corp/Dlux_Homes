@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
               <span style="color:#9c8974;">Email:</span> <strong style="color:#2b1b12;">${bookingData.email}</strong><br/>
               <span style="color:#9c8974;">Password:</span> <strong style="color:#2b1b12;">${bookingData.newAccountPassword}</strong>
             </div>
-            <div style="font-size:12px;color:#9c8974;margin-top:8px;">We recommend changing this password after you sign in.</div>
+            <div style="font-size:12px;line-height:1.5;color:#9c8974;margin-top:8px;">We recommend changing it &mdash; sign in, then open <a href="${siteUrl}/my-bookings" style="color:#2b1b12;font-weight:600;text-decoration:underline;">My Bookings</a> and look for Account security.</div>
           </td>
         </tr>
       </table>` : '';
@@ -309,7 +309,8 @@ export async function POST(request: NextRequest) {
             `Sign in any time to view this booking and your stay history:`,
             `Email     ${bookingData.email}`,
             `Password  ${bookingData.newAccountPassword}`,
-            `We recommend changing this password after you sign in.`,
+            `We recommend changing it: sign in, open My Bookings, and look for`,
+            `Account security — ${siteUrl}/my-bookings`,
             ``,
           ]
         : []),
