@@ -23,10 +23,20 @@
 -- ── discount_users ────────────────────────────────────────────────────────
 ALTER TABLE discount_users ADD COLUMN IF NOT EXISTS guest_email TEXT;
 
--- A guest redemption has no account yet. Postgres allows repeated NULLs in a
--- UNIQUE constraint, so the existing UNIQUE(discount_id, user_id) survives this
--- and keeps doing its job for account-backed rows.
+-- A guest redemption has no account yet.
 ALTER TABLE discount_users ALTER COLUMN user_id DROP NOT NULL;
+
+-- Retire UNIQUE(discount_id, user_id). The email is the identity key now, and
+-- user_id is an annotation on it: one account can legitimately own two rows,
+-- when someone booked under two addresses and is later shown to be the same
+-- person (the COALESCE in createBooking stamps their account onto both).
+--
+-- Keeping it broke exactly that upgrade: stamping an account onto a guest row
+-- collided with any row that account already had, and because the write is
+-- best-effort the failure was silent — the booking succeeded with the
+-- redemption unrecorded, which is the bug this whole migration exists to end.
+-- The plain idx_discount_users_user_id index still serves the lookups.
+ALTER TABLE discount_users DROP CONSTRAINT IF EXISTS discount_users_discount_id_user_id_key;
 
 -- Existing rows are all account-backed; their address is the account's.
 UPDATE discount_users du
@@ -50,6 +60,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS discount_users_discount_email_key
 -- ── promotion_users ───────────────────────────────────────────────────────
 ALTER TABLE promotion_users ADD COLUMN IF NOT EXISTS guest_email TEXT;
 ALTER TABLE promotion_users ALTER COLUMN user_id DROP NOT NULL;
+ALTER TABLE promotion_users DROP CONSTRAINT IF EXISTS promotion_users_promotion_id_user_id_key;
 
 UPDATE promotion_users pu
 SET guest_email = LOWER(u.email)

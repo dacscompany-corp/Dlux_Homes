@@ -37,6 +37,7 @@ import { partnerRegistrationApi } from "./api/partnerRegistrationApi";
 import { systemAuditLogsApi } from "./api/systemAuditLogsApi";
 import { havenListingStatusApi } from "./api/havenListingStatusApi";
 import { promotionsApi } from "./api/promotionsApi";
+import { seasonalRatesApi } from "./api/seasonalRatesApi";
 import { overheadApi } from "./api/overheadApi";
 
 const persistConfig = {
@@ -76,6 +77,7 @@ export const store = configureStore({
     [systemAuditLogsApi.reducerPath]: systemAuditLogsApi.reducer,
     [havenListingStatusApi.reducerPath]: havenListingStatusApi.reducer,
     [promotionsApi.reducerPath]: promotionsApi.reducer,
+    [seasonalRatesApi.reducerPath]: seasonalRatesApi.reducer,
     [overheadApi.reducerPath]: overheadApi.reducer,
   },
   middleware: (getDefaultMiddleware) =>
@@ -120,6 +122,7 @@ export const store = configureStore({
       .concat(systemAuditLogsApi.middleware)
       .concat(havenListingStatusApi.middleware)
       .concat(promotionsApi.middleware)
+      .concat(seasonalRatesApi.middleware)
       .concat(overheadApi.middleware),
 });
 

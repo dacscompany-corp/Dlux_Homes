@@ -4,8 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import { generateBookingId } from "@/lib/booking-store";
 import { fileToCompressedDataUrl } from "@/lib/compressImage";
-import { stayTotal, pickRate, isWeekendOrHoliday, addDaysISO, extraPaxFee, bundleNightlyRate, bundleExtraPaxFee, securityDepositFor } from "@/lib/pricing";
+import { stayTotal, pickRate, isLongTermStay, isWeekendOrHoliday, addDaysISO, extraPaxFee, bundleNightlyRate, bundleExtraPaxFee, securityDepositFor } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
+import { useSeasonalRates } from "@/lib/useSeasonalRates";
 import { havenToRoom } from "@/lib/haven-adapter";
 
 // Admin "New Booking" — implements the New Booking Redesign.
@@ -149,6 +150,8 @@ export default function NewBookingWizard({
   const set = (patch: Partial<typeof empty>) => setForm((f) => ({ ...f, ...patch }));
 
   const rules = useCalendarRules();
+  // Active seasonal rates, so an admin quote matches what the site charges.
+  const seasons = useSeasonalRates();
 
   // Single property → auto-select the first haven (same as the storefront).
   useEffect(() => {
@@ -198,15 +201,16 @@ export default function NewBookingWizard({
     const overCap = counted > MAX_COUNTED;
     const basePax = room?.basePax ?? BASE_PAX_FALLBACK;
     const perPax = room?.additionalPaxFee ?? 200;
-    const base = room && stay && form.ci ? stayTotal(stay.group, form.ci, nights, room, rules) : 0;
+    const base = room && stay && form.ci ? stayTotal(stay.group, form.ci, nights, room, rules, seasons) : 0;
     // Long-term (bundle) stays charge their own per-pax-per-night fee INSTEAD
     // of extraPaxFee() — the two must never both apply. Shares the same
     // pricing functions as the guest-facing pages so an admin-made booking is
     // never priced differently from the same booking made on the site.
     const bundleRate = room && stay && form.ci && stay.group !== "10" ? bundleNightlyRate(nights, form.ci, room, rules) : undefined;
     const extraCount = Math.min(Math.max(0, counted - basePax), MAX_COUNTED - basePax);
-    const paxFeeRate = bundleRate != null ? (room?.longtermExtraPaxFee ?? 100) : perPax;
-    const paxFee = overCap ? 0 : bundleRate != null
+    const longTerm = !!room && !!stay && !!form.ci && isLongTermStay(stay.group, form.ci, nights, room, rules, seasons);
+    const paxFeeRate = longTerm ? (room?.longtermExtraPaxFee ?? 100) : perPax;
+    const paxFee = overCap ? 0 : longTerm
       ? bundleExtraPaxFee(basePax + extraCount, basePax, nights, room!)
       : extraPaxFee(basePax + extraCount, basePax, perPax, nights);
     const total = base + paxFee;
@@ -215,7 +219,7 @@ export default function NewBookingWizard({
     // Refundable deposit scales with nights booked (securityDepositFor()).
     const deposit = securityDepositFor(nights, stay?.group, room);
     return { nights, adults, young, kids, counted, overCap, base, extraCount, perPax: paxFeeRate, paxFee, total, down, balance, deposit, atCheckin: balance + deposit, weekend: isWeekendOrHoliday(form.ci, rules), bundleRate };
-  }, [entry, stay, form, rules]);
+  }, [entry, stay, form, rules, seasons]);
 
   // The main guest is "Adult 1"; every other head gets its own record for
   // check-in. Resize the list whenever the pax counters change.
@@ -517,7 +521,7 @@ export default function NewBookingWizard({
                   <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
                     {entry?.stayTypes.map((t) => {
                       const sel = form.stay === t.id;
-                      const rate = entry.room ? pickRate(t.group, form.ci, entry.room, rules) : 0;
+                      const rate = entry.room ? pickRate(t.group, form.ci, entry.room, rules, seasons) : 0;
                       return (
                         <div key={t.id} onClick={() => set({ stay: t.id, co: t.multiNight ? form.co : "" })} style={selCardStyle(sel, STAY_CARD)}>
                           <div style={{ flex: 1 }}>

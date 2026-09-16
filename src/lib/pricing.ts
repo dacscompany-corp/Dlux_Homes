@@ -95,10 +95,62 @@ export const BUNDLE_TIER2_LABEL = `${BUNDLE_TIER2_NIGHTS}–${BUNDLE_TIER3_NIGHT
 export const BUNDLE_TIER3_LABEL = `${BUNDLE_TIER3_NIGHTS}–${BUNDLE_TIER4_NIGHTS - 1} nights`;
 export const BUNDLE_TIER4_LABEL = `${BUNDLE_TIER4_NIGHTS}+ nights`;
 
-// Pick the correct rate for a stay type + check-in date.
+// Seasonal rate (owner spec, "Seasonal Rate MVP Terms & Requirements"): an
+// owner-set date range — Christmas, Holy Week, … — that REPLACES the haven's
+// four regular rates for any date inside it, start and end both inclusive.
+// Weekday vs weekend/holiday within a season is still decided by the same
+// calendar rules as regular pricing. Only ACTIVE (switched ON) seasons may ever
+// be passed in; an OFF season must not reach pricing at all. Active seasons
+// never overlap (enforced by an exclusion constraint on seasonal_rates), so at
+// most one season covers any date.
+//
+// allowPromos=false (the default) means no promo code or automatic promotion
+// may be applied to a stay that touches this season — see promoBlockingSeason().
+//
+// longtermTier1..4 are optional flat nightly rates for long Overnight stays,
+// on the same 3/11/18/26-night bands as the haven's long-term pricing. When a
+// stay reaches a tier that the season has a rate for, its seasonal nights use
+// that rate; left blank, seasonal nights use the season's nightly rates.
+export type SeasonalRate = {
+  id: string;
+  name: string;
+  startDate: string; // YYYY-MM-DD, inclusive
+  endDate: string;   // YYYY-MM-DD, inclusive
+  overnightWeekday: number;
+  overnightWeekend: number;
+  daynightWeekday: number;
+  daynightWeekend: number;
+  allowPromos: boolean;
+  longtermTier1?: number | null;
+  longtermTier2?: number | null;
+  longtermTier3?: number | null;
+  longtermTier4?: number | null;
+};
+
+// The active season covering a YYYY-MM-DD date, or undefined. Compares the ISO
+// strings directly — they sort lexically, and a Date round trip would shift
+// the day in PH (+08:00).
+export function seasonFor(dateISO: string, seasons: readonly SeasonalRate[] = []): SeasonalRate | undefined {
+  if (!dateISO) return undefined;
+  return seasons.find((s) => s.startDate <= dateISO && dateISO <= s.endDate);
+}
+
+// Pick the correct rate for a stay type + date. An active season covering the
+// date wins over the haven's regular rates.
 // stayType "10" = Daycation/Nightcation, anything else = Overnight (21h).
-export function pickRate(stayType: string, dateISO: string, rates: Rates, rules: CalendarRules = DEFAULT_CALENDAR_RULES): number {
+export function pickRate(
+  stayType: string,
+  dateISO: string,
+  rates: Rates,
+  rules: CalendarRules = DEFAULT_CALENDAR_RULES,
+  seasons: readonly SeasonalRate[] = [],
+): number {
   const weekend = isWeekendOrHoliday(dateISO, rules);
+  const season = seasonFor(dateISO, seasons);
+  if (season) {
+    if (stayType === "10") return weekend ? season.daynightWeekend : season.daynightWeekday;
+    return weekend ? season.overnightWeekend : season.overnightWeekday;
+  }
   if (stayType === "10") return weekend ? rates.price10hrWeekend : rates.price10hr;
   return weekend ? rates.price21hrWeekend : rates.price21hr;
 }
@@ -116,11 +168,24 @@ export function pickRate(stayType: string, dateISO: string, rates: Rates, rules:
 // must branch on whichever fee function actually applied.
 export function bundleNightlyRate(nights: number, _checkInISO: string, rates: Rates, _rules: CalendarRules = DEFAULT_CALENDAR_RULES): number | undefined {
   if (rates.longtermActive === false) return undefined;
-  if (nights >= BUNDLE_TIER4_NIGHTS && rates.longtermTier4Rate) return rates.longtermTier4Rate;
-  if (nights >= BUNDLE_TIER3_NIGHTS && rates.longtermTier3Rate) return rates.longtermTier3Rate;
-  if (nights >= BUNDLE_TIER2_NIGHTS && rates.longtermTier2Rate) return rates.longtermTier2Rate;
-  if (nights >= BUNDLE_TIER1_NIGHTS && rates.longtermTier1Rate) return rates.longtermTier1Rate;
+  return tierRateFor(nights, [rates.longtermTier1Rate, rates.longtermTier2Rate, rates.longtermTier3Rate, rates.longtermTier4Rate]);
+}
+
+// The rate of the highest long-term tier this many nights reaches that has a
+// rate configured (a blank higher tier falls through to the next one down).
+function tierRateFor(nights: number, tiers: readonly (number | null | undefined)[]): number | undefined {
+  const floors = [BUNDLE_TIER1_NIGHTS, BUNDLE_TIER2_NIGHTS, BUNDLE_TIER3_NIGHTS, BUNDLE_TIER4_NIGHTS];
+  for (let i = floors.length - 1; i >= 0; i--) {
+    if (nights >= floors[i] && tiers[i]) return tiers[i] as number;
+  }
   return undefined;
+}
+
+// A season's own long-term rate for a stay of `nights`, or undefined when the
+// stay is too short or the season has no rate for the tier it reaches. Set on
+// the season itself, so it applies even if the haven's long-term pricing is off.
+export function seasonLongTermRate(nights: number, season: SeasonalRate): number | undefined {
+  return tierRateFor(nights, [season.longtermTier1, season.longtermTier2, season.longtermTier3, season.longtermTier4]);
 }
 
 // Extra-pax charge for a long-term (bundled) stay: `feePerExtraPax` per extra
@@ -200,18 +265,91 @@ export function addDaysISO(iso: string, n: number): string {
 // nights), in which case the whole stay is priced at that flat nightly rate
 // (no weekday/weekend split) instead of mixing per-night rates.
 //
+// Seasons override BOTH of those per night: a night inside an active season is
+// charged the seasonal rate, even within a long-term stay — only the nights
+// outside the season keep the flat long-term rate (owner decision, 2026-09-16).
+//
 // Callers MUST check whether this stay landed on a bundle tier (e.g. via
 // bundleNightlyRate() themselves) to decide which pax fee applies —
 // extraPaxFee() for normal stays, bundleExtraPaxFee() for long-term ones. The
 // two must never both be added; that double-charges the same extra guest.
-export function stayTotal(stayType: string, checkInISO: string, nights: number, rates: Rates, rules: CalendarRules = DEFAULT_CALENDAR_RULES): number {
-  if (stayType === "10" || !checkInISO) return pickRate(stayType, checkInISO, rates, rules);
+export function stayTotal(
+  stayType: string,
+  checkInISO: string,
+  nights: number,
+  rates: Rates,
+  rules: CalendarRules = DEFAULT_CALENDAR_RULES,
+  seasons: readonly SeasonalRate[] = [],
+): number {
+  return stayBreakdown(stayType, checkInISO, nights, rates, rules, seasons).total;
+}
+
+// longTerm: priced by a long-term tier rate (the haven's, or the season's own).
+export type NightPrice = { date: string; rate: number; season?: SeasonalRate; longTerm: boolean };
+
+// stayTotal(), itemised: one entry per priced night (a single entry for a 10h
+// session), each tagged with the season that priced it, plus the distinct
+// seasons the stay touches — what the booking summary needs to show
+// "Christmas Season Rate — Dec 10, 2026 — Overnight ₱2,300".
+export function stayBreakdown(
+  stayType: string,
+  checkInISO: string,
+  nights: number,
+  rates: Rates,
+  rules: CalendarRules = DEFAULT_CALENDAR_RULES,
+  seasons: readonly SeasonalRate[] = [],
+): { total: number; nights: NightPrice[]; seasons: SeasonalRate[] } {
+  const items: NightPrice[] = [];
+  if (stayType === "10" || !checkInISO) {
+    items.push({ date: checkInISO, rate: pickRate(stayType, checkInISO, rates, rules, seasons), season: seasonFor(checkInISO, seasons), longTerm: false });
+  } else {
+    const n = Math.max(1, Math.floor(nights || 1));
+    const bundleRate = bundleNightlyRate(n, checkInISO, rates, rules);
+    for (let i = 0; i < n; i++) {
+      const date = addDaysISO(checkInISO, i);
+      const season = seasonFor(date, seasons);
+      // Seasonal night: the season's long-term rate if it has one for this
+      // stay length, else its nightly rate. Other nights: the haven's.
+      const longRate = season ? seasonLongTermRate(n, season) : bundleRate;
+      const rate = longRate ?? pickRate("21", date, rates, rules, seasons);
+      items.push({ date, rate, season, longTerm: longRate != null });
+    }
+  }
+  const touched: SeasonalRate[] = [];
+  for (const it of items) if (it.season && !touched.includes(it.season)) touched.push(it.season);
+  return { total: items.reduce((sum, it) => sum + it.rate, 0), nights: items, seasons: touched };
+}
+
+// Does this stay pay the long-term pax fee instead of the normal one? True
+// when the haven's long-term tier applies OR any seasonal night was priced on
+// the season's own long-term tier. Every caller that picks between
+// bundleExtraPaxFee() and extraPaxFee() must use this, or the room page, bot
+// and admin wizard drift from what createBooking accepts.
+export function isLongTermStay(
+  stayType: string,
+  checkInISO: string,
+  nights: number,
+  rates: Rates,
+  rules: CalendarRules = DEFAULT_CALENDAR_RULES,
+  seasons: readonly SeasonalRate[] = [],
+): boolean {
+  if (stayType === "10") return false;
   const n = Math.max(1, Math.floor(nights || 1));
-  const bundleRate = bundleNightlyRate(n, checkInISO, rates, rules);
-  if (bundleRate != null) return bundleRate * n;
-  let total = 0;
-  for (let i = 0; i < n; i++) total += pickRate("21", addDaysISO(checkInISO, i), rates, rules);
-  return total;
+  if (bundleNightlyRate(n, checkInISO, rates, rules) != null) return true;
+  return stayBreakdown(stayType, checkInISO, n, rates, rules, seasons).nights.some((night) => night.longTerm);
+}
+
+// The first season this stay touches that forbids promos, or undefined when
+// promos may apply. Seasons don't stack with promos unless the owner switched
+// "Allow promos" on for that season.
+export function promoBlockingSeason(stayType: string, checkInISO: string, nights: number, seasons: readonly SeasonalRate[] = []): SeasonalRate | undefined {
+  if (!checkInISO || seasons.length === 0) return undefined;
+  const n = stayType === "10" ? 1 : Math.max(1, Math.floor(nights || 1));
+  for (let i = 0; i < n; i++) {
+    const s = seasonFor(addDaysISO(checkInISO, i), seasons);
+    if (s && !s.allowPromos) return s;
+  }
+  return undefined;
 }
 
 // Senior citizen / PWD discount (RA 9994, RA 10754): 20% off a qualifying
@@ -253,4 +391,64 @@ export function extraPaxFee(totalPax: number, basePax: number, feePerPax: number
   const extra = Math.max(0, Math.floor(totalPax || 0) - Math.floor(basePax || 0));
   const n = Math.max(1, Math.floor(nights || 1));
   return extra * Math.max(0, feePerPax || 0) * n;
+}
+
+// The whole pre-promo quote for a stay — room (with seasons), pax fee (normal
+// or long-term, never both), senior/PWD discount — in ONE place, so the
+// checkout that shows the price and createBooking that verifies it can't drift.
+export type StayQuoteInput = {
+  stayType: string;
+  checkInISO: string;
+  nights: number;
+  rates: Rates & { basePax: number; additionalPaxFee: number };
+  rules?: CalendarRules;
+  seasons?: readonly SeasonalRate[];
+  feePax: number;       // adults + young adults; 7-and-under excluded
+  seniorCount?: number; // guests flagged senior/PWD
+};
+
+export type StayQuote = {
+  roomTotal: number;
+  nights: NightPrice[];
+  seasons: SeasonalRate[];
+  bundleRate: number | undefined;
+  // The one flat nightly rate when EVERY night was priced long-term at the same
+  // rate — what the summary shows as "₱X/night · Long-term rate". Undefined for
+  // a stay that mixes rates.
+  flatLongTermRate: number | undefined;
+  paxFeeRate: number;
+  paxFee: number;
+  seniorDiscount: number;
+  subtotal: number; // roomTotal + paxFee - seniorDiscount, before any promo
+};
+
+export function quoteStay(input: StayQuoteInput): StayQuote {
+  const { stayType, checkInISO, rates, feePax } = input;
+  const rules = input.rules ?? DEFAULT_CALENDAR_RULES;
+  const nights = stayType === "10" ? 1 : Math.max(1, Math.floor(input.nights || 1));
+  const breakdown = stayBreakdown(stayType, checkInISO, nights, rates, rules, input.seasons ?? []);
+  const bundleRate = stayType === "10" ? undefined : bundleNightlyRate(nights, checkInISO, rates, rules);
+  const allLongTerm = breakdown.nights.length > 0 && breakdown.nights.every((n) => n.longTerm);
+  const flatLongTermRate = allLongTerm && breakdown.nights.every((n) => n.rate === breakdown.nights[0].rate)
+    ? breakdown.nights[0].rate
+    : undefined;
+  // Long-term stays pay the long-term pax fee — whether the haven's tier or a
+  // season's own tier made it one.
+  const longTermStay = isLongTermStay(stayType, checkInISO, nights, rates, rules, input.seasons ?? []);
+  const paxFeeRate = longTermStay ? (rates.longtermExtraPaxFee ?? BUNDLE_EXTRA_PAX_FEE_DEFAULT) : rates.additionalPaxFee;
+  const paxFee = longTermStay
+    ? bundleExtraPaxFee(feePax, rates.basePax, nights, rates)
+    : extraPaxFee(feePax, rates.basePax, rates.additionalPaxFee, nights);
+  const seniorDiscount = seniorPwdDiscount(breakdown.total, feePax, input.seniorCount ?? 0);
+  return {
+    roomTotal: breakdown.total,
+    nights: breakdown.nights,
+    seasons: breakdown.seasons,
+    bundleRate,
+    flatLongTermRate,
+    paxFeeRate,
+    paxFee,
+    seniorDiscount,
+    subtotal: Math.max(0, breakdown.total + paxFee - seniorDiscount),
+  };
 }

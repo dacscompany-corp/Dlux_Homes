@@ -4,6 +4,10 @@ import { authOptions } from "@/lib/auth";
 import pool from "@/backend/config/db";
 import { validateDiscount, resolvePromoIdentity, promoRedemptionEmail } from "@/backend/utils/validateDiscount";
 import { rateLimit, clientIp, tooManyRequests } from "@/backend/utils/rateLimit";
+import { loadActiveSeasons } from "@/lib/availability";
+import { addDaysISO, promoBlockingSeason } from "@/lib/pricing";
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 // Validates a guest-entered promo code at checkout. The rules live in
 // validateDiscount() so this endpoint and the booking submit enforce exactly
@@ -35,6 +39,19 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
     if (emailKey) {
       const byEmail = rateLimit(`promo:email:${emailKey}`, 15, 10 * 60 * 1000);
       if (!byEmail.ok) return tooManyRequests(byEmail.retryAfterSec);
+    }
+
+    // Seasonal rates don't stack with promos unless the season allows them.
+    // Preview only, like `nights` below — createBooking enforces it at submit.
+    const checkIn = typeof body?.check_in_date === "string" && ISO_DATE.test(body.check_in_date) ? body.check_in_date : null;
+    if (checkIn) {
+      const stayType = body?.stay_type === "10" ? "10" : "21";
+      const nights = stayType === "10" ? 1 : Math.max(1, Math.floor(Number(body?.nights) || 1));
+      const seasons = await loadActiveSeasons(pool, { fromISO: checkIn, toISO: addDaysISO(checkIn, nights - 1) });
+      const blocking = promoBlockingSeason(stayType, checkIn, nights, seasons);
+      if (blocking) {
+        return NextResponse.json({ success: false, error: `Promos don't apply to ${blocking.name} dates.` }, { status: 400 });
+      }
     }
 
     const result = await validateDiscount({

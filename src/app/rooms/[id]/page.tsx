@@ -23,8 +23,9 @@ import { fmtClock, spanHours } from "@/lib/stay-window";
 import { turnoverMs } from "@/lib/turnover";
 import { isStartBookable } from "@/lib/bookingWindow";
 import DluxLoader, { DluxLoaderPage } from "@/components/brand/DluxLoader";
-import { stayTotal, isWeekendOrHoliday, extraPaxFee, bundleNightlyRate, bundleExtraPaxFee, addDaysISO, pickRate } from "@/lib/pricing";
+import { quoteStay, isWeekendOrHoliday, addDaysISO, pickRate, promoBlockingSeason } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
+import { useSeasonalRates } from "@/lib/useSeasonalRates";
 import type { Room } from "@/types";
 
 // ── Inline SVG icons ───────────────────────────────────────────
@@ -877,21 +878,23 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   // Owner-editable weekend/holiday calendar (System → Settings in the admin
   // portal); falls back to Fri/Sat + built-in PH holidays if unreachable.
   const calendarRules = useCalendarRules();
+  // Owner-set seasonal rates (Finance → Seasonal Rates): a night inside an
+  // active season is charged the season's rate instead of the regular one.
+  const seasons = useSeasonalRates();
   const isWeekendRate = isWeekendOrHoliday(date, calendarRules);
   const feePax = guests.adults + guests.children; // adults + young adults; excludes 7-under
-  const basePrice = stayTotal(selectedWindow.stayType, date, stayNights, room, calendarRules);
-  // Long-term tier (3/11/18/26+ nights, Overnight only) — null if this stay
-  // doesn't qualify or the haven's long-term pricing is off/unconfigured.
-  const bundleRate = selectedWindow.stayType === "10" ? undefined : bundleNightlyRate(stayNights, date, room, calendarRules);
-  const bundleLabel = bundleRate == null ? null : "Long-term rate";
+  // Same quoteStay() the checkout and createBooking price with: room total
+  // (seasons and long-term tiers included) plus the matching pax fee — a
+  // long-term stay charges its own per-pax-per-night fee INSTEAD of the normal one.
+  const stayQuote = quoteStay({ stayType: selectedWindow.stayType, checkInISO: date, nights: stayNights, rates: room, rules: calendarRules, seasons, feePax });
+  const basePrice = stayQuote.roomTotal;
+  // "₱X/night · Long-term rate" only when one flat long-term rate (the haven's
+  // or a season's) priced every night. Seasons are not named to the guest.
+  const bundleRate = stayQuote.flatLongTermRate;
+  const bundleLabel = bundleRate != null ? "Long-term rate" : null;
   const extraPaxCount = Math.max(0, feePax - room.basePax);
-  // A long-term stay charges its own per-pax-per-night fee INSTEAD of the
-  // normal extraPaxFee() — the two must never both apply, or an extra guest
-  // gets charged twice.
-  const paxFeeRate = bundleRate != null ? ((room as { longtermExtraPaxFee?: number }).longtermExtraPaxFee ?? 100) : room.additionalPaxFee;
-  const paxFee = bundleRate != null
-    ? bundleExtraPaxFee(feePax, room.basePax, stayNights, room)
-    : extraPaxFee(feePax, room.basePax, room.additionalPaxFee, stayNights);
+  const paxFeeRate = stayQuote.paxFeeRate;
+  const paxFee = stayQuote.paxFee;
   const total = basePrice + paxFee;
 
   // What the calendar greys out depends on whether a rate is already in play.
@@ -962,7 +965,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   // rate stands as the "from" floor.
   const rateOn = (stayType: string, iso: string = date) =>
     iso
-      ? pickRate(stayType, iso, room, calendarRules)
+      ? pickRate(stayType, iso, room, calendarRules, seasons)
       : stayType === "10" ? room.price10hr : room.price21hr;
 
   // Shown before a stay type is picked — advertising one option's rate as "the"
@@ -977,13 +980,11 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   // the guest is about to be charged, so only show it when every night really
   // does cost the same; otherwise state the total, which is always true.
   // A long-term stay overrides all of it with one flat nightly rate.
-  const nightlyRates = date && isOvernight
-    ? Array.from({ length: stayNights }, (_, i) => pickRate("21", addDaysISO(date, i), room, calendarRules))
-    : [];
+  // Seasonal nights are priced per night too, even inside a long-term stay.
+  const nightlyRates = date && isOvernight ? stayQuote.nights.map((n) => n.rate) : [];
   const nightsBreakdown = (() => {
     if (nightlyRates.length === 0) return "";
     const plural = `night${stayNights > 1 ? "s" : ""}`;
-    if (bundleRate != null) return `${peso(bundleRate)} × ${stayNights} ${plural}`;
     if (nightlyRates.every((r) => r === nightlyRates[0])) {
       return `${peso(nightlyRates[0])} × ${stayNights} ${plural}`;
     }
@@ -1001,7 +1002,9 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   // then charging ₱1,499 at checkout is the worst possible outcome.
   const voucherActive = (p: ActivePromotion) =>
     !!p.discount_code && promoCode.trim().toUpperCase() === p.discount_code.toUpperCase();
-  const livePromo = stayChosen
+  // Seasonal rates don't stack with promos unless the owner allowed it.
+  const blockingSeason = stayChosen ? promoBlockingSeason(selectedWindow.stayType, date, stayNights, seasons) : undefined;
+  const livePromo = stayChosen && !blockingSeason
     ? (activePromotions || []).find(
         (p) => isEnforceable(p)
           && promoCoversStay(p, selectedWindow.stayType === "10" ? "10" : "21")
@@ -1024,13 +1027,19 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   const applyPromoCode = async (raw?: string) => {
     const code = (raw ?? promoInput).trim();
     if (!code) return;
+    if (blockingSeason) {
+      setEnteredPromo(null);
+      setPromoStatus("error");
+      setPromoError(`Promos don't apply to ${blockingSeason.name} dates.`);
+      return;
+    }
     setPromoStatus("checking");
     setPromoError("");
     try {
       const res = await fetch("/api/discounts/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, haven_id: isUuid ? id : null, amount: total, nights: stayNights, user_id: sessionUserId }),
+        body: JSON.stringify({ code, haven_id: isUuid ? id : null, amount: total, nights: stayNights, user_id: sessionUserId, check_in_date: date, stay_type: selectedWindow.stayType }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json?.success) {
@@ -1057,12 +1066,15 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   // guest entered wins over an automatic promotion and the two never stack.
   // Computed on `total` (not the nightly rate) so this page and checkout agree
   // to the peso on multi-night stays and bookings with extra-guest fees.
-  const promoDiscount = enteredPromo
+  const promoDiscount = blockingSeason
+    ? 0
+    : enteredPromo
     ? Math.min(total, enteredPromo.discount_amount)
     : livePromo
       ? promoDiscountOn(livePromo, total, stayNights)
       : 0;
   const payableTotal = Math.max(0, total - promoDiscount);
+
   const promoLabel = enteredPromo ? enteredPromo.code : livePromo?.title ?? "";
 
   // The nightly headline, derived from the discount actually applied to this
@@ -1423,7 +1435,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                   {/* Bundle stays quote one flat nightly rate, so show it —
                       otherwise a guest can't tell why the room total moved when
                       they added a 3rd guest. */}
-                  {bundleRate != null && <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: -4 }}>{peso(bundleRate)}/night</div>}
+                  {bundleLabel && bundleRate != null && <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: -4 }}>{peso(bundleRate)}/night</div>}
                   {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra guests · {extraPaxCount} × {peso(paxFeeRate)}{stayNights > 1 ? ` × ${stayNights} nights` : ""}</span><span>{peso(paxFee)}</span></div>}
                   {promoDiscount > 0 && (
                     <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{promoLabel}</span><span style={{ flex: "none" }}>&minus;{peso(promoDiscount)}</span></div>
@@ -1934,7 +1946,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                   {/* Bundle stays quote one flat nightly rate, so show it —
                       otherwise a guest can't tell why the room total moved when
                       they added a 3rd guest. */}
-                  {bundleRate != null && <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: -4 }}>{peso(bundleRate)}/night</div>}
+                  {bundleLabel && bundleRate != null && <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: -4 }}>{peso(bundleRate)}/night</div>}
                       {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra guests · {extraPaxCount} × {peso(paxFeeRate)}{stayNights > 1 ? ` × ${stayNights} nights` : ""}</span><span>{peso(paxFee)}</span></div>}
                       {promoDiscount > 0 && (
                     <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{promoLabel}</span><span style={{ flex: "none" }}>&minus;{peso(promoDiscount)}</span></div>

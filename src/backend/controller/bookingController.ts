@@ -19,7 +19,10 @@ import type { ActivePromotion } from "@/redux/api/promotionsApi";
 import { createCalendarEvent, createCalendarEventWithResult, updateCalendarEvent, CalendarEventData } from "../utils/googleCalendar";
 import { turnoverSql, TURNOVER_BLURB } from "@/lib/turnover";
 import { occupyingBookingSql, EXISTING_START_SQL, EXISTING_END_SQL, stayTypeCodeFor } from "@/lib/bookingWindow";
-import { securityDepositFor } from "@/lib/pricing";
+import { securityDepositFor, quoteStay, promoBlockingSeason, seasonFor, addDaysISO } from "@/lib/pricing";
+import { checkClaimedPrice } from "@/lib/priceCheck";
+import { loadCalendarRules, loadActiveSeasons } from "@/lib/availability";
+import { havenToRoom } from "@/lib/haven-adapter";
 import { dispatchTransactionalEmail, type EmailDispatchResult } from "../utils/dispatchEmail";
 
 // EXISTING_START_SQL / EXISTING_END_SQL now live in @/lib/bookingWindow beside
@@ -1271,6 +1274,85 @@ export const createBooking = async (
       amount_paid: paymentAmountPaid,
     });
 
+    // ── Re-price the stay on the server ───────────────────────────────────
+    // The room price used to be whatever the browser sent. It's now re-quoted
+    // with the same quoteStay() the checkout uses — live haven rates, weekend/
+    // holiday calendar and ACTIVE seasonal rates — and a booking priced below
+    // that quote is refused. That also covers a guest whose page loaded before
+    // the owner switched a season ON.
+    //
+    // Reads go through `pool`, not the transaction's `client`: a failed read
+    // inside the transaction would abort it and take the booking down with it.
+    const stayTypeCode = stayTypeCodeFor(check_in_date, check_out_date, check_in_time, check_out_time);
+    const stayNightsCount = stayTypeCode === "10" ? 1 : bookedNights(check_in_date, check_out_date);
+    const checkInISO = String(check_in_date).slice(0, 10);
+    const havenRow = await pool
+      .query(
+        haven_id && UUID_RE.test(haven_id)
+          ? `SELECT * FROM havens WHERE uuid_id = $1 LIMIT 1`
+          : `SELECT * FROM havens WHERE haven_name = $1 LIMIT 1`,
+        [haven_id && UUID_RE.test(haven_id) ? haven_id : room_name],
+      )
+      .then((r) => r.rows[0] as Record<string, unknown> | undefined)
+      .catch((err: unknown) => {
+        console.error("[BOOKING] haven lookup for price check failed:", err);
+        return undefined;
+      });
+    const [calendarRules, stayingSeasons] = await Promise.all([
+      loadCalendarRules(pool),
+      loadActiveSeasons(pool, { fromISO: checkInISO, toISO: addDaysISO(checkInISO, stayNightsCount - 1) }),
+    ]);
+    const seniorFlags = [guest_senior_pwd === true, ...(additional_guests as Array<{ seniorPwd?: unknown }>).map((g) => g?.seniorPwd === true)];
+
+    if (!havenRow) {
+      if (!opts.isAdminCaller) {
+        await client.query("ROLLBACK");
+        console.warn("[BOOKING] Rejected: no haven found to price", haven_id, room_name);
+        return NextResponse.json(
+          { success: false, error: "We couldn't verify the price for this room. Please refresh and try again.", code: "PRICE_CHANGED" },
+          { status: 409 },
+        );
+      }
+    } else {
+      const quote = quoteStay({
+        stayType: stayTypeCode,
+        checkInISO,
+        nights: stayNightsCount,
+        rates: havenToRoom(havenRow),
+        rules: calendarRules,
+        seasons: stayingSeasons,
+        feePax: (Number(adults) || 0) + (Number(children) || 0),
+        seniorCount: seniorFlags.filter(Boolean).length,
+      });
+      const priceCheck = checkClaimedPrice(quote, { total_amount, discount_amount, senior_discount });
+      if (!priceCheck.ok) {
+        if (opts.isAdminCaller) {
+          // The New Booking wizard lets staff set a price by hand; flag it, don't block it.
+          console.warn(`[BOOKING] Admin booking ${booking_id} differs from the quote (allowed):`, priceCheck.reason);
+        } else {
+          await client.query("ROLLBACK");
+          console.warn(`[BOOKING] Rejected ${booking_id} at submit:`, priceCheck.reason);
+          return NextResponse.json(
+            { success: false, error: "The rates for these dates have changed. Please refresh the page to see the current price.", code: "PRICE_CHANGED" },
+            { status: 409 },
+          );
+        }
+      }
+    }
+
+    // Seasons don't stack with promos unless the owner allowed it for that season.
+    const promoBlockedBy = promoBlockingSeason(stayTypeCode, checkInISO, stayNightsCount, stayingSeasons);
+    if (promoBlockedBy && (discount_id || discount_code || promotion_id) && !opts.isAdminCaller) {
+      await client.query("ROLLBACK");
+      console.warn(`[BOOKING] Rejected promo on ${promoBlockedBy.name} dates:`, discount_code || promotion_id);
+      return NextResponse.json(
+        { success: false, error: `Promos don't apply to ${promoBlockedBy.name} dates. Please remove the promo and try again.`, code: "DISCOUNT_INVALID" },
+        { status: 409 },
+      );
+    }
+    // Snapshot of the season that priced this booking (first seasonal night).
+    const pricedBySeason = Array.from({ length: stayNightsCount }, (_, i) => seasonFor(addDaysISO(checkInISO, i), stayingSeasons)).find(Boolean);
+
     // ── Re-validate the promo code before it is honoured ──────────────────
     // The browser validated this code when the guest typed it, but that was
     // minutes ago and on a client we do not control. Re-run the SAME rules
@@ -1392,9 +1474,10 @@ export const createBooking = async (
       INSERT INTO booking_payments (
         booking_id, payment_method, payment_proof_url, payment_reference, room_rate,
         add_ons_total, total_amount, down_payment, amount_paid, remaining_balance,
-        discount_id, discount_code, discount_amount, senior_discount
+        discount_id, discount_code, discount_amount, senior_discount,
+        seasonal_rate_id, seasonal_rate_name
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
     `;
 
     const paymentValues = [
@@ -1412,6 +1495,8 @@ export const createBooking = async (
       discount_code || null,
       Number(discount_amount) || 0,
       Number(senior_discount) || 0,
+      pricedBySeason?.id ?? null,
+      pricedBySeason?.name ?? null,
     ];
 
     console.log("📝 [BOOKING] Inserting payment record...");
