@@ -15,6 +15,33 @@
 export const MIN_LEAD_MINUTES = 0;
 
 /**
+ * Which kind of stay a booking is: "10" a Daycation/Nightcation session, "21"
+ * an overnight stay. Matches the `stayType` search param the storefront and
+ * checkout pass around, and lines up with promo-offer's StayTypeCode.
+ *
+ * DERIVED, never taken from a payload. createBooking uses it to check an
+ * automatic promotion's `applies_to` scope, so a client-supplied value would be
+ * a lever on which offers apply — and the checkout sends no stay_type field
+ * anyway, so there is nothing to take.
+ *
+ * Elapsed hours is what separates the two: a 10-hour session is ~10h whether or
+ * not it crosses midnight (an 8pm–6am Nightcation spans two dates but is still
+ * a session), while the shortest overnight is ~21h. Anything unparseable falls
+ * back to "21", which is the checkout's own default.
+ */
+export function stayTypeCodeFor(
+  checkInISO?: string | null,
+  checkOutISO?: string | null,
+  checkInTime?: string | null,
+  checkOutTime?: string | null,
+): "10" | "21" {
+  const start = Date.parse(`${String(checkInISO).slice(0, 10)}T${checkInTime || "00:00"}`);
+  const end = Date.parse(`${String(checkOutISO).slice(0, 10)}T${checkOutTime || "00:00"}`);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return "21";
+  return (end - start) / 3_600_000 <= 12 ? "10" : "21";
+}
+
+/**
  * Can a window whose check-in falls at `startMs` still be booked at `nowMs`?
  *
  * The test is the START, not the end: you cannot check a guest in at 7am once

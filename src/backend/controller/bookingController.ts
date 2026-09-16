@@ -1,13 +1,24 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import type { PoolClient } from "pg";
 import bcrypt from "bcryptjs";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 import pool from "../config/db";
 import { upload_file } from "../utils/cloudinary";
 import { validateImageDataUrl } from "../utils/imageGuard";
-import { validateDiscount } from "../utils/validateDiscount";
+import {
+  validateDiscount,
+  promotionAlreadyRedeemed,
+  resolvePromoIdentity,
+  promoRedemptionEmail,
+  ALREADY_REDEEMED_ERROR,
+} from "../utils/validateDiscount";
+import { normalizeEmail } from "@/lib/normalize-email";
+import { promoDiscountOn, promoCoversStay } from "@/lib/promo-offer";
+import type { ActivePromotion } from "@/redux/api/promotionsApi";
 import { createCalendarEvent, createCalendarEventWithResult, updateCalendarEvent, CalendarEventData } from "../utils/googleCalendar";
 import { turnoverSql, TURNOVER_BLURB } from "@/lib/turnover";
-import { occupyingBookingSql, EXISTING_START_SQL, EXISTING_END_SQL } from "@/lib/bookingWindow";
+import { occupyingBookingSql, EXISTING_START_SQL, EXISTING_END_SQL, stayTypeCodeFor } from "@/lib/bookingWindow";
 import { securityDepositFor } from "@/lib/pricing";
 import { dispatchTransactionalEmail, type EmailDispatchResult } from "../utils/dispatchEmail";
 
@@ -89,7 +100,10 @@ async function resolveOrCreateGuestAccount(
   // are keyed on the stored value — so an address saved as "Maria@Gmail.com"
   // used to create an account the guest could never sign in to by typing
   // "maria@gmail.com". Normalizing on write makes one address mean one account.
-  const normalizedEmail = email.trim().toLowerCase();
+  //
+  // Same normalizer the promo identity uses, so the address an account is
+  // created from is the address that already burned the guest's promo codes.
+  const normalizedEmail = normalizeEmail(email) ?? email.trim().toLowerCase();
 
   const existing = await client.query(
     `SELECT user_id FROM users WHERE LOWER(email) = $1 LIMIT 1`,
@@ -713,7 +727,7 @@ export interface Booking {
 // in front of the modal and needs to be told when the guest was NOT reached.
 export const createBooking = async (
   req: NextRequest,
-  opts: { awaitPendingEmail?: boolean } = {},
+  opts: { awaitPendingEmail?: boolean; isAdminCaller?: boolean } = {},
 ): Promise<NextResponse> => {
   const body = await req.json();
   console.log("📥 [BOOKING] createBooking body received");
@@ -776,6 +790,30 @@ export const createBooking = async (
       // Add-ons (frontend sends snake_case `add_ons`)
       add_ons: addOns = {},
     } = body;
+
+  // ── Who is claiming the promo ────────────────────────────────────────────
+  //
+  // NOT `user_id` from the body. That field is what the booking row is keyed on
+  // (and still is, below — the NULL it carries for a guest is load-bearing for
+  // requireBookingAccess), but as a promo identity it was worthless: a guest
+  // signed out has none, so the one-use rule never ran, and a signed-in guest
+  // could simply omit it to get the same exemption.
+  //
+  // The email is the identity that actually exists for every booking. user_id
+  // rides along when we can prove it from the session, so a guest who later
+  // signs in is still recognised as the same person.
+  //
+  // An admin posting the New Booking wizard is NOT the guest: their session
+  // must never attach the guest's redemption to the admin's own account.
+  const promoSession = opts.isAdminCaller ? null : await getServerSession(authOptions);
+  const promoSessionUserId = (promoSession?.user as { id?: string } | undefined)?.id ?? null;
+  // Resolved by the same helper /api/discounts/validate uses, so the code the
+  // guest was told is valid is checked against the same person here.
+  const promoIdentity = await resolvePromoIdentity(pool, promoSessionUserId, guest_email);
+  const promoUserId = promoIdentity.userId ?? null;
+  // The one address the redemption is written under. Checking is wider than
+  // writing: the lookup matches any address this guest is known by.
+  const promoEmail = promoRedemptionEmail(promoIdentity);
 
   // Resolve every photo (payment proof, main guest ID(s), each additional
   // guest's ID(s)) BEFORE touching Postgres. These are Cloudinary round
@@ -1237,13 +1275,16 @@ export const createBooking = async (
     // The browser validated this code when the guest typed it, but that was
     // minutes ago and on a client we do not control. Re-run the SAME rules
     // here: a code deactivated in the meantime, expired, over its cap, or
-    // already redeemed by this account must not pay out, and the peso amount is
+    // already redeemed by this guest must not pay out, and the peso amount is
     // recomputed rather than trusted.
     //
     // `preDiscount` is the total the guest confirmed plus the discount taken off
     // it — i.e. what the code was applied to. This catches an inflated
     // discount_amount; it does NOT re-derive the room price itself, which is
     // still client-supplied (tracked separately).
+    //
+    // The checkout never stacks the two, so at most one of these branches is
+    // live for a given booking and `discount_amount` belongs entirely to it.
     if (discount_id || discount_code) {
       const claimed = Number(discount_amount) || 0;
       const preDiscount = (Number(paymentTotalAmount) || 0) + claimed;
@@ -1252,7 +1293,7 @@ export const createBooking = async (
         code: discount_code || null,
         discountId: discount_id || null,
         havenId: haven_id || null,
-        userId: user_id || null,
+        ...promoIdentity,
         amount: preDiscount,
         // Derived from the dates being booked, never taken from the payload — a
         // per-night code multiplies by this, so a client-supplied night count
@@ -1275,6 +1316,73 @@ export const createBooking = async (
           { status: 409 },
         );
       }
+    }
+
+    // ── Same, for an AUTOMATIC promotion ──────────────────────────────────
+    // There is no code to type for these, which is exactly why they were never
+    // re-checked: `promotion_id` and the peso amount it contributed came
+    // straight off the payload and were written as given. So closing the
+    // one-use hole on voucher codes alone would just have moved the reuse here.
+    //
+    // Only a promotion that clears this branch is recorded as redeemed below.
+    // A payload carrying BOTH a code and a promotion_id takes the voucher path
+    // above, and must not also burn the promotion it never actually applied.
+    let promotionVerified = false;
+    if (!(discount_id || discount_code) && promotion_id) {
+      const claimed = Number(discount_amount) || 0;
+      const preDiscount = (Number(paymentTotalAmount) || 0) + claimed;
+
+      const reject = async (reason: string, guestMessage: string) => {
+        await client.query("ROLLBACK");
+        console.warn("[BOOKING] Rejected automatic promotion at submit:", promotion_id, reason);
+        return NextResponse.json(
+          { success: false, error: guestMessage, code: "DISCOUNT_INVALID" },
+          { status: 409 },
+        );
+      };
+
+      const promoRow = await client.query(
+        `SELECT p.id, p.title, p.description, p.image_url, p.discount_type, p.discount_value,
+                p.discount_id, p.start_date, p.end_date, p.applies_to, p.redemption,
+                p.per_night, p.max_discount, d.code AS discount_code
+         FROM promotions p
+         LEFT JOIN discounts d ON d.id = p.discount_id
+         WHERE p.id = $1
+           AND p.active = true
+           AND p.start_date <= NOW()
+           AND p.end_date >= NOW()
+           AND p.redemption = 'automatic'
+         LIMIT 1`,
+        [promotion_id],
+      );
+      if (promoRow.rows.length === 0) {
+        return reject("not an active automatic promotion", "This offer is no longer available. Please refresh and try again.");
+      }
+
+      // NUMERIC arrives from pg as a string; the shared pricing helpers do
+      // arithmetic on these, exactly as /api/promotions/active parses them.
+      const promo: ActivePromotion = {
+        ...promoRow.rows[0],
+        discount_value: promoRow.rows[0].discount_value != null ? parseFloat(promoRow.rows[0].discount_value) : null,
+        max_discount: promoRow.rows[0].max_discount != null ? parseFloat(promoRow.rows[0].max_discount) : null,
+      };
+
+      const stayType = stayTypeCodeFor(check_in_date, check_out_date, check_in_time, check_out_time);
+      if (!promoCoversStay(promo, stayType)) {
+        return reject(`does not cover stay type ${stayType}`, "This offer does not apply to the stay you selected. Please refresh and try again.");
+      }
+
+      if (await promotionAlreadyRedeemed({ db: client, promotionId: promo.id, ...promoIdentity })) {
+        return reject("already redeemed by this guest", `${ALREADY_REDEEMED_ERROR} Please refresh and try again.`);
+      }
+
+      // Same helper the checkout priced it with, so the two cannot drift.
+      const worth = promoDiscountOn(promo, preDiscount, bookedNights(check_in_date, check_out_date));
+      if (claimed > worth) {
+        return reject(`amount overstated: ${claimed} > ${worth}`, "The promo discount could not be verified. Please refresh and try again.");
+      }
+
+      promotionVerified = true;
     }
 
     // remaining_balance satisfies the DB check (= total_amount - amount_paid).
@@ -1310,37 +1418,49 @@ export const createBooking = async (
     await client.query(paymentQuery, paymentValues);
     console.log("✅ [BOOKING] Payment record created");
 
-    // Count this redemption against the code's usage cap, and record it
-    // against the account so the same signed-in guest can't reuse this code
-    // on a future booking (enforced by /api/discounts/validate). Best-effort —
-    // the booking still succeeds even if these updates fail for some reason.
+    // Count this redemption against the code's usage cap, and record it against
+    // the guest so they can't reuse this code on a future booking (enforced by
+    // validateDiscount, which both /api/discounts/validate and the submit above
+    // run). Best-effort — the booking still succeeds even if these fail.
+    //
+    // Keyed on the normalized email, with user_id alongside when we have it.
+    // This used to be `if (user_id)`, which meant a signed-out guest — i.e.
+    // nearly every guest — burned nothing and could reuse the code forever.
     if (discount_id) {
       await bestEffort(client, "discount_use_count", async () => {
         await client.query(`UPDATE discounts SET used_count = used_count + 1 WHERE id = $1`, [discount_id]);
       });
-      if (user_id) {
+      if (promoEmail) {
         await bestEffort(client, "discount_redemption", async () => {
           await client.query(
-            `INSERT INTO discount_users (discount_id, user_id, used, used_at)
-             VALUES ($1, $2, true, NOW())
-             ON CONFLICT (discount_id, user_id) DO UPDATE SET used = true, used_at = NOW()`,
-            [discount_id, user_id]
+            // COALESCE, not EXCLUDED: a row written while the guest was signed
+            // out has a NULL user_id, and this stamps their account onto it the
+            // first time they redeem while signed in — without ever clearing an
+            // account already recorded there.
+            `INSERT INTO discount_users (discount_id, user_id, guest_email, used, used_at)
+             VALUES ($1, $2, $3, true, NOW())
+             ON CONFLICT (discount_id, guest_email)
+             DO UPDATE SET used = true, used_at = NOW(),
+                           user_id = COALESCE(discount_users.user_id, EXCLUDED.user_id)`,
+            [discount_id, promoUserId, promoEmail]
           );
         });
       }
     }
 
-    // Same rule for an automatic promotion: one redemption per guest account.
-    // The UNIQUE (promotion_id, user_id) pair is the real enforcement — from
-    // here on /api/promotions/active stops returning this promotion to this
-    // guest, so no later surface can offer it to them again.
-    if (promotion_id && user_id) {
+    // Same rule for an automatic promotion: one redemption per guest. From here
+    // on /api/promotions/active stops returning this promotion to them, so no
+    // later surface can offer it again — and the submit check above refuses it
+    // even if one somehow does.
+    if (promotionVerified && promoEmail) {
       await bestEffort(client, "promotion_redemption", async () => {
         await client.query(
-          `INSERT INTO promotion_users (promotion_id, user_id, booking_id, used, used_at)
-           VALUES ($1, $2, $3, true, NOW())
-           ON CONFLICT (promotion_id, user_id) DO UPDATE SET used = true, used_at = NOW()`,
-          [promotion_id, user_id, bookingId]
+          `INSERT INTO promotion_users (promotion_id, user_id, guest_email, booking_id, used, used_at)
+           VALUES ($1, $2, $3, $4, true, NOW())
+           ON CONFLICT (promotion_id, guest_email)
+           DO UPDATE SET used = true, used_at = NOW(),
+                         user_id = COALESCE(promotion_users.user_id, EXCLUDED.user_id)`,
+          [promotion_id, promoUserId, promoEmail, bookingId]
         );
       });
     }

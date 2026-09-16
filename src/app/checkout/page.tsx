@@ -694,7 +694,10 @@ function CheckoutInner() {
   const seniorCount = (info.senior ? 1 : 0) + extraGuests.filter((g) => g.senior).length;
   const seniorDiscount = seniorPwdDiscount(basePrice, feePax, seniorCount);
   const subtotal = Math.max(0, basePrice + paxFee - seniorDiscount);
-  const { data: activePromotions } = useGetActivePromotionsQuery();
+  // Passing the email lets the server drop promotions this guest has already
+  // redeemed — otherwise a signed-out repeat guest sees the automatic offer in
+  // the summary all the way to submit, and only then gets refused.
+  const { data: activePromotions } = useGetActivePromotionsQuery({ email: info.email });
 
   // Promo code — validated against /api/discounts/validate as the guest types.
   // ?promo= arrives pre-filled from the home page's promo banner and auto-applies.
@@ -714,7 +717,10 @@ function CheckoutInner() {
         headers: { "Content-Type": "application/json" },
         // `nights` lets a per-night code quote its real value here; the server
         // re-derives it from the dates at submit, so this is a preview figure.
-        body: JSON.stringify({ code, haven_id: isUuid ? roomId : null, amount: subtotal, nights, user_id: session?.user?.id ?? null }),
+        // No user_id: the server reads the session itself now, since a field the
+        // browser controls was a rule the browser could opt out of. `guest_email`
+        // is the identity for a guest who never signs in — which is most of them.
+        body: JSON.stringify({ code, haven_id: isUuid ? roomId : null, amount: subtotal, nights, guest_email: info.email }),
       });
       const json = await res.json();
       if (!res.ok || !json.success) {
@@ -742,11 +748,14 @@ function CheckoutInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // Re-validate whenever the subtotal changes (e.g. guest count changes the
-  // pax fee) so a min-booking-amount code doesn't silently overcharge.
+  // pax fee) so a min-booking-amount code doesn't silently overcharge — and
+  // whenever the email changes, since that is who the one-use-per-guest rule
+  // is checked against. A code applied before the guest typed their address
+  // was only ever a preview.
   useEffect(() => {
     if (appliedDiscount) applyPromo(appliedDiscount.code);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subtotal]);
+  }, [subtotal, info.email]);
 
   // Automatic promotion — no code to type. Resolved from the server's active
   // list rather than a URL param, so it can't be forged by editing the link,

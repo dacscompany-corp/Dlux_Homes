@@ -5,6 +5,7 @@ import {
   MIN_LEAD_MINUTES,
   EXISTING_START_SQL,
   EXISTING_END_SQL,
+  stayTypeCodeFor,
 } from "./bookingWindow";
 
 const at = (iso: string) => new Date(iso).getTime();
@@ -85,5 +86,42 @@ describe("shared conflict SQL fragments", () => {
   it("treats a '00:00' checkout as the next day's midnight", () => {
     expect(EXISTING_END_SQL).toContain("'00:00'");
     expect(EXISTING_END_SQL).toContain("INTERVAL '1 day'");
+  });
+});
+
+/**
+ * createBooking checks an automatic promotion's applies_to scope against this.
+ * Get it wrong and an overnight-only offer pays out on a daycation — which is
+ * why it is derived here rather than read off the payload.
+ */
+describe("stayTypeCodeFor", () => {
+  it("reads a same-day session as the 10-hour stay", () => {
+    expect(stayTypeCodeFor("2026-09-20", "2026-09-20", "08:00", "18:00")).toBe("10");
+  });
+
+  it("still reads a session that crosses midnight as the 10-hour stay", () => {
+    // An 8pm–6am Nightcation spans two dates but is one session, so the date
+    // span alone cannot tell it apart from a one-night overnight.
+    expect(stayTypeCodeFor("2026-09-20", "2026-09-21", "20:00", "06:00")).toBe("10");
+  });
+
+  it("reads a single overnight as the overnight stay", () => {
+    expect(stayTypeCodeFor("2026-09-20", "2026-09-21", "14:00", "12:00")).toBe("21");
+  });
+
+  it("reads a multi-night stay as the overnight stay", () => {
+    expect(stayTypeCodeFor("2026-09-20", "2026-09-24", "14:00", "12:00")).toBe("21");
+  });
+
+  it("falls back to the overnight stay when the input cannot be read", () => {
+    // Matches the checkout's own default, and is the conservative direction:
+    // a day-scoped offer is refused rather than quietly honoured.
+    expect(stayTypeCodeFor(null, null, null, null)).toBe("21");
+    expect(stayTypeCodeFor("not-a-date", "also-not", "08:00", "18:00")).toBe("21");
+    expect(stayTypeCodeFor("2026-09-20", "2026-09-20", "18:00", "08:00")).toBe("21");
+  });
+
+  it("accepts full ISO timestamps, as Postgres returns them", () => {
+    expect(stayTypeCodeFor("2026-09-20T00:00:00.000Z", "2026-09-20T00:00:00.000Z", "08:00", "18:00")).toBe("10");
   });
 });

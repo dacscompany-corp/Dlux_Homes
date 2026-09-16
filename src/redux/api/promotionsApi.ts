@@ -40,8 +40,16 @@ export const promotionsApi = createApi({
   tagTypes: ['Promotion'],
   endpoints: (builder) => ({
     // Public — only currently active, in-window promotions.
-    getActivePromotions: builder.query<ActivePromotion[], void>({
-      query: () => ({ url: "/promotions/active" }),
+    //
+    // `email` is optional and only checkout passes it: the server uses it to
+    // drop promotions this guest has already redeemed while signed out. Without
+    // it (the rooms page, where nothing has been typed yet) the list is filtered
+    // by account alone, which for a signed-out visitor means not at all.
+    getActivePromotions: builder.query<ActivePromotion[], { email?: string | null } | void>({
+      query: (arg) => {
+        const email = (arg && "email" in arg ? arg.email : null)?.trim();
+        return { url: "/promotions/active", params: email ? { email } : undefined };
+      },
       transformResponse: (response: ActivePromotionsResponse) =>
         Array.isArray(response?.data) ? response.data : [],
       providesTags: ['Promotion'],
