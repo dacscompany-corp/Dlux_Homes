@@ -18,6 +18,7 @@ import {
   discountBadgeText, headlineUnitPrice, offerPriceFor, pesoAmount, promoCoversStay, promoDiscountOn, scopedStayTypes,
 } from "@/lib/promo-offer";
 import { IcoZoom, PromoLightbox } from "@/components/PromoLightbox";
+import PromoLoginGate from "@/components/PromoLoginGate";
 import { havenToRoom } from "@/lib/haven-adapter";
 import { fmtClock, spanHours } from "@/lib/stay-window";
 import { turnoverMs } from "@/lib/turnover";
@@ -346,6 +347,14 @@ function PromoBanner({ promotions, rates, variant, promoCode = "" }: {
   // Copy confirmation for the voucher stub below. Reverts on its own so the
   // button doesn't sit on "Copied" forever and stop reading as a control.
   const [copied, setCopied] = useState(false);
+  // Claiming (copying the code) is account-bound — see PromoLoginGate. The
+  // card itself stays visible to everyone. The gate sends the guest back to
+  // exactly this room (with its ?promo= intact) once they've signed in.
+  const { status: authStatus } = useSession();
+  const [gateOpen, setGateOpen] = useState(false);
+  const [currentUrl] = useState<string>(() =>
+    typeof window === "undefined" ? "/rooms" : `${window.location.pathname}${window.location.search}`,
+  );
   useEffect(() => {
     if (!copied) return;
     const t = setTimeout(() => setCopied(false), 1600);
@@ -432,6 +441,7 @@ function PromoBanner({ promotions, rates, variant, promoCode = "" }: {
           {note && <span style={{ marginLeft: "auto", flex: "none", fontSize: 11.5, fontWeight: 600, color: "#8C5A2E", whiteSpace: "nowrap" }}>{note}</span>}
         </div>
         <PromoLightbox src={lightbox} onClose={() => setLightbox(null)} />
+        <PromoLoginGate open={gateOpen} onOpenChange={setGateOpen} callbackUrl={currentUrl} />
       </div>
     );
   }
@@ -509,7 +519,10 @@ function PromoBanner({ promotions, rates, variant, promoCode = "" }: {
                   rounded corners. */}
               <span aria-hidden="true" style={{ width: 1, flex: "none", backgroundImage: "linear-gradient(to bottom, #C9A46B 0 4px, transparent 4px 8px)", backgroundSize: "1px 8px" }} />
               <button type="button" aria-label={`Copy promo code ${p.discount_code}`}
-                onClick={() => { navigator.clipboard?.writeText(p.discount_code!).then(() => setCopied(true), () => {}); }}
+                onClick={() => {
+                  if (authStatus !== "authenticated") { setGateOpen(true); return; }
+                  navigator.clipboard?.writeText(p.discount_code!).then(() => setCopied(true), () => {});
+                }}
                 style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "0 15px", background: copied ? "#15803D" : "#1F160E", border: "none", color: "#FFFCF4", font: "inherit", fontSize: 12.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", transition: "background .18s" }}>
                 {copied ? <IcoCheckBold size={12} stroke={2.6} /> : <IcoCopySm />}{copied ? "Copied" : "Copy"}
               </button>
@@ -1050,10 +1063,15 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   const [enteredPromo, setEnteredPromo] = useState<EnteredDiscount | null>(null);
   const [promoStatus, setPromoStatus] = useState<"idle" | "checking" | "error">("idle");
   const [promoError, setPromoError] = useState("");
+  // Claiming a promo (typing a code, or taking an automatic one) is
+  // account-bound — see PromoLoginGate. Guests still see the offer and its
+  // price, just not applied to their total until they sign in.
+  const [promoGateOpen, setPromoGateOpen] = useState(false);
 
   const applyPromoCode = async (raw?: string) => {
     const code = (raw ?? promoInput).trim();
     if (!code) return;
+    if (authStatus !== "authenticated") { setPromoGateOpen(true); return; }
     if (blockingSeason) {
       setEnteredPromo(null);
       setPromoStatus("error");
@@ -1093,16 +1111,26 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   // guest entered wins over an automatic promotion and the two never stack.
   // Computed on `total` (not the nightly rate) so this page and checkout agree
   // to the peso on multi-night stays and bookings with extra-guest fees.
+  //
+  // `enteredPromo` only ever gets set once /api/discounts/validate has
+  // already confirmed a session (applyPromoCode gates the call itself), so
+  // it needs no extra check here — but the automatic-promo branch bypasses
+  // that endpoint entirely and must be gated directly, or a guest would get
+  // the discount for free with nothing to sign in for. `blockingSeason` zeroes
+  // both paths the same way it already zeroed `livePromo` above.
   const promoDiscount = blockingSeason
     ? 0
     : enteredPromo
     ? Math.min(total, enteredPromo.discount_amount)
-    : livePromo
+    : livePromo && authStatus === "authenticated"
       ? promoDiscountOn(livePromo, total, stayNights)
       : 0;
   const payableTotal = Math.max(0, total - promoDiscount);
-
-  const promoLabel = enteredPromo ? enteredPromo.code : livePromo?.title ?? "";
+  const promoLabel = enteredPromo ? enteredPromo.code : (authStatus === "authenticated" ? livePromo?.title ?? "" : "");
+  // An automatic promo the guest qualifies for but hasn't unlocked yet — used
+  // to show a "Log in to apply" nudge instead of silently charging full price
+  // with no explanation for why the advertised discount isn't showing up.
+  const lockedAutoPromo = !enteredPromo && !blockingSeason && livePromo && authStatus !== "authenticated" ? livePromo : null;
 
   // The nightly headline, derived from the discount actually applied to this
   // stay rather than computed independently — the two doing their own
@@ -1466,6 +1494,12 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                   {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra guests · {extraPaxCount} × {peso(paxFeeRate)}{stayNights > 1 ? ` × ${stayNights} nights` : ""}</span><span>{peso(paxFee)}</span></div>}
                   {promoDiscount > 0 && (
                     <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{promoLabel}</span><span style={{ flex: "none" }}>&minus;{peso(promoDiscount)}</span></div>
+                  )}
+                  {lockedAutoPromo && (
+                    <button type="button" onClick={() => setPromoGateOpen(true)}
+                      style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, background: "transparent", border: "none", padding: 0, font: "inherit", color: "#8C5A2E", cursor: "pointer", textAlign: "left" }}>
+                      <span>{lockedAutoPromo.title} available</span><span style={{ flex: "none", textDecoration: "underline" }}>Log in to apply</span>
+                    </button>
                   )}
                   <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16, paddingTop: 9, borderTop: "1px solid #EFE4CE" }}><span>Total</span><span>{peso(payableTotal)}</span></div>
                   {/* PROMO CODE — mirrors the desktop panel; checkout re-validates. */}
@@ -1978,6 +2012,12 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                       {promoDiscount > 0 && (
                     <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{promoLabel}</span><span style={{ flex: "none" }}>&minus;{peso(promoDiscount)}</span></div>
                   )}
+                  {lockedAutoPromo && (
+                    <button type="button" onClick={() => setPromoGateOpen(true)}
+                      style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, background: "transparent", border: "none", padding: 0, font: "inherit", color: "#8C5A2E", cursor: "pointer", textAlign: "left" }}>
+                      <span>{lockedAutoPromo.title} available</span><span style={{ flex: "none", textDecoration: "underline" }}>Log in to apply</span>
+                    </button>
+                  )}
                   <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16, paddingTop: 9, borderTop: "1px solid #EFE4CE" }}><span>Total</span><span>{peso(payableTotal)}</span></div>
                     </div>
                   )}
@@ -2061,6 +2101,11 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
       </div>
 
       {showGallery && <GalleryModal images={room.images} start={galleryIdx} onClose={() => setShowGallery(false)} />}
+      <PromoLoginGate
+        open={promoGateOpen}
+        onOpenChange={setPromoGateOpen}
+        callbackUrl={typeof window !== "undefined" ? `${window.location.pathname}${window.location.search}` : `/rooms/${id}`}
+      />
 
       {/* FOOTER */}
       <footer style={{ borderTop: "1px solid var(--line)", background: "var(--bg)" }}>

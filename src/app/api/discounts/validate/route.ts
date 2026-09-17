@@ -25,6 +25,17 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
     const session = await getServerSession(authOptions);
     const sessionUserId = (session?.user as { id?: string } | undefined)?.id ?? null;
 
+    // Product requirement: claiming a promo needs an account, on top of (not
+    // instead of) the email-based "already redeemed" tracking below — that
+    // tracking still matters once someone IS signed in (an old guest booking
+    // under the same address must still count). Belongs here, not inside
+    // validateDiscount() itself: that function is the shared "is this code
+    // valid for this identity" check, and createBooking's own re-validation at
+    // submit needs to keep working for bookings this route never saw.
+    if (!sessionUserId) {
+      return NextResponse.json({ success: false, error: "Please log in to claim this promo." }, { status: 401 });
+    }
+
     // Resolved the same way createBooking resolves it, so a code this endpoint
     // calls valid is checked against exactly the same person at submit.
     const identity = await resolvePromoIdentity(pool, sessionUserId, body?.guest_email as string);

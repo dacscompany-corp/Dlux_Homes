@@ -16,6 +16,7 @@ import { useGetHavensQuery } from "@/redux/api/roomApi";
 import { useGetHavenReviewsQuery } from "@/redux/api/reviewsApi";
 import { spanHours } from "@/lib/stay-window";
 import { IcoZoom, PromoLightbox } from "@/components/PromoLightbox";
+import PromoLoginGate from "@/components/PromoLoginGate";
 import { havenToRoom } from "@/lib/haven-adapter";
 import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
 import type { ActivePromotion, PromoStayType } from "@/redux/api/promotionsApi";
@@ -261,6 +262,8 @@ function PromoBanner({ promotions, roomId, rates, variant, visible = true }: {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<string | null>(null);
+  const [gateOpen, setGateOpen] = useState(false);
+  const { status: authStatus } = useSession();
   useEffect(() => {
     if (!copiedCode) return;
     const t = setTimeout(() => setCopiedCode(null), 2000);
@@ -275,6 +278,14 @@ function PromoBanner({ promotions, roomId, rates, variant, visible = true }: {
 
   const hrefFor = (p: ActivePromotion) =>
     p.discount_code ? `/rooms/${roomId}?promo=${encodeURIComponent(p.discount_code)}` : `/rooms/${roomId}`;
+
+  // Claiming (copying a code, following "Use this offer") is account-bound —
+  // see PromoLoginGate. Anyone can still see the card above; only these two
+  // actions are gated, so a guest never loses sight of the offer itself.
+  const requireAuth = (action: () => void) => {
+    if (authStatus !== "authenticated") { setGateOpen(true); return; }
+    action();
+  };
 
   const copyCode = async (code: string) => {
     try {
@@ -336,7 +347,7 @@ function PromoBanner({ promotions, roomId, rates, variant, visible = true }: {
           </p>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ flex: 1, fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 15, letterSpacing: ".1em", color: "#1F160E", background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 10, padding: "10px 12px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{code}</span>
-            <button type="button" onClick={() => copyCode(code)}
+            <button type="button" onClick={() => requireAuth(() => copyCode(code))}
               style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#1F160E", color: "#FFFCF4", border: "none", borderRadius: 10, padding: "11px 14px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", font: "inherit" }}>
               <IcoCopy />{copiedCode === code ? "Copied" : "Copy"}
             </button>
@@ -405,14 +416,22 @@ function PromoBanner({ promotions, roomId, rates, variant, visible = true }: {
 
           {renderClaimBlock()}
 
-          <Link href={hrefFor(expanded)} className="promo-cta"
-            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, width: "100%", background: "#B07848", color: "#FFFCF4", borderRadius: 14, padding: 15, fontSize: 15, fontWeight: 600, textDecoration: "none" }}>
-            Use this offer <IcoArrowRight size={16} />
-          </Link>
+          {authStatus === "authenticated" ? (
+            <Link href={hrefFor(expanded)} className="promo-cta"
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, width: "100%", background: "#B07848", color: "#FFFCF4", borderRadius: 14, padding: 15, fontSize: 15, fontWeight: 600, textDecoration: "none" }}>
+              Use this offer <IcoArrowRight size={16} />
+            </Link>
+          ) : (
+            <button type="button" onClick={() => setGateOpen(true)} className="promo-cta"
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, width: "100%", background: "#B07848", color: "#FFFCF4", border: "none", borderRadius: 14, padding: 15, fontSize: 15, fontWeight: 600, cursor: "pointer", font: "inherit" }}>
+              Use this offer <IcoArrowRight size={16} />
+            </button>
+          )}
         </div>
 
         {collapsed.map((p) => renderCollapsedRow(p))}
         <PromoLightbox src={lightbox} onClose={() => setLightbox(null)} />
+        <PromoLoginGate open={gateOpen} onOpenChange={setGateOpen} callbackUrl={hrefFor(expanded)} />
       </div>
     );
   }
@@ -479,7 +498,7 @@ function PromoBanner({ promotions, roomId, rates, variant, visible = true }: {
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <span style={{ fontSize: 12, color: "#6B6358" }}>Your code</span>
               <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 16, letterSpacing: ".1em", color: "#1F160E", background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 10, padding: "11px 12px", textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{code}</span>
-              <button type="button" onClick={() => copyCode(code)}
+              <button type="button" onClick={() => requireAuth(() => copyCode(code))}
                 style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, background: "transparent", color: "#8C5A2E", border: "1px solid #D4BE9A", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", font: "inherit" }}>
                 <IcoCopy />{copiedCode === code ? "Copied" : "Copy code"}
               </button>
@@ -492,10 +511,17 @@ function PromoBanner({ promotions, roomId, rates, variant, visible = true }: {
             </p>
           )}
 
-          <Link href={hrefFor(expanded)} className="promo-cta"
-            style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 9, background: "#B07848", color: "#FFFCF4", borderRadius: 999, padding: "14px 22px", fontSize: 15, fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap" }}>
-            Use this offer <IcoArrowRight size={17} />
-          </Link>
+          {authStatus === "authenticated" ? (
+            <Link href={hrefFor(expanded)} className="promo-cta"
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 9, background: "#B07848", color: "#FFFCF4", borderRadius: 999, padding: "14px 22px", fontSize: 15, fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap" }}>
+              Use this offer <IcoArrowRight size={17} />
+            </Link>
+          ) : (
+            <button type="button" onClick={() => setGateOpen(true)} className="promo-cta"
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 9, background: "#B07848", color: "#FFFCF4", border: "none", borderRadius: 999, padding: "14px 22px", fontSize: 15, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", font: "inherit" }}>
+              Use this offer <IcoArrowRight size={17} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -526,7 +552,88 @@ function PromoBanner({ promotions, roomId, rates, variant, visible = true }: {
           </div>
         );
       })}
+      <PromoLoginGate open={gateOpen} onOpenChange={setGateOpen} callbackUrl={hrefFor(expanded)} />
     </>
+  );
+}
+
+// ── FAQ ──────────────────────────────────────────────────────────
+// Answers sourced from agent_docs/business-rules.md and BOOKING_WORKFLOW.md —
+// keep these in sync if either changes (payment terms, pax limits, cancellation).
+const FAQ_ITEMS: { q: string; a: string }[] = [
+  {
+    q: "Do I need an account to book?",
+    a: "No. You can check out as a guest — we just need your name, email and phone. Creating an account is optional and only useful for saving your booking history and claiming promos; you can also sign in during checkout if you'd rather have it tied to your account.",
+  },
+  {
+    q: "What is Daycation and Nightcation?",
+    a: "Both are 10-hour sessions in the same unit. Daycation runs 7AM–5PM; Nightcation runs 7PM–5AM. Pick whichever fits your schedule — pricing is the same for both, with a slightly higher rate on weekends and PH holidays.",
+  },
+  {
+    q: "How do I book a room?",
+    a: "Choose a stay type (Daycation, Nightcation, or Overnight), pick your dates and guest count, then tap Book Now. You'll fill in your details, send a 50% down payment to reserve, upload proof of payment and a valid ID, then submit — we'll confirm by email once it's reviewed.",
+  },
+  {
+    q: "How many guests can stay?",
+    a: "The base rate covers 2 guests. You can add up to 2 more (max 4 counted guests total) for +₱200 per guest per night — kids 7 and under stay free and aren't counted. Need more than 4? Message us directly and we'll see what we can do.",
+  },
+  {
+    q: "How much is the room?",
+    a: "Rates depend on stay type and date — see the live pricing on each room's page, since weekends and PH holidays run a bit higher than weekdays. Staying 5+ nights also unlocks a lower long-term nightly rate.",
+  },
+  {
+    q: "Is a deposit required?",
+    a: "You'll pay 50% down to reserve your booking. The remaining 50% plus a refundable security deposit (from ₱1,000, scaling with longer stays) is due when you check in. The deposit is returned after checkout, minus any damages.",
+  },
+  {
+    q: "Can I cancel or reschedule?",
+    a: "Bookings aren't cancellable, but we allow one date change if you request it at least 7 days before check-in, moving to a new date within a month of the original.",
+  },
+  {
+    q: "How do I check my booking?",
+    a: "Visit My Bookings — if you booked as a guest, it's remembered on this device automatically; if you booked while signed in, it's on your account from any device. Either way you'll see your status, payment details, and receipt.",
+  },
+];
+
+function FaqAccordion({ variant }: { variant: "mobile" | "desktop" }) {
+  const [openIdx, setOpenIdx] = useState<number | null>(0);
+  const isMobile = variant === "mobile";
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 10 : 12 }}>
+      {FAQ_ITEMS.map((item, i) => {
+        const open = openIdx === i;
+        return (
+          <div key={item.q}
+            style={{
+              background: isMobile ? "#FFFCF4" : "var(--white)",
+              border: `1px solid ${isMobile ? "#E0CEB2" : "var(--line)"}`,
+              borderRadius: isMobile ? 16 : 18,
+              overflow: "hidden",
+              textAlign: "left",
+            }}>
+            <button type="button" onClick={() => setOpenIdx(open ? null : i)}
+              aria-expanded={open}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+                width: "100%", padding: isMobile ? "15px 16px" : "18px 22px",
+                background: "transparent", border: "none", cursor: "pointer", font: "inherit",
+                textAlign: "left", color: isMobile ? "#1F160E" : "var(--ink)",
+              }}>
+              <span style={{ fontSize: isMobile ? 14.5 : 16, fontWeight: 600, letterSpacing: "-.005em" }}>{item.q}</span>
+              <span style={{
+                flex: "none", display: "inline-flex", color: isMobile ? "#8C5A2E" : "var(--accent-ink)",
+                transform: open ? "rotate(180deg)" : "none", transition: "transform .2s ease",
+              }}><IcoChevronDown size={isMobile ? 14 : 16} /></span>
+            </button>
+            {open && (
+              <div style={{ padding: isMobile ? "0 16px 16px" : "0 22px 20px", fontSize: isMobile ? 13.5 : 14.5, lineHeight: 1.6, color: isMobile ? "#4A3A2A" : "var(--ink-2)", textWrap: "pretty" }}>
+                {item.a}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1305,6 +1412,13 @@ export default function BrowsePage() {
           </Link>
         </div>
 
+        {/* FAQ */}
+        <div style={{ position: "relative", zIndex: 1, padding: "0 24px 40px" }}>
+          <h2 style={{ fontFamily: "'Fraunces', serif", fontWeight: 400, fontSize: 26, letterSpacing: "-.02em", lineHeight: 1.1, margin: 0, textAlign: "center" }}>Frequently Asked Questions</h2>
+          <p style={{ fontSize: 13.5, color: "#4A3A2A", lineHeight: 1.5, margin: "8px 0 16px", textAlign: "center" }}>Everything you need to know before getting started.</p>
+          <FaqAccordion variant="mobile" />
+        </div>
+
         {/* FOOTER */}
         <footer style={{ position: "relative", zIndex: 1, borderTop: "1px solid #E0CEB2", padding: "28px 24px 30px" }}>
           <div style={{ fontFamily: "'Fraunces', serif", fontSize: 26, fontWeight: 500, letterSpacing: "-.02em", lineHeight: 1 }}>Come home to <em>rest.</em></div>
@@ -1705,6 +1819,17 @@ export default function BrowsePage() {
           <Link href={`/rooms/${room.id}`} className="booknow-btn cta-btn" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 999, background: "var(--dlux-accent)", color: "var(--white)", fontSize: 15, fontWeight: 600, textDecoration: "none" }}>
             See the home · Book now <IcoArrowRight size={18} />
           </Link>
+        </div>
+
+        {/* FAQ */}
+        <div style={{ position: "relative", maxWidth: 800, margin: "0 auto", padding: "0 28px 100px" }}>
+          <h2 className="serif" style={{ fontSize: "clamp(30px,3.5vw,40px)", fontWeight: 400, letterSpacing: "-.02em", lineHeight: 1.1, margin: 0, textAlign: "center", color: "var(--ink)" }}>
+            Frequently Asked Questions
+          </h2>
+          <p style={{ fontSize: 15.5, color: "var(--ink-2)", lineHeight: 1.55, margin: "14px 0 28px", textAlign: "center" }}>
+            Everything you need to know before getting started.
+          </p>
+          <FaqAccordion variant="desktop" />
         </div>
 
         {/* FOOTER — folded into the same tiling boho section as everything

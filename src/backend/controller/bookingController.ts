@@ -819,6 +819,19 @@ export const createBooking = async (
   // writing: the lookup matches any address this guest is known by.
   const promoEmail = promoRedemptionEmail(promoIdentity);
 
+  // Product requirement: claiming a promo requires an ACCOUNT, distinct from
+  // the "who is this guest" identity resolution above (which still runs for
+  // signed-in redemption tracking). `promoSessionUserId` is server-derived —
+  // never the client-sent `user_id` — so this can't be defeated by simply
+  // omitting the field; the real UI never even offers to apply a promo
+  // without a session (see validateDiscount() and PromoLoginGate).
+  if ((discount_id || promotion_id) && !promoSessionUserId) {
+    return NextResponse.json(
+      { success: false, message: "Please log in to claim this promo." },
+      { status: 400 },
+    );
+  }
+
   // Resolve every photo (payment proof, main guest ID(s), each additional
   // guest's ID(s)) BEFORE touching Postgres. These are Cloudinary round
   // trips, not database work — running them after BEGIN held a transaction
