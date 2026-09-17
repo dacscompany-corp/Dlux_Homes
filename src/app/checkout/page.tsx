@@ -21,6 +21,7 @@ import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
 import { autoDiscountAmount, pickAutoPromo } from "@/lib/promo-offer";
 import { TERMS_VERSION } from "@/lib/terms";
 import { DluxLoaderOverlay, DluxLoaderPage } from "@/components/brand/DluxLoader";
+import PromoLoginGate from "@/components/PromoLoginGate";
 
 // ── Helpers ────────────────────────────────────────────────────
 function peso(n: number) { return "₱" + n.toLocaleString("en-PH"); }
@@ -703,9 +704,14 @@ function CheckoutInner() {
   const [appliedDiscount, setAppliedDiscount] = useState<AppliedDiscount | null>(null);
   const [promoStatus, setPromoStatus] = useState<"idle" | "checking" | "error">("idle");
   const [promoError, setPromoError] = useState("");
+  // Claiming a promo (typing a code, or taking an automatic one) is
+  // account-bound — see PromoLoginGate. A guest can still check out at full
+  // price; only the discount itself waits on a session.
+  const [promoGateOpen, setPromoGateOpen] = useState(false);
   const applyPromo = async (codeOverride?: string) => {
     const code = (codeOverride ?? promoInput).trim();
     if (!code) return;
+    if (authStatus !== "authenticated") { setPromoGateOpen(true); return; }
     setPromoStatus("checking");
     setPromoError("");
     try {
@@ -753,8 +759,15 @@ function CheckoutInner() {
   // and only applied when it covers the stay type being booked.
   const autoPromo = pickAutoPromo(activePromotions, stayType === "10" ? "10" : "21");
   // Never stack: a code the guest entered wins over the automatic offer, since
-  // they took a deliberate action to use it.
-  const autoDiscount = appliedDiscount || !autoPromo ? 0 : autoDiscountAmount(autoPromo, subtotal, nights);
+  // they took a deliberate action to use it. Like the voucher box, this is
+  // account-bound — an unauthenticated guest sees the offer (below) but the
+  // discount itself doesn't fold into the total until they sign in.
+  const autoDiscount = appliedDiscount || !autoPromo || authStatus !== "authenticated"
+    ? 0
+    : autoDiscountAmount(autoPromo, subtotal, nights);
+  // The eligible automatic promo a guest hasn't unlocked yet, for the "Log in
+  // to apply" nudge near the total.
+  const lockedAutoPromo = !appliedDiscount && autoPromo && authStatus !== "authenticated" ? autoPromo : null;
 
   const discountAmount = (appliedDiscount?.discount_amount ?? 0) + autoDiscount;
   const total = Math.max(0, subtotal - discountAmount);
@@ -1931,6 +1944,12 @@ function CheckoutInner() {
                   {autoDiscount > 0 && autoPromo && (
                     <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span>{autoPromo.title}</span><span>−{peso(autoDiscount)}</span></div>
                   )}
+                  {lockedAutoPromo && (
+                    <button type="button" onClick={() => setPromoGateOpen(true)}
+                      style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, width: "100%", background: "transparent", border: "none", padding: 0, font: "inherit", color: "#8C5A2E", cursor: "pointer", textAlign: "left" }}>
+                      <span>{lockedAutoPromo.title} available</span><span style={{ flex: "none", textDecoration: "underline" }}>Log in to apply</span>
+                    </button>
+                  )}
                   {/* Mobile only: the pay-now hero carries these on desktop, but
                       below 860px it collapses to the sticky bar, so the settle-up
                       figures live here instead of disappearing. */}
@@ -2025,6 +2044,11 @@ function CheckoutInner() {
           </button>
         )}
       </div>
+      <PromoLoginGate
+        open={promoGateOpen}
+        onOpenChange={setPromoGateOpen}
+        callbackUrl={typeof window !== "undefined" ? `${window.location.pathname}${window.location.search}` : "/checkout"}
+      />
     </div>
   );
 }

@@ -51,6 +51,13 @@ export async function validateDiscount({ db, code, discountId, havenId, userId, 
     return { ok: false, error: "Enter a promo code.", status: 400 };
   }
 
+  // Promos are account-bound (one redemption per user, enforced below and by
+  // the UNIQUE constraint on discount_users) — an anonymous request has no
+  // account for that to bind to, so there's nothing valid to price here.
+  if (!userId) {
+    return { ok: false, error: "Please log in to claim this promo.", status: 401 };
+  }
+
   const result = await db.query(
     `SELECT d.id, d.code, d.name, d.discount_type, d.discount_value, d.min_booking_amount,
             d.max_uses, d.used_count, d.per_night, d.max_discount

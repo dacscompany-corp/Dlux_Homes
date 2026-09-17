@@ -777,6 +777,18 @@ export const createBooking = async (
       add_ons: addOns = {},
     } = body;
 
+  // Promos are account-bound — a guest with no user_id has no session for
+  // /api/discounts/validate to have approved in the first place, so a
+  // discount/promotion arriving here without one can only be a forged
+  // request (the real UI never sends one for an anonymous checkout since
+  // validateDiscount() itself now refuses to price a code with no userId).
+  if ((discount_id || promotion_id) && !user_id) {
+    return NextResponse.json(
+      { success: false, message: "Please log in to claim this promo." },
+      { status: 400 },
+    );
+  }
+
   // Resolve every photo (payment proof, main guest ID(s), each additional
   // guest's ID(s)) BEFORE touching Postgres. These are Cloudinary round
   // trips, not database work — running them after BEGIN held a transaction

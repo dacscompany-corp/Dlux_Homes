@@ -16,6 +16,7 @@ import { useGetHavensQuery } from "@/redux/api/roomApi";
 import { useGetHavenReviewsQuery } from "@/redux/api/reviewsApi";
 import { spanHours } from "@/lib/stay-window";
 import { IcoZoom, PromoLightbox } from "@/components/PromoLightbox";
+import PromoLoginGate from "@/components/PromoLoginGate";
 import { havenToRoom } from "@/lib/haven-adapter";
 import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
 import type { ActivePromotion, PromoStayType } from "@/redux/api/promotionsApi";
@@ -261,6 +262,8 @@ function PromoBanner({ promotions, roomId, rates, variant, visible = true }: {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<string | null>(null);
+  const [gateOpen, setGateOpen] = useState(false);
+  const { status: authStatus } = useSession();
   useEffect(() => {
     if (!copiedCode) return;
     const t = setTimeout(() => setCopiedCode(null), 2000);
@@ -275,6 +278,14 @@ function PromoBanner({ promotions, roomId, rates, variant, visible = true }: {
 
   const hrefFor = (p: ActivePromotion) =>
     p.discount_code ? `/rooms/${roomId}?promo=${encodeURIComponent(p.discount_code)}` : `/rooms/${roomId}`;
+
+  // Claiming (copying a code, following "Use this offer") is account-bound —
+  // see PromoLoginGate. Anyone can still see the card above; only these two
+  // actions are gated, so a guest never loses sight of the offer itself.
+  const requireAuth = (action: () => void) => {
+    if (authStatus !== "authenticated") { setGateOpen(true); return; }
+    action();
+  };
 
   const copyCode = async (code: string) => {
     try {
@@ -336,7 +347,7 @@ function PromoBanner({ promotions, roomId, rates, variant, visible = true }: {
           </p>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ flex: 1, fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 15, letterSpacing: ".1em", color: "#1F160E", background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 10, padding: "10px 12px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{code}</span>
-            <button type="button" onClick={() => copyCode(code)}
+            <button type="button" onClick={() => requireAuth(() => copyCode(code))}
               style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#1F160E", color: "#FFFCF4", border: "none", borderRadius: 10, padding: "11px 14px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", font: "inherit" }}>
               <IcoCopy />{copiedCode === code ? "Copied" : "Copy"}
             </button>
@@ -405,14 +416,22 @@ function PromoBanner({ promotions, roomId, rates, variant, visible = true }: {
 
           {renderClaimBlock()}
 
-          <Link href={hrefFor(expanded)} className="promo-cta"
-            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, width: "100%", background: "#B07848", color: "#FFFCF4", borderRadius: 14, padding: 15, fontSize: 15, fontWeight: 600, textDecoration: "none" }}>
-            Use this offer <IcoArrowRight size={16} />
-          </Link>
+          {authStatus === "authenticated" ? (
+            <Link href={hrefFor(expanded)} className="promo-cta"
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, width: "100%", background: "#B07848", color: "#FFFCF4", borderRadius: 14, padding: 15, fontSize: 15, fontWeight: 600, textDecoration: "none" }}>
+              Use this offer <IcoArrowRight size={16} />
+            </Link>
+          ) : (
+            <button type="button" onClick={() => setGateOpen(true)} className="promo-cta"
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, width: "100%", background: "#B07848", color: "#FFFCF4", border: "none", borderRadius: 14, padding: 15, fontSize: 15, fontWeight: 600, cursor: "pointer", font: "inherit" }}>
+              Use this offer <IcoArrowRight size={16} />
+            </button>
+          )}
         </div>
 
         {collapsed.map((p) => renderCollapsedRow(p))}
         <PromoLightbox src={lightbox} onClose={() => setLightbox(null)} />
+        <PromoLoginGate open={gateOpen} onOpenChange={setGateOpen} callbackUrl={hrefFor(expanded)} />
       </div>
     );
   }
@@ -479,7 +498,7 @@ function PromoBanner({ promotions, roomId, rates, variant, visible = true }: {
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <span style={{ fontSize: 12, color: "#6B6358" }}>Your code</span>
               <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 16, letterSpacing: ".1em", color: "#1F160E", background: "#FFFCF4", border: "1px solid #E0CEB2", borderRadius: 10, padding: "11px 12px", textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{code}</span>
-              <button type="button" onClick={() => copyCode(code)}
+              <button type="button" onClick={() => requireAuth(() => copyCode(code))}
                 style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, background: "transparent", color: "#8C5A2E", border: "1px solid #D4BE9A", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", font: "inherit" }}>
                 <IcoCopy />{copiedCode === code ? "Copied" : "Copy code"}
               </button>
@@ -492,10 +511,17 @@ function PromoBanner({ promotions, roomId, rates, variant, visible = true }: {
             </p>
           )}
 
-          <Link href={hrefFor(expanded)} className="promo-cta"
-            style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 9, background: "#B07848", color: "#FFFCF4", borderRadius: 999, padding: "14px 22px", fontSize: 15, fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap" }}>
-            Use this offer <IcoArrowRight size={17} />
-          </Link>
+          {authStatus === "authenticated" ? (
+            <Link href={hrefFor(expanded)} className="promo-cta"
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 9, background: "#B07848", color: "#FFFCF4", borderRadius: 999, padding: "14px 22px", fontSize: 15, fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap" }}>
+              Use this offer <IcoArrowRight size={17} />
+            </Link>
+          ) : (
+            <button type="button" onClick={() => setGateOpen(true)} className="promo-cta"
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 9, background: "#B07848", color: "#FFFCF4", border: "none", borderRadius: 999, padding: "14px 22px", fontSize: 15, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", font: "inherit" }}>
+              Use this offer <IcoArrowRight size={17} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -526,6 +552,7 @@ function PromoBanner({ promotions, roomId, rates, variant, visible = true }: {
           </div>
         );
       })}
+      <PromoLoginGate open={gateOpen} onOpenChange={setGateOpen} callbackUrl={hrefFor(expanded)} />
     </>
   );
 }
