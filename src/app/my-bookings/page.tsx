@@ -5,6 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useSession } from "next-auth/react";
 import SiteHeader from "@/components/SiteHeader";
+import ChangePasswordCard from "@/components/guest/ChangePasswordCard";
 import { getMyBookingIds } from "@/lib/booking-store";
 import type { StoredBooking } from "@/lib/booking-store";
 
@@ -221,6 +222,10 @@ export default function MyBookingsPage() {
             {list.map((b) => <BookingCard key={b.id} booking={b as StoredBooking & { checkInTime?: string; checkOutTime?: string }} />)}
           </div>
         )}
+
+        {/* Only signed-in guests have a password to change; a guest who booked
+            without an account has nothing to show here yet. */}
+        {status === "authenticated" && <ChangePasswordCard email={session?.user?.email} />}
       </div>
 
       <footer style={{ borderTop: "1px solid var(--line)", background: "var(--bg)" }}>

@@ -115,6 +115,8 @@ Booking data (room, dates, guests) is persisted in **Redux state** from the prev
 
 ### Step 5.4 — Payment
 - View booking summary (room, dates, stay type, add-ons, total)
+  - Dates inside an active seasonal rate show a "{Season} Rate" block listing each seasonal date and its rate; promo entry is replaced by "Promos don't apply to {Season} dates" unless the season allows promos
+  - The server re-prices the booking on submit; if rates changed since the page loaded it returns 409 `PRICE_CHANGED` and the guest is asked to refresh
 - Upload **Payment Proof** (GCash screenshot or bank transfer)
 - Upload **Valid ID**
 - Review booking policy and house rules

@@ -42,10 +42,15 @@ const REDEMPTION_OPTIONS: { key: PromotionRedemption; label: string; hint: strin
   { key: "voucher", label: "Voucher code", hint: "Guests enter a code at checkout." },
 ];
 
-// Both delivery methods are capped at one redemption per guest account —
-// vouchers via discount_users, automatic promos via promotion_users. Stated in
-// the form because it's a rule owners are otherwise unaware they're setting.
-const ONE_PER_GUEST_NOTE = "Either way, each guest account can use this offer once.";
+// Both delivery methods are capped at one redemption per guest — vouchers via
+// discount_users, automatic promos via promotion_users. Stated in the form
+// because it's a rule owners are otherwise unaware they're setting.
+//
+// "Email address", not "account": most guests never sign in, so keying this on
+// an account meant it went unenforced for nearly everyone. The copy says what
+// the rule actually is now, including the limit owners should know about it.
+const ONE_PER_GUEST_NOTE =
+  "Either way, each guest can use this offer once — tracked by the email address they book with, whether or not they sign in.";
 
 // Mirrors normalizeCode() in the server action, so what the owner types is what
 // gets saved and shown to guests.

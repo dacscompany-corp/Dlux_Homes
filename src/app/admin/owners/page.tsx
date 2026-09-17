@@ -30,6 +30,7 @@ import {
   PaymentMethodsSection, GuestAssistanceSection, UserManagementSection, PartnerManagementSection,
   PricingCalendarSection, Empty,
 } from "@/components/admin/owners/OwnerModules";
+import { SeasonalRatesSection } from "@/components/admin/owners/SeasonalRatesSection";
 import HavenWizard from "@/components/admin/owners/HavenWizard";
 import { MonthNavigator, currentMonthKey } from "@/components/admin/owners/MonthNavigator";
 import OverheadSection from "@/components/admin/owners/overhead/OverheadSection";
@@ -88,6 +89,7 @@ import {
   SlidersHorizontal,
   Bookmark,
   Receipt,
+  CalendarRange,
 } from "lucide-react";
 
 // PromotionRecord types start_date/end_date as string, but server actions return
@@ -157,7 +159,7 @@ export default function OwnerDashboard() {
   // Booking guide starts open, matching the design — it is reference material an
   // owner can collapse once the flow is familiar.
   const [guideOpen, setGuideOpen] = useState(false);
-  const [financeTab, setFinanceTab]   = useState<"revenue"|"methods"|"promotions"|"overhead"|"profitability">("revenue");
+  const [financeTab, setFinanceTab]   = useState<"revenue"|"methods"|"promotions"|"seasonal"|"overhead"|"profitability">("revenue");
   const [teamTab, setTeamTab]         = useState<"staff"|"users"|"partners">("staff");
 
   // ── Live data from the Supabase-backed API (RTK Query) ──
@@ -1907,9 +1909,11 @@ export default function OwnerDashboard() {
             { id: "revenue", label: "Revenue Management", icon: PhilippinePeso },
             { id: "methods", label: "Payment Methods", icon: CreditCard },
             { id: "promotions", label: "Promotions", icon: Sparkles },
+            ...(isOwner ? [{ id: "seasonal", label: "Seasonal Rates", icon: CalendarRange }] : []),
             ...(isOwner ? [{ id: "overhead", label: "Overhead", icon: Receipt }] : []),
             ...(isOwner ? [{ id: "profitability", label: "Profitability", icon: TrendingUp }] : []),
-          ], financeTab, (id) => setFinanceTab(id as "revenue" | "methods" | "promotions" | "overhead" | "profitability"))}
+          ], financeTab, (id) => setFinanceTab(id as "revenue" | "methods" | "promotions" | "seasonal" | "overhead" | "profitability"))}
+          {financeTab === "seasonal" && isOwner && <SeasonalRatesSection />}
           {financeTab === "overhead" && isOwner && <OverheadSection />}
           {financeTab === "profitability" && isOwner && (
             <ProfitabilitySection

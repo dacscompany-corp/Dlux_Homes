@@ -8,6 +8,7 @@ import toast from "react-hot-toast";
 import { imageFileError, PHOTO_READ_ERROR } from "@/lib/validateImageFile";
 import { fileToCompressedDataUrl } from "@/lib/compressImage";
 import { securityDepositFor } from "@/lib/pricing";
+import { bookingHeroStage, type BookingHeroStage } from "@/lib/bookingHeroStage";
 import { useGetHavensQuery } from "@/redux/api/roomApi";
 import ImageThumb from "@/components/ImageThumb";
 import SiteHeader from "@/components/SiteHeader";
@@ -57,7 +58,61 @@ function IcoMessenger({ size = 18, inverted = false }: { size?: number; inverted
 }
 function IcoCheck() { return <svg width={32} height={32} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>; }
 function IcoCalendar() { return <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>; }
-function IcoArrowRight() { return <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>; }
+function IcoArrowRight({ size = 16 }: { size?: number } = {}) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>; }
+function IcoClock({ size = 32 }: { size?: number }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15 14" /></svg>; }
+function IcoX({ size = 32 }: { size?: number }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>; }
+function HeroIcon({ kind, size }: { kind: "clock" | "arrow" | "x"; size: number }) {
+  if (kind === "clock") return <IcoClock size={size} />;
+  if (kind === "arrow") return <IcoArrowRight size={size} />;
+  return <IcoX size={size} />;
+}
+
+// What the fallback hero says at each stage it can land on. It used to
+// congratulate everyone it covered — "You're in. Rest is coming." with
+// "Confirmation emailed to ..." underneath — so a guest whose documents the
+// owner hadn't opened yet, or whose request was turned down, read it as
+// confirmed. Desktop sets `em` in italics after `title`; mobile runs the two
+// together. `emailsGuest` marks the stages whose body promises an email, so
+// the guest's address is only appended where a sentence is waiting for it.
+const HERO_COPY: Record<BookingHeroStage, {
+  title: string;
+  em: string;
+  body: string;
+  emailsGuest: boolean;
+  tone: "live" | "stopped";
+  icon: "clock" | "arrow" | "x";
+}> = {
+  pending: {
+    title: "Request", em: "received.",
+    body: "We’re reviewing your documents now. Once it’s approved, we’ll email your confirmation and set up your account, so you can sign in and see this booking any time.",
+    emailsGuest: true, tone: "live", icon: "clock",
+  },
+  "awaiting-payment": {
+    title: "You’re approved.", em: "One step left.",
+    body: "Send your down payment and upload the receipt below to lock in these dates.",
+    emailsGuest: false, tone: "live", icon: "arrow",
+  },
+  verifying: {
+    title: "Payment", em: "received.",
+    body: "We’re verifying your down payment. Once it clears, your confirmation goes out and your account is ready to sign in to.",
+    emailsGuest: true, tone: "live", icon: "clock",
+  },
+  cancelled: {
+    title: "This booking was", em: "cancelled.",
+    body: "These dates have been released. Message us if this wasn’t expected, or book again for a new stay.",
+    emailsGuest: false, tone: "stopped", icon: "x",
+  },
+  rejected: {
+    title: "This request wasn’t", em: "approved.",
+    body: "Message us and we’ll walk you through what’s needed, or book again for a new stay.",
+    emailsGuest: false, tone: "stopped", icon: "x",
+  },
+  lapsed: {
+    title: "This stay has", em: "passed.",
+    body: "These dates are in the past and the booking wasn’t completed. Message us if you need help, or book again for a new stay.",
+    emailsGuest: false, tone: "stopped", icon: "x",
+  },
+};
 
 const ROOM_IMAGE = "https://images.unsplash.com/photo-1631049307264-da0ec9d70304?w=1600&q=80";
 
@@ -328,6 +383,14 @@ function ConfirmedInner() {
   // Confirmed = down payment approved (or the booking is already past that point).
   // From here the guest just waits for check-in day and settles the rest then.
   const isConfirmed = !lapsed && !isCompleted && (dpApproved || ["confirmed", "on-going", "checked-in"].includes(String(booking.status)));
+  // Everything the two designs above don't claim falls through to the hero at
+  // the bottom of this file; this is which of those states the guest is in.
+  const heroStage = bookingHeroStage({
+    status: String(booking.status),
+    hasPaymentProof: !!pay.proofUrl,
+    lapsed,
+  });
+  const hero = HERO_COPY[heroStage];
   // Mirror the server policy: self-service date changes are only offered while
   // the booking is still pending host review — once approved/confirmed, the
   // guest must message us instead (see request-date-change/route.ts).
@@ -387,7 +450,7 @@ function ConfirmedInner() {
             <div style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".16em", color: "#8C5A2E", marginBottom: 14 }}>Booking confirmed</div>
             <h1 className="cf2-h1" style={{ fontFamily: SERIF, fontSize: 52, fontWeight: 400, letterSpacing: "-.03em", lineHeight: 1.04, margin: 0 }}>You&rsquo;re all set{guestName ? <>, {guestName}</> : null}.</h1>
             <p style={{ fontSize: 17, color: "#4A3A2A", lineHeight: 1.6, margin: "18px auto 0", maxWidth: 440 }}>
-              Your stay is locked in.{guestEmail ? <> We&rsquo;ve emailed everything to <strong>{guestEmail}</strong> —</> : <> We&rsquo;ve emailed everything over —</>} and we&rsquo;ll email you the night before with how to get in.
+              Your stay is locked in.{guestEmail ? <> We&rsquo;ve emailed everything to <strong>{guestEmail}</strong> &mdash; the same address you can now sign in with to see this booking any time.</> : <> We&rsquo;ve emailed everything over, and your account is ready to sign in to.</>} We&rsquo;ll email you the night before with how to get in.
             </p>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 20, padding: "8px 16px", borderRadius: 999, background: "#fff", border: "1px solid #E0CEB2", fontSize: 13, color: "#4A3A2A", fontFamily: MONO }}>
               Booking <span style={{ color: "#1F160E", fontWeight: 500 }}>{booking.id}</span>
@@ -710,20 +773,20 @@ function ConfirmedInner() {
           }
         `}</style>
 
-        {/* MOBILE dark success hero */}
-        <div className="cf-mobhero" style={{ background: lapsed ? "#3a352e" : "#1F160E", color: "#FFFCF4", padding: "52px 24px 32px", textAlign: "center", margin: "-40px -16px 24px" }}>
-          <div style={{ width: 66, height: 66, borderRadius: "50%", background: lapsed ? "#9ca3af" : "#5B9E6B", display: "grid", placeItems: "center", margin: "0 auto 18px", color: "#fff", boxShadow: lapsed ? "none" : "0 0 0 8px rgba(91,158,107,.18)" }}>
-            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+        {/* MOBILE dark hero — wording and icon come from the stage, not a fixed success */}
+        <div className="cf-mobhero" style={{ background: hero.tone === "stopped" ? "#3a352e" : "#1F160E", color: "#FFFCF4", padding: "52px 24px 32px", textAlign: "center", margin: "-40px -16px 24px" }}>
+          <div style={{ width: 66, height: 66, borderRadius: "50%", background: hero.tone === "stopped" ? "#9ca3af" : "#B07848", display: "grid", placeItems: "center", margin: "0 auto 18px", color: "#fff" }}>
+            <HeroIcon kind={hero.icon} size={30} />
           </div>
-          <h1 style={{ fontFamily: "'Fraunces', Georgia, serif", fontWeight: 400, fontSize: 30, letterSpacing: "-.02em", margin: 0 }}>{isCompleted ? "Thanks for staying." : lapsed ? "This stay has passed." : "You’re all set."}</h1>
-          <p style={{ fontSize: 14, lineHeight: 1.55, color: "rgba(255,255,252,.78)", margin: "12px auto 0", maxWidth: 280 }}>{lapsed ? "These dates are in the past and the booking wasn’t completed." : "We’ve received your payment for review. A confirmation will arrive shortly."}</p>
+          <h1 style={{ fontFamily: "'Fraunces', Georgia, serif", fontWeight: 400, fontSize: 30, letterSpacing: "-.02em", margin: 0 }}>{`${hero.title} ${hero.em}`}</h1>
+          <p style={{ fontSize: 14, lineHeight: 1.55, color: "rgba(255,255,252,.78)", margin: "12px auto 0", maxWidth: 280 }}>{hero.body}</p>
           <div style={{ display: "inline-block", marginTop: 16, padding: "7px 14px", borderRadius: 999, background: "rgba(255,255,255,.1)", fontFamily: "'Geist Mono', monospace", fontSize: 12, letterSpacing: ".05em" }}>{booking.id}</div>
         </div>
 
-        {/* Hero check (desktop) */}
+        {/* Hero (desktop) */}
         <div className="cf-deskhero" style={{ textAlign: "center", marginBottom: 40 }}>
-          <div style={{ width: 72, height: 72, borderRadius: "50%", background: lapsed ? "#9ca3af" : "var(--ink)", color: "var(--white)", display: "grid", placeItems: "center", margin: "0 auto 20px" }}>
-            <IcoCheck />
+          <div style={{ width: 72, height: 72, borderRadius: "50%", background: hero.tone === "stopped" ? "#9ca3af" : "var(--ink)", color: "var(--white)", display: "grid", placeItems: "center", margin: "0 auto 20px" }}>
+            <HeroIcon kind={hero.icon} size={32} />
           </div>
           <div style={{ display: "inline-flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
             <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: "var(--accent-ink)" }}>
@@ -734,22 +797,16 @@ function ConfirmedInner() {
             )}
           </div>
           <h1 className="serif cf-hero-h1" style={{ fontSize: 56, fontWeight: 400, letterSpacing: "-.03em", margin: 0, lineHeight: 1 }}>
-            {isCompleted ? <>Thanks for <em>staying.</em></> : lapsed ? <>This stay has <em>passed.</em></> : <>You&apos;re in. <em>Rest is coming.</em></>}
+            {hero.title} <em>{hero.em}</em>
           </h1>
           <p style={{ fontSize: 16, color: "var(--ink-2)", marginTop: 16, maxWidth: 520, marginInline: "auto", lineHeight: 1.6 }}>
-            {lapsed ? (
-              <>These dates are in the past and the booking wasn&apos;t completed. Message us if you need help, or book again for a new stay.</>
-            ) : (
-              <>
-                {guestEmail && <>Confirmation emailed to <strong>{guestEmail}</strong>. </>}
-                {guestName && guestEmail && <>{guestName}, we&apos;ll email your check-in details the day before.</>}
-              </>
-            )}
+            {hero.body}
+            {hero.emailsGuest && guestEmail && <> We&apos;ll send it to <strong>{guestEmail}</strong>.</>}
           </p>
         </div>
 
         {/* Faster-review Messenger nudge while the request is still pending */}
-        {String(booking.status) === "pending" && !lapsed && (
+        {heroStage === "pending" && (
           <div style={{ marginBottom: 28, borderRadius: 24, border: "1px solid var(--line)", background: "var(--white)", padding: 24, display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 220 }}>
               <div className="serif" style={{ fontSize: 20, fontWeight: 500 }}>Want a faster review?</div>
@@ -763,7 +820,7 @@ function ConfirmedInner() {
         )}
 
         {/* PAY AFTER APPROVAL — shown once the host pre-approves the documents */}
-        {String(booking.status) === "approved" && !lapsed && !isConfirmed && (
+        {(heroStage === "awaiting-payment" || heroStage === "verifying") && (
           <div style={{ marginBottom: 28, borderRadius: 24, border: "1px solid var(--dlux-accent)", background: "rgba(176,120,72,.05)", overflow: "hidden" }}>
             <div style={{ padding: "18px 28px", background: "var(--dlux-accent)", color: "var(--white)" }}>
               <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", opacity: 0.9 }}>Approved — next step</div>

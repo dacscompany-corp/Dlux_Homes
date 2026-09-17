@@ -32,8 +32,11 @@ export async function POST(req: NextRequest) {
   // Derived from the session rather than a body flag, so a guest can't opt
   // themselves into the slow path. Owner and CSR both qualify — both mount the
   // wizard.
+  // It also tells the controller not to treat the caller's session as the
+  // guest's: the wizard books on someone else's behalf, so the admin's account
+  // must not be the identity a promo redemption is recorded against.
   const guard = await requireAdmin();
-  const res = await createBooking(req, { awaitPendingEmail: guard.ok });
+  const res = await createBooking(req, { awaitPendingEmail: guard.ok, isAdminCaller: guard.ok });
   // On success, ping the admin's Messenger that a new request arrived (best-effort).
   try {
     const json = await res.clone().json();

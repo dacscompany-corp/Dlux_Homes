@@ -473,3 +473,31 @@ describe("availabilityReply — no longer carries the CTA", () => {
     expect(out.trimEnd().endsWith("Weekday rate po ang date na 'yan.")).toBe(true);
   });
 });
+
+describe("seasonal rates in bot quotes", () => {
+  const XMAS = {
+    id: "xmas", name: "Christmas Season 2026", startDate: "2026-12-05", endDate: "2026-12-31",
+    overnightWeekday: 2300, overnightWeekend: 2500, daynightWeekday: 1800, daynightWeekend: 2000, allowPromos: false,
+  };
+
+  // 2026-12-10 is a Thursday -> seasonal weekday rate.
+  it("quotes a seasonal date at the season's rate and names the season", () => {
+    expect(quoteFor(OVERNIGHT, "2026-12-10", 1, 2, RATES, 200, RULES, [XMAS])).toBe(2300);
+    const msg = availabilityReply({
+      from: "2026-12-10", nights: 1, pax: 2, windows: [OVERNIGHT, DAYCATION],
+      rates: RATES, extraPaxFee: 200, rules: RULES, seasons: [XMAS],
+    });
+    expect(msg).toContain("₱2,300");
+    expect(msg).toContain("₱1,800");
+    expect(msg).toContain("Christmas Season 2026 rate po");
+  });
+
+  it("keeps the regular wording outside the season", () => {
+    const msg = availabilityReply({
+      from: "2026-12-02", nights: 1, pax: 2, windows: [OVERNIGHT],
+      rates: RATES, extraPaxFee: 200, rules: RULES, seasons: [XMAS],
+    });
+    expect(msg).toContain("₱1,899");
+    expect(msg).toContain("Weekday rate po");
+  });
+});

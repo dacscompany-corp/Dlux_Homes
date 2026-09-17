@@ -18,7 +18,8 @@ import {
   EXISTING_END_SQL,
 } from "./bookingWindow";
 import { turnoverSql } from "./turnover";
-import { DEFAULT_CALENDAR_RULES, type CalendarRules } from "./pricing";
+import { DEFAULT_CALENDAR_RULES, type CalendarRules, type SeasonalRate } from "./pricing";
+import { seasonFromRow, publicSeason } from "./seasonalRates";
 import type { StayWindow } from "./messenger-reply";
 
 /** Anything that can run a parameterised query — the pool, a client, or a test stub. */
@@ -110,6 +111,32 @@ export async function loadCalendarRules(db?: Queryable): Promise<CalendarRules> 
   } catch {
     // Pricing must never break because the calendar tables are unreachable.
     return DEFAULT_CALENDAR_RULES;
+  }
+}
+
+/**
+ * Active (switched ON) seasonal rates, read server-side — the counterpart of
+ * useSeasonalRates() on the storefront. Pass a range to get only the seasons
+ * overlapping [fromISO, toISO] (both inclusive).
+ *
+ * Returns [] when the table is unreachable, so pricing falls back to regular
+ * rates rather than breaking. createBooking's price check only rejects prices
+ * BELOW the quote, so this fallback can never refuse a correctly priced booking.
+ */
+export async function loadActiveSeasons(db?: Queryable, range?: { fromISO: string; toISO: string }): Promise<SeasonalRate[]> {
+  try {
+    const q = await resolveDb(db);
+    const res = range
+      ? await q.query(
+          `SELECT * FROM seasonal_rates
+           WHERE active AND start_date <= $2::date AND end_date >= $1::date
+           ORDER BY start_date`,
+          [range.fromISO, range.toISO],
+        )
+      : await q.query(`SELECT * FROM seasonal_rates WHERE active ORDER BY start_date`);
+    return res.rows.map((r) => publicSeason(seasonFromRow(r)));
+  } catch {
+    return [];
   }
 }
 

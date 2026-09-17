@@ -14,6 +14,7 @@ import {
 import {
   loadHavenContext,
   loadCalendarRules,
+  loadActiveSeasons,
   openWindowsOn,
   isRangeOpen,
   openDatesAhead,
@@ -119,10 +120,11 @@ async function handleMessage(senderId: string, text: string): Promise<void> {
   }
 
   try {
-    const [ctx, rules, room] = await Promise.all([
+    const [ctx, rules, room, seasons] = await Promise.all([
       loadHavenContext(),
       loadCalendarRules(),
       loadRoom(),
+      loadActiveSeasons(),
     ]);
     if (!ctx || !room) return;
 
@@ -177,6 +179,7 @@ async function handleMessage(senderId: string, text: string): Promise<void> {
         rates: room,
         extraPaxFee: room.additionalPaxFee,
         rules,
+        seasons,
         stay: intent.stay,
         timeAsk: intent.timeAsk,
         requestedTime: intent.requestedTime,

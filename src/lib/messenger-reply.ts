@@ -14,7 +14,11 @@ import {
   bundleExtraPaxFee,
   extraPaxFee,
   isWeekendOrHoliday,
+  seasonFor,
+  addDaysISO,
+  isLongTermStay,
   type CalendarRules,
+  type SeasonalRate,
 } from "./pricing";
 import { spanHours } from "./stay-window";
 import type { StayLabel } from "./messenger-intent";
@@ -105,13 +109,13 @@ export function quoteFor(
   rates: RateFields,
   feePerPax: number,
   rules: CalendarRules,
+  seasons: readonly SeasonalRate[] = [],
 ): number {
   const sessions = w.stayType === "10" ? 1 : Math.max(1, nights);
-  const room = stayTotal(w.stayType, checkInISO, sessions, rates, rules);
+  const room = stayTotal(w.stayType, checkInISO, sessions, rates, rules, seasons);
 
   // Only an Overnight can reach a tier; a 10-hour session never does.
-  const bundled =
-    w.stayType === "21" && bundleNightlyRate(sessions, checkInISO, rates, rules) != null;
+  const bundled = isLongTermStay(w.stayType, checkInISO, sessions, rates, rules, seasons);
 
   const paxFee = bundled
     ? bundleExtraPaxFee(pax, BASE_PAX, sessions, rates)
@@ -209,11 +213,14 @@ export function availabilityReply(args: {
   rates: RateFields;
   extraPaxFee: number;
   rules: CalendarRules;
+  /** Active seasonal rates; a seasonal date is quoted at the season's rate. */
+  seasons?: readonly SeasonalRate[];
   stay?: StayLabel;
   timeAsk?: boolean;
   requestedTime?: string;
 }): string {
   const { from, to, nights, pax, windows, rates, rules, stay } = args;
+  const seasons = args.seasons ?? [];
   const span = to
     ? `${shortDate(from)}–${shortDate(to)} (${nights} nights)`
     : `${shortDate(from)} (${dayName(from)})`;
@@ -226,7 +233,7 @@ export function availabilityReply(args: {
   }
 
   const price = (w: StayWindow) =>
-    `• ${windowLine(w)} — ${peso(quoteFor(w, from, nights, pax, rates, args.extraPaxFee, rules))}`;
+    `• ${windowLine(w)} — ${peso(quoteFor(w, from, nights, pax, rates, args.extraPaxFee, rules, seasons))}`;
 
   // A guest who named one window gets that window, not the whole card. Two
   // things can still make the narrowed list empty, and each needs its own
@@ -254,7 +261,12 @@ export function availabilityReply(args: {
     quoted.some((w) => w.stayType === "21") &&
     bundleNightlyRate(nights, from, rates, rules) != null;
 
-  const rateNote = bundled
+  // A season on any quoted date outranks the weekday/weekend/long-term wording.
+  const season = Array.from({ length: Math.max(1, nights) }, (_, i) => seasonFor(addDaysISO(from, i), seasons)).find(Boolean);
+
+  const rateNote = season
+    ? `${season.name} rate po ang date na 'yan.`
+    : bundled
     ? `Long-term rate po ito para sa ${nights} nights.`
     : isWeekendOrHoliday(from, rules)
       ? "Weekend/holiday rate po ang date na 'yan."

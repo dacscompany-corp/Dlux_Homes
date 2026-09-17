@@ -15,8 +15,9 @@ import { mockRooms } from "@/lib/mock-data";
 import { generateBookingId, addMyBookingId } from "@/lib/booking-store";
 import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
 import { havenToRoom } from "@/lib/haven-adapter";
-import { stayTotal, isWeekendOrHoliday, addDaysISO, extraPaxFee, bundleNightlyRate, bundleExtraPaxFee, seniorPwdDiscount, securityDepositFor } from "@/lib/pricing";
+import { isWeekendOrHoliday, addDaysISO, securityDepositFor, quoteStay, promoBlockingSeason } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
+import { useSeasonalRates } from "@/lib/useSeasonalRates";
 import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
 import { autoDiscountAmount, pickAutoPromo } from "@/lib/promo-offer";
 import { TERMS_VERSION } from "@/lib/terms";
@@ -671,31 +672,40 @@ function CheckoutInner() {
   // No cleaning or service fee.
   const feePax = adults + children; // adults + young adults; excludes 7-under
   const extraPaxCount = Math.max(0, feePax - room.basePax);
-  // Stay price: 10h single session, or 21h × nights (each night priced by its
-  // own date) — UNLESS the stay is long enough to qualify for a long-term tier
-  // (3/11/18/26+ nights), in which case a flat nightly rate applies (no
-  // weekday/weekend split).
-  const basePrice = stayTotal(stayType, date, nights, room, calendarRules);
-  const bundleRate = stayType === "10" ? undefined : bundleNightlyRate(nights, date, room, calendarRules);
-  const bundleLabel = bundleRate == null ? null : "Long-term rate";
-  // A long-term stay charges its own per-pax-per-night fee INSTEAD of the
-  // normal extraPaxFee() — the two must never both apply, or an extra guest
-  // gets charged twice.
-  const paxFeeRate = bundleRate != null ? ((room as { longtermExtraPaxFee?: number }).longtermExtraPaxFee ?? 100) : room.additionalPaxFee;
-  const paxFee = bundleRate != null
-    ? bundleExtraPaxFee(feePax, room.basePax, nights, room)
-    : extraPaxFee(feePax, room.basePax, room.additionalPaxFee, nights);
-  // Refundable security deposit, collected at check-in — scales with nights
-  // booked (owner spec, 2026-08-19): 3-10 nights ₱1,500, 11-17 ₱2,000,
-  // 18-25 ₱3,000, 26+ ₱5,000, ₱1,000 otherwise (incl. Daycation/Nightcation).
-  const SECURITY_DEPOSIT = securityDepositFor(nights, stayType, room as { securityDeposit?: number; depositTier1Amount?: number; depositTier2Amount?: number; depositTier3Amount?: number; depositTier4Amount?: number });
+  // Owner-set seasonal rates (Finance → Seasonal Rates). A night inside an
+  // active season is charged the seasonal rate, overriding both the regular
+  // and the long-term rate.
+  const seasons = useSeasonalRates();
   // Senior citizen / PWD: 20% off each qualifying guest's share of the ROOM
   // (basePrice), never the pax fee. Comes off before any promo code, so a promo
   // lands on the already-reduced subtotal — the statutory discount is protected.
   const seniorCount = (info.senior ? 1 : 0) + extraGuests.filter((g) => g.senior).length;
-  const seniorDiscount = seniorPwdDiscount(basePrice, feePax, seniorCount);
-  const subtotal = Math.max(0, basePrice + paxFee - seniorDiscount);
-  const { data: activePromotions } = useGetActivePromotionsQuery();
+  // Stay price: 10h single session, or 21h × nights (each night priced by its
+  // own date) — UNLESS the stay is long enough to qualify for a long-term tier
+  // (3/11/18/26+ nights), in which case a flat nightly rate applies to the
+  // non-seasonal nights. A long-term stay charges its own per-pax-per-night fee
+  // INSTEAD of the normal one. quoteStay() is the same helper createBooking
+  // re-prices the booking with, so what's shown here is what the server accepts.
+  const quote = quoteStay({ stayType, checkInISO: date, nights, rates: room, rules: calendarRules, seasons, feePax, seniorCount });
+  const basePrice = quote.roomTotal;
+  // "₱X/night · Long-term rate" only when one flat long-term rate (the haven's
+  // or a season's) priced every night. Seasons are not named to the guest.
+  const bundleRate = quote.flatLongTermRate;
+  const bundleLabel = bundleRate != null ? "Long-term rate" : null;
+  const paxFeeRate = quote.paxFeeRate;
+  const paxFee = quote.paxFee;
+  // The season (if any) that rules out promos on this stay.
+  const blockingSeason = promoBlockingSeason(stayType, date, nights, seasons);
+  // Refundable security deposit, collected at check-in — scales with nights
+  // booked (owner spec, 2026-08-19): 3-10 nights ₱1,500, 11-17 ₱2,000,
+  // 18-25 ₱3,000, 26+ ₱5,000, ₱1,000 otherwise (incl. Daycation/Nightcation).
+  const SECURITY_DEPOSIT = securityDepositFor(nights, stayType, room as { securityDeposit?: number; depositTier1Amount?: number; depositTier2Amount?: number; depositTier3Amount?: number; depositTier4Amount?: number });
+  const seniorDiscount = quote.seniorDiscount;
+  const subtotal = quote.subtotal;
+  // Passing the email lets the server drop promotions this guest has already
+  // redeemed — otherwise a signed-out repeat guest sees the automatic offer in
+  // the summary all the way to submit, and only then gets refused.
+  const { data: activePromotions } = useGetActivePromotionsQuery({ email: info.email });
 
   // Promo code — validated against /api/discounts/validate as the guest types.
   // ?promo= arrives pre-filled from the home page's promo banner and auto-applies.
@@ -712,6 +722,12 @@ function CheckoutInner() {
     const code = (codeOverride ?? promoInput).trim();
     if (!code) return;
     if (authStatus !== "authenticated") { setPromoGateOpen(true); return; }
+    if (blockingSeason) {
+      setAppliedDiscount(null);
+      setPromoStatus("error");
+      setPromoError(`Promos don't apply to ${blockingSeason.name} dates.`);
+      return;
+    }
     setPromoStatus("checking");
     setPromoError("");
     try {
@@ -720,7 +736,12 @@ function CheckoutInner() {
         headers: { "Content-Type": "application/json" },
         // `nights` lets a per-night code quote its real value here; the server
         // re-derives it from the dates at submit, so this is a preview figure.
-        body: JSON.stringify({ code, haven_id: isUuid ? roomId : null, amount: subtotal, nights, user_id: session?.user?.id ?? null }),
+        // No user_id: the server reads the session itself now, since a field the
+        // browser controls was a rule the browser could opt out of. `guest_email`
+        // is the identity for a guest who never signs in — which is most of them.
+        // `check_in_date` + `stay_type` let the server refuse a code on dates
+        // covered by a season that doesn't allow promos.
+        body: JSON.stringify({ code, haven_id: isUuid ? roomId : null, amount: subtotal, nights, guest_email: info.email, check_in_date: date, stay_type: stayType }),
       });
       const json = await res.json();
       if (!res.ok || !json.success) {
@@ -748,16 +769,22 @@ function CheckoutInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // Re-validate whenever the subtotal changes (e.g. guest count changes the
-  // pax fee) so a min-booking-amount code doesn't silently overcharge.
+  // pax fee) so a min-booking-amount code doesn't silently overcharge — and
+  // whenever the email changes, since that is who the one-use-per-guest rule
+  // is checked against. A code applied before the guest typed their address
+  // was only ever a preview.
+  // A season that forbids promos (e.g. switched ON, or loaded after the code
+  // was applied) runs through the same path and drops the code with a reason.
   useEffect(() => {
     if (appliedDiscount) applyPromo(appliedDiscount.code);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subtotal]);
+  }, [subtotal, info.email, blockingSeason?.id]);
 
   // Automatic promotion — no code to type. Resolved from the server's active
   // list rather than a URL param, so it can't be forged by editing the link,
   // and only applied when it covers the stay type being booked.
-  const autoPromo = pickAutoPromo(activePromotions, stayType === "10" ? "10" : "21");
+  // Seasonal rates don't stack with promos unless the owner allowed it.
+  const autoPromo = blockingSeason ? undefined : pickAutoPromo(activePromotions, stayType === "10" ? "10" : "21");
   // Never stack: a code the guest entered wins over the automatic offer, since
   // they took a deliberate action to use it. Like the voucher box, this is
   // account-bound — an unauthenticated guest sees the offer (below) but the
@@ -1935,7 +1962,7 @@ function CheckoutInner() {
                 <div style={{ padding: "16px 0 0", fontSize: 13, display: "flex", flexDirection: "column", gap: 6 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>{stayType === "10" ? `10-hour stay · ${isWeekendRate ? "Weekend/Holiday" : "Weekday"}` : `Overnight · ${nights} night${nights > 1 ? "s" : ""}${bundleLabel ? ` · ${bundleLabel}` : ""}`}</span><span>{peso(basePrice)}</span></div>
                   {/* Long-term stays quote one flat nightly rate — show it. */}
-                  {bundleRate != null && <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: -4 }}>{peso(bundleRate)}/night</div>}
+                  {bundleLabel && bundleRate != null && <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: -4 }}>{peso(bundleRate)}/night</div>}
                   {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra pax · {extraPaxCount} × {peso(paxFeeRate)}{nights > 1 ? ` × ${nights} nights` : ""}</span><span>{peso(paxFee)}</span></div>}
                   {seniorDiscount > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span>Senior/PWD discount · {seniorCount} guest{seniorCount > 1 ? "s" : ""}</span><span>−{peso(seniorDiscount)}</span></div>}
                   {appliedDiscount && (
@@ -1962,7 +1989,11 @@ function CheckoutInner() {
 
                 {/* PROMO CODE */}
                 <div style={{ padding: "16px 0 0", borderTop: "1px solid #E0CEB2", marginTop: 16 }}>
-                  {appliedDiscount ? (
+                  {blockingSeason ? (
+                    <div style={{ fontSize: 12.5, color: "#8B7458", lineHeight: 1.5 }}>
+                      Promos don&apos;t apply to {blockingSeason.name} dates.
+                    </div>
+                  ) : appliedDiscount ? (
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, background: "#EAF7EF", border: "1px solid #BCE7CC", borderRadius: 12, padding: "10px 14px" }}>
                       <div style={{ minWidth: 0 }}>
                         <div style={{ fontSize: 13, fontWeight: 700, color: "#166534" }}>{appliedDiscount.code} applied</div>
