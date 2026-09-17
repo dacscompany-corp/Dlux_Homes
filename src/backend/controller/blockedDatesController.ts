@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "../config/db";
+import { parseBlockSlots } from "@/lib/blockedSlots";
 
 export interface BlockedDate {
   id: string;
@@ -7,6 +8,8 @@ export interface BlockedDate {
   from_date: string;
   to_date: string;
   reason?: string;
+  /** null = whole day; otherwise only these stay windows are blocked. */
+  slots?: string[] | null;
   created_at: string;
   haven_name?: string;
   tower?: string;
@@ -154,6 +157,14 @@ export async function createBlockedDate(req: NextRequest): Promise<NextResponse>
       );
     }
 
+    const slots = parseBlockSlots(body.slots);
+    if (slots === "invalid") {
+      return NextResponse.json(
+        { success: false, error: "slots must be a list of daycation, nightcation, overnight" },
+        { status: 400 }
+      );
+    }
+
     // Ensure from_date is before or equal to to_date
     const fromDateObj = new Date(from_date);
     const toDateObj = new Date(to_date);
@@ -165,19 +176,19 @@ export async function createBlockedDate(req: NextRequest): Promise<NextResponse>
 
     const query = statusColumnExists
       ? `
-        INSERT INTO blocked_dates (haven_id, from_date, to_date, reason, status, created_at)
-        VALUES ($1, $2, $3, $4, $5, NOW())
+        INSERT INTO blocked_dates (haven_id, from_date, to_date, reason, status, slots, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, NOW())
         RETURNING *
       `
       : `
-        INSERT INTO blocked_dates (haven_id, from_date, to_date, reason, created_at)
-        VALUES ($1, $2, $3, $4, NOW())
+        INSERT INTO blocked_dates (haven_id, from_date, to_date, reason, slots, created_at)
+        VALUES ($1, $2, $3, $4, $5, NOW())
         RETURNING *
       `;
 
     const values = statusColumnExists
-      ? [haven_id, actualFromDate, actualToDate, reason || null, status || "active"]
-      : [haven_id, actualFromDate, actualToDate, reason || null];
+      ? [haven_id, actualFromDate, actualToDate, reason || null, status || "active", slots]
+      : [haven_id, actualFromDate, actualToDate, reason || null, slots];
 
     const result = await pool.query(query, values);
 
@@ -212,6 +223,17 @@ export async function updateBlockedDate(req: NextRequest): Promise<NextResponse>
       );
     }
 
+    // `slots` is only changed when the caller sends the key; omitting it keeps
+    // the row's current windows.
+    const slotsProvided = Object.prototype.hasOwnProperty.call(body, "slots");
+    const slots = parseBlockSlots(body.slots);
+    if (slots === "invalid") {
+      return NextResponse.json(
+        { success: false, error: "slots must be a list of daycation, nightcation, overnight" },
+        { status: 400 }
+      );
+    }
+
     // Ensure from_date is before or equal to to_date
     const fromDateObj = new Date(from_date);
     const toDateObj = new Date(to_date);
@@ -228,7 +250,8 @@ export async function updateBlockedDate(req: NextRequest): Promise<NextResponse>
             from_date = COALESCE($3, from_date),
             to_date = COALESCE($4, to_date),
             reason = $5,
-            status = COALESCE($6, status)
+            status = COALESCE($6, status),
+            slots = CASE WHEN $7::BOOLEAN THEN $8::TEXT[] ELSE slots END
         WHERE id = $1
         RETURNING *
       `
@@ -237,14 +260,15 @@ export async function updateBlockedDate(req: NextRequest): Promise<NextResponse>
         SET haven_id = COALESCE($2, haven_id),
             from_date = COALESCE($3, from_date),
             to_date = COALESCE($4, to_date),
-            reason = $5
+            reason = $5,
+            slots = CASE WHEN $6::BOOLEAN THEN $7::TEXT[] ELSE slots END
         WHERE id = $1
         RETURNING *
       `;
 
     const values = statusColumnExists
-      ? [id, haven_id, actualFromDate, actualToDate, reason || null, status || null]
-      : [id, haven_id, actualFromDate, actualToDate, reason || null];
+      ? [id, haven_id, actualFromDate, actualToDate, reason || null, status || null, slotsProvided, slots]
+      : [id, haven_id, actualFromDate, actualToDate, reason || null, slotsProvided, slots];
 
     const result = await pool.query(query, values);
 

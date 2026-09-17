@@ -16,6 +16,7 @@ import { useGetCleaningTasksQuery } from "@/redux/api/cleanersApi";
 import { useGetAdminUsersQuery } from "@/redux/api/adminUsersApi";
 import { useGetPartnersQuery } from "@/redux/api/partnersApi";
 import { COLOR, fmt12h, resolveDayCell, stayKind, type DayBooking, type DayCell } from "@/lib/ownerCalendarDay";
+import { BLOCK_SLOTS, BLOCK_SLOT_LABEL, blockSlotsOf, blockSlotsLabel, type BlockSlot } from "@/lib/blockedSlots";
 type DateRange = { from?: Date; to?: Date };
 
 // Range-picker calendar styled to match the Booking Calendar (big wall-calendar
@@ -428,13 +429,26 @@ export function BookingCalendarSection() {
 
   // Blocked days in this month + their reasons. Parse the date in LOCAL time
   // (matches the list display) so a PH-stored date doesn't shift a day back.
+  // Whole-day blocks go in blockInfo; per-slot blocks ("Daycation only") go in
+  // slotBlockInfo and only close the half of the date their window sits in —
+  // Daycation is the day half, Nightcation/Overnight the night half.
   const blockInfo: Record<number, string[]> = {};
+  const slotBlockInfo: Record<number, { day: boolean; night: boolean; notes: string[] }> = {};
   dataOf(blockedData).forEach((b) => {
     const from = new Date(String(b.from_date)); from.setHours(0, 0, 0, 0);
     const to = new Date(String(b.to_date)); to.setHours(0, 0, 0, 0);
+    const slots = blockSlotsOf(b.slots);
+    const reason = String(b.reason || "").trim();
     for (const d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
-      if (d.getFullYear() === month.y && d.getMonth() === month.m) {
-        (blockInfo[d.getDate()] = blockInfo[d.getDate()] || []).push(String(b.reason || "").trim() || "Blocked");
+      if (d.getFullYear() !== month.y || d.getMonth() !== month.m) continue;
+      const n = d.getDate();
+      if (!slots) {
+        (blockInfo[n] = blockInfo[n] || []).push(reason || "Blocked");
+      } else {
+        const sb = (slotBlockInfo[n] = slotBlockInfo[n] || { day: false, night: false, notes: [] });
+        if (slots.includes("daycation")) sb.day = true;
+        if (slots.includes("nightcation") || slots.includes("overnight")) sb.night = true;
+        sb.notes.push(`${blockSlotsLabel(slots)} blocked${reason ? ` — ${reason}` : ""}`);
       }
     }
   });
@@ -477,16 +491,20 @@ export function BookingCalendarSection() {
     : selNightBooking ? { text: "Daytime is still free", bg: "#faf7f1", fg: "#1f1b16" }
     : { text: "Free all day — nothing booked", bg: "#F1F5EE", fg: "#4a6a3a" };
 
+  const selSlotBlock = selectedDay != null && !selBlocks ? slotBlockInfo[selectedDay] : undefined;
   const detailBlocks = [
     {
       isNight: false, title: "Daytime", hours: "7AM – 5PM",
       booking: selBlocks ? null : selDayBooking,
-      freeText: selBlocks ? `Blocked — ${selReason}` : "Nobody booked. Open for a Daycation.",
+      freeText: selBlocks ? `Blocked — ${selReason}`
+        : selSlotBlock?.day ? selSlotBlock.notes.join(" · ")
+        : "Nobody booked. Open for a Daycation.",
     },
     {
       isNight: true, title: "Night", hours: "7PM – 5AM",
       booking: selBlocks ? null : selNightBooking,
       freeText: selBlocks ? `Blocked — ${selReason}`
+        : selSlotBlock?.night ? selSlotBlock.notes.join(" · ")
         : earlyOut ? `${earlyOut.name} checked out ${fmt12h(earlyOut.checkOutTime)}. Now open for a Nightcation or a full-stay check-in.`
         : "Nobody booked. Open for a Nightcation or a full-stay check-in.",
     },
@@ -499,7 +517,7 @@ export function BookingCalendarSection() {
   for (let d = 1; d <= daysInMonth; d++) {
     if (blockInfo[d]) { blockedDays++; continue; }
     const r = resolveDay(d);
-    if (!r || (r.dayFill === COLOR.empty && r.nightFill === COLOR.empty)) freeDays++;
+    if (!slotBlockInfo[d] && (!r || (r.dayFill === COLOR.empty && r.nightFill === COLOR.empty))) freeDays++;
     for (const b of dayBookings[d] || []) {
       if (b.isCheckIn) arrivals++;
       if (b.isCheckOut) departures++;
@@ -637,15 +655,21 @@ export function BookingCalendarSection() {
               const blocked = !!reasons;
               const blockNote = blocked ? reasons.filter((x) => x !== "Blocked").join(" · ") : "";
               const r = blocked ? null : resolveDay(day);
+              const sb = blocked ? undefined : slotBlockInfo[day];
 
               // A blocked day overrides both halves; a free day is white on both.
-              const dayFill = blocked ? COLOR.blocked : r?.dayFill ?? COLOR.empty;
-              const nightFill = blocked ? COLOR.blocked : r?.nightFill ?? COLOR.empty;
+              // A per-slot block fills only its half, and only where no booking
+              // already holds it (a real guest outranks the block in the view).
+              const daySlotBlocked = !!sb?.day && (r?.dayFill ?? COLOR.empty) === COLOR.empty;
+              const nightSlotBlocked = !!sb?.night && (r?.nightFill ?? COLOR.empty) === COLOR.empty;
+              const dayFill = blocked || daySlotBlocked ? COLOR.blocked : r?.dayFill ?? COLOR.empty;
+              const nightFill = blocked || nightSlotBlocked ? COLOR.blocked : r?.nightFill ?? COLOR.empty;
               const dayHeld = dayFill !== COLOR.empty;
               const nightHeld = nightFill !== COLOR.empty;
               const solid = dayFill === nightFill;
               const isToday = day === todayNum;
               const bothFree = !blocked && !dayHeld && !nightHeld;
+              const slotNote = sb ? sb.notes.join(" · ") : "";
 
               // Today is a filled chip rather than a tint, so it survives being
               // drawn on top of any of the six fills.
@@ -685,6 +709,7 @@ export function BookingCalendarSection() {
                 <>
                   {heading(color)}
                   {blocked && blockNote ? <div style={{ fontSize: 9.5, marginTop: 3, color, opacity: 0.8 }}>{blockNote}</div> : null}
+                  {slotNote && !r?.label ? <div style={{ fontSize: 9.5, marginTop: 3, color, opacity: 0.8 }}>{slotNote}</div> : null}
                   {labelInNight ? (
                     <div style={{ position: "absolute", right: 8, bottom: 6, textAlign: "right" }}>
                       <div className="flex items-center justify-end" style={{ gap: 4 }}>
@@ -738,8 +763,8 @@ export function BookingCalendarSection() {
                     {number("#1f1b16")}
                     {blocked && blockNote ? <span style={{ fontSize: 10, color: "#8a4a3a", opacity: 0.85, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{blockNote}</span> : null}
                   </div>
-                  {band(blocked || dayHeld, dayFill, blocked ? "Blocked" : r?.dayText ?? "", false)}
-                  {band(blocked || nightHeld, nightFill, blocked ? "Blocked" : r?.nightText ?? "", true)}
+                  {band(blocked || dayHeld, dayFill, blocked || daySlotBlocked ? "Blocked" : r?.dayText ?? "", false)}
+                  {band(blocked || nightHeld, nightFill, blocked || nightSlotBlocked ? "Blocked" : r?.nightText ?? "", true)}
                 </div>
               );
 
@@ -752,7 +777,7 @@ export function BookingCalendarSection() {
                 : dayHeld && nightHeld ? "Fully booked"
                 : dayHeld ? "Night still free" : "Day still free";
               const detail = blocked ? (blockNote || "Unavailable for booking")
-                : [r?.label, r?.sub].filter(Boolean).join(" · ");
+                : [r?.label, r?.sub, slotNote].filter(Boolean).join(" · ");
 
               const stripNode = (
                 <div style={{ position: "absolute", inset: 0, padding: "9px 10px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
@@ -904,10 +929,34 @@ export function BlockedDatesSection() {
   const [haven_id, setHavenId] = useState("");
   const [reason, setReason] = useState("");
   const [range, setRange] = useState<DateRange | undefined>();
+  // Which stay windows to close. Empty = the whole day.
+  const [slots, setSlots] = useState<BlockSlot[]>([]);
   // Single-property site: with exactly one haven there's nothing to choose —
   // use it automatically and hide the selector.
   const singleHaven = havens.length === 1 ? havens[0] : null;
   const effectiveHavenId = singleHaven ? singleHaven.id : haven_id;
+
+  // Clock hint under each slot, from the haven's own window columns — the same
+  // columns the server resolves a slot block against.
+  const havenRow = arr(havensData).find((h) => String(h.uuid_id || h.id || "") === effectiveHavenId);
+  const slotHours = (slot: BlockSlot) => {
+    if (!havenRow) return "";
+    const [ci, co] = slot === "daycation" ? [havenRow.ten_hour_check_in, havenRow.ten_hour_check_out]
+      : slot === "nightcation" ? [havenRow.six_hour_check_in, havenRow.six_hour_check_out]
+      : [havenRow.twenty_one_hour_check_in, havenRow.twenty_one_hour_check_out];
+    const a = fmt12h(String(ci ?? "")), b = fmt12h(String(co ?? ""));
+    return a && b ? `${a} – ${b}` : "";
+  };
+  const toggleSlot = (slot: BlockSlot) =>
+    setSlots((cur) => {
+      const next = cur.includes(slot) ? cur.filter((s) => s !== slot) : [...cur, slot];
+      // Ticking all three is the same as the whole day.
+      return next.length === BLOCK_SLOTS.length ? [] : next;
+    });
+  const slotOptions: { key: "whole" | BlockSlot; label: string; hint: string }[] = [
+    { key: "whole", label: "Whole day", hint: "Every stay type" },
+    ...BLOCK_SLOTS.map((k) => ({ key: k, label: BLOCK_SLOT_LABEL[k], hint: slotHours(k) })),
+  ];
 
   // Local YYYY-MM-DD (avoid the UTC shift toISOString causes).
   const toISO = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -917,9 +966,9 @@ export function BlockedDatesSection() {
     if (!effectiveHavenId) { toast.error("Select a haven"); return; }
     if (!fromD) { toast.error("Pick a date range on the calendar"); return; }
     try {
-      await createBlocked({ haven_id: effectiveHavenId, from_date: toISO(fromD), to_date: toISO(toD!), reason }).unwrap();
-      toast.success("Dates blocked");
-      setRange(undefined); setReason("");
+      await createBlocked({ haven_id: effectiveHavenId, from_date: toISO(fromD), to_date: toISO(toD!), reason, slots: slots.length ? slots : null }).unwrap();
+      toast.success(slots.length ? `${blockSlotsLabel(slots)} blocked` : "Dates blocked");
+      setRange(undefined); setReason(""); setSlots([]);
     } catch { toast.error("Could not block dates"); }
   };
   const remove = async (id: string) => { try { await deleteBlocked(id).unwrap(); toast.success("Removed"); } catch { toast.error("Could not remove"); } };
@@ -940,23 +989,46 @@ export function BlockedDatesSection() {
           )}
           <input placeholder="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} className={inputCls} style={inputStyle} />
         </div>
+        <div className="mb-4">
+          <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: ".09em", textTransform: "uppercase", color: "#b8754a", margin: "0 0 8px" }}>What to block</p>
+          <div className="flex flex-wrap" style={{ gap: 8 }}>
+            {slotOptions.map((o) => {
+              const active = o.key === "whole" ? slots.length === 0 : slots.includes(o.key);
+              return (
+                <button key={o.key} type="button" aria-pressed={active}
+                  onClick={() => (o.key === "whole" ? setSlots([]) : toggleSlot(o.key))}
+                  className="cursor-pointer text-left"
+                  style={{ padding: "8px 14px", minWidth: 128, fontFamily: "inherit", border: `1px solid ${active ? "#1f1b16" : "#D4BFA0"}`, background: active ? "#1f1b16" : "#ffffff", color: active ? "#faf7f1" : "#1f1b16", transition: "background .12s ease" }}>
+                  <span style={{ display: "block", fontSize: 13, fontWeight: 600 }}>{o.label}</span>
+                  {o.hint ? <span style={{ display: "block", fontSize: 11, marginTop: 1, color: active ? "#d9cdb8" : "#8a8276" }}>{o.hint}</span> : null}
+                </button>
+              );
+            })}
+          </div>
+          {slots.includes("overnight") && (
+            <p style={{ fontSize: 12, color: "#8a8276", margin: "8px 0 0" }}>
+              A blocked Overnight holds the unit until its check-out, so the next day&apos;s Daycation closes too.
+            </p>
+          )}
+        </div>
         <div className="border p-5" style={{ borderColor: "#ece5d4", backgroundColor: "#ffffff" }}>
           <RangeCalendar value={range} onChange={setRange} />
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3 mt-4">
           <p className="text-sm" style={{ color: "#8B6344" }}>
-            {fromD ? <>Blocking <span className="font-semibold" style={{ color: "#1a1a1a" }}>{niceDate(fromD)}{toD && toD !== fromD ? ` → ${niceDate(toD)}` : ""}</span></> : "Click a start and end date on the calendar."}
+            {fromD ? <>Blocking <span className="font-semibold" style={{ color: "#1a1a1a" }}>{slots.length ? `${blockSlotsLabel(slots)} on ` : ""}{niceDate(fromD)}{toD && toD !== fromD ? ` → ${niceDate(toD)}` : ""}</span></> : "Click a start and end date on the calendar."}
           </p>
-          <button type="button" onClick={submit} disabled={creating} className="px-5 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#1f1b16" }}>{creating ? "Blocking…" : "Block dates"}</button>
+          <button type="button" onClick={submit} disabled={creating} className="px-5 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#1f1b16" }}>{creating ? "Blocking…" : slots.length ? `Block ${blockSlotsLabel(slots)}` : "Block dates"}</button>
         </div>
       </Card>
       {rows.length === 0 ? <Empty label="No blocked dates." /> : (
-        <Table headers={["Haven", "From", "To", "Reason", "Status", ""]}>
+        <Table headers={["Haven", "From", "To", "Blocks", "Reason", "Status", ""]}>
           {rows.map((r, i) => (
             <tr key={String(r.id ?? i)} style={{ borderTop: i > 0 ? "1px solid #F7F0E3" : "none" }}>
               <td className="px-4 py-3.5 text-sm" style={{ color: "#1a1a1a" }}>{String(r.haven_name ?? "—")}</td>
               <td className="px-4 py-3.5 text-sm" style={{ color: "#5a4a3a" }}>{fmtDate(r.from_date)}</td>
               <td className="px-4 py-3.5 text-sm" style={{ color: "#5a4a3a" }}>{fmtDate(r.to_date)}</td>
+              <td className="px-4 py-3.5 text-sm" style={{ color: "#1f1b16", whiteSpace: "nowrap" }}>{blockSlotsLabel(r.slots)}</td>
               <td className="px-4 py-3.5 text-sm" style={{ color: "#8B6344" }}>{String(r.reason ?? "—")}</td>
               <td className="px-4 py-3.5"><Pill text={String(r.status ?? "active")} tone="warn" /></td>
               <td className="px-4 py-3.5">

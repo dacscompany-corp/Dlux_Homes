@@ -6,6 +6,8 @@ export interface BlockedDate {
   from_date: string;
   to_date: string;
   reason?: string;
+  /** null = whole day; otherwise only these windows ("daycation" | "nightcation" | "overnight"). */
+  slots?: string[] | null;
   status?: string;
   created_at: string;
   haven_name?: string;

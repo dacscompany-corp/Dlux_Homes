@@ -221,6 +221,10 @@ export default function OwnerDashboard() {
     && window.innerHeight - statusBtnRect.bottom < STATUS_PANEL_H
     && statusBtnRect.top > window.innerHeight - statusBtnRect.bottom;
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
+  // Bookings table month filter (by check-in month). Independent of the
+  // Overview's `selectedMonth`; opens on the current month like the Overview,
+  // with "All time" still available in the picker.
+  const [bookingsMonth, setBookingsMonth] = useState<string | null>(() => currentMonthKey());
   // Restore in an effect rather than in useState's initialiser: reading
   // localStorage during the first render makes the server and client markup
   // disagree and React throws a hydration mismatch.
@@ -761,17 +765,29 @@ export default function OwnerDashboard() {
       };
     }),
   }));
-  const filteredAdminBookings = statusFilters.length
-    ? allAdminBookings.filter((b) => statusFilters.includes(b.status))
+  // Check-in month as 'YYYY-MM' in local time — the same day the Check-in
+  // column displays (toLocaleDateString), so the filter never disagrees with it.
+  const checkInMonthKey = (raw: string) => {
+    if (!raw) return "";
+    const d = new Date(raw);
+    return Number.isNaN(d.getTime()) ? "" : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  };
+  const bookingMonthsWithData = Array.from(new Set(allAdminBookings.map((b) => checkInMonthKey(b.checkInRaw)).filter(Boolean)));
+  const monthScopedBookings = bookingsMonth
+    ? allAdminBookings.filter((b) => checkInMonthKey(b.checkInRaw) === bookingsMonth)
     : allAdminBookings;
-  // Counts come from the UNFILTERED list on purpose: they tell the owner how
-  // much is in each status, so counting only what survives the current filter
-  // would show 0 against every box they haven't ticked.
+  const filteredAdminBookings = statusFilters.length
+    ? monthScopedBookings.filter((b) => statusFilters.includes(b.status))
+    : monthScopedBookings;
+  // Counts ignore the STATUS filter on purpose: they tell the owner how much
+  // is in each status, so counting only what survives the current filter
+  // would show 0 against every box they haven't ticked. They do respect the
+  // month filter, so they match the period being looked at.
   const statusCounts = useMemo(() => {
     const out: Record<string, number> = {};
-    for (const b of allAdminBookings) out[b.status] = (out[b.status] ?? 0) + 1;
+    for (const b of monthScopedBookings) out[b.status] = (out[b.status] ?? 0) + 1;
     return out;
-  }, [allAdminBookings]);
+  }, [monthScopedBookings]);
   const recentAdminBookings = recentStatusFilters.length
     ? allAdminBookings.filter((b) => recentStatusFilters.includes(b.status))
     : allAdminBookings;
@@ -835,7 +851,10 @@ export default function OwnerDashboard() {
     floor: [h.tower, h.floor].filter(Boolean).join(", ") || String(h.location || "—"),
     rate: Number(h.price_per_night ?? h.price ?? h.rate ?? h.weekday_rate ?? h.ten_hour_rate ?? 0),
     status: String(h.listing_status || h.status || "available"),
-    occupancy: Number(h.occupancy ?? 0),
+    // The havens API carries no occupancy field. The analytics summary computes
+    // it (nights sold / nights available across all havens), which for this
+    // single-unit property is exactly this haven's rate.
+    occupancy: Math.round(Number(h.occupancy ?? (havensList.length === 1 ? s?.occupancy_rate : 0) ?? 0)),
     raw: h, // full record, used to pre-fill the edit wizard
   }));
 
@@ -1627,16 +1646,21 @@ export default function OwnerDashboard() {
             )}
           </section>
           <div className="border overflow-hidden" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }}>
-            <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: "#ece5d4" }}>
+            <div className="px-6 py-4 border-b flex items-center justify-between gap-3 flex-wrap" style={{ borderColor: "#ece5d4" }}>
               <div>
                 <h3 className="font-bold" style={{ color: "#1a1a1a" }}>All Bookings</h3>
                 <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>
-                  {statusFilters.length
+                  {statusFilters.length || bookingsMonth
                     ? `${filteredAdminBookings.length} of ${allAdminBookings.length} records`
                     : `${allAdminBookings.length} total records`}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                <MonthNavigator
+                  value={bookingsMonth}
+                  onChange={setBookingsMonth}
+                  monthsWithData={bookingMonthsWithData}
+                />
                 <div style={{ position: "relative" }}>
                   <button type="button" ref={statusFilterBtnRef} onClick={() => setStatusFilterOpen((v) => !v)}
                     className="flex items-center gap-2 px-3.5 py-2 text-sm font-medium cursor-pointer"
@@ -1913,7 +1937,15 @@ export default function OwnerDashboard() {
             ...(isOwner ? [{ id: "overhead", label: "Overhead", icon: Receipt }] : []),
             ...(isOwner ? [{ id: "profitability", label: "Profitability", icon: TrendingUp }] : []),
           ], financeTab, (id) => setFinanceTab(id as "revenue" | "methods" | "promotions" | "seasonal" | "overhead" | "profitability"))}
-          {financeTab === "seasonal" && isOwner && <SeasonalRatesSection />}
+          {financeTab === "seasonal" && isOwner && (
+            <SeasonalRatesSection usualRates={{
+              // Same weekend→weekday fallback the rate cards use when a weekend rate is unset.
+              overnightWeekday: rnum(h0.weekday_rate),
+              overnightWeekend: rnum(h0.weekend_rate) || rnum(h0.weekday_rate),
+              daynightWeekday: rnum(h0.ten_hour_rate),
+              daynightWeekend: rnum(h0.six_hour_rate) || rnum(h0.ten_hour_rate),
+            }} />
+          )}
           {financeTab === "overhead" && isOwner && <OverheadSection />}
           {financeTab === "profitability" && isOwner && (
             <ProfitabilitySection
@@ -2072,7 +2104,7 @@ export default function OwnerDashboard() {
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead><tr style={{ backgroundColor: "#faf7f1", borderBottom: "1px solid #ece5d4" }}>
-                      {["Haven","Type","Location","Rate / night","Occupancy","Status","Actions"].map((h) => (
+                      {["Haven","Type","Location","Rate / night",`Occupancy · ${monthLabel ?? "30d"}`,"Status","Actions"].map((h) => (
                         <th key={h} className="px-4 py-3 text-left text-[11px] uppercase tracking-[0.08em]" style={{ color: "#8B6344" }}>{h}</th>
                       ))}
                     </tr></thead>

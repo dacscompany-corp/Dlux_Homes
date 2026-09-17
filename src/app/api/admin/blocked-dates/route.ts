@@ -12,7 +12,7 @@ import pool from "@/backend/config/db";
 //   ?haven_id=<uuid>   → PUBLIC. Used by Components/HeroSection/DateRangePicker
 //                        on the guest checkout flow to grey out unavailable
 //                        dates. Returns ONLY a minimal projection
-//                        (id, from_date, to_date, status) — no `reason` (which
+//                        (id, from_date, to_date, slots) — no `reason` (which
 //                        may contain admin notes), no joined haven metadata.
 //   no haven_id        → ADMIN ONLY. Full management view via the controller
 //                        (includes reason + haven name/tower/floor).
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
     try {
       // blocked_dates has no `status` column — every row is an active block.
       const result = await pool.query(
-        `SELECT id::text, from_date::text, to_date::text
+        `SELECT id::text, from_date::text, to_date::text, slots
            FROM blocked_dates
           WHERE haven_id = $1
           ORDER BY from_date ASC`,

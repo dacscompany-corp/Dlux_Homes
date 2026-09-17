@@ -23,6 +23,7 @@ import { securityDepositFor, quoteStay, promoBlockingSeason, seasonFor, addDaysI
 import { checkClaimedPrice } from "@/lib/priceCheck";
 import { loadCalendarRules, loadActiveSeasons } from "@/lib/availability";
 import { havenToRoom } from "@/lib/haven-adapter";
+import { slotBlockOverlapSql } from "@/lib/blockedSlots";
 import { dispatchTransactionalEmail, type EmailDispatchResult } from "../utils/dispatchEmail";
 
 // EXISTING_START_SQL / EXISTING_END_SQL now live in @/lib/bookingWindow beside
@@ -983,14 +984,30 @@ export const createBooking = async (
     // windows. Skipped if haven_id is missing (e.g. legacy clients that send only
     // room_name) so we don't regress those callers.
     if (body.haven_id && UUID_RE.test(body.haven_id)) {
+      // Whole-day rows (slots IS NULL) close every date the stay touches; the
+      // upper bound is at least check-in + 1 so a same-day Daycation
+      // (check-in = check-out) still meets a block on its own date — a bare
+      // '[)' range of one date is empty and overlaps nothing.
+      // Per-slot rows only close their windows' clock time (+ turnover), via
+      // the shared slotBlockOverlapSql — see src/lib/blockedSlots.ts.
       const blockedCheck = await client.query(
-        `SELECT id, from_date, to_date, block_type, reason
-         FROM blocked_dates
-         WHERE haven_id = $1
-           AND daterange(from_date, to_date, '[]')
-               && daterange($2::date, $3::date, '[)')
+        `WITH n AS (
+           SELECT ($2::DATE + $4::TIME)::TIMESTAMP AS ns,
+                  (CASE WHEN $5 = '00:00'
+                        THEN ($3::DATE + INTERVAL '1 day')::TIMESTAMP
+                        ELSE ($3::DATE + $5::TIME)::TIMESTAMP END) AS ne
+         )
+         SELECT bd.id, bd.from_date, bd.to_date, bd.block_type, bd.reason
+         FROM blocked_dates bd, n
+         WHERE bd.haven_id = $1
+           AND (
+             (bd.slots IS NULL
+               AND daterange(bd.from_date, bd.to_date, '[]')
+                   && daterange($2::date, GREATEST($3::date, $2::date + 1), '[)'))
+             OR ${slotBlockOverlapSql("n.ns", "n.ne")}
+           )
          LIMIT 1`,
-        [body.haven_id, check_in_date, check_out_date]
+        [body.haven_id, check_in_date, check_out_date, check_in_time, check_out_time]
       );
 
       if (blockedCheck.rows.length > 0) {

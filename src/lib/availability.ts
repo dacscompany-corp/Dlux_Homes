@@ -18,6 +18,7 @@ import {
   EXISTING_END_SQL,
 } from "./bookingWindow";
 import { turnoverSql } from "./turnover";
+import { slotBlockOverlapSql } from "./blockedSlots";
 import { DEFAULT_CALENDAR_RULES, type CalendarRules, type SeasonalRate } from "./pricing";
 import { seasonFromRow, publicSeason } from "./seasonalRates";
 import type { StayWindow } from "./messenger-reply";
@@ -189,10 +190,14 @@ const CONFLICT_SQL = `
     AND (${EXISTING_END_SQL} + ${turnoverSql(EXISTING_START_SQL, EXISTING_END_SQL)}) > n.ns
   UNION ALL
   SELECT 1
-  FROM blocked_dates bd
+  FROM blocked_dates bd, n
   WHERE bd.haven_id = $6
-    AND bd.from_date <= $4::DATE
-    AND bd.to_date   >= $2::DATE
+    AND (
+      (bd.slots IS NULL
+        AND bd.from_date <= $4::DATE
+        AND bd.to_date   >= $2::DATE)
+      OR ${slotBlockOverlapSql("n.ns", "n.ne")}
+    )
   LIMIT 1
 `;
 
@@ -287,8 +292,12 @@ export async function openDatesAhead(
     AND NOT EXISTS (
       SELECT 1 FROM blocked_dates bd
       WHERE bd.haven_id = $6
-        AND bd.from_date <= n.day
-        AND bd.to_date   >= n.day
+        AND (
+          (bd.slots IS NULL
+            AND bd.from_date <= n.day
+            AND bd.to_date   >= n.day)
+          OR ${slotBlockOverlapSql("n.ns", "n.ne")}
+        )
     )
     ORDER BY n.day
   `;

@@ -26,6 +26,7 @@ import DluxLoader, { DluxLoaderPage } from "@/components/brand/DluxLoader";
 import { quoteStay, isWeekendOrHoliday, addDaysISO, pickRate, promoBlockingSeason } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import { useSeasonalRates } from "@/lib/useSeasonalRates";
+import { blockSlotsOf, slotForWindowLabel } from "@/lib/blockedSlots";
 import type { Room } from "@/types";
 
 // ── Inline SVG icons ───────────────────────────────────────────
@@ -778,10 +779,12 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
     return d.getTime() + mins * 60_000;
   };
 
-  // Owner-blocked ranges (inclusive) genuinely take the whole day.
+  // Owner-blocked ranges (inclusive). A whole-day block (no `slots`) takes the
+  // entire date; a per-slot block is handled below as busy time instead.
   const ownerBlocked = (() => {
     const set = new Set<string>();
     (blockedRes?.data || []).forEach((b) => {
+      if (blockSlotsOf(b.slots)) return;
       const fromISO = toLocalISO(b.from_date);
       if (!fromISO) return;
       const d = new Date(fromISO + "T00:00:00");
@@ -792,7 +795,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   })();
 
   // Existing stays as real timestamps. A '00:00' checkout means end-of-day.
-  const busyIntervals = (bookedRanges ?? []).flatMap(({ ci, co, ciT, coT }) => {
+  const bookingIntervals = (bookedRanges ?? []).flatMap(({ ci, co, ciT, coT }) => {
     const from = toLocalISO(ci);
     const to = toLocalISO(co) || from;
     const s = minutesOf(ciT), e = minutesOf(coT);
@@ -801,6 +804,30 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
     const end = e === 0 ? atMs(to, 0, 1) : atMs(to, e);
     return end > start ? [{ start, end }] : [];
   });
+
+  // Per-slot owner blocks ("no Daycation on the 25th") occupy that window's
+  // clock time on each date in the range — exactly like a booking in it, so
+  // the turnover rule applies too. Mirrors slotBlockOverlapSql on the server.
+  const slotBlockIntervals = (blockedRes?.data || []).flatMap((b) => {
+    const slots = blockSlotsOf(b.slots);
+    const fromISO = toLocalISO(b.from_date);
+    if (!slots || !fromISO) return [];
+    const toISO = toLocalISO(b.to_date) || fromISO;
+    const out: { start: number; end: number }[] = [];
+    for (let iso = fromISO, g = 0; iso <= toISO && g < 400; iso = addDaysISO(iso, 1), g++) {
+      for (const w of windows) {
+        const slot = slotForWindowLabel(w.label);
+        if (!slot || !slots.includes(slot)) continue;
+        const ci = minutesOf(w.checkIn), co = minutesOf(w.checkOut);
+        if (ci == null || co == null) continue;
+        const start = atMs(iso, ci);
+        const end = atMs(iso, co, w.stayType !== "10" || co <= ci ? 1 : 0);
+        if (end > start) out.push({ start, end });
+      }
+    }
+    return out;
+  });
+  const busyIntervals = [...bookingIntervals, ...slotBlockIntervals];
 
   // Can this specific window be booked starting on this date, for `forNights`?
   //
