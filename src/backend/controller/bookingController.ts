@@ -1336,6 +1336,7 @@ export const createBooking = async (
         seasons: stayingSeasons,
         feePax: (Number(adults) || 0) + (Number(children) || 0),
         seniorCount: seniorFlags.filter(Boolean).length,
+        checkInTime: check_in_time,
       });
       const priceCheck = checkClaimedPrice(quote, { total_amount, discount_amount, senior_discount });
       if (!priceCheck.ok) {
