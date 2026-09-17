@@ -135,17 +135,41 @@ export function seasonFor(dateISO: string, seasons: readonly SeasonalRate[] = []
   return seasons.find((s) => s.startDate <= dateISO && dateISO <= s.endDate);
 }
 
+// Is a 10-hour check-in TIME (not date) the AM session (Daycation) rather
+// than the PM one (Nightcation)? Accepts either the display form the
+// storefront carries around ("7:00 AM") or a 24h "HH:MM" (what's actually
+// persisted as bookings.check_in_time) — callers hold one or the other
+// depending on how far downstream they are.
+//
+// Unparseable/missing input returns false (treated as Nightcation/unknown)
+// rather than true — a caller that hasn't been updated to pass this yet must
+// keep getting today's behavior, not silently start giving away the
+// Daycation discount to stays it can't actually identify.
+export function isDaySession(checkInTime?: string | null): boolean {
+  if (!checkInTime) return false;
+  const ampm = checkInTime.match(/^(\d{1,2}):\d{2}\s*(AM|PM)$/i);
+  if (ampm) return ampm[2].toUpperCase() === "AM";
+  const h24 = checkInTime.match(/^(\d{1,2}):\d{2}$/);
+  if (h24) return Number(h24[1]) < 12;
+  return false;
+}
+
 // Pick the correct rate for a stay type + date. An active season covering the
 // date wins over the haven's regular rates.
 // stayType "10" = Daycation/Nightcation, anything else = Overnight (21h).
+//
+// `checkInTime`, when given, singles out Daycation (the AM session): it never
+// carries the weekend/holiday markup, unlike Nightcation (PM) and Overnight,
+// which both still do. Owner spec, 2026-09-17 — Daycation is flat every day.
 export function pickRate(
   stayType: string,
   dateISO: string,
   rates: Rates,
   rules: CalendarRules = DEFAULT_CALENDAR_RULES,
   seasons: readonly SeasonalRate[] = [],
+  checkInTime?: string | null,
 ): number {
-  const weekend = isWeekendOrHoliday(dateISO, rules);
+  const weekend = isWeekendOrHoliday(dateISO, rules) && !(stayType === "10" && isDaySession(checkInTime));
   const season = seasonFor(dateISO, seasons);
   if (season) {
     if (stayType === "10") return weekend ? season.daynightWeekend : season.daynightWeekday;
@@ -280,8 +304,9 @@ export function stayTotal(
   rates: Rates,
   rules: CalendarRules = DEFAULT_CALENDAR_RULES,
   seasons: readonly SeasonalRate[] = [],
+  checkInTime?: string | null,
 ): number {
-  return stayBreakdown(stayType, checkInISO, nights, rates, rules, seasons).total;
+  return stayBreakdown(stayType, checkInISO, nights, rates, rules, seasons, checkInTime).total;
 }
 
 // longTerm: priced by a long-term tier rate (the haven's, or the season's own).
@@ -298,10 +323,11 @@ export function stayBreakdown(
   rates: Rates,
   rules: CalendarRules = DEFAULT_CALENDAR_RULES,
   seasons: readonly SeasonalRate[] = [],
+  checkInTime?: string | null,
 ): { total: number; nights: NightPrice[]; seasons: SeasonalRate[] } {
   const items: NightPrice[] = [];
   if (stayType === "10" || !checkInISO) {
-    items.push({ date: checkInISO, rate: pickRate(stayType, checkInISO, rates, rules, seasons), season: seasonFor(checkInISO, seasons), longTerm: false });
+    items.push({ date: checkInISO, rate: pickRate(stayType, checkInISO, rates, rules, seasons, checkInTime), season: seasonFor(checkInISO, seasons), longTerm: false });
   } else {
     const n = Math.max(1, Math.floor(nights || 1));
     const bundleRate = bundleNightlyRate(n, checkInISO, rates, rules);
@@ -405,6 +431,10 @@ export type StayQuoteInput = {
   seasons?: readonly SeasonalRate[];
   feePax: number;       // adults + young adults; 7-and-under excluded
   seniorCount?: number; // guests flagged senior/PWD
+  // The stay's check-in TIME (not date) — only meaningful for a 10h session,
+  // where it tells Daycation (AM, never weekend-priced) from Nightcation (PM,
+  // still weekend-priced) apart. See isDaySession()/pickRate().
+  checkInTime?: string | null;
 };
 
 export type StayQuote = {
@@ -426,7 +456,7 @@ export function quoteStay(input: StayQuoteInput): StayQuote {
   const { stayType, checkInISO, rates, feePax } = input;
   const rules = input.rules ?? DEFAULT_CALENDAR_RULES;
   const nights = stayType === "10" ? 1 : Math.max(1, Math.floor(input.nights || 1));
-  const breakdown = stayBreakdown(stayType, checkInISO, nights, rates, rules, input.seasons ?? []);
+  const breakdown = stayBreakdown(stayType, checkInISO, nights, rates, rules, input.seasons ?? [], input.checkInTime);
   const bundleRate = stayType === "10" ? undefined : bundleNightlyRate(nights, checkInISO, rates, rules);
   const allLongTerm = breakdown.nights.length > 0 && breakdown.nights.every((n) => n.longTerm);
   const flatLongTermRate = allLongTerm && breakdown.nights.every((n) => n.rate === breakdown.nights[0].rate)
