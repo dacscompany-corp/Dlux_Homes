@@ -73,14 +73,8 @@ describe("quoteFor", () => {
     expect(quoteFor(OVERNIGHT, "2026-12-25", 1, 2, RATES, 200, RULES)).toBe(2099);
   });
 
-  // Owner spec, 2026-09-17: Daycation (the AM session) never carries the
-  // weekend/holiday markup — always the weekday rate, every day of the week.
-  it("prices a weekend daycation at the WEEKDAY rate (Daycation never marks up)", () => {
-    expect(quoteFor(DAYCATION, "2026-08-29", 1, 2, RATES, 200, RULES)).toBe(1499);
-  });
-
-  it("still prices a weekend nightcation at the weekend rate", () => {
-    expect(quoteFor(NIGHTCATION, "2026-08-29", 1, 2, RATES, 200, RULES)).toBe(1799);
+  it("prices a weekend daycation at the 10-hour weekend rate", () => {
+    expect(quoteFor(DAYCATION, "2026-08-29", 1, 2, RATES, 200, RULES)).toBe(1799);
   });
 
   it("adds the extra-pax fee per night", () => {

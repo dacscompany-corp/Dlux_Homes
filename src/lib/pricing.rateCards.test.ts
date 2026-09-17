@@ -38,44 +38,6 @@ describe("rate cards follow the selected date", () => {
   });
 });
 
-// Owner spec, 2026-09-17: Daycation (the AM session) never carries the
-// weekend/holiday markup — Nightcation (PM) and Overnight still do.
-describe("Daycation is flat every day; Nightcation still gets the weekend rate", () => {
-  it("prices Friday Daycation (AM check-in) at the WEEKDAY rate", () => {
-    expect(pickRate("10", "2026-09-11", ROOM, RULES, [], "7:00 AM")).toBe(1499);
-    expect(pickRate("10", "2026-09-11", ROOM, RULES, [], "07:00")).toBe(1499);
-  });
-
-  it("still prices Friday Nightcation (PM check-in) at the weekend rate", () => {
-    expect(pickRate("10", "2026-09-11", ROOM, RULES, [], "7:00 PM")).toBe(1699);
-    expect(pickRate("10", "2026-09-11", ROOM, RULES, [], "19:00")).toBe(1699);
-  });
-
-  it("prices Saturday Daycation at the weekday rate too", () => {
-    expect(pickRate("10", "2026-09-12", ROOM, RULES, [], "7:00 AM")).toBe(1499);
-  });
-
-  it("prices a holiday Daycation at the weekday rate", () => {
-    const withHoliday: CalendarRules = { weekendDays: new Set([5, 6]), holidays: new Set(["2026-09-16"]) };
-    expect(pickRate("10", "2026-09-16", ROOM, withHoliday, [], "7:00 AM")).toBe(1499);
-  });
-
-  it("falls back to today's (weekend-eligible) behavior when no check-in time is given", () => {
-    expect(pickRate("10", "2026-09-11", ROOM, RULES)).toBe(1699);
-  });
-
-  it("never applies the Daycation carve-out to an Overnight stay", () => {
-    // A morning-ish time string on stayType "21" must not accidentally waive
-    // the Overnight weekend rate — the carve-out only reads for stayType "10".
-    expect(pickRate("21", "2026-09-11", ROOM, RULES, [], "7:00 AM")).toBe(2099);
-  });
-
-  it("stayTotal() carries the same rule through for a single Daycation session", () => {
-    expect(stayTotal("10", "2026-09-11", 1, ROOM, RULES, [], "7:00 AM")).toBe(1499);
-    expect(stayTotal("10", "2026-09-11", 1, ROOM, RULES, [], "7:00 PM")).toBe(1699);
-  });
-});
-
 describe("multi-night stays price each night on its own date", () => {
   // Why the night-stepper line can't just say "rate x nights": these two nights
   // are not the same price, so neither 1899x2 nor 2099x2 reaches the total.

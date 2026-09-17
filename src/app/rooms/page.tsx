@@ -579,7 +579,7 @@ const FAQ_ITEMS: { q: string; a: string }[] = [
   },
   {
     q: "How much is the room?",
-    a: "Rates depend on stay type and date — see the live pricing on each room's page, since weekends and PH holidays run a bit higher than weekdays. Staying 3+ nights also unlocks a lower long-term nightly rate.",
+    a: "Rates depend on stay type and date — see the live pricing on each room's page, since weekends and PH holidays run a bit higher than weekdays. Staying 5+ nights also unlocks a lower long-term nightly rate.",
   },
   {
     q: "Is a deposit required?",

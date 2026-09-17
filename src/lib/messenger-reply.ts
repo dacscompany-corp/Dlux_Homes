@@ -112,7 +112,7 @@ export function quoteFor(
   seasons: readonly SeasonalRate[] = [],
 ): number {
   const sessions = w.stayType === "10" ? 1 : Math.max(1, nights);
-  const room = stayTotal(w.stayType, checkInISO, sessions, rates, rules, seasons, w.checkIn);
+  const room = stayTotal(w.stayType, checkInISO, sessions, rates, rules, seasons);
 
   // Only an Overnight can reach a tier; a 10-hour session never does.
   const bundled = isLongTermStay(w.stayType, checkInISO, sessions, rates, rules, seasons);

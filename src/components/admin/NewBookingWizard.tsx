@@ -201,7 +201,7 @@ export default function NewBookingWizard({
     const overCap = counted > MAX_COUNTED;
     const basePax = room?.basePax ?? BASE_PAX_FALLBACK;
     const perPax = room?.additionalPaxFee ?? 200;
-    const base = room && stay && form.ci ? stayTotal(stay.group, form.ci, nights, room, rules, seasons, stay.ci) : 0;
+    const base = room && stay && form.ci ? stayTotal(stay.group, form.ci, nights, room, rules, seasons) : 0;
     // Long-term (bundle) stays charge their own per-pax-per-night fee INSTEAD
     // of extraPaxFee() — the two must never both apply. Shares the same
     // pricing functions as the guest-facing pages so an admin-made booking is
@@ -521,7 +521,7 @@ export default function NewBookingWizard({
                   <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
                     {entry?.stayTypes.map((t) => {
                       const sel = form.stay === t.id;
-                      const rate = entry.room ? pickRate(t.group, form.ci, entry.room, rules, seasons, t.ci) : 0;
+                      const rate = entry.room ? pickRate(t.group, form.ci, entry.room, rules, seasons) : 0;
                       return (
                         <div key={t.id} onClick={() => set({ stay: t.id, co: t.multiNight ? form.co : "" })} style={selCardStyle(sel, STAY_CARD)}>
                           <div style={{ flex: 1 }}>

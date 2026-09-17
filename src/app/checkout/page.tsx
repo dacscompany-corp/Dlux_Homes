@@ -686,7 +686,7 @@ function CheckoutInner() {
   // non-seasonal nights. A long-term stay charges its own per-pax-per-night fee
   // INSTEAD of the normal one. quoteStay() is the same helper createBooking
   // re-prices the booking with, so what's shown here is what the server accepts.
-  const quote = quoteStay({ stayType, checkInISO: date, nights, rates: room, rules: calendarRules, seasons, feePax, seniorCount, checkInTime });
+  const quote = quoteStay({ stayType, checkInISO: date, nights, rates: room, rules: calendarRules, seasons, feePax, seniorCount });
   const basePrice = quote.roomTotal;
   // "₱X/night · Long-term rate" only when one flat long-term rate (the haven's
   // or a season's) priced every night. Seasons are not named to the guest.
