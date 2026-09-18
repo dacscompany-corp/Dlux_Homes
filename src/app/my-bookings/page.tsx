@@ -230,7 +230,7 @@ export default function MyBookingsPage() {
 
       <footer style={{ borderTop: "1px solid var(--line)", background: "var(--bg)" }}>
         <div style={{ maxWidth: 1320, margin: "0 auto", padding: "24px 28px", display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--muted)", flexWrap: "wrap", gap: 12 }}>
-          <div>© 2026 D&apos; Lux Homes · Metro Manila, PH</div>
+          <div>© 2024 D&apos; Lux Homes · Metro Manila, PH</div>
           <div>Made with care for rest.</div>
         </div>
       </footer>

@@ -570,7 +570,7 @@ function ConfirmedInner() {
 
         <footer style={{ borderTop: "1px solid #E0CEB2", background: "#F6EFE2" }}>
           <div style={{ maxWidth: 680, margin: "0 auto", padding: "22px 24px", display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", fontSize: 12, color: "#8B7458" }}>
-            <span>© 2026 D&rsquo; Lux Homes · Metro Manila, PH</span>
+            <span>© 2024 D&rsquo; Lux Homes · Metro Manila, PH</span>
             <span>Made with care for rest.</span>
           </div>
         </footer>
@@ -733,7 +733,7 @@ function ConfirmedInner() {
 
         <footer style={{ borderTop: "1px solid #E0CEB2", background: "#F6EFE2" }}>
           <div style={{ maxWidth: 680, margin: "0 auto", padding: "22px 24px", display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", fontSize: 12, color: "#8B7458" }}>
-            <span>© 2026 D&rsquo; Lux Homes · Metro Manila, PH</span>
+            <span>© 2024 D&rsquo; Lux Homes · Metro Manila, PH</span>
             <span>Made with care for rest.</span>
           </div>
         </footer>
@@ -982,7 +982,7 @@ function ConfirmedInner() {
 
       <footer style={{ borderTop: "1px solid var(--line)", background: "var(--bg)" }}>
         <div style={{ maxWidth: 1320, margin: "0 auto", padding: "24px 28px", display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--muted)", flexWrap: "wrap", gap: 12 }}>
-          <div>© 2026 D&apos; Lux Homes · Metro Manila, PH</div>
+          <div>© 2024 D&apos; Lux Homes · Metro Manila, PH</div>
           <div>Made with care for rest.</div>
         </div>
       </footer>
