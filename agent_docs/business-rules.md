@@ -5,7 +5,7 @@ D'Lux Homes is one physical unit — Tower 4, Grass Residences, SM North EDSA, Q
 **Stay types (base 1–2 pax), per night:**
 - Overnight (21h, ~7PM–4PM next day): weekday ₱1,899 / weekend+holiday ₱2,099
 - Daycation/Nightcation (10h, 7AM–5PM or 7PM–5AM): weekday ₱1,499 / weekend+holiday ₱1,799
-- Weekend = Fri/Sat/Sun check-in + PH holidays (`isWeekendOrHoliday()` in `src/lib/pricing.ts`)
+- Weekend = Fri/Sat check-in (owner-editable `pricing_settings.weekend_days`) + PH holidays (`isWeekendOrHoliday()` in `src/lib/pricing.ts`). **Daycation exception (owner, 2026-09-19):** a Daycation follows the night before it — Sat/Sun Daycation = weekend rate, Fri Daycation = weekday rate. Nightcation/Overnight use the check-in day as-is. A holiday Daycation is still weekend.
 
 **Extra pax:** base covers 2 pax. Each additional counted pax (adults + young adults, ages 7+) is **+₱200 per night** — a 3-night stay with one extra pax pays ₱600. Max 4 counted pax total, so a stay tops out at 2 extra pax × ₱200 × nights. Applies to bundle-discounted long stays too (no night cap). 10-hour Daycation/Nightcation is a single session, so it's charged once. Children 7-under are free and excluded from the count entirely (the booking UI caps them at 4). More than 4 counted pax isn't bookable online — routes to Facebook/Messenger instead. Implemented in `extraPaxFee()` in `src/lib/pricing.ts`; the ₱200 lives in `havens.extra_pax_fee` and is owner-editable.
 

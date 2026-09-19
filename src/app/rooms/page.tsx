@@ -1241,7 +1241,7 @@ export default function BrowsePage() {
           <p style={{ fontSize: 14, lineHeight: 1.65, color: "#4A3A2A", margin: "14px 0 0", textWrap: "pretty" }}>{room.description}</p>
           {aboutOpen && (
             <p style={{ fontSize: 14, lineHeight: 1.65, color: "#4A3A2A", margin: "12px 0 0", textWrap: "pretty" }}>
-              We keep it small on purpose — one home, obsessively looked after, so every guest gets the version we&rsquo;d want to stay in ourselves. Hosted since 2022.
+              We keep it small on purpose — one home, obsessively looked after, so every guest gets the version we&rsquo;d want to stay in ourselves. Hosted since 2024.
             </p>
           )}
           <div style={{ display: "flex", gap: 6, marginTop: 16 }}>
@@ -1451,7 +1451,7 @@ export default function BrowsePage() {
             </div>
           </div>
           <div style={{ marginTop: 26, paddingTop: 16, borderTop: "1px solid #E0CEB2", display: "flex", flexDirection: "column", gap: 4, fontSize: 11.5, color: "#8B7458" }}>
-            <div>© 2026 D&rsquo; Lux Homes · Metro Manila, PH</div>
+            <div>© 2024 D&rsquo; Lux Homes · Metro Manila, PH</div>
             <div>Made with care for rest.</div>
           </div>
         </footer>
@@ -1574,7 +1574,7 @@ export default function BrowsePage() {
             </h2>
             <p style={{ fontSize: 16, color: "var(--ink-2)", lineHeight: 1.7, marginTop: 20 }}>{room.description}</p>
             <p style={{ fontSize: 16, color: "var(--ink-2)", lineHeight: 1.7, marginTop: 16 }}>
-              We keep it small on purpose — one home, obsessively looked after, so every guest gets the version we&apos;d want to stay in ourselves. Hosted since 2022.
+              We keep it small on purpose — one home, obsessively looked after, so every guest gets the version we&apos;d want to stay in ourselves. Hosted since 2024.
             </p>
             <div style={{ marginTop: 28, display: "flex", gap: 8, flexWrap: "wrap" }}>
               {["Balcony", "City view", "Swimming pool", "Garden"].map((t, i) => (
@@ -1895,7 +1895,7 @@ export default function BrowsePage() {
             ))}
           </div>
           <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid var(--line)", display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--ink)" }}>
-            <div>© 2026 D&apos; Lux Homes · Metro Manila, PH</div>
+            <div>© 2024 D&apos; Lux Homes · Metro Manila, PH</div>
             <div>Made with care for rest.</div>
           </div>
         </div>
