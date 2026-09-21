@@ -24,7 +24,7 @@ import { fmtClock, spanHours } from "@/lib/stay-window";
 import { turnoverMs } from "@/lib/turnover";
 import { isStartBookable } from "@/lib/bookingWindow";
 import DluxLoader, { DluxLoaderPage } from "@/components/brand/DluxLoader";
-import { quoteStay, isWeekendOrHoliday, addDaysISO, pickRate, promoBlockingSeason } from "@/lib/pricing";
+import { quoteStay, isWeekendOrHoliday, isDaycation, addDaysISO, pickRate, promoBlockingSeason } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import { useSeasonalRates } from "@/lib/useSeasonalRates";
 import { blockSlotsOf, slotForWindowLabel } from "@/lib/blockedSlots";
@@ -921,12 +921,14 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   // Owner-set seasonal rates (Finance → Seasonal Rates): a night inside an
   // active season is charged the season's rate instead of the regular one.
   const seasons = useSeasonalRates();
-  const isWeekendRate = isWeekendOrHoliday(date, calendarRules);
+  // A Daycation follows the night before it (Sat/Sun weekend, Fri weekday).
+  const daycation = isDaycation(selectedWindow.stayType, selectedWindow.checkIn, selectedWindow.checkOut);
+  const isWeekendRate = isWeekendOrHoliday(date, calendarRules, daycation);
   const feePax = guests.adults + guests.children; // adults + young adults; excludes 7-under
   // Same quoteStay() the checkout and createBooking price with: room total
   // (seasons and long-term tiers included) plus the matching pax fee — a
   // long-term stay charges its own per-pax-per-night fee INSTEAD of the normal one.
-  const stayQuote = quoteStay({ stayType: selectedWindow.stayType, checkInISO: date, nights: stayNights, rates: room, rules: calendarRules, seasons, feePax });
+  const stayQuote = quoteStay({ stayType: selectedWindow.stayType, checkInISO: date, nights: stayNights, rates: room, rules: calendarRules, seasons, feePax, daycation });
   const basePrice = stayQuote.roomTotal;
   // "₱X/night · Long-term rate" only when one flat long-term rate (the haven's
   // or a season's) priced every night. Seasons are not named to the guest.
@@ -1003,10 +1005,13 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   //
   // With no date yet there is no weekend/weekday answer to give, so the weekday
   // rate stands as the "from" floor.
-  const rateOn = (stayType: string, iso: string = date) =>
+  const rateOn = (stayType: string, iso: string = date, dayc = false) =>
     iso
-      ? pickRate(stayType, iso, room, calendarRules, seasons)
+      ? pickRate(stayType, iso, room, calendarRules, seasons, dayc)
       : stayType === "10" ? room.price10hr : room.price21hr;
+  // A specific window's rate — tells a Daycation apart from a Nightcation.
+  const windowRate = (w: { stayType: string; checkIn: string; checkOut: string }) =>
+    rateOn(w.stayType, date, isDaycation(w.stayType, w.checkIn, w.checkOut));
 
   // Shown before a stay type is picked — advertising one option's rate as "the"
   // price would be the same silent default we just removed.
@@ -1035,7 +1040,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   // whatever promo is running; this narrows to one that actually covers the
   // stay type the guest picked, so an overnight-only promo never discounts a
   // Daycation quote. Only meaningful once a stay type is chosen.
-  const stayRate = rateOn(selectedWindow.stayType);
+  const stayRate = windowRate(selectedWindow);
   // Is this voucher's code actually in play for this visit? Reserve only
   // forwards ?promo= to checkout when it arrived in the URL, so a voucher the
   // guest hasn't opted into must NOT move the price here — showing ₱1,199 and
@@ -1246,7 +1251,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
         <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, background: "#FAF7F1", borderTop: "1px solid #ECE5D4", padding: "14px 18px calc(16px + env(safe-area-inset-bottom))", boxShadow: "0 -12px 30px -18px rgba(20,15,9,.35)", display: "flex", alignItems: "center", gap: 14 }}>
           <div style={{ flex: "none" }}>
             <div style={{ fontSize: 10.5, color: "#8B7458" }}>{canProceed ? "Total" : "From"}</div>
-            <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: "-.01em" }}>{peso(canProceed ? total : stayChosen ? rateOn(selectedWindow.stayType) : fromPrice)}</div>
+            <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: "-.01em" }}>{peso(canProceed ? total : stayChosen ? windowRate(selectedWindow) : fromPrice)}</div>
           </div>
           <button
             onClick={() => {
@@ -1349,7 +1354,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
               </CardStep>
 
               {/* 2. RATE — only what is bookable on that date. */}
-              <CardStep n={2} title="Choose your rate" active={cardStep === 2} done={stayChosen && cardStep > 2} summary={stayChosen ? `${selectedWindow.label} · ${peso(rateOn(selectedWindow.stayType))}` : undefined} onOpen={() => { setCardStep(2); setDateOpen(false); setGuestOpen(false); }}>
+              <CardStep n={2} title="Choose your rate" active={cardStep === 2} done={stayChosen && cardStep > 2} summary={stayChosen ? `${selectedWindow.label} · ${peso(windowRate(selectedWindow))}` : undefined} onOpen={() => { setCardStep(2); setDateOpen(false); setGuestOpen(false); }}>
                 {!date ? (
                   <div style={{ fontSize: 13, color: "#8B7458", padding: "10px 2px" }}>
                     Pick a date first — the rates open on that day will appear here.
@@ -1369,7 +1374,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                   {windows.map((w) => {
                     const free = isWindowFreeOn(date, w, 1);
                     const active = free && stayChosen && selectedWindow.checkIn === w.checkIn && selectedWindow.checkOut === w.checkOut;
-                    const price = rateOn(w.stayType);
+                    const price = windowRate(w);
                     const i = windows.indexOf(w); // icon follows the original order
                     const ic = i === 0
                       ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
@@ -1874,7 +1879,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                   </CardStep>
 
                   {/* 2. RATE — only what is bookable on that date. */}
-                  <CardStep n={2} title="Choose your rate" active={cardStep === 2} done={stayChosen && cardStep > 2} summary={stayChosen ? `${selectedWindow.label} · ${peso(rateOn(selectedWindow.stayType))}` : undefined} onOpen={() => { setCardStep(2); setDateOpen(false); setGuestOpen(false); }}>
+                  <CardStep n={2} title="Choose your rate" active={cardStep === 2} done={stayChosen && cardStep > 2} summary={stayChosen ? `${selectedWindow.label} · ${peso(windowRate(selectedWindow))}` : undefined} onOpen={() => { setCardStep(2); setDateOpen(false); setGuestOpen(false); }}>
                     {!date ? (
                       <div style={{ fontSize: 13.5, color: "#8B7458", padding: "10px 2px" }}>
                         Pick a date first — the rates open on that day will appear here.
@@ -1892,7 +1897,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                       {windows.map((w) => {
                         const free = isWindowFreeOn(date, w, 1);
                         const active = free && stayChosen && selectedWindow.checkIn === w.checkIn && selectedWindow.checkOut === w.checkOut;
-                        const price = rateOn(w.stayType);
+                        const price = windowRate(w);
                         const i = windows.indexOf(w); // icon follows the original order
                     const ic = i === 0
                           ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>

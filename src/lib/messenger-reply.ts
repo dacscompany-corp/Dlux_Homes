@@ -14,6 +14,7 @@ import {
   bundleExtraPaxFee,
   extraPaxFee,
   isWeekendOrHoliday,
+  isDaycation,
   seasonFor,
   addDaysISO,
   isLongTermStay,
@@ -112,7 +113,7 @@ export function quoteFor(
   seasons: readonly SeasonalRate[] = [],
 ): number {
   const sessions = w.stayType === "10" ? 1 : Math.max(1, nights);
-  const room = stayTotal(w.stayType, checkInISO, sessions, rates, rules, seasons);
+  const room = stayTotal(w.stayType, checkInISO, sessions, rates, rules, seasons, isDaycation(w.stayType, w.checkIn, w.checkOut));
 
   // Only an Overnight can reach a tier; a 10-hour session never does.
   const bundled = isLongTermStay(w.stayType, checkInISO, sessions, rates, rules, seasons);
@@ -264,13 +265,19 @@ export function availabilityReply(args: {
   // A season on any quoted date outranks the weekday/weekend/long-term wording.
   const season = Array.from({ length: Math.max(1, nights) }, (_, i) => seasonFor(addDaysISO(from, i), seasons)).find(Boolean);
 
+  // A Daycation follows the night before it, so on a Friday or Sunday the
+  // quoted windows can disagree — then no single note is true and each line's
+  // price speaks for itself.
+  const weekendFlags = new Set(quoted.map((w) => isWeekendOrHoliday(from, rules, isDaycation(w.stayType, w.checkIn, w.checkOut))));
   const rateNote = season
     ? `${season.name} rate po ang date na 'yan.`
     : bundled
     ? `Long-term rate po ito para sa ${nights} nights.`
-    : isWeekendOrHoliday(from, rules)
-      ? "Weekend/holiday rate po ang date na 'yan."
-      : "Weekday rate po ang date na 'yan.";
+    : weekendFlags.size > 1
+      ? ""
+      : weekendFlags.has(true)
+        ? "Weekend/holiday rate po ang date na 'yan."
+        : "Weekday rate po ang date na 'yan.";
 
   return (
     `${lead}\n\n` +
@@ -281,7 +288,7 @@ export function availabilityReply(args: {
       ? `${timeNote(quoted.length === 1 ? quoted[0] : undefined, args.requestedTime)}\n\n`
       : "") +
     rateNote
-  );
+  ).trimEnd();
 }
 
 /**

@@ -11,7 +11,7 @@ import { accentHex, type BrandAccent } from "./palette";
  * size, takes any accent, and can animate. The three layouts are the whole
  * system:
  *
- *   full    — stacked lockup: mark over wordmark, rules, "Since 2026". Splash,
+ *   full    — stacked lockup: mark over wordmark, rules, "Since 2024". Splash,
  *             print, signage.
  *   compact — mark beside the wordmark. The working mark: app bar, keycards,
  *             confirmation mail.
@@ -258,7 +258,7 @@ export default function DluxMark({
               marginTop: Math.round(12 * scale),
             }}
           >
-            Since 2026
+            Since 2024
           </div>
         </div>
       )}

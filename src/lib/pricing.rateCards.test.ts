@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pickRate, stayTotal, type CalendarRules } from "./pricing";
+import { pickRate, stayTotal, quoteStay, isDaycation, type CalendarRules } from "./pricing";
 
 // The live D'Lux rate card (havens row for Tower 4), so a rate change in admin
 // that these no longer match is a signal, not noise.
@@ -58,5 +58,47 @@ describe("multi-night stays price each night on its own date", () => {
     expect(stayTotal("21", "2026-09-11", 1, ROOM, RULES)).toBe(
       pickRate("21", "2026-09-11", ROOM, RULES),
     );
+  });
+});
+
+// Owner decision 2026-09-19: a Daycation runs the day AFTER a night, so it
+// follows that night — Fri daycation weekday, Sat/Sun daycation weekend.
+// Nightcation keeps the check-in day. Sep 11 2026 = Fri, 12 = Sat, 13 = Sun.
+describe("daycation follows the night before it", () => {
+  it("prices a Friday Daycation at the weekday rate", () => {
+    expect(pickRate("10", "2026-09-11", ROOM, RULES, [], true)).toBe(1499);
+  });
+  it("prices Saturday and Sunday Daycations at the weekend rate", () => {
+    expect(pickRate("10", "2026-09-12", ROOM, RULES, [], true)).toBe(1699);
+    expect(pickRate("10", "2026-09-13", ROOM, RULES, [], true)).toBe(1699);
+  });
+  it("prices a Monday Daycation at the weekday rate", () => {
+    expect(pickRate("10", "2026-09-14", ROOM, RULES, [], true)).toBe(1499);
+  });
+  it("keeps Nightcation on the check-in day (Fri weekend, Sun weekday)", () => {
+    expect(pickRate("10", "2026-09-11", ROOM, RULES)).toBe(1699);
+    expect(pickRate("10", "2026-09-13", ROOM, RULES)).toBe(1499);
+  });
+  it("still charges a holiday Daycation the weekend rate", () => {
+    const withHoliday = { ...RULES, holidays: new Set(["2026-09-16"]) };
+    expect(pickRate("10", "2026-09-16", ROOM, withHoliday, [], true)).toBe(1699);
+  });
+  it("ignores the daycation flag for Overnight", () => {
+    expect(pickRate("21", "2026-09-11", ROOM, RULES, [], true)).toBe(2099);
+  });
+  it("flows through quoteStay", () => {
+    const rates = { ...ROOM, basePax: 2, additionalPaxFee: 300 };
+    expect(quoteStay({ stayType: "10", checkInISO: "2026-09-13", nights: 1, rates, rules: RULES, feePax: 2, daycation: true }).roomTotal).toBe(1699);
+    expect(quoteStay({ stayType: "10", checkInISO: "2026-09-11", nights: 1, rates, rules: RULES, feePax: 2, daycation: true }).roomTotal).toBe(1499);
+  });
+});
+
+describe("isDaycation", () => {
+  it("tells a same-day session from one that rolls past midnight", () => {
+    expect(isDaycation("10", "07:00", "17:00")).toBe(true);
+    expect(isDaycation("10", "7:00 AM", "5:00 PM")).toBe(true);
+    expect(isDaycation("10", "19:00", "05:00")).toBe(false);
+    expect(isDaycation("10", "7:00 PM", "5:00 AM")).toBe(false);
+    expect(isDaycation("21", "07:00", "17:00")).toBe(false);
   });
 });

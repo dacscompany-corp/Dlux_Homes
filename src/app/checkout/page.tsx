@@ -15,7 +15,7 @@ import { mockRooms } from "@/lib/mock-data";
 import { generateBookingId, addMyBookingId } from "@/lib/booking-store";
 import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
 import { havenToRoom } from "@/lib/haven-adapter";
-import { isWeekendOrHoliday, addDaysISO, securityDepositFor, quoteStay, promoBlockingSeason } from "@/lib/pricing";
+import { isWeekendOrHoliday, isDaycation, addDaysISO, securityDepositFor, quoteStay, promoBlockingSeason } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
 import { useSeasonalRates } from "@/lib/useSeasonalRates";
 import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
@@ -666,7 +666,9 @@ function CheckoutInner() {
   // portal); falls back to Fri/Sat + built-in PH holidays if unreachable.
   const calendarRules = useCalendarRules();
   // Weekday vs weekend/holiday rate based on the check-in date.
-  const isWeekendRate = isWeekendOrHoliday(date, calendarRules);
+  // A Daycation follows the night before it (Sat/Sun weekend, Fri weekday).
+  const daycation = isDaycation(stayType, checkInTime, checkOutTime);
+  const isWeekendRate = isWeekendOrHoliday(date, calendarRules, daycation);
   // D'Lux pricing: base rate covers 2 pax; each extra adult/young adult adds a
   // per-pax fee CHARGED PER NIGHT. "Children (7 under)" are exempt from the fee.
   // No cleaning or service fee.
@@ -686,7 +688,7 @@ function CheckoutInner() {
   // non-seasonal nights. A long-term stay charges its own per-pax-per-night fee
   // INSTEAD of the normal one. quoteStay() is the same helper createBooking
   // re-prices the booking with, so what's shown here is what the server accepts.
-  const quote = quoteStay({ stayType, checkInISO: date, nights, rates: room, rules: calendarRules, seasons, feePax, seniorCount });
+  const quote = quoteStay({ stayType, checkInISO: date, nights, rates: room, rules: calendarRules, seasons, feePax, seniorCount, daycation });
   const basePrice = quote.roomTotal;
   // "₱X/night · Long-term rate" only when one flat long-term rate (the haven's
   // or a season's) priced every night. Seasons are not named to the guest.

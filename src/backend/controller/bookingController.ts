@@ -19,7 +19,7 @@ import type { ActivePromotion } from "@/redux/api/promotionsApi";
 import { createCalendarEvent, createCalendarEventWithResult, updateCalendarEvent, CalendarEventData } from "../utils/googleCalendar";
 import { turnoverSql, TURNOVER_BLURB } from "@/lib/turnover";
 import { occupyingBookingSql, EXISTING_START_SQL, EXISTING_END_SQL, stayTypeCodeFor } from "@/lib/bookingWindow";
-import { securityDepositFor, quoteStay, promoBlockingSeason, seasonFor, addDaysISO } from "@/lib/pricing";
+import { securityDepositFor, quoteStay, promoBlockingSeason, seasonFor, addDaysISO, isDaycation } from "@/lib/pricing";
 import { checkClaimedPrice } from "@/lib/priceCheck";
 import { loadCalendarRules, loadActiveSeasons } from "@/lib/availability";
 import { havenToRoom } from "@/lib/haven-adapter";
@@ -1353,6 +1353,7 @@ export const createBooking = async (
         seasons: stayingSeasons,
         feePax: (Number(adults) || 0) + (Number(children) || 0),
         seniorCount: seniorFlags.filter(Boolean).length,
+        daycation: isDaycation(stayTypeCode, check_in_time, check_out_time),
       });
       const priceCheck = checkClaimedPrice(quote, { total_amount, discount_amount, senior_discount });
       if (!priceCheck.ok) {
