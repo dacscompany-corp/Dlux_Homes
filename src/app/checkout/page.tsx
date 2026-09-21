@@ -104,7 +104,7 @@ function IcoHome() { return <svg width={18} height={18} viewBox="0 0 24 24" fill
 function IcoUpload() { return <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>; }
 function IcoStar() { return <svg width={12} height={12} viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="12 2 15 9 22 10 17 15 18 22 12 18.5 6 22 7 15 2 10 9 9 12 2" /></svg>; }
 
-const STEPS = ["Your details", "Payment", "Confirm", "Review"];
+const STEPS = ["Your details", "Amenities", "Payment", "Confirm", "Review"];
 
 // Brand marks for the payment options (see public/images). Matched against the
 // method key, provider and display name together, so a method stored as "bank"
@@ -592,6 +592,31 @@ function CheckoutInner() {
   // stored with no ID attached.
   const [info, setInfo] = useState<Info>({ firstName: "", lastName: "", age: "", gender: "Male", email: "", phone: "", facebook: "", notes: "", validIds: [], senior: false, birthday: "" });
   const [payment, setPayment] = useState<Payment>({ methodId: "", method: "", reference: "", proofName: null, proofData: null, idName: null, idData: null });
+  // Amenities — optional. An amenity is only billed/saved once it's switched ON
+  // AND has at least one booked guest selected for it (see fieldErrors step 1).
+  // `guestKeys` holds keys like "main" or "x0"/"x1" (matching extraGuests index),
+  // capped at 6 per amenity.
+  // The amenity fee is per amenity, not per person. Guest selection tells the
+  // host who may use it; it does not multiply the fee (e.g. 3 pool guests =
+  // ₱200, as specified by the owner).
+  const AMENITIES = [
+    { key: "swimmingPool", name: "Swimming Pool", fee: 200 },
+    { key: "basketballCourt", name: "Basketball Court", fee: 200 },
+  ] as const;
+  type AmenityKey = typeof AMENITIES[number]["key"];
+  const [amenities, setAmenities] = useState<Record<AmenityKey, { enabled: boolean; guestKeys: string[] }>>({
+    swimmingPool: { enabled: false, guestKeys: [] },
+    basketballCourt: { enabled: false, guestKeys: [] },
+  });
+  const toggleAmenity = (key: AmenityKey) =>
+    setAmenities((prev) => ({ ...prev, [key]: { ...prev[key], enabled: !prev[key].enabled } }));
+  const toggleAmenityGuest = (key: AmenityKey, guestKey: string) =>
+    setAmenities((prev) => {
+      const cur = prev[key].guestKeys;
+      const has = cur.includes(guestKey);
+      if (!has && cur.length >= 6) return prev; // max 6 selected guests per amenity
+      return { ...prev, [key]: { ...prev[key], guestKeys: has ? cur.filter((k) => k !== guestKey) : [...cur, guestKey] } };
+    });
   // Terms acceptance. Gated on step 0 -> 1, i.e. BEFORE the payment step reveals
   // the GCash/BPI details — never at the final Review step. The down payment is
   // a manual transfer the guest makes outside the app, so by the time they press
@@ -801,7 +826,27 @@ function CheckoutInner() {
   const discountAmount = (appliedDiscount?.discount_amount ?? 0) + autoDiscount;
   const total = Math.max(0, subtotal - discountAmount);
   const downPayment = Math.round(total * 0.5); // 50% reservation down payment
-  const stepCaption = ["Step 1 of 4 — tell us who's staying", "Step 2 of 4 — send your down payment to reserve", "Step 3 of 4 — confirm the payment you sent", "Step 4 of 4 — review and submit your request"][step];
+
+  // Amenities pricing — NOT discounted, NOT split into the 50% down payment.
+  // Each enabled amenity bills its flat fee in full now.
+  const selectedAmenities = AMENITIES
+    .map((a) => {
+      const guestKeys = amenities[a.key].enabled ? amenities[a.key].guestKeys : [];
+      return { ...a, guestKeys, fee: a.fee * guestKeys.length };
+    })
+    .filter((a) => a.guestKeys.length > 0);
+  const amenitiesTotal = selectedAmenities.reduce((sum, a) => sum + a.fee, 0);
+  // What the guest actually sends today: the 50% down payment plus any
+  // amenities fee (amenities are billed in full up front, not split 50/50).
+  const amountDueNow = downPayment + amenitiesTotal;
+
+  const stepCaption = [
+    "Step 1 of 5 — tell us who's staying",
+    "Step 2 of 5 — add optional amenities",
+    "Step 3 of 5 — send your down payment to reserve",
+    "Step 4 of 5 — confirm the payment you sent",
+    "Step 5 of 5 — review and submit your request",
+  ][step];
 
   // Per-field validation for the current step. Returns the set of invalid field
   // keys so the Continue button can stay clickable while we mark exactly what's
@@ -843,11 +888,19 @@ function CheckoutInner() {
       // guest card to land on the checkbox.
       if (!termsOk) e.add("terms");
     }
-    // Step 1 (Payment): a payment method must be selected.
-    if (step === 1 && !payment.methodId) e.add("method");
-    // Step 2 (Confirm payment): reference number + receipt are required, since
-    // the guest pays the 50% down payment during checkout.
-    if (step === 2) {
+    // Step 1 (Amenities, optional): an enabled amenity needs at least one
+    // selected guest before Continue is allowed — an amenity left OFF needs
+    // nothing at all.
+    if (step === 1) {
+      AMENITIES.forEach((a) => {
+        if (amenities[a.key].enabled && amenities[a.key].guestKeys.length === 0) e.add(`amenity-${a.key}`);
+      });
+    }
+    // Step 2 (Payment): a payment method must be selected.
+    if (step === 2 && !payment.methodId) e.add("method");
+    // Step 3 (Confirm payment): reference number + receipt are required, since
+    // the guest pays the down payment during checkout.
+    if (step === 3) {
       if (!payment.reference.trim()) e.add("reference");
       if (!payment.proofData) e.add("receipt");
     }
@@ -963,11 +1016,21 @@ function CheckoutInner() {
       // when it is the only thing left — and it is the one blocker whose reason
       // the guest most needs stated plainly.
       const onlyTerms = fieldErrors.size === 1 && fieldErrors.has("terms");
-      toast.error(
-        onlyTerms
-          ? "Please read and accept the Terms & Conditions before you pay."
-          : `Please complete the ${fieldErrors.size} highlighted field${fieldErrors.size > 1 ? "s" : ""} before continuing.`,
-      );
+      // An amenity switched ON with no guest selected gets its own named
+      // message ("...who will use the Swimming Pool.") instead of the generic
+      // field count — there is no input to highlight, just a picker to open.
+      const unfinishedAmenity = step === 1
+        ? AMENITIES.find((a) => fieldErrors.has(`amenity-${a.key}`))
+        : undefined;
+      if (unfinishedAmenity) {
+        toast.error(`Please select at least one booked guest who will use the ${unfinishedAmenity.name}.`);
+      } else {
+        toast.error(
+          onlyTerms
+            ? "Please read and accept the Terms & Conditions before you pay."
+            : `Please complete the ${fieldErrors.size} highlighted field${fieldErrors.size > 1 ? "s" : ""} before continuing.`,
+        );
+      }
       // Jump to the first missing field (Set keeps form order).
       const firstKey = fieldErrors.values().next().value;
       // A collapsed card's inputs are NOT in the DOM, so the scroll/focus below
@@ -1045,10 +1108,14 @@ function CheckoutInner() {
       payment_method: payment.method,
       payment_reference: payment.reference || undefined, // guest-entered reference number
       room_rate: basePrice,
-      add_ons_total: 0,
-      total_amount: total,
-      down_payment: downPayment,
-      add_ons: [],
+      add_ons_total: amenitiesTotal,
+      total_amount: total + amenitiesTotal,
+      down_payment: amountDueNow,
+      // A normal add-on record makes selected amenities visible everywhere a
+      // booking is read; the explicit selections let the server validate and
+      // preserve the eligible guest list as well.
+      add_ons: selectedAmenities.map((a) => ({ name: a.name, price: a.fee, quantity: 1 })),
+      amenities: selectedAmenities.map((a) => ({ key: a.key, guestKeys: a.guestKeys })),
       discount_id: appliedDiscount?.id || undefined,
       discount_code: appliedDiscount?.code || undefined,
       discount_amount: discountAmount || undefined,
@@ -1370,7 +1437,7 @@ function CheckoutInner() {
             <div className="co-mobile-steps" style={{ alignItems: "center", gap: 5, marginBottom: 22 }}>
               {STEPS.map((s, i) => {
                 const done = i < step, current = i === step;
-                const shortLabel = ["Details", "Payment", "Confirm", "Review"][i];
+                const shortLabel = ["Details", "Amenities", "Payment", "Confirm", "Review"][i];
                 return (
                   <div key={i} style={{ display: "contents" }}>
                     {i > 0 && <div style={{ height: 1.5, flex: "0 0 12px", background: "#D4BE9A", marginBottom: 18 }} />}
@@ -1727,11 +1794,95 @@ function CheckoutInner() {
               </div>
             )}
 
-            {/* Step 1: Payment method */}
-            {/* Step 1: choose a payment method + show its QR / account details */}
+            {/* Step 1: Amenities (optional) — no separate "Skip" control; Continue
+                stays enabled with every toggle OFF. An enabled amenity requires
+                at least one selected guest before Continue proceeds (see
+                fieldErrors / tryAdvance above). */}
             {step === 1 && (
+              <div className="co-fade" style={{ background: "#1C1713", color: "#F9F5EF", borderRadius: 18, padding: "22px clamp(16px, 3vw, 26px)", boxShadow: "0 12px 28px rgba(31, 22, 14, .14)" }}>
+                <h2 style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 28, fontWeight: 500, margin: "0 0 5px", letterSpacing: "-.02em" }}>Choose your amenities</h2>
+                <p style={{ color: "#B9ACA0", fontSize: 12, margin: "0 0 18px" }}>
+                  Skip this if you don&apos;t need anything extra — you can continue without selecting a thing.
+                </p>
+                {AMENITIES.map((a) => {
+                  const state = amenities[a.key];
+                  const guestKeys = Array.from({ length: totalGuests }, (_, gi) => (gi === 0 ? "main" : `x${gi - 1}`));
+                  const nameFor = (gi: number) => {
+                    const filled = gi === 0 ? `${info.firstName} ${info.lastName}`.trim() : `${extraGuests[gi - 1]?.firstName ?? ""} ${extraGuests[gi - 1]?.lastName ?? ""}`.trim();
+                    return filled || guestLabel(gi);
+                  };
+                  const guestDetailFor = (gi: number) => {
+                    const age = gi === 0 ? Number(info.age) : Number(extraGuests[gi - 1]?.age);
+                    if (!Number.isFinite(age) || age <= 0) return "Guest";
+                    return age >= 18 ? "Adult" : `Age ${age}`;
+                  };
+                  const errKey = `amenity-${a.key}`;
+                  const showAmenityError = showErrors && fieldErrors.has(errKey);
+                  return (
+                    <div key={a.key} style={{ border: `1px solid ${showAmenityError ? "#EF6A5B" : "#51463E"}`, borderRadius: 10, background: "#29231F", padding: "14px 12px 12px", marginBottom: 9 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: "#F9F5EF" }}>{a.name}</div>
+                          <div style={{ color: "#B9ACA0", fontSize: 10.5, marginTop: 3 }}>Open 8:00 AM–10:00 PM · Maximum 6 guests</div>
+                          <div style={{ color: "#B9ACA0", fontSize: 10.5, marginTop: 2 }}>Includes ₱150 amenity fee + ₱50 service fee</div>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 9, flex: "none" }}>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: "#F9F5EF" }}>{peso(a.fee)}<span style={{ color: "#B9ACA0", fontSize: 9, fontWeight: 500 }}> / person</span></span>
+                        <button type="button" role="switch" aria-checked={state.enabled} onClick={() => toggleAmenity(a.key)}
+                          style={{ position: "relative", width: 30, height: 18, borderRadius: 999, border: "none", cursor: "pointer", flex: "none", background: state.enabled ? "#C98243" : "#6A605A", transition: "background 0.2s ease" }}>
+                          <span style={{ position: "absolute", top: 3, left: state.enabled ? 15 : 3, width: 12, height: 12, borderRadius: "50%", background: "#FFF9F1", transition: "left 0.2s ease", boxShadow: "0 1px 2px rgba(0,0,0,.25)" }} />
+                        </button>
+                        </div>
+                      </div>
+                      {state.enabled && (
+                        <div style={{ marginTop: 11, paddingTop: 11, borderTop: "1px solid #51463E" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 10, fontSize: 0 }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: "#F9F5EF" }}>Who will use this amenity?</span>
+                            <span style={{ fontSize: 10.5, color: "#E4A76D" }}>{state.guestKeys.length} of 6 selected</span>
+                            Select the booked guests who will use this — {state.guestKeys.length} of 6 selected.
+                          </div>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "9px 18px" }}>
+                            {guestKeys.map((gk, gi) => {
+                              const checked = state.guestKeys.includes(gk);
+                              const disabled = !checked && state.guestKeys.length >= 6;
+                              return (
+                                <label key={gk} style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0, fontSize: 10.5, fontWeight: 600, color: disabled ? "#776C63" : "#E8E1D8", cursor: disabled ? "not-allowed" : "pointer" }}>
+                                  <input type="checkbox" checked={checked} disabled={disabled} onChange={() => toggleAmenityGuest(a.key, gk)}
+                                    style={{ width: 12, height: 12, margin: 0, accentColor: "#C98243", cursor: disabled ? "not-allowed" : "pointer", flex: "none" }} />
+                                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nameFor(gi)} · {guestDetailFor(gi)}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                      {showAmenityError && (
+                        <div id={`f-${errKey}`} style={{ fontSize: 11, color: "#FF9589", marginTop: 10 }}>
+                          Please select at least one booked guest who will use the {a.name}.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700, padding: "12px 10px", borderRadius: 9, background: "#332C27", color: "#F9F5EF" }}>
+                  <span>Amenities total</span>
+                  <span>{amenitiesTotal > 0 ? peso(amenitiesTotal) : "₱0"}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Step 2: Payment method */}
+            {/* Step 2: choose a payment method + show its QR / account details */}
+            {step === 2 && (
               <div className="co-fade">
                 <h2 style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 27, fontWeight: 500, margin: "0 0 18px", letterSpacing: "-.02em" }}>How would you like to pay?</h2>
+
+                <div style={{ margin: "0 0 20px", padding: "15px 17px", borderRadius: 14, background: "#FAF7F1", border: "1px solid #E0CEB2", fontSize: 13, color: "#4A3A2A" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}><span>Amenities</span><span style={{ fontWeight: 600 }}>{selectedAmenities.length ? selectedAmenities.map((a) => a.name).join(", ") : "None"}</span></div>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 7 }}><span>Amenities fee</span><span style={{ fontWeight: 600 }}>{peso(amenitiesTotal)}</span></div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, marginTop: 12, paddingTop: 12, borderTop: "1px solid #E0CEB2", color: "#1F160E" }}><span style={{ fontWeight: 700 }}>Amount due now</span><span style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 22, fontWeight: 600, color: "#8C5A2E" }}>{peso(amountDueNow)}</span></div>
+                  <div style={{ fontSize: 11.5, color: "#8B7458", marginTop: 4 }}>Accommodation down payment{amenitiesTotal ? " + total amenities fee" : ""}</div>
+                </div>
 
                 {methods.length === 0 ? (
                   <div style={{ padding: 20, borderRadius: 16, background: "#EFE4CE", fontSize: 13.5, color: "#4A3A2A", lineHeight: 1.6 }}>
@@ -1775,7 +1926,7 @@ function CheckoutInner() {
                     {selectedMethod && (
                       <div style={{ border: "1px solid #E0CEB2", borderRadius: 18, background: "#FFFCF4", overflow: "hidden" }}>
                         <div style={{ padding: "22px 22px 24px", textAlign: "center", background: "#EFE4CE" }}>
-                          <div style={{ fontFamily: "'Geist Mono', monospace", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".14em", color: "#8B7458", marginBottom: 16 }}>Scan to pay {peso(downPayment)} · {selectedMethod.payment_name}</div>
+                          <div style={{ fontFamily: "'Geist Mono', monospace", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".14em", color: "#8B7458", marginBottom: 16 }}>Scan to pay {peso(amountDueNow)} · {selectedMethod.payment_name}</div>
                           {/* Width-constrained, height-free: hosts upload tall poster-style
                               QR graphics, and boxing those into a fixed square shrank the
                               scannable code to a fraction of the frame. Letting the height
@@ -1806,13 +1957,13 @@ function CheckoutInner() {
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, paddingTop: 12, borderTop: "1px solid #EFE4CE" }}>
                             <div>
                               <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em", color: "#8B7458" }}>Exact amount to send</div>
-                              <div style={{ fontSize: 20, fontWeight: 600, color: "#8C5A2E", fontFamily: "'Fraunces', Georgia, serif", marginTop: 2 }}>{peso(downPayment)}</div>
+                              <div style={{ fontSize: 20, fontWeight: 600, color: "#8C5A2E", fontFamily: "'Fraunces', Georgia, serif", marginTop: 2 }}>{peso(amountDueNow)}</div>
                             </div>
                             <span style={{ fontSize: 11.5, color: "#8B7458", maxWidth: 150, textAlign: "right", lineHeight: 1.4 }}>Send this exact amount to reserve instantly.</span>
                           </div>
                         </div>
                         <div style={{ padding: "16px 22px 18px", background: "#FAF7F1", borderTop: "1px solid #EFE4CE", display: "flex", gap: 6 }}>
-                          {[["1", `Open ${selectedMethod.payment_name}`], ["2", `Send ${peso(downPayment)}`], ["3", "Screenshot the receipt"]].map(([n, t]) => (
+                          {[["1", `Open ${selectedMethod.payment_name}`], ["2", `Send ${peso(amountDueNow)}`], ["3", "Screenshot the receipt"]].map(([n, t]) => (
                             <div key={n} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 7, textAlign: "center" }}>
                               <span style={{ width: 24, height: 24, borderRadius: "50%", background: "#2C2218", color: "#F6EFE2", display: "grid", placeItems: "center", fontSize: 11, fontFamily: "'Geist Mono', monospace" }}>{n}</span>
                               <span style={{ fontSize: 11, color: "#4A3A2A", lineHeight: 1.3 }}>{t}</span>
@@ -1828,12 +1979,12 @@ function CheckoutInner() {
               </div>
             )}
 
-            {/* Step 2: confirm payment — reference number + receipt upload */}
-            {step === 2 && (
+            {/* Step 3: confirm payment — reference number + receipt upload */}
+            {step === 3 && (
               <div className="co-fade">
                 <h2 style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 27, fontWeight: 500, margin: "0 0 8px", letterSpacing: "-.02em" }}>Confirm your payment</h2>
                 <p style={{ fontSize: 14, color: "#4A3A2A", margin: "0 0 22px", lineHeight: 1.55 }}>
-                  Add your reference number and receipt so we can verify the <strong>{peso(downPayment)}</strong> you sent{selectedMethod ? <> via <strong>{selectedMethod.payment_name}</strong></> : null} and confirm your booking.
+                  Add your reference number and receipt so we can verify the <strong>{peso(amountDueNow)}</strong> you sent{selectedMethod ? <> via <strong>{selectedMethod.payment_name}</strong></> : null} and confirm your booking.
                 </p>
 
                 <div style={{ marginBottom: 20 }}>
@@ -1859,8 +2010,8 @@ function CheckoutInner() {
               </div>
             )}
 
-            {/* Step 3: Review */}
-            {step === 3 && (
+            {/* Step 4: Review */}
+            {step === 4 && (
               <div className="co-fade">
                 <h2 style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 27, fontWeight: 500, margin: "0 0 18px", letterSpacing: "-.02em" }}>Double-check everything</h2>
                 <ReviewBlock title="Guest" onEdit={() => setStep(0)}>
@@ -1874,11 +2025,16 @@ function CheckoutInner() {
                   <div style={{ fontSize: 13, color: "#8B7458", marginTop: 4 }}>{formatDateLong(date)} · {checkInTime} → {checkOutTime}</div>
                   <div style={{ fontSize: 13, color: "#8B7458" }}>{stayType === "10" ? "10-hour stay" : `Overnight · ${nights} night${nights > 1 ? "s" : ""}`} · {adults + children + infants} guest{adults + children + infants > 1 ? "s" : ""}</div>
                 </ReviewBlock>
-                <ReviewBlock title="Payment" onEdit={() => setStep(1)}>
+                <ReviewBlock title="Amenities" onEdit={() => setStep(1)}>
+                  {selectedAmenities.length ? selectedAmenities.map((a) => (
+                    <div key={a.key} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#8B7458", marginTop: 3 }}><span>{a.name} · {a.guestKeys.length} guest{a.guestKeys.length === 1 ? "" : "s"}</span><span>{peso(a.fee)}</span></div>
+                  )) : <div style={{ fontSize: 13, color: "#8B7458" }}>Amenities: None · ₱0</div>}
+                </ReviewBlock>
+                <ReviewBlock title="Payment" onEdit={() => setStep(2)}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 14, fontWeight: 600 }}>{selectedMethod?.payment_name || payment.method || "—"} ·</span>
-                    <span style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 22, fontWeight: 600, color: "#8C5A2E" }}>{peso(downPayment)}</span>
-                    <span style={{ fontSize: 13, color: "#8B7458" }}>due now · 50% down payment</span>
+                    <span style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 22, fontWeight: 600, color: "#8C5A2E" }}>{peso(amountDueNow)}</span>
+                    <span style={{ fontSize: 13, color: "#8B7458" }}>due now · accommodation down payment{amenitiesTotal ? " + amenities" : ""}</span>
                   </div>
                   <div style={{ fontSize: 13, color: "#8B7458", marginTop: 4 }}>Ref no. {payment.reference || "—"}{payment.proofName ? ` · receipt: ${payment.proofName}` : ""}</div>
                   <div style={{ fontSize: 13, color: "#8B7458", marginTop: 2 }}>{peso(total - downPayment)} balance + {peso(SECURITY_DEPOSIT)} deposit at check-in</div>
@@ -1928,7 +2084,7 @@ function CheckoutInner() {
                     style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 30px", borderRadius: 999, fontSize: 15, fontWeight: 600, border: "none", cursor: "pointer",
                       background: step === 0 && firstIncomplete != null ? G.offBg : G.accent,
                       color: step === 0 && firstIncomplete != null ? G.offInk : G.white }}>
-                    Continue <IcoArrowRight />
+                    {step === 0 ? "Next: Amenities" : step === 1 ? "Next: Payment" : step === 2 ? "Next: Confirm" : "Next: Review"} <IcoArrowRight />
                   </button>
                 </span>
               ) : (
@@ -1966,6 +2122,7 @@ function CheckoutInner() {
                   {/* Long-term stays quote one flat nightly rate — show it. */}
                   {bundleLabel && bundleRate != null && <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: -4 }}>{peso(bundleRate)}/night</div>}
                   {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra pax · {extraPaxCount} × {peso(paxFeeRate)}{nights > 1 ? ` × ${nights} nights` : ""}</span><span>{peso(paxFee)}</span></div>}
+                  <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Amenities</span><span>{selectedAmenities.length ? peso(amenitiesTotal) : "None · ₱0"}</span></div>
                   {seniorDiscount > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span>Senior/PWD discount · {seniorCount} guest{seniorCount > 1 ? "s" : ""}</span><span>−{peso(seniorDiscount)}</span></div>}
                   {appliedDiscount && (
                     <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span>Promo · {appliedDiscount.code}</span><span>−{peso(appliedDiscount.discount_amount)}</span></div>
@@ -1986,7 +2143,7 @@ function CheckoutInner() {
                     <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Balance at check-in</span><span style={{ fontWeight: 600 }}>{peso(total - downPayment)}</span></div>
                     <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Refundable deposit</span><span style={{ fontWeight: 600 }}>{peso(SECURITY_DEPOSIT)}</span></div>
                   </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16, marginTop: 6, paddingTop: 10, borderTop: "1px solid #E0CEB2" }}><span>Total stay value</span><span>{peso(total)}</span></div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16, marginTop: 6, paddingTop: 10, borderTop: "1px solid #E0CEB2" }}><span>Total stay value</span><span>{peso(total + amenitiesTotal)}</span></div>
                 </div>
 
                 {/* PROMO CODE */}
@@ -2035,8 +2192,8 @@ function CheckoutInner() {
                     <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".16em", color: "#D4A96A" }}>Pay now to reserve</span>
                   </div>
                   <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, marginTop: 8 }}>
-                    <div className="co-pay-amt" style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 52, fontWeight: 500, lineHeight: 1 }}>{peso(downPayment)}</div>
-                    <div style={{ fontSize: 12, color: "#B8A68E", textAlign: "right", paddingBottom: 6 }}>50% down<br />payment</div>
+                    <div className="co-pay-amt" style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 52, fontWeight: 500, lineHeight: 1 }}>{peso(amountDueNow)}</div>
+                    <div style={{ fontSize: 12, color: "#B8A68E", textAlign: "right", paddingBottom: 6 }}>down payment<br />+ amenities</div>
                   </div>
                   <div style={{ fontSize: 12.5, color: "#B8A68E", marginTop: 8, lineHeight: 1.5 }}>Secures your booking instantly. Send this amount first — the rest is paid when you arrive.</div>
                 </div>
@@ -2061,14 +2218,14 @@ function CheckoutInner() {
           <div style={{ fontFamily: "'Geist Mono', monospace", fontSize: 9.5, fontWeight: 600, letterSpacing: ".14em", textTransform: "uppercase", color: "#D4A96A", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             Pay now to reserve · 50%
           </div>
-          <div style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 26, lineHeight: 1.15, marginTop: 1 }}>{peso(downPayment)}</div>
+          <div style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 26, lineHeight: 1.15, marginTop: 1 }}>{peso(amountDueNow)}</div>
         </div>
         {step < STEPS.length - 1 ? (
           <button onClick={() => tryAdvance(() => setStep(step + 1))}
             style={{ flex: "none", display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 24px", borderRadius: 999, fontSize: 15, fontWeight: 600, border: "none", fontFamily: "inherit", cursor: "pointer",
               background: step === 0 && firstIncomplete != null ? "#4d4337" : G.accent,
               color: step === 0 && firstIncomplete != null ? "#A2937D" : G.white }}>
-            Continue <IcoArrowRight />
+            {step === 0 ? "Next: Amenities" : step === 1 ? "Next: Payment" : step === 2 ? "Next: Confirm" : "Next: Review"} <IcoArrowRight />
           </button>
         ) : (
           <button onClick={() => tryAdvance(submit)} disabled={submitting}

@@ -359,6 +359,14 @@ const ADD_ON_PRICES = {
   extraSlippers: 30,
 };
 
+// Flat checkout amenity fees are server-owned: selecting guests grants use but
+// never turns the fee into a per-person charge.
+const CHECKOUT_AMENITIES = {
+  swimmingPool: { name: "Swimming Pool", fee: 200 },
+  basketballCourt: { name: "Basketball Court", fee: 200 },
+} as const;
+type CheckoutAmenityKey = keyof typeof CHECKOUT_AMENITIES;
+
 export const updateBookingDetails = async (
   req: NextRequest,
 ): Promise<NextResponse> => {
@@ -792,6 +800,7 @@ export const createBooking = async (
       terms_version,
       terms_accepted_at,
       // Add-ons (frontend sends snake_case `add_ons`)
+      amenities: amenitySelections = [],
       add_ons: addOns = {},
     } = body;
 
@@ -1291,18 +1300,33 @@ export const createBooking = async (
     // Step 4: Create payment record (without security deposit)
     // Note: paymentProofUrl was already uploaded earlier for calendar event
 
-    // Calculate payment amounts (security deposit is handled separately during checkout)
-    const paymentTotalAmount = Number(total_amount) || 0; // Full amount during booking
-    const requestedDownPayment = Number(down_payment) || 0;
-    // amount_paid must not exceed total_amount (booking_payments_amount_paid_check)
-    const paymentAmountPaid = Math.min(requestedDownPayment, paymentTotalAmount);
-    const paymentDownPayment = Math.min(requestedDownPayment, paymentTotalAmount);
-
-    console.log("📋 [BOOKING] Payment computed:", {
-      total_amount: paymentTotalAmount,
-      down_payment: paymentDownPayment,
-      amount_paid: paymentAmountPaid,
-    });
+    // Validate optional amenity selections before their fee affects payment.
+    const eligibleGuestKeys = new Set(["main", ...(additional_guests as unknown[]).map((_, index) => `x${index}`)]);
+    if (!Array.isArray(amenitySelections)) {
+      await client.query("ROLLBACK");
+      return NextResponse.json({ success: false, error: "Invalid amenity selection." }, { status: 400 });
+    }
+    const seenAmenities = new Set<CheckoutAmenityKey>();
+    const verifiedAmenities: Array<{ key: CheckoutAmenityKey; guestKeys: string[] }> = [];
+    for (const selection of amenitySelections as Array<{ key?: unknown; guestKeys?: unknown }>) {
+      const key = typeof selection?.key === "string" ? selection.key as CheckoutAmenityKey : null;
+      const guestKeys = Array.isArray(selection?.guestKeys) ? selection.guestKeys : [];
+      if (!key || !(key in CHECKOUT_AMENITIES) || seenAmenities.has(key) || guestKeys.length < 1 || guestKeys.length > 6
+        || guestKeys.some((guestKey) => typeof guestKey !== "string" || !eligibleGuestKeys.has(guestKey))
+        || new Set(guestKeys).size !== guestKeys.length) {
+        await client.query("ROLLBACK");
+        return NextResponse.json({ success: false, error: "Each selected amenity needs one to six booked guests." }, { status: 400 });
+      }
+      seenAmenities.add(key);
+      verifiedAmenities.push({ key, guestKeys: guestKeys as string[] });
+    }
+    const verifiedAmenitiesTotal = verifiedAmenities.reduce(
+      (sum, item) => sum + CHECKOUT_AMENITIES[item.key].fee * item.guestKeys.length,
+      0,
+    );
+    let paymentTotalAmount = Number(total_amount) || 0;
+    let paymentDownPayment = Number(down_payment) || 0;
+    let paymentAmountPaid = paymentDownPayment;
 
     // ── Re-price the stay on the server ───────────────────────────────────
     // The room price used to be whatever the browser sent. It's now re-quoted
@@ -1355,7 +1379,13 @@ export const createBooking = async (
         seniorCount: seniorFlags.filter(Boolean).length,
         daycation: isDaycation(stayTypeCode, check_in_time, check_out_time),
       });
-      const priceCheck = checkClaimedPrice(quote, { total_amount, discount_amount, senior_discount });
+      // quote covers accommodation only; amenities are paid in full alongside
+      // its down payment and are not discounted.
+      const priceCheck = checkClaimedPrice(quote, {
+        total_amount: Number(total_amount) - verifiedAmenitiesTotal,
+        discount_amount,
+        senior_discount,
+      });
       if (!priceCheck.ok) {
         if (opts.isAdminCaller) {
           // The New Booking wizard lets staff set a price by hand; flag it, don't block it.
@@ -1369,7 +1399,27 @@ export const createBooking = async (
           );
         }
       }
+      if (!opts.isAdminCaller) {
+        // The accommodation amount was price-checked above; preserve the
+        // product rule that the guest pays half of that amount plus every
+        // selected amenity in full today.
+        const accommodationTotal = Number(total_amount) - verifiedAmenitiesTotal;
+        const expectedTotal = accommodationTotal + verifiedAmenitiesTotal;
+        const expectedDownPayment = Math.round(accommodationTotal * 0.5) + verifiedAmenitiesTotal;
+        if (paymentTotalAmount !== expectedTotal || paymentDownPayment !== expectedDownPayment || Number(add_ons_total || 0) !== verifiedAmenitiesTotal) {
+          await client.query("ROLLBACK");
+          return NextResponse.json({ success: false, error: "The payment total has changed. Please refresh and try again.", code: "PRICE_CHANGED" }, { status: 409 });
+        }
+      }
+      paymentAmountPaid = Math.min(paymentDownPayment, paymentTotalAmount);
+      paymentDownPayment = Math.min(paymentDownPayment, paymentTotalAmount);
     }
+
+    console.log("📋 [BOOKING] Payment computed:", {
+      total_amount: paymentTotalAmount,
+      down_payment: paymentDownPayment,
+      amount_paid: paymentAmountPaid,
+    });
 
     // Seasons don't stack with promos unless the owner allowed it for that season.
     const promoBlockedBy = promoBlockingSeason(stayTypeCode, checkInISO, stayNightsCount, stayingSeasons);
@@ -1628,19 +1678,31 @@ export const createBooking = async (
     // Step 5: Create add-ons records
     // Accepts array form (per-haven rentable-items: name+price+quantity from the catalog)
     // and legacy object form (hardcoded keys priced from ADD_ON_PRICES).
-    if (Array.isArray(addOns)) {
-      for (const item of addOns as Array<{ name?: string; price?: number | string; quantity?: number | string }>) {
+    const amenityGuestNames = (guestKeys: string[]) => guestKeys.map((guestKey) => {
+      if (guestKey === "main") return `${guest_first_name ?? ""} ${guest_last_name ?? ""}`.trim() || "Main guest";
+      const guest = (additional_guests as Array<{ firstName?: string; lastName?: string }>)[Number(guestKey.slice(1))];
+      return `${guest?.firstName ?? ""} ${guest?.lastName ?? ""}`.trim() || "Booked guest";
+    });
+    const amenityAddOns = verifiedAmenities.map((item) => ({
+      name: CHECKOUT_AMENITIES[item.key].name,
+      price: CHECKOUT_AMENITIES[item.key].fee,
+      quantity: item.guestKeys.length,
+      notes: `Guests: ${amenityGuestNames(item.guestKeys).join(", ")}`,
+    }));
+    const storedAddOns = opts.isAdminCaller ? addOns : amenityAddOns;
+    if (Array.isArray(storedAddOns)) {
+      for (const item of storedAddOns as Array<{ name?: string; price?: number | string; quantity?: number | string; notes?: string }>) {
         const quantityNum = Number(item?.quantity || 0);
         if (quantityNum > 0) {
           await client.query(
-            `INSERT INTO booking_add_ons (booking_id, name, price, quantity)
-             VALUES ($1, $2, $3, $4)`,
-            [bookingId, String(item.name || ""), Number(item.price || 0), quantityNum],
+            `INSERT INTO booking_add_ons (booking_id, name, price, quantity, notes)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [bookingId, String(item.name || ""), Number(item.price || 0), quantityNum, item.notes || null],
           );
         }
       }
-    } else if (addOns && Object.keys(addOns).length > 0) {
-      for (const [name, quantity] of Object.entries(addOns)) {
+    } else if (storedAddOns && Object.keys(storedAddOns).length > 0) {
+      for (const [name, quantity] of Object.entries(storedAddOns)) {
         const quantityNum = Number(quantity);
         if (quantityNum > 0) {
           const addOnPrice =

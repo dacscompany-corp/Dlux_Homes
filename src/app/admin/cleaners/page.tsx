@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import "leaflet/dist/leaflet.css";
 import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
 import DluxMark from "@/components/brand/DluxMark";
@@ -56,6 +57,11 @@ const scheduleData = [
   { date: "Apr 22",           tasks: ["Emerald Deluxe Room — 9:00 AM", "Azure Haven Suite — 2:00 PM"] },
 ];
 
+// Same pin/coords as the guest-facing /location page, so the cleaner sees the
+// exact property location rather than a static placeholder graphic.
+const PROPERTY_COORDS: [number, number] = [14.659186800125402, 121.02701538724116];
+const PROPERTY_PIN_SVG = `<svg xmlns='http://www.w3.org/2000/svg' width='48' height='58' viewBox='0 0 48 58'><path d='M24 1C11.85 1 2 10.85 2 23c0 15.5 22 34 22 34s22-18.5 22-34C46 10.85 36.15 1 24 1z' fill='#1F160E' stroke='#FAF7F1' stroke-width='2.5'/><text x='24' y='31' font-family='Georgia, serif' font-style='italic' font-weight='600' font-size='24' fill='#FAF7F1' text-anchor='middle'>D</text></svg>`;
+
 const guideTopics = [
   { title: "Getting Started",             desc: "How to navigate the cleaner portal and find your daily assignments.", icon: BookOpen },
   { title: "Cleaning Standards",          desc: "D'Lux Homes cleaning protocols and quality checklist guidelines.",   icon: CheckSquare },
@@ -81,6 +87,42 @@ export default function CleanerDashboard() {
   const [issueForm, setIssueForm] = useState({ haven: "", type: "", priority: "", location: "", description: "" });
   const [issueSubmitted, setIssueSubmitted] = useState(false);
 
+  // ── Property Location — real map (same coords/pin as guest-facing /location) ──
+  const mapRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (activeNav !== "Property Location") return;
+    let cancelled = false;
+    let map: import("leaflet").Map | null = null;
+
+    import("leaflet").then((mod) => {
+      const L = mod.default;
+      if (cancelled || !mapRef.current) return;
+
+      map = L.map(mapRef.current, { scrollWheelZoom: true, maxZoom: 21 }).setView(PROPERTY_COORDS, 17);
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxNativeZoom: 19,
+        maxZoom: 21,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      }).addTo(map);
+
+      const icon = L.icon({
+        iconUrl: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(PROPERTY_PIN_SVG),
+        iconSize: [48, 58],
+        iconAnchor: [24, 57],
+        popupAnchor: [0, -52],
+      });
+      L.marker(PROPERTY_COORDS, { icon }).addTo(map).bindTooltip("D'Lux Homes — Tower 4, Grass Residences");
+
+      // The map sits in a tab that can size after init; recalc once laid out.
+      setTimeout(() => map?.invalidateSize(), 120);
+    });
+
+    return () => {
+      cancelled = true;
+      if (map) map.remove();
+    };
+  }, [activeNav]);
+
   // ── My Assignment — live cleaning tasks (booking_cleaning) ──
   const { data: cleaningTasksData } = useGetCleaningTasksQuery();
   const [startCleaningM] = useStartCleaningMutation();
@@ -101,6 +143,10 @@ export default function CleanerDashboard() {
     setAssignmentStatuses(Object.fromEntries(assignments.map((a) => [a.id, a.status])));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cleaningTasksData]);
+  // assignmentStatuses is only populated by the effect above, which runs after
+  // the first paint — fall back to the assignment's own status so status
+  // lookups never see an unmapped id before that effect fires.
+  const statusFor = (id: string, fallback: string) => assignmentStatuses[id] ?? fallback;
 
   // ── Report an Issue → live report_issue (feeds Owner Maintenance) ──
   const { data: session } = useSession();
@@ -249,8 +295,15 @@ export default function CleanerDashboard() {
   };
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: "#ffffff", zoom: "1.1" }}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist+Mono:wght@400;500&display=swap');`}</style>
+    <div className="min-h-screen cleaner-dashboard-root" style={{ backgroundColor: "#ffffff" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist+Mono:wght@400;500&display=swap');
+        /* The 1.1x zoom is a desktop-only polish — on phones it shrinks the
+           usable viewport and causes text/cards to overflow or crowd. */
+        @media (min-width: 1024px) {
+          .cleaner-dashboard-root { zoom: 1.1; }
+        }
+      `}</style>
       {sidebarOpen && (
         <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setSidebarOpen(false)} />
       )}
@@ -311,24 +364,24 @@ export default function CleanerDashboard() {
       {/* Main */}
       <div className="lg:pl-64 flex flex-col min-h-screen">
         {/* Header */}
-        <header className="px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-4 sticky top-0 z-30 border-b"
+        <header className="px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-2 sm:gap-4 sticky top-0 z-30 border-b"
           style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4", height: 72, fontFamily: "'Geist', system-ui, sans-serif" }}>
-          <div className="flex items-center gap-4">
-            <button onClick={() => setSidebarOpen(true)} aria-label="Open menu" className="lg:hidden p-2 rounded-lg cursor-pointer" style={{ color: "#6b6358" }}>
+          <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+            <button onClick={() => setSidebarOpen(true)} aria-label="Open menu" className="lg:hidden p-2 rounded-lg cursor-pointer flex-shrink-0" style={{ color: "#6b6358" }}>
               <Menu className="w-5 h-5" />
             </button>
-            <div className="flex flex-col gap-1">
-              <div className="flex items-center gap-2" style={{ fontSize: 12, color: "#8a8276" }}>
+            <div className="flex flex-col gap-1 min-w-0">
+              <div className="hidden sm:flex items-center gap-2" style={{ fontSize: 12, color: "#8a8276" }}>
                 <span className="inline-flex items-center gap-1.5" style={{ padding: "2px 8px", background: "rgba(212,169,106,0.22)", color: "#8a6a2f", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase" }}>
                   <span style={{ width: 5, height: 5, background: "#d4a96a", borderRadius: "50%" }} />
                   Cleaner
                 </span>
                 <span>Housekeeping &middot; {assignments.length} assigned</span>
               </div>
-              <h1 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 24, lineHeight: 1, letterSpacing: "-0.01em", margin: 0, color: "#1f1b16" }}>{activeNav}</h1>
+              <h1 className="truncate" style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 24, lineHeight: 1, letterSpacing: "-0.01em", margin: 0, color: "#1f1b16" }}>{activeNav}</h1>
             </div>
           </div>
-          <div className="flex items-center" style={{ gap: 6 }}>
+          <div className="flex items-center flex-shrink-0" style={{ gap: 6 }}>
             {(() => {
               const total = assignments.length;
               const doneN = Object.values(assignmentStatuses).filter((s) => s === "completed").length;
@@ -343,7 +396,7 @@ export default function CleanerDashboard() {
                 </div>
               );
             })()}
-            <span style={{ width: 1, height: 24, background: "#e8e1d2", margin: "0 8px" }} />
+            <span className="hidden md:block" style={{ width: 1, height: 24, background: "#e8e1d2", margin: "0 8px" }} />
             <button onClick={() => setActiveNav("Notifications")} title="Notifications" className="relative p-2.5 rounded-lg cursor-pointer transition-colors" style={{ color: "#6b6358" }}
               onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#f3eee2"} onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
               <Bell className="w-[18px] h-[18px]" />
@@ -351,8 +404,8 @@ export default function CleanerDashboard() {
             </button>
             <button type="button" className="flex items-center gap-2.5 rounded-lg cursor-pointer transition-colors" style={{ padding: "6px 12px 6px 6px", background: "transparent", border: 0 }}
               onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#f3eee2"} onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
-              <span style={{ width: 28, height: 28, borderRadius: "50%", background: "#d4a96a", color: "#2c1f14", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 14 }}>L</span>
-              <span className="flex flex-col items-start" style={{ lineHeight: 1.2 }}>
+              <span className="flex-shrink-0" style={{ width: 28, height: 28, borderRadius: "50%", background: "#d4a96a", color: "#2c1f14", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 14 }}>L</span>
+              <span className="hidden sm:flex flex-col items-start" style={{ lineHeight: 1.2 }}>
                 <span style={{ fontSize: 13, color: "#1f1b16" }}>Cleaner Staff</span>
                 <span style={{ fontSize: 11, color: "#8a8276" }}>On route</span>
               </span>
@@ -364,7 +417,7 @@ export default function CleanerDashboard() {
 
           {/* ── Dashboard ── */}
           {activeNav === "Dashboard" && (<>
-            <div className="grid grid-cols-3 gap-4 mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
               {[
                 { label: "Today's Assignments", value: assignments.length,                                                               icon: ClipboardList, iconBg: "#F7F0E3", iconColor: "#B07848" },
                 { label: "Completed Today",      value: Object.values(assignmentStatuses).filter((s) => s === "completed").length,      icon: CheckCircle2,  iconBg: "#d1fae5", iconColor: "#059669" },
@@ -391,8 +444,8 @@ export default function CleanerDashboard() {
                   <button onClick={() => setActiveNav("My Assignment")} className="text-sm font-medium cursor-pointer" style={{ color: "#8a6a2f" }}>View All →</button>
                 </div>
                 {assignments.map((a) => {
-                  const cs = assignmentStatuses[a.id];
-                  const st = statusConfig[cs];
+                  const cs = statusFor(a.id, a.status);
+                  const st = statusConfig[cs] || statusConfig.pending;
                   return (
                     <div key={a.id} className="border p-4" style={{ borderColor: cs === "in-progress" ? "#D4BFA0" : "#E0CEB8" }}>
                       <div className="flex items-start justify-between gap-3 mb-2">
@@ -455,6 +508,47 @@ export default function CleanerDashboard() {
             </div>
           </>)}
 
+          {/* ── Property Location ── */}
+          {activeNav === "Property Location" && (
+            <div className="space-y-4">
+              <div className="border overflow-hidden" style={{ borderColor: "#ece5d4", position: "relative", zIndex: 0 }}>
+                <style>{`.cleaner-map .leaflet-container { font-family: 'Geist', system-ui, sans-serif; background: #e9e2d3; }`}</style>
+                <div className="cleaner-map relative" style={{ height: "320px", width: "100%", overflow: "hidden", zIndex: 0 }}>
+                  <div ref={mapRef} style={{ position: "absolute", inset: 0 }} />
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 border-t" style={{ borderColor: "#ece5d4" }}>
+                  <div>
+                    <p className="font-bold text-sm" style={{ color: "#1a1a1a" }}>D&apos;Lux Homes — Tower 4 Grass Residences</p>
+                    <p className="text-sm mt-0.5" style={{ color: "#8B6344" }}>Grass Residences, SM North EDSA, Quezon City</p>
+                  </div>
+                  <button
+                    onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${PROPERTY_COORDS[0]},${PROPERTY_COORDS[1]}`, "_blank", "noopener")}
+                    className="px-4 py-2 text-sm font-medium text-white cursor-pointer flex-shrink-0" style={{ backgroundColor: "#1f1b16" }}>
+                    Open in Google Maps
+                  </button>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {[
+                  { label: "Tower 4",       address: "Grass Residences — 1BR Unit with Balcony (City View)", color: "#8a6a2f", bg: "#F7F0E3" },
+                  { label: "SM North EDSA", address: "Walking distance — shopping & groceries",                color: "#059669", bg: "#d1fae5" },
+                  { label: "Lobby / CSR",   address: "Ground Floor — Reception & CSR Desk",                   color: "#7c3aed", bg: "#ede9fe" },
+                  { label: "Amenities",     address: "Pool · Gym · Basketball Court · Kids Playground",       color: "#0d9488", bg: "#ccfbf1" },
+                ].map((loc) => (
+                  <div key={loc.label} className="border p-4 flex items-center gap-4" style={{ borderColor: "#ece5d4" }}>
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: loc.bg }}>
+                      <Building2 className="w-5 h-5" style={{ color: loc.color }} />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-sm" style={{ color: "#1a1a1a" }}>{loc.label}</p>
+                      <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{loc.address}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* ── My Assignment ── */}
           {activeNav === "My Assignment" && (
             <div className="space-y-4">
@@ -465,8 +559,8 @@ export default function CleanerDashboard() {
                 </div>
               </div>
               {assignments.map((a) => {
-                const cs = assignmentStatuses[a.id];
-                const st = statusConfig[cs];
+                const cs = statusFor(a.id, a.status);
+                const st = statusConfig[cs] || statusConfig.pending;
                 return (
                   <div key={a.id} className="border p-5 transition-shadow hover:shadow-md"
                     style={{ borderColor: cs === "in-progress" ? "#D4BFA0" : "#E0CEB8", borderLeftWidth: "4px", borderLeftColor: st.dot }}>
@@ -531,47 +625,6 @@ export default function CleanerDashboard() {
             </div>
           )}
 
-          {/* ── Property Location ── */}
-          {activeNav === "Property Location" && (
-            <div className="space-y-4">
-              <div className="border overflow-hidden" style={{ borderColor: "#ece5d4" }}>
-                {/* Map placeholder */}
-                <div className="relative flex items-center justify-center" style={{ height: "320px", backgroundColor: "#f0ebe3", backgroundImage: "repeating-linear-gradient(0deg,#E0CEB820 0px,#E0CEB820 1px,transparent 1px,transparent 40px),repeating-linear-gradient(90deg,#E0CEB820 0px,#E0CEB820 1px,transparent 1px,transparent 40px)" }}>
-                  <div className="text-center">
-                    <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-3" style={{ backgroundColor: "#1f1b16" }}>
-                      <MapPin className="w-8 h-8 text-white" />
-                    </div>
-                    <p className="font-bold" style={{ color: "#1a1a1a" }}>D&apos;Lux Homes — Tower 4 Grass Residences</p>
-                    <p className="text-sm mt-1" style={{ color: "#8B6344" }}>Grass Residences, SM North EDSA, Quezon City</p>
-                    <button
-                      onClick={() => window.open("https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent("Grass Residences SM North EDSA Quezon City"), "_blank", "noopener")}
-                      className="mt-3 px-4 py-2 text-sm font-medium text-white cursor-pointer" style={{ backgroundColor: "#1f1b16" }}>
-                      Open in Google Maps
-                    </button>
-                  </div>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {[
-                  { label: "Tower 4",       address: "Grass Residences — 1BR Unit with Balcony (City View)", color: "#8a6a2f", bg: "#F7F0E3" },
-                  { label: "SM North EDSA", address: "Walking distance — shopping & groceries",                color: "#059669", bg: "#d1fae5" },
-                  { label: "Lobby / CSR",   address: "Ground Floor — Reception & CSR Desk",                   color: "#7c3aed", bg: "#ede9fe" },
-                  { label: "Amenities",     address: "Pool · Gym · Basketball Court · Kids Playground",       color: "#0d9488", bg: "#ccfbf1" },
-                ].map((loc) => (
-                  <div key={loc.label} className="border p-4 flex items-center gap-4" style={{ borderColor: "#ece5d4" }}>
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: loc.bg }}>
-                      <Building2 className="w-5 h-5" style={{ color: loc.color }} />
-                    </div>
-                    <div>
-                      <p className="font-semibold text-sm" style={{ color: "#1a1a1a" }}>{loc.label}</p>
-                      <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{loc.address}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* ── Cleaning Checklist ── */}
           {activeNav === "Cleaning Checklist" && (
             <div className="max-w-2xl">
@@ -593,7 +646,7 @@ export default function CleanerDashboard() {
               </div>
               <div className="border overflow-hidden mb-4" style={{ borderColor: "#ece5d4" }}>
                 {checklist.map((item, idx) => (
-                  <label key={item.id} className="flex items-center gap-4 px-5 py-3.5 cursor-pointer transition-colors"
+                  <label key={item.id} className="flex items-center gap-2 sm:gap-4 px-3 sm:px-5 py-3.5 cursor-pointer transition-colors"
                     style={{ borderTop: idx > 0 ? "1px solid #F7F0E3" : "none" }}
                     onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
                     onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
@@ -602,14 +655,14 @@ export default function CleanerDashboard() {
                       onClick={() => toggleChecklistItem(item.id)}>
                       {item.done && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
                     </div>
-                    <span className="text-sm flex-1" style={{ color: item.done ? "#A89080" : "#5a4a3a", textDecoration: item.done ? "line-through" : "none" }}>{item.label}</span>
+                    <span className="text-sm flex-1 min-w-0" style={{ color: item.done ? "#A89080" : "#5a4a3a", textDecoration: item.done ? "line-through" : "none" }}>{item.label}</span>
                     {checklistPhotos[item.label] ? <ImageThumb src={checklistPhotos[item.label]} alt={item.label} size={32} /> : null}
                     <button type="button" title={checklistPhotos[item.label] ? "Replace photo" : "Attach photo"} disabled={photoUploading === item.label}
                       onClick={(e) => { e.preventDefault(); e.stopPropagation(); pickChecklistPhoto(item.label); }}
                       className="flex-shrink-0 p-1.5 rounded-lg cursor-pointer disabled:opacity-50" style={{ color: "#8a6a2f", border: "1px solid #E0CEB8", backgroundColor: "#FAF7F1" }}>
                       <Camera className="w-3.5 h-3.5" />
                     </button>
-                    {item.done && <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ backgroundColor: "#d1fae5", color: "#065f46" }}>Done</span>}
+                    {item.done && <span className="hidden sm:inline text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0" style={{ backgroundColor: "#d1fae5", color: "#065f46" }}>Done</span>}
                   </label>
                 ))}
               </div>
