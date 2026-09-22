@@ -359,13 +359,19 @@ const ADD_ON_PRICES = {
   extraSlippers: 30,
 };
 
-// Flat checkout amenity fees are server-owned: selecting guests grants use but
-// never turns the fee into a per-person charge.
+// Checkout amenity rate is server-owned and PER PERSON (owner rule,
+// 2026-09-22): Amenity Total = number of amenity users × ₱150. Only bookable
+// on a Friday, Saturday or Sunday check-in date — see AMENITY_DAYS below.
+const AMENITY_RATE = 150;
 const CHECKOUT_AMENITIES = {
-  swimmingPool: { name: "Swimming Pool", fee: 200 },
-  basketballCourt: { name: "Basketball Court", fee: 200 },
+  swimmingPool: { name: "Swimming Pool", fee: AMENITY_RATE },
+  basketballCourt: { name: "Basketball Court", fee: AMENITY_RATE },
 } as const;
 type CheckoutAmenityKey = keyof typeof CHECKOUT_AMENITIES;
+// 0=Sun..6=Sat (JS Date#getDay()) — matches the calendar-day rule the
+// checkout UI uses, independent of the owner-editable weekend/holiday
+// pricing calendar (which also counts PH holidays).
+const AMENITY_DAYS = new Set([0, 5, 6]); // Sun, Fri, Sat
 
 export const updateBookingDetails = async (
   req: NextRequest,
@@ -1301,25 +1307,39 @@ export const createBooking = async (
     // Note: paymentProofUrl was already uploaded earlier for calendar event
 
     // Validate optional amenity selections before their fee affects payment.
+    // The guest pool IS the cap: "number of amenity users cannot exceed the
+    // total number of guests in the booking" (owner rule, 2026-09-22) — there
+    // is no separate flat max.
     const eligibleGuestKeys = new Set(["main", ...(additional_guests as unknown[]).map((_, index) => `x${index}`)]);
+    const totalBookingGuests = eligibleGuestKeys.size;
     if (!Array.isArray(amenitySelections)) {
       await client.query("ROLLBACK");
       return NextResponse.json({ success: false, error: "Invalid amenity selection." }, { status: 400 });
+    }
+    // Amenities are only offered on a Friday, Saturday or Sunday check-in date
+    // (owner rule, 2026-09-22) — a weekday booking must not carry any amenity
+    // selection at all, regardless of what the client computed.
+    const amenityDow = new Date(String(check_in_date).slice(0, 10) + "T00:00:00").getDay();
+    const amenitiesAllowedForDate = AMENITY_DAYS.has(amenityDow);
+    if (amenitySelections.length > 0 && !amenitiesAllowedForDate) {
+      await client.query("ROLLBACK");
+      return NextResponse.json({ success: false, error: "Amenities are only available for Friday, Saturday or Sunday bookings." }, { status: 400 });
     }
     const seenAmenities = new Set<CheckoutAmenityKey>();
     const verifiedAmenities: Array<{ key: CheckoutAmenityKey; guestKeys: string[] }> = [];
     for (const selection of amenitySelections as Array<{ key?: unknown; guestKeys?: unknown }>) {
       const key = typeof selection?.key === "string" ? selection.key as CheckoutAmenityKey : null;
       const guestKeys = Array.isArray(selection?.guestKeys) ? selection.guestKeys : [];
-      if (!key || !(key in CHECKOUT_AMENITIES) || seenAmenities.has(key) || guestKeys.length < 1 || guestKeys.length > 6
+      if (!key || !(key in CHECKOUT_AMENITIES) || seenAmenities.has(key) || guestKeys.length < 1 || guestKeys.length > totalBookingGuests
         || guestKeys.some((guestKey) => typeof guestKey !== "string" || !eligibleGuestKeys.has(guestKey))
         || new Set(guestKeys).size !== guestKeys.length) {
         await client.query("ROLLBACK");
-        return NextResponse.json({ success: false, error: "Each selected amenity needs one to six booked guests." }, { status: 400 });
+        return NextResponse.json({ success: false, error: `Each selected amenity needs one to ${totalBookingGuests} booked guest${totalBookingGuests === 1 ? "" : "s"}.` }, { status: 400 });
       }
       seenAmenities.add(key);
       verifiedAmenities.push({ key, guestKeys: guestKeys as string[] });
     }
+    // Amenity Total = number of amenity users × ₱150 (owner rule, 2026-09-22).
     const verifiedAmenitiesTotal = verifiedAmenities.reduce(
       (sum, item) => sum + CHECKOUT_AMENITIES[item.key].fee * item.guestKeys.length,
       0,
