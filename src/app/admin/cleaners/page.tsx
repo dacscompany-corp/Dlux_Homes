@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import "leaflet/dist/leaflet.css";
+import { useState, useEffect } from "react";
 import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
 import DluxMark from "@/components/brand/DluxMark";
@@ -17,21 +16,35 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   LayoutDashboard, ClipboardList, MapPin, CheckSquare, AlertTriangle,
   Bell, Menu, X, LogOut, Clock, CheckCircle2, Circle,
-  AlertCircle, Building2, MessageSquare, User, CalendarDays, BookOpen,
-  Camera, Phone, Mail, Shield, Star, ChevronDown,
+  AlertCircle, Building2, MessageSquare, CalendarDays, BookOpen,
+  Camera, Phone, Mail, Shield, Star, ChevronDown, ChevronRight, LifeBuoy,
 } from "lucide-react";
 
-const navItems = [
+// Simplified sidebar (owner spec, 2026-09-22): five top-level items —
+// Dashboard, Tasks, Schedule, Messages, Support. "Tasks" and "Support" are
+// expandable groups (collapsed by default) that fold in what used to be
+// separate pages:
+//   - Tasks    -> Assignments (renamed from "My Assignment") + Cleaning
+//                 Checklist. Property Location is no longer its own page —
+//                 each task card now shows its own location inline instead.
+//   - Support  -> User Guide + Report an Issue.
+// Notifications moved to the header bell (already existed there); Profile
+// opens from the account card at the sidebar's bottom instead of a nav row.
+const navItems: Array<
+  | { icon: React.ElementType; label: string; children?: undefined }
+  | { icon: React.ElementType; label: string; children: { icon: React.ElementType; label: string }[] }
+> = [
   { icon: LayoutDashboard, label: "Dashboard" },
-  { icon: ClipboardList,   label: "My Assignment" },
-  { icon: MapPin,          label: "Property Location" },
-  { icon: CheckSquare,     label: "Cleaning Checklist" },
-  { icon: AlertTriangle,   label: "Report an Issue" },
-  { icon: Bell,            label: "Notifications" },
+  { icon: ClipboardList,   label: "Tasks", children: [
+    { icon: ClipboardList, label: "Assignments" },
+    { icon: CheckSquare,   label: "Cleaning Checklist" },
+  ] },
   { icon: CalendarDays,    label: "My Schedule" },
-  { icon: BookOpen,        label: "User Guide" },
   { icon: MessageSquare,   label: "Messages" },
-  { icon: User,            label: "Profile" },
+  { icon: LifeBuoy,        label: "Support", children: [
+    { icon: BookOpen,      label: "User Guide" },
+    { icon: AlertTriangle, label: "Report an Issue" },
+  ] },
 ];
 
 const checklistItems = [
@@ -57,10 +70,16 @@ const scheduleData = [
   { date: "Apr 22",           tasks: ["Emerald Deluxe Room — 9:00 AM", "Azure Haven Suite — 2:00 PM"] },
 ];
 
-// Same pin/coords as the guest-facing /location page, so the cleaner sees the
-// exact property location rather than a static placeholder graphic.
+// Same pin/coords as the guest-facing /location page, so the "Get Directions"
+// link on each task card points at the exact property, not an approximation.
+// The old standalone Property Location page (map + marker + nearby-location
+// cards) is gone (owner spec, 2026-09-22) — this is a single-property site,
+// so the address + a directions link inline on each task card covers the one
+// thing that page did that a cleaner actually needed mid-shift.
 const PROPERTY_COORDS: [number, number] = [14.659186800125402, 121.02701538724116];
-const PROPERTY_PIN_SVG = `<svg xmlns='http://www.w3.org/2000/svg' width='48' height='58' viewBox='0 0 48 58'><path d='M24 1C11.85 1 2 10.85 2 23c0 15.5 22 34 22 34s22-18.5 22-34C46 10.85 36.15 1 24 1z' fill='#1F160E' stroke='#FAF7F1' stroke-width='2.5'/><text x='24' y='31' font-family='Georgia, serif' font-style='italic' font-weight='600' font-size='24' fill='#FAF7F1' text-anchor='middle'>D</text></svg>`;
+const PROPERTY_NAME = "D'Lux Homes — Tower 4, Grass Residences";
+const PROPERTY_ADDRESS = "Grass Residences, SM North EDSA, Quezon City";
+const propertyDirectionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${PROPERTY_COORDS[0]},${PROPERTY_COORDS[1]}`;
 
 const guideTopics = [
   { title: "Getting Started",             desc: "How to navigate the cleaner portal and find your daily assignments.", icon: BookOpen },
@@ -82,46 +101,14 @@ function toRows(v: unknown): Record<string, unknown>[] {
 export default function CleanerDashboard() {
   const [sidebarOpen,       setSidebarOpen]       = useState(false);
   const [activeNav,         setActiveNav]         = useState("Dashboard");
+  // Which expandable nav groups (Tasks, Support) are open — collapsed by
+  // default (owner spec, 2026-09-22).
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const toggleGroup = (label: string) => setOpenGroups((prev) => ({ ...prev, [label]: !prev[label] }));
   const [checklist,         setChecklist]         = useState(checklistItems);
   const [assignmentStatuses,setAssignmentStatuses]= useState<Record<string, string>>({});
   const [issueForm, setIssueForm] = useState({ haven: "", type: "", priority: "", location: "", description: "" });
   const [issueSubmitted, setIssueSubmitted] = useState(false);
-
-  // ── Property Location — real map (same coords/pin as guest-facing /location) ──
-  const mapRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (activeNav !== "Property Location") return;
-    let cancelled = false;
-    let map: import("leaflet").Map | null = null;
-
-    import("leaflet").then((mod) => {
-      const L = mod.default;
-      if (cancelled || !mapRef.current) return;
-
-      map = L.map(mapRef.current, { scrollWheelZoom: true, maxZoom: 21 }).setView(PROPERTY_COORDS, 17);
-      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxNativeZoom: 19,
-        maxZoom: 21,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-      }).addTo(map);
-
-      const icon = L.icon({
-        iconUrl: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(PROPERTY_PIN_SVG),
-        iconSize: [48, 58],
-        iconAnchor: [24, 57],
-        popupAnchor: [0, -52],
-      });
-      L.marker(PROPERTY_COORDS, { icon }).addTo(map).bindTooltip("D'Lux Homes — Tower 4, Grass Residences");
-
-      // The map sits in a tab that can size after init; recalc once laid out.
-      setTimeout(() => map?.invalidateSize(), 120);
-    });
-
-    return () => {
-      cancelled = true;
-      if (map) map.remove();
-    };
-  }, [activeNav]);
 
   // ── My Assignment — live cleaning tasks (booking_cleaning) ──
   const { data: cleaningTasksData } = useGetCleaningTasksQuery();
@@ -330,23 +317,71 @@ export default function CleanerDashboard() {
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
           {navItems.map((item) => {
             const Icon = item.icon;
-            const isActive = activeNav === item.label;
+            if (!item.children) {
+              const isActive = activeNav === item.label;
+              return (
+                <button key={item.label}
+                  onClick={() => { setActiveNav(item.label); setSidebarOpen(false); }}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm cursor-pointer"
+                  style={{ backgroundColor: isActive ? "#B0784816" : "transparent", color: isActive ? "#E6CFA6" : "#A89080", fontWeight: isActive ? 600 : 500 }}
+                  onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "#2f2114"; }}
+                  onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}>
+                  <Icon className="w-[18px] h-[18px] flex-shrink-0" strokeWidth={isActive ? 2 : 1.5} style={{ color: isActive ? "#D4A96A" : "#8C7660" }} />
+                  {item.label}
+                  {isActive && <span className="ml-auto w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#D4A96A" }} />}
+                </button>
+              );
+            }
+            // Expandable group (Tasks, Support) — collapsed by default. The
+            // group header itself is never "active"; only its children are.
+            const isOpen = !!openGroups[item.label];
+            const childActive = item.children.some((c) => c.label === activeNav);
             return (
-              <button key={item.label}
-                onClick={() => { setActiveNav(item.label); setSidebarOpen(false); }}
-                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm cursor-pointer"
-                style={{ backgroundColor: isActive ? "#B0784816" : "transparent", color: isActive ? "#E6CFA6" : "#A89080", fontWeight: isActive ? 600 : 500 }}
-                onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "#2f2114"; }}
-                onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}>
-                <Icon className="w-[18px] h-[18px] flex-shrink-0" strokeWidth={isActive ? 2 : 1.5} style={{ color: isActive ? "#D4A96A" : "#8C7660" }} />
-                {item.label}
-                {isActive && <span className="ml-auto w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#D4A96A" }} />}
-              </button>
+              <div key={item.label}>
+                <button
+                  onClick={() => toggleGroup(item.label)}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm cursor-pointer"
+                  style={{ backgroundColor: childActive ? "#B0784816" : "transparent", color: childActive ? "#E6CFA6" : "#A89080", fontWeight: childActive ? 600 : 500 }}
+                  onMouseEnter={(e) => { if (!childActive) (e.currentTarget as HTMLElement).style.backgroundColor = "#2f2114"; }}
+                  onMouseLeave={(e) => { if (!childActive) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}>
+                  <Icon className="w-[18px] h-[18px] flex-shrink-0" strokeWidth={childActive ? 2 : 1.5} style={{ color: childActive ? "#D4A96A" : "#8C7660" }} />
+                  {item.label}
+                  {isOpen ? <ChevronDown className="ml-auto w-3.5 h-3.5 flex-shrink-0" /> : <ChevronRight className="ml-auto w-3.5 h-3.5 flex-shrink-0" />}
+                </button>
+                {isOpen && (
+                  <div className="mt-0.5 ml-4 pl-3 space-y-0.5 border-l" style={{ borderColor: "rgba(250,247,241,0.12)" }}>
+                    {item.children.map((child) => {
+                      const ChildIcon = child.icon;
+                      const isActive = activeNav === child.label;
+                      return (
+                        <button key={child.label}
+                          onClick={() => { setActiveNav(child.label); setSidebarOpen(false); }}
+                          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-sm cursor-pointer"
+                          style={{ backgroundColor: isActive ? "#B0784816" : "transparent", color: isActive ? "#E6CFA6" : "#A89080", fontWeight: isActive ? 600 : 500 }}
+                          onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "#2f2114"; }}
+                          onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}>
+                          <ChildIcon className="w-4 h-4 flex-shrink-0" strokeWidth={isActive ? 2 : 1.5} style={{ color: isActive ? "#D4A96A" : "#8C7660" }} />
+                          {child.label}
+                          {isActive && <span className="ml-auto w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#D4A96A" }} />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             );
           })}
         </nav>
         <div className="px-3 py-4 border-t" style={{ borderColor: "rgba(250,247,241,0.1)" }}>
-          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl" style={{ backgroundColor: "rgba(250,247,241,0.1)" }}>
+          {/* Account card — clicking it opens Profile (owner spec, 2026-09-22),
+              instead of Profile living in the nav list as its own row. Sign
+              out is a separate hit target so a tap meant for the card can't
+              accidentally sign the cleaner out. */}
+          <button type="button" onClick={() => { setActiveNav("Profile"); setSidebarOpen(false); }}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-colors text-left"
+            style={{ backgroundColor: activeNav === "Profile" ? "#B0784825" : "rgba(250,247,241,0.1)" }}
+            onMouseEnter={(e) => { if (activeNav !== "Profile") (e.currentTarget as HTMLElement).style.backgroundColor = "rgba(250,247,241,0.16)"; }}
+            onMouseLeave={(e) => { if (activeNav !== "Profile") (e.currentTarget as HTMLElement).style.backgroundColor = "rgba(250,247,241,0.1)"; }}>
             <Avatar className="w-8 h-8 flex-shrink-0">
               <AvatarFallback className="text-xs font-bold" style={{ backgroundColor: "#D4A96A", color: "#2C1F14" }}>CL</AvatarFallback>
             </Avatar>
@@ -354,10 +389,13 @@ export default function CleanerDashboard() {
               <p className="text-white text-sm font-medium truncate">Cleaner Staff</p>
               <p className="text-xs truncate" style={{ color: "#6b5040" }}>cleaner@dluxhomes.com</p>
             </div>
-            <button type="button" onClick={() => signOut({ callbackUrl: "/admin/login" })} aria-label="Sign out" className="cursor-pointer">
+            <span role="button" tabIndex={0} aria-label="Sign out"
+              onClick={(e) => { e.stopPropagation(); signOut({ callbackUrl: "/admin/login" }); }}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); signOut({ callbackUrl: "/admin/login" }); } }}
+              className="cursor-pointer p-1 -m-1 flex-shrink-0">
               <LogOut className="w-4 h-4 flex-shrink-0" style={{ color: "#6b5040" }} />
-            </button>
-          </div>
+            </span>
+          </button>
         </div>
       </aside>
 
@@ -402,7 +440,7 @@ export default function CleanerDashboard() {
               <Bell className="w-[18px] h-[18px]" />
               <span style={{ position: "absolute", top: 8, right: 8, width: 6, height: 6, background: "#d4a96a", borderRadius: "50%", border: "2px solid #fff" }} />
             </button>
-            <button type="button" className="flex items-center gap-2.5 rounded-lg cursor-pointer transition-colors" style={{ padding: "6px 12px 6px 6px", background: "transparent", border: 0 }}
+            <button type="button" onClick={() => setActiveNav("Profile")} title="Profile" className="flex items-center gap-2.5 rounded-lg cursor-pointer transition-colors" style={{ padding: "6px 12px 6px 6px", background: "transparent", border: 0 }}
               onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#f3eee2"} onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
               <span className="flex-shrink-0" style={{ width: 28, height: 28, borderRadius: "50%", background: "#d4a96a", color: "#2c1f14", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 14 }}>L</span>
               <span className="hidden sm:flex flex-col items-start" style={{ lineHeight: 1.2 }}>
@@ -441,7 +479,7 @@ export default function CleanerDashboard() {
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>Today&apos;s Assignments</h2>
-                  <button onClick={() => setActiveNav("My Assignment")} className="text-sm font-medium cursor-pointer" style={{ color: "#8a6a2f" }}>View All →</button>
+                  <button onClick={() => setActiveNav("Assignments")} className="text-sm font-medium cursor-pointer" style={{ color: "#8a6a2f" }}>View All →</button>
                 </div>
                 {assignments.map((a) => {
                   const cs = statusFor(a.id, a.status);
@@ -457,8 +495,13 @@ export default function CleanerDashboard() {
                         </div>
                         <span className="text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0" style={{ backgroundColor: st.bg, color: st.color }}>{st.label}</span>
                       </div>
-                      <div className="flex items-center gap-1.5 text-xs mb-3" style={{ color: "#8B6344" }}>
+                      <div className="flex items-center gap-1.5 text-xs mb-1" style={{ color: "#8B6344" }}>
                         <Clock className="w-3.5 h-3.5" style={{ color: "#8a6a2f" }} />{a.timeSlot}
+                      </div>
+                      {/* Property location, inline per task (owner spec, 2026-09-22) —
+                          replaces the old standalone Property Location page. */}
+                      <div className="flex items-center gap-1.5 text-xs mb-3" style={{ color: "#8B6344" }}>
+                        <MapPin className="w-3.5 h-3.5" style={{ color: "#8a6a2f" }} />{PROPERTY_ADDRESS}
                       </div>
                       <div className="flex gap-2">
                         {cs === "pending"     && <button onClick={() => startCleaning(a.id)} className="px-3 py-1.5 text-xs font-medium text-white cursor-pointer" style={{ background: "#1f1b16" }}><Circle className="w-3 h-3 inline mr-1" />Start</button>}
@@ -508,53 +551,13 @@ export default function CleanerDashboard() {
             </div>
           </>)}
 
-          {/* ── Property Location ── */}
-          {activeNav === "Property Location" && (
-            <div className="space-y-4">
-              <div className="border overflow-hidden" style={{ borderColor: "#ece5d4", position: "relative", zIndex: 0 }}>
-                <style>{`.cleaner-map .leaflet-container { font-family: 'Geist', system-ui, sans-serif; background: #e9e2d3; }`}</style>
-                <div className="cleaner-map relative" style={{ height: "320px", width: "100%", overflow: "hidden", zIndex: 0 }}>
-                  <div ref={mapRef} style={{ position: "absolute", inset: 0 }} />
-                </div>
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 border-t" style={{ borderColor: "#ece5d4" }}>
-                  <div>
-                    <p className="font-bold text-sm" style={{ color: "#1a1a1a" }}>D&apos;Lux Homes — Tower 4 Grass Residences</p>
-                    <p className="text-sm mt-0.5" style={{ color: "#8B6344" }}>Grass Residences, SM North EDSA, Quezon City</p>
-                  </div>
-                  <button
-                    onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${PROPERTY_COORDS[0]},${PROPERTY_COORDS[1]}`, "_blank", "noopener")}
-                    className="px-4 py-2 text-sm font-medium text-white cursor-pointer flex-shrink-0" style={{ backgroundColor: "#1f1b16" }}>
-                    Open in Google Maps
-                  </button>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {[
-                  { label: "Tower 4",       address: "Grass Residences — 1BR Unit with Balcony (City View)", color: "#8a6a2f", bg: "#F7F0E3" },
-                  { label: "SM North EDSA", address: "Walking distance — shopping & groceries",                color: "#059669", bg: "#d1fae5" },
-                  { label: "Lobby / CSR",   address: "Ground Floor — Reception & CSR Desk",                   color: "#7c3aed", bg: "#ede9fe" },
-                  { label: "Amenities",     address: "Pool · Gym · Basketball Court · Kids Playground",       color: "#0d9488", bg: "#ccfbf1" },
-                ].map((loc) => (
-                  <div key={loc.label} className="border p-4 flex items-center gap-4" style={{ borderColor: "#ece5d4" }}>
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: loc.bg }}>
-                      <Building2 className="w-5 h-5" style={{ color: loc.color }} />
-                    </div>
-                    <div>
-                      <p className="font-semibold text-sm" style={{ color: "#1a1a1a" }}>{loc.label}</p>
-                      <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{loc.address}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* ── My Assignment ── */}
-          {activeNav === "My Assignment" && (
+          {/* ── Assignments (renamed from "My Assignment"; property location is
+              now inline per task below instead of its own page) ── */}
+          {activeNav === "Assignments" && (
             <div className="space-y-4">
               <div className="flex items-center justify-between mb-2">
                 <div>
-                  <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>My Assignments</h2>
+                  <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>Assignments</h2>
                   <p className="text-sm" style={{ color: "#8B6344" }}>April 20, 2026 — Today</p>
                 </div>
               </div>
@@ -581,8 +584,20 @@ export default function CleanerDashboard() {
                         <span className="text-xs font-semibold" style={{ color: st.color }}>{st.label}</span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 text-sm mb-3" style={{ color: "#5a4a3a" }}>
+                    <div className="flex items-center gap-2 text-sm mb-2" style={{ color: "#5a4a3a" }}>
                       <Clock className="w-4 h-4" style={{ color: "#8a6a2f" }} />{a.timeSlot}
+                    </div>
+                    {/* Property location, inline per task (owner spec, 2026-09-22) —
+                        replaces the old standalone Property Location page. */}
+                    <div className="flex items-center justify-between gap-3 text-sm mb-3">
+                      <div className="flex items-center gap-2 min-w-0" style={{ color: "#5a4a3a" }} title={PROPERTY_NAME}>
+                        <MapPin className="w-4 h-4 flex-shrink-0" style={{ color: "#8a6a2f" }} />
+                        <span className="truncate">{PROPERTY_ADDRESS}</span>
+                      </div>
+                      <button type="button" onClick={() => window.open(propertyDirectionsUrl, "_blank", "noopener")}
+                        className="text-xs font-medium cursor-pointer flex-shrink-0" style={{ color: "#8a6a2f" }}>
+                        Get Directions
+                      </button>
                     </div>
                     {a.notes && (
                       <div className="rounded-xl p-3 mb-3 border" style={{ backgroundColor: "#F7F0E3", borderColor: "#ece5d4" }}>
