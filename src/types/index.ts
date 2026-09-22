@@ -38,6 +38,11 @@ export interface Room {
   depositTier3Amount?: number;
   depositTier4Amount?: number;
   additionalPaxFee: number;
+  // Checkout amenity rates (Swimming Pool / Basketball Court), ₱ per person
+  // using the amenity — owner-editable in Haven Management -> Add-ons.
+  // undefined = not configured, code default (₱150) applies.
+  swimmingPoolAmenityFee?: number;
+  basketballCourtAmenityFee?: number;
   basePax: number;
   maxPax: number;
   images: string[];

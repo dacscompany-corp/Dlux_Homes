@@ -1306,6 +1306,31 @@ export const createBooking = async (
     // Step 4: Create payment record (without security deposit)
     // Note: paymentProofUrl was already uploaded earlier for calendar event
 
+    // Haven lookup, hoisted ahead of amenity verification below so owner-set
+    // amenity rates (swimming_pool_amenity_fee / basketball_court_amenity_fee,
+    // see 2026-09-22-add-checkout-amenity-fees.sql) are available before their
+    // fee affects payment. Read goes through `pool`, not the transaction's
+    // `client`: a failed read here would abort the transaction and take the
+    // booking down with it.
+    const havenRow = await pool
+      .query(
+        haven_id && UUID_RE.test(haven_id)
+          ? `SELECT * FROM havens WHERE uuid_id = $1 LIMIT 1`
+          : `SELECT * FROM havens WHERE haven_name = $1 LIMIT 1`,
+        [haven_id && UUID_RE.test(haven_id) ? haven_id : room_name],
+      )
+      .then((r) => r.rows[0] as Record<string, unknown> | undefined)
+      .catch((err: unknown) => {
+        console.error("[BOOKING] haven lookup for price check failed:", err);
+        return undefined;
+      });
+    // Owner-editable per haven; undefined = not configured, code default applies.
+    const amenityFeeFor = (key: CheckoutAmenityKey): number => {
+      const column = key === "swimmingPool" ? "swimming_pool_amenity_fee" : "basketball_court_amenity_fee";
+      const raw = havenRow?.[column];
+      return raw != null ? Number(raw) : CHECKOUT_AMENITIES[key].fee;
+    };
+
     // Validate optional amenity selections before their fee affects payment.
     // The guest pool IS the cap: "number of amenity users cannot exceed the
     // total number of guests in the booking" (owner rule, 2026-09-22) — there
@@ -1339,9 +1364,10 @@ export const createBooking = async (
       seenAmenities.add(key);
       verifiedAmenities.push({ key, guestKeys: guestKeys as string[] });
     }
-    // Amenity Total = number of amenity users × ₱150 (owner rule, 2026-09-22).
+    // Amenity Total = number of amenity users × the haven's owner-set rate
+    // (falls back to CHECKOUT_AMENITIES' ₱150 default when unconfigured).
     const verifiedAmenitiesTotal = verifiedAmenities.reduce(
-      (sum, item) => sum + CHECKOUT_AMENITIES[item.key].fee * item.guestKeys.length,
+      (sum, item) => sum + amenityFeeFor(item.key) * item.guestKeys.length,
       0,
     );
     let paymentTotalAmount = Number(total_amount) || 0;
@@ -1354,24 +1380,9 @@ export const createBooking = async (
     // holiday calendar and ACTIVE seasonal rates — and a booking priced below
     // that quote is refused. That also covers a guest whose page loaded before
     // the owner switched a season ON.
-    //
-    // Reads go through `pool`, not the transaction's `client`: a failed read
-    // inside the transaction would abort it and take the booking down with it.
     const stayTypeCode = stayTypeCodeFor(check_in_date, check_out_date, check_in_time, check_out_time);
     const stayNightsCount = stayTypeCode === "10" ? 1 : bookedNights(check_in_date, check_out_date);
     const checkInISO = String(check_in_date).slice(0, 10);
-    const havenRow = await pool
-      .query(
-        haven_id && UUID_RE.test(haven_id)
-          ? `SELECT * FROM havens WHERE uuid_id = $1 LIMIT 1`
-          : `SELECT * FROM havens WHERE haven_name = $1 LIMIT 1`,
-        [haven_id && UUID_RE.test(haven_id) ? haven_id : room_name],
-      )
-      .then((r) => r.rows[0] as Record<string, unknown> | undefined)
-      .catch((err: unknown) => {
-        console.error("[BOOKING] haven lookup for price check failed:", err);
-        return undefined;
-      });
     const [calendarRules, stayingSeasons] = await Promise.all([
       loadCalendarRules(pool),
       loadActiveSeasons(pool, { fromISO: checkInISO, toISO: addDaysISO(checkInISO, stayNightsCount - 1) }),
@@ -1705,7 +1716,7 @@ export const createBooking = async (
     });
     const amenityAddOns = verifiedAmenities.map((item) => ({
       name: CHECKOUT_AMENITIES[item.key].name,
-      price: CHECKOUT_AMENITIES[item.key].fee,
+      price: amenityFeeFor(item.key), // the haven's owner-set rate actually charged, not the code default
       quantity: item.guestKeys.length,
       notes: `Guests: ${amenityGuestNames(item.guestKeys).join(", ")}`,
     }));

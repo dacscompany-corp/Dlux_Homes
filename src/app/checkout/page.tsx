@@ -596,11 +596,17 @@ function CheckoutInner() {
   // AND has at least one booked guest selected for it (see fieldErrors step 1).
   // `guestKeys` holds keys like "main" or "x0"/"x1" (matching extraGuests index),
   // capped at the total number of guests in the booking (owner rule, 2026-09-22).
-  // Fee is ₱150 PER PERSON using the amenity: Amenity Total = users × ₱150.
-  const AMENITY_RATE = 150;
+  // Fee is PER PERSON using the amenity: Amenity Total = users × rate.
+  // Owner-editable per haven (Haven Management -> Add-ons); ₱150 is only the
+  // fallback when the owner hasn't set one — see haven-adapter.ts.
+  const DEFAULT_AMENITY_RATE = 150;
+  // Mock rooms (fallback while a live haven loads) don't carry these fields —
+  // cast rather than widen `room`'s shared type, which many other lines below
+  // depend on structurally.
+  const roomAmenityFees = room as { swimmingPoolAmenityFee?: number; basketballCourtAmenityFee?: number };
   const AMENITIES = [
-    { key: "swimmingPool", name: "Swimming Pool", fee: AMENITY_RATE },
-    { key: "basketballCourt", name: "Basketball Court", fee: AMENITY_RATE },
+    { key: "swimmingPool", name: "Swimming Pool", fee: roomAmenityFees.swimmingPoolAmenityFee ?? DEFAULT_AMENITY_RATE },
+    { key: "basketballCourt", name: "Basketball Court", fee: roomAmenityFees.basketballCourtAmenityFee ?? DEFAULT_AMENITY_RATE },
   ] as const;
   type AmenityKey = typeof AMENITIES[number]["key"];
   const [amenities, setAmenities] = useState<Record<AmenityKey, { enabled: boolean; guestKeys: string[] }>>({
@@ -1857,8 +1863,14 @@ function CheckoutInner() {
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                         <div>
                           <div style={{ fontSize: 12, fontWeight: 700, color: "#F9F5EF" }}>{a.name}</div>
-                          <div style={{ color: "#B9ACA0", fontSize: 10.5, marginTop: 3 }}>Open 8:00 AM–10:00 PM · Up to {totalBookingGuests} guest{totalBookingGuests === 1 ? "" : "s"} (your full booking)</div>
-                          <div style={{ color: "#B9ACA0", fontSize: 10.5, marginTop: 2 }}>₱{AMENITY_RATE} per person using this amenity</div>
+                          {/* Access Pass hours — shown the same whether the toggle is on or
+                              off (owner spec, 2026-09-22): this is when the amenity itself
+                              is open, not something the guest's selection changes. */}
+                          <div style={{ color: "#B9ACA0", fontSize: 10.5, marginTop: 3 }}>Access Pass ADMIN TIME</div>
+                          <div style={{ color: "#B9ACA0", fontSize: 10.5 }}>Mon–Fri 9:00am – 5:00am</div>
+                          <div style={{ color: "#B9ACA0", fontSize: 10.5 }}>Saturday 9:00am – 11:00am</div>
+                          <div style={{ color: "#B9ACA0", fontSize: 10.5, marginTop: 3 }}>Up to {totalBookingGuests} guest{totalBookingGuests === 1 ? "" : "s"} (your full booking)</div>
+                          <div style={{ color: "#B9ACA0", fontSize: 10.5, marginTop: 2 }}>{peso(a.fee)} per person using this amenity</div>
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 9, flex: "none" }}>
                           <span style={{ fontSize: 12, fontWeight: 700, color: "#F9F5EF" }}>{peso(a.fee)}<span style={{ color: "#B9ACA0", fontSize: 9, fontWeight: 500 }}> / person</span></span>
@@ -1888,8 +1900,8 @@ function CheckoutInner() {
                             })}
                           </div>
                           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#E4A76D", marginTop: 10, paddingTop: 10, borderTop: "1px solid #51463E" }}>
-                            <span>{state.guestKeys.length} × {peso(AMENITY_RATE)}</span>
-                            <span style={{ fontWeight: 700 }}>{peso(state.guestKeys.length * AMENITY_RATE)}</span>
+                            <span>{state.guestKeys.length} × {peso(a.fee)}</span>
+                            <span style={{ fontWeight: 700 }}>{peso(state.guestKeys.length * a.fee)}</span>
                           </div>
                         </div>
                       )}
