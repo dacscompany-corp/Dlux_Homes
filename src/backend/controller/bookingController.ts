@@ -359,13 +359,19 @@ const ADD_ON_PRICES = {
   extraSlippers: 30,
 };
 
-// Flat checkout amenity fees are server-owned: selecting guests grants use but
-// never turns the fee into a per-person charge.
+// Checkout amenity rate is server-owned and PER PERSON (owner rule,
+// 2026-09-22): Amenity Total = number of amenity users × ₱150. Only bookable
+// on a Friday, Saturday or Sunday check-in date — see AMENITY_DAYS below.
+const AMENITY_RATE = 150;
 const CHECKOUT_AMENITIES = {
-  swimmingPool: { name: "Swimming Pool", fee: 200 },
-  basketballCourt: { name: "Basketball Court", fee: 200 },
+  swimmingPool: { name: "Swimming Pool", fee: AMENITY_RATE },
+  basketballCourt: { name: "Basketball Court", fee: AMENITY_RATE },
 } as const;
 type CheckoutAmenityKey = keyof typeof CHECKOUT_AMENITIES;
+// 0=Sun..6=Sat (JS Date#getDay()) — matches the calendar-day rule the
+// checkout UI uses, independent of the owner-editable weekend/holiday
+// pricing calendar (which also counts PH holidays).
+const AMENITY_DAYS = new Set([0, 5, 6]); // Sun, Fri, Sat
 
 export const updateBookingDetails = async (
   req: NextRequest,
@@ -1300,46 +1306,12 @@ export const createBooking = async (
     // Step 4: Create payment record (without security deposit)
     // Note: paymentProofUrl was already uploaded earlier for calendar event
 
-    // Validate optional amenity selections before their fee affects payment.
-    const eligibleGuestKeys = new Set(["main", ...(additional_guests as unknown[]).map((_, index) => `x${index}`)]);
-    if (!Array.isArray(amenitySelections)) {
-      await client.query("ROLLBACK");
-      return NextResponse.json({ success: false, error: "Invalid amenity selection." }, { status: 400 });
-    }
-    const seenAmenities = new Set<CheckoutAmenityKey>();
-    const verifiedAmenities: Array<{ key: CheckoutAmenityKey; guestKeys: string[] }> = [];
-    for (const selection of amenitySelections as Array<{ key?: unknown; guestKeys?: unknown }>) {
-      const key = typeof selection?.key === "string" ? selection.key as CheckoutAmenityKey : null;
-      const guestKeys = Array.isArray(selection?.guestKeys) ? selection.guestKeys : [];
-      if (!key || !(key in CHECKOUT_AMENITIES) || seenAmenities.has(key) || guestKeys.length < 1 || guestKeys.length > 6
-        || guestKeys.some((guestKey) => typeof guestKey !== "string" || !eligibleGuestKeys.has(guestKey))
-        || new Set(guestKeys).size !== guestKeys.length) {
-        await client.query("ROLLBACK");
-        return NextResponse.json({ success: false, error: "Each selected amenity needs one to six booked guests." }, { status: 400 });
-      }
-      seenAmenities.add(key);
-      verifiedAmenities.push({ key, guestKeys: guestKeys as string[] });
-    }
-    const verifiedAmenitiesTotal = verifiedAmenities.reduce(
-      (sum, item) => sum + CHECKOUT_AMENITIES[item.key].fee * item.guestKeys.length,
-      0,
-    );
-    let paymentTotalAmount = Number(total_amount) || 0;
-    let paymentDownPayment = Number(down_payment) || 0;
-    let paymentAmountPaid = paymentDownPayment;
-
-    // ── Re-price the stay on the server ───────────────────────────────────
-    // The room price used to be whatever the browser sent. It's now re-quoted
-    // with the same quoteStay() the checkout uses — live haven rates, weekend/
-    // holiday calendar and ACTIVE seasonal rates — and a booking priced below
-    // that quote is refused. That also covers a guest whose page loaded before
-    // the owner switched a season ON.
-    //
-    // Reads go through `pool`, not the transaction's `client`: a failed read
-    // inside the transaction would abort it and take the booking down with it.
-    const stayTypeCode = stayTypeCodeFor(check_in_date, check_out_date, check_in_time, check_out_time);
-    const stayNightsCount = stayTypeCode === "10" ? 1 : bookedNights(check_in_date, check_out_date);
-    const checkInISO = String(check_in_date).slice(0, 10);
+    // Haven lookup, hoisted ahead of amenity verification below so owner-set
+    // amenity rates (swimming_pool_amenity_fee / basketball_court_amenity_fee,
+    // see 2026-09-22-add-checkout-amenity-fees.sql) are available before their
+    // fee affects payment. Read goes through `pool`, not the transaction's
+    // `client`: a failed read here would abort the transaction and take the
+    // booking down with it.
     const havenRow = await pool
       .query(
         haven_id && UUID_RE.test(haven_id)
@@ -1352,6 +1324,65 @@ export const createBooking = async (
         console.error("[BOOKING] haven lookup for price check failed:", err);
         return undefined;
       });
+    // Owner-editable per haven; undefined = not configured, code default applies.
+    const amenityFeeFor = (key: CheckoutAmenityKey): number => {
+      const column = key === "swimmingPool" ? "swimming_pool_amenity_fee" : "basketball_court_amenity_fee";
+      const raw = havenRow?.[column];
+      return raw != null ? Number(raw) : CHECKOUT_AMENITIES[key].fee;
+    };
+
+    // Validate optional amenity selections before their fee affects payment.
+    // The guest pool IS the cap: "number of amenity users cannot exceed the
+    // total number of guests in the booking" (owner rule, 2026-09-22) — there
+    // is no separate flat max.
+    const eligibleGuestKeys = new Set(["main", ...(additional_guests as unknown[]).map((_, index) => `x${index}`)]);
+    const totalBookingGuests = eligibleGuestKeys.size;
+    if (!Array.isArray(amenitySelections)) {
+      await client.query("ROLLBACK");
+      return NextResponse.json({ success: false, error: "Invalid amenity selection." }, { status: 400 });
+    }
+    // Amenities are only offered on a Friday, Saturday or Sunday check-in date
+    // (owner rule, 2026-09-22) — a weekday booking must not carry any amenity
+    // selection at all, regardless of what the client computed.
+    const amenityDow = new Date(String(check_in_date).slice(0, 10) + "T00:00:00").getDay();
+    const amenitiesAllowedForDate = AMENITY_DAYS.has(amenityDow);
+    if (amenitySelections.length > 0 && !amenitiesAllowedForDate) {
+      await client.query("ROLLBACK");
+      return NextResponse.json({ success: false, error: "Amenities are only available for Friday, Saturday or Sunday bookings." }, { status: 400 });
+    }
+    const seenAmenities = new Set<CheckoutAmenityKey>();
+    const verifiedAmenities: Array<{ key: CheckoutAmenityKey; guestKeys: string[] }> = [];
+    for (const selection of amenitySelections as Array<{ key?: unknown; guestKeys?: unknown }>) {
+      const key = typeof selection?.key === "string" ? selection.key as CheckoutAmenityKey : null;
+      const guestKeys = Array.isArray(selection?.guestKeys) ? selection.guestKeys : [];
+      if (!key || !(key in CHECKOUT_AMENITIES) || seenAmenities.has(key) || guestKeys.length < 1 || guestKeys.length > totalBookingGuests
+        || guestKeys.some((guestKey) => typeof guestKey !== "string" || !eligibleGuestKeys.has(guestKey))
+        || new Set(guestKeys).size !== guestKeys.length) {
+        await client.query("ROLLBACK");
+        return NextResponse.json({ success: false, error: `Each selected amenity needs one to ${totalBookingGuests} booked guest${totalBookingGuests === 1 ? "" : "s"}.` }, { status: 400 });
+      }
+      seenAmenities.add(key);
+      verifiedAmenities.push({ key, guestKeys: guestKeys as string[] });
+    }
+    // Amenity Total = number of amenity users × the haven's owner-set rate
+    // (falls back to CHECKOUT_AMENITIES' ₱150 default when unconfigured).
+    const verifiedAmenitiesTotal = verifiedAmenities.reduce(
+      (sum, item) => sum + amenityFeeFor(item.key) * item.guestKeys.length,
+      0,
+    );
+    let paymentTotalAmount = Number(total_amount) || 0;
+    let paymentDownPayment = Number(down_payment) || 0;
+    let paymentAmountPaid = paymentDownPayment;
+
+    // ── Re-price the stay on the server ───────────────────────────────────
+    // The room price used to be whatever the browser sent. It's now re-quoted
+    // with the same quoteStay() the checkout uses — live haven rates, weekend/
+    // holiday calendar and ACTIVE seasonal rates — and a booking priced below
+    // that quote is refused. That also covers a guest whose page loaded before
+    // the owner switched a season ON.
+    const stayTypeCode = stayTypeCodeFor(check_in_date, check_out_date, check_in_time, check_out_time);
+    const stayNightsCount = stayTypeCode === "10" ? 1 : bookedNights(check_in_date, check_out_date);
+    const checkInISO = String(check_in_date).slice(0, 10);
     const [calendarRules, stayingSeasons] = await Promise.all([
       loadCalendarRules(pool),
       loadActiveSeasons(pool, { fromISO: checkInISO, toISO: addDaysISO(checkInISO, stayNightsCount - 1) }),
@@ -1685,7 +1716,7 @@ export const createBooking = async (
     });
     const amenityAddOns = verifiedAmenities.map((item) => ({
       name: CHECKOUT_AMENITIES[item.key].name,
-      price: CHECKOUT_AMENITIES[item.key].fee,
+      price: amenityFeeFor(item.key), // the haven's owner-set rate actually charged, not the code default
       quantity: item.guestKeys.length,
       notes: `Guests: ${amenityGuestNames(item.guestKeys).join(", ")}`,
     }));

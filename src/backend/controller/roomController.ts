@@ -80,6 +80,11 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
       deposit_tier3_amount,
       deposit_tier4_amount,
       extra_pax_fee,
+      // Checkout amenity rates (Swimming Pool / Basketball Court) — see
+      // 2026-09-22-add-checkout-amenity-fees.sql. null/undefined = not
+      // configured, code default (₱150) applies.
+      swimming_pool_amenity_fee,
+      basketball_court_amenity_fee,
       commission_rate,
       house_rules,
       smoking_policy,
@@ -215,6 +220,7 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
         longterm_tier1_rate, longterm_tier2_rate, longterm_tier3_rate, longterm_tier4_rate,
         longterm_extra_pax_fee, longterm_active,
         deposit_tier1_amount, deposit_tier2_amount, deposit_tier3_amount, deposit_tier4_amount,
+        swimming_pool_amenity_fee, basketball_court_amenity_fee,
         created_at, updated_at
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb,
@@ -224,6 +230,7 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
                 $37, $38, $39, $40,
                 $41, $42,
                 $43, $44, $45, $46,
+                $47, $48,
                 NOW(), NOW())
       RETURNING *
     `;
@@ -279,6 +286,8 @@ export const createHaven = async (req: NextRequest): Promise<NextResponse> => {
       deposit_tier2_amount ? parseFloat(deposit_tier2_amount) : null,
       deposit_tier3_amount ? parseFloat(deposit_tier3_amount) : null,
       deposit_tier4_amount ? parseFloat(deposit_tier4_amount) : null,
+      swimming_pool_amenity_fee ? parseFloat(swimming_pool_amenity_fee) : null,
+      basketball_court_amenity_fee ? parseFloat(basketball_court_amenity_fee) : null,
     ];
 
     const havenResult = await pool.query(havenQuery, havenValues);
@@ -725,6 +734,11 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
       deposit_tier3_amount,
       deposit_tier4_amount,
       extra_pax_fee,
+      // Checkout amenity rates (Swimming Pool / Basketball Court) — see
+      // 2026-09-22-add-checkout-amenity-fees.sql. null/undefined = not
+      // configured, code default (₱150) applies.
+      swimming_pool_amenity_fee,
+      basketball_court_amenity_fee,
       commission_rate,
       house_rules,
       smoking_policy,
@@ -809,6 +823,8 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
           deposit_tier2_amount = $44,
           deposit_tier3_amount = $45,
           deposit_tier4_amount = $46,
+          swimming_pool_amenity_fee = $47,
+          basketball_court_amenity_fee = $48,
           updated_at = NOW()
       WHERE uuid_id = $22
       RETURNING *
@@ -865,6 +881,8 @@ export const updateHaven = async (req: NextRequest): Promise<NextResponse> => {
       deposit_tier2_amount ? parseFloat(deposit_tier2_amount) : null,
       deposit_tier3_amount ? parseFloat(deposit_tier3_amount) : null,
       deposit_tier4_amount ? parseFloat(deposit_tier4_amount) : null,
+      swimming_pool_amenity_fee ? parseFloat(swimming_pool_amenity_fee) : null,
+      basketball_court_amenity_fee ? parseFloat(basketball_court_amenity_fee) : null,
     ];
 
     const result = await pool.query(query, values);

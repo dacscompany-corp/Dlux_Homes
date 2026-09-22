@@ -74,6 +74,10 @@ const empty = {
   // length prices per-night as normal until re-activated.
   longterm_active: true,
   cleaning_fee: "", security_deposit: "", extra_pax_fee: "",
+  // Checkout amenity rates (Swimming Pool / Basketball Court), ₱ per person
+  // using the amenity — see 2026-09-22-add-checkout-amenity-fees.sql.
+  // Blank = not configured, checkout falls back to its ₱150 default.
+  swimming_pool_amenity_fee: "", basketball_court_amenity_fee: "",
   // Security deposit tiers — same 3/11/18/26 night bands, scales
   // independently of long-term pricing. Blank = not configured for that tier.
   deposit_tier1_amount: "", deposit_tier2_amount: "", deposit_tier3_amount: "", deposit_tier4_amount: "",
@@ -134,6 +138,7 @@ function havenToForm(h: Record<string, unknown>): { form: Form; images: ImgRef[]
       longterm_extra_pax_fee: s(h.longterm_extra_pax_fee),
       longterm_active: h.longterm_active !== false,
       cleaning_fee: s(h.cleaning_fee), security_deposit: s(h.security_deposit), extra_pax_fee: s(h.extra_pax_fee),
+      swimming_pool_amenity_fee: s(h.swimming_pool_amenity_fee), basketball_court_amenity_fee: s(h.basketball_court_amenity_fee),
       deposit_tier1_amount: s(h.deposit_tier1_amount), deposit_tier2_amount: s(h.deposit_tier2_amount),
       deposit_tier3_amount: s(h.deposit_tier3_amount), deposit_tier4_amount: s(h.deposit_tier4_amount),
       six_hour_check_in: s(h.six_hour_check_in) || empty.six_hour_check_in, six_hour_check_out: s(h.six_hour_check_out) || empty.six_hour_check_out,
@@ -244,6 +249,8 @@ export default function HavenWizard({
         deposit_tier1_amount: num(form.deposit_tier1_amount), deposit_tier2_amount: num(form.deposit_tier2_amount),
         deposit_tier3_amount: num(form.deposit_tier3_amount), deposit_tier4_amount: num(form.deposit_tier4_amount),
         extra_pax_fee: form.extra_pax_fee || undefined,
+        swimming_pool_amenity_fee: num(form.swimming_pool_amenity_fee),
+        basketball_court_amenity_fee: num(form.basketball_court_amenity_fee),
         six_hour_check_in: form.six_hour_check_in, six_hour_check_out: form.six_hour_check_out,
         ten_hour_check_in: form.ten_hour_check_in, ten_hour_check_out: form.ten_hour_check_out,
         twenty_one_hour_check_in: form.twenty_one_hour_check_in, twenty_one_hour_check_out: form.twenty_one_hour_check_out,
@@ -527,6 +534,22 @@ export default function HavenWizard({
                 className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: "#B07848" }}>
                 <Plus className="w-4 h-4" /> Add item
               </button>
+
+              <div className="pt-3 mt-1 border-t" style={{ borderColor: "#EDE3D2" }}>
+                <p className="text-xs font-semibold" style={{ color: "#8B6344" }}>Checkout amenities</p>
+                <p className="text-xs mt-1" style={{ color: "#C9B79E" }}>Per-person rate for the &quot;Choose your amenities&quot; step at checkout (Fri/Sat/Sun bookings only). Leave blank to use the ₱150 default.</p>
+                <div className="space-y-2 mt-2">
+                  {[
+                    { label: "Swimming Pool", key: "swimming_pool_amenity_fee" },
+                    { label: "Basketball Court", key: "basketball_court_amenity_fee" },
+                  ].map((a) => (
+                    <div key={a.key} className="rounded-xl border p-3 flex items-center justify-between gap-3" style={{ borderColor: "#EDE3D2", backgroundColor: "#FFFFFF" }}>
+                      <p className="text-xs font-semibold" style={{ color: "#B07848" }}>{a.label} <span className="font-normal" style={{ color: "#C9B79E" }}>· ₱ / person</span></p>
+                      <input type="number" placeholder="150" value={form[a.key as keyof Form] as string} onChange={(e) => set({ [a.key]: e.target.value } as Partial<Form>)} className={field} style={{ ...fieldStyle, width: 140 }} />
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
 

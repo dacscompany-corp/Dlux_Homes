@@ -595,13 +595,18 @@ function CheckoutInner() {
   // Amenities — optional. An amenity is only billed/saved once it's switched ON
   // AND has at least one booked guest selected for it (see fieldErrors step 1).
   // `guestKeys` holds keys like "main" or "x0"/"x1" (matching extraGuests index),
-  // capped at 6 per amenity.
-  // The amenity fee is per amenity, not per person. Guest selection tells the
-  // host who may use it; it does not multiply the fee (e.g. 3 pool guests =
-  // ₱200, as specified by the owner).
+  // capped at the total number of guests in the booking (owner rule, 2026-09-22).
+  // Fee is PER PERSON using the amenity: Amenity Total = users × rate.
+  // Owner-editable per haven (Haven Management -> Add-ons); ₱150 is only the
+  // fallback when the owner hasn't set one — see haven-adapter.ts.
+  const DEFAULT_AMENITY_RATE = 150;
+  // Mock rooms (fallback while a live haven loads) don't carry these fields —
+  // cast rather than widen `room`'s shared type, which many other lines below
+  // depend on structurally.
+  const roomAmenityFees = room as { swimmingPoolAmenityFee?: number; basketballCourtAmenityFee?: number };
   const AMENITIES = [
-    { key: "swimmingPool", name: "Swimming Pool", fee: 200 },
-    { key: "basketballCourt", name: "Basketball Court", fee: 200 },
+    { key: "swimmingPool", name: "Swimming Pool", fee: roomAmenityFees.swimmingPoolAmenityFee ?? DEFAULT_AMENITY_RATE },
+    { key: "basketballCourt", name: "Basketball Court", fee: roomAmenityFees.basketballCourtAmenityFee ?? DEFAULT_AMENITY_RATE },
   ] as const;
   type AmenityKey = typeof AMENITIES[number]["key"];
   const [amenities, setAmenities] = useState<Record<AmenityKey, { enabled: boolean; guestKeys: string[] }>>({
@@ -610,11 +615,16 @@ function CheckoutInner() {
   });
   const toggleAmenity = (key: AmenityKey) =>
     setAmenities((prev) => ({ ...prev, [key]: { ...prev[key], enabled: !prev[key].enabled } }));
+  // Number of amenity users can never exceed the total number of guests in the
+  // booking (owner rule, 2026-09-22) — computed from the raw pax counts rather
+  // than `extraGuests.length` so it's correct from first render, before that
+  // state's resize effect runs.
+  const totalBookingGuests = Math.max(1, adults + children + infants);
   const toggleAmenityGuest = (key: AmenityKey, guestKey: string) =>
     setAmenities((prev) => {
       const cur = prev[key].guestKeys;
       const has = cur.includes(guestKey);
-      if (!has && cur.length >= 6) return prev; // max 6 selected guests per amenity
+      if (!has && cur.length >= totalBookingGuests) return prev; // cap: total guests in the booking
       return { ...prev, [key]: { ...prev[key], guestKeys: has ? cur.filter((k) => k !== guestKey) : [...cur, guestKey] } };
     });
   // Terms acceptance. Gated on step 0 -> 1, i.e. BEFORE the payment step reveals
@@ -694,6 +704,21 @@ function CheckoutInner() {
   // A Daycation follows the night before it (Sat/Sun weekend, Fri weekday).
   const daycation = isDaycation(stayType, checkInTime, checkOutTime);
   const isWeekendRate = isWeekendOrHoliday(date, calendarRules, daycation);
+  // Amenities availability rule (owner spec, 2026-09-22): the "Choose your
+  // amenities" step only shows for a Friday, Saturday or Sunday check-in date —
+  // a plain calendar-day check, independent of the pricing weekend/holiday
+  // calendar (`isWeekendRate` above also counts PH holidays and the owner's
+  // editable weekend days, which is NOT what this rule keys off).
+  const amenitiesAvailable = (() => {
+    if (!date) return false;
+    const dow = new Date(date + "T00:00:00").getDay(); // 0=Sun..6=Sat
+    return dow === 0 || dow === 5 || dow === 6; // Sun, Fri, Sat
+  })();
+  // Step indicators render off THIS, not the raw STEPS array — it drops the
+  // "Amenities" entry (and its underlying step index, 1) on a weekday booking
+  // so the guest never sees a step for something they can't use.
+  const visibleSteps = STEPS.map((label, index) => ({ label, index })).filter((s) => amenitiesAvailable || s.index !== 1);
+  const visiblePos = visibleSteps.findIndex((s) => s.index === step); // this step's position among the ones actually shown
   // D'Lux pricing: base rate covers 2 pax; each extra adult/young adult adds a
   // per-pax fee CHARGED PER NIGHT. "Children (7 under)" are exempt from the fee.
   // No cleaning or service fee.
@@ -828,10 +853,12 @@ function CheckoutInner() {
   const downPayment = Math.round(total * 0.5); // 50% reservation down payment
 
   // Amenities pricing — NOT discounted, NOT split into the 50% down payment.
-  // Each enabled amenity bills its flat fee in full now.
+  // Amenity Total = Number of Amenity Users × ₱150 (owner rule, 2026-09-22),
+  // billed in full now. Never computed at all on a weekday booking, since
+  // `amenities` state can't be changed without the step being reachable.
   const selectedAmenities = AMENITIES
     .map((a) => {
-      const guestKeys = amenities[a.key].enabled ? amenities[a.key].guestKeys : [];
+      const guestKeys = amenitiesAvailable && amenities[a.key].enabled ? amenities[a.key].guestKeys : [];
       return { ...a, guestKeys, fee: a.fee * guestKeys.length };
     })
     .filter((a) => a.guestKeys.length > 0);
@@ -840,13 +867,14 @@ function CheckoutInner() {
   // amenities fee (amenities are billed in full up front, not split 50/50).
   const amountDueNow = downPayment + amenitiesTotal;
 
-  const stepCaption = [
-    "Step 1 of 5 — tell us who's staying",
-    "Step 2 of 5 — add optional amenities",
-    "Step 3 of 5 — send your down payment to reserve",
-    "Step 4 of 5 — confirm the payment you sent",
-    "Step 5 of 5 — review and submit your request",
-  ][step];
+  const stepCaptionByIndex = [
+    "tell us who's staying",
+    "add optional amenities",
+    "send your down payment to reserve",
+    "confirm the payment you sent",
+    "review and submit your request",
+  ];
+  const stepCaption = `Step ${visiblePos + 1} of ${visibleSteps.length} — ${stepCaptionByIndex[step]}`;
 
   // Per-field validation for the current step. Returns the set of invalid field
   // keys so the Continue button can stay clickable while we mark exactly what's
@@ -1050,6 +1078,18 @@ function CheckoutInner() {
     setShowErrors(false);
     action();
   };
+
+  // Step 1 ("Choose your amenities") only exists on Fri/Sat/Sun bookings
+  // (owner rule, 2026-09-22). On a weekday booking it's skipped entirely in
+  // both directions so a guest never lands on it, sees it in the indicator,
+  // or has to click past it — `step` itself stays a plain 0-4 index, these
+  // just route around 1 when it isn't showable.
+  const nextStepFrom = (s: number) => (s === 0 && !amenitiesAvailable ? 2 : s + 1);
+  const prevStepFrom = (s: number) => (s === 2 && !amenitiesAvailable ? 0 : s - 1);
+  const goNext = () => tryAdvance(() => setStep(nextStepFrom(step)));
+  // Only ever called when step > 0 — callers still send step 0's Back to
+  // router.back() themselves, same as before.
+  const goBack = () => setStep(prevStepFrom(step));
 
   // Style/marking helpers driven by a failed Continue attempt.
   const fieldStyle = (key: string): React.CSSProperties =>
@@ -1328,8 +1368,8 @@ function CheckoutInner() {
 
           {/* step indicator */}
           <div className="co-steps" style={{ display: "flex", alignItems: "center", gap: 14, fontSize: 14 }}>
-            {STEPS.map((s, i) => {
-              const done = i < step, current = i === step;
+            {visibleSteps.map(({ label: s, index: i }, pos) => {
+              const done = pos < visiblePos, current = i === step;
               const circle = done
                 ? { background: "#1F160E", color: "#faf7f1", border: "none" as const }
                 : current
@@ -1339,10 +1379,10 @@ function CheckoutInner() {
               return (
                 <div key={i} style={{ display: "flex", alignItems: "center", gap: 14 }}>
                   {/* connector fills in once the previous step is done */}
-                  {i > 0 && <div style={{ width: 30, height: 2, borderRadius: 2, background: i <= step ? "#C9B79A" : "#E6DCCB" }} />}
+                  {pos > 0 && <div style={{ width: 30, height: 2, borderRadius: 2, background: pos <= visiblePos ? "#C9B79A" : "#E6DCCB" }} />}
                   <button onClick={() => done && setStep(i)} style={{ display: "flex", alignItems: "center", gap: 9, background: "transparent", border: 0, padding: 0, font: "inherit", color: labelColor, fontWeight: current ? 700 : done ? 500 : 400, cursor: done ? "pointer" : "default" }}>
                     <span style={{ width: 26, height: 26, flex: "none", borderRadius: "50%", display: "grid", placeItems: "center", fontSize: 12.5, fontWeight: 600, fontFamily: "'Geist Mono', ui-monospace, monospace", ...circle }}>
-                      {done ? <IcoCheckLg /> : i + 1}
+                      {done ? <IcoCheckLg /> : pos + 1}
                     </span>
                     <span>{s}</span>
                   </button>
@@ -1364,14 +1404,14 @@ function CheckoutInner() {
 
       {/* MOBILE header — Guest Header 3b: centered step + progress bars */}
       <div className="co-mobhdr" style={{ position: "sticky", top: 0, zIndex: 50, background: "#FAF7F1", borderBottom: "1px solid #ECE5D4", padding: "14px 20px 16px", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
-        <button onClick={() => (step === 0 ? router.back() : setStep(step - 1))} aria-label="Back" style={{ position: "absolute", left: 14, top: 12, width: 40, height: 40, borderRadius: "50%", border: "1px solid #E1D8C6", background: "transparent", display: "grid", placeItems: "center", cursor: "pointer", color: "#1F160E" }}>
+        <button onClick={() => (step === 0 ? router.back() : goBack())} aria-label="Back" style={{ position: "absolute", left: 14, top: 12, width: 40, height: 40, borderRadius: "50%", border: "1px solid #E1D8C6", background: "transparent", display: "grid", placeItems: "center", cursor: "pointer", color: "#1F160E" }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>
         </button>
-        <div style={{ fontFamily: "'Geist Mono', monospace", fontSize: 10.5, letterSpacing: 2, color: "#B07848", marginBottom: 2 }}>STEP {step + 1} OF {STEPS.length}</div>
+        <div style={{ fontFamily: "'Geist Mono', monospace", fontSize: 10.5, letterSpacing: 2, color: "#B07848", marginBottom: 2 }}>STEP {visiblePos + 1} OF {visibleSteps.length}</div>
         <div style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 22, color: "#1F160E" }}>{STEPS[step]}</div>
         <div style={{ display: "flex", gap: 6, marginTop: 14, justifyContent: "center" }}>
-          {STEPS.map((_, i) => (
-            <span key={i} style={{ width: 34, height: 5, borderRadius: 3, background: i < step ? "#1F160E" : i === step ? "#B07848" : "#E6DCCB" }} />
+          {visibleSteps.map(({ index: i }, pos) => (
+            <span key={i} style={{ width: 34, height: 5, borderRadius: 3, background: pos < visiblePos ? "#1F160E" : i === step ? "#B07848" : "#E6DCCB" }} />
           ))}
         </div>
       </div>
@@ -1435,15 +1475,15 @@ function CheckoutInner() {
           <div style={{ minWidth: 0 }}>
             {/* Mobile-only step dots (the header step bar hides below 860px) */}
             <div className="co-mobile-steps" style={{ alignItems: "center", gap: 5, marginBottom: 22 }}>
-              {STEPS.map((s, i) => {
-                const done = i < step, current = i === step;
+              {visibleSteps.map(({ index: i }, pos) => {
+                const done = pos < visiblePos, current = i === step;
                 const shortLabel = ["Details", "Amenities", "Payment", "Confirm", "Review"][i];
                 return (
                   <div key={i} style={{ display: "contents" }}>
-                    {i > 0 && <div style={{ height: 1.5, flex: "0 0 12px", background: "#D4BE9A", marginBottom: 18 }} />}
+                    {pos > 0 && <div style={{ height: 1.5, flex: "0 0 12px", background: "#D4BE9A", marginBottom: 18 }} />}
                     <div style={{ flex: 1, textAlign: "center" }}>
                       <div style={{ width: 28, height: 28, borderRadius: "50%", background: done ? "#1F160E" : current ? "#B07848" : "#EFE4CE", color: done || current ? "#fff" : "#8B7458", display: "grid", placeItems: "center", margin: "0 auto 6px", fontSize: 12, fontWeight: current ? 700 : 600 }}>
-                        {done ? <IcoCheck /> : i + 1}
+                        {done ? <IcoCheck /> : pos + 1}
                       </div>
                       <div style={{ fontSize: 10, color: current ? "#1F160E" : "#8B7458", fontWeight: current ? 600 : 400 }}>{shortLabel}</div>
                     </div>
@@ -1823,8 +1863,14 @@ function CheckoutInner() {
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                         <div>
                           <div style={{ fontSize: 12, fontWeight: 700, color: "#F9F5EF" }}>{a.name}</div>
-                          <div style={{ color: "#B9ACA0", fontSize: 10.5, marginTop: 3 }}>Open 8:00 AM–10:00 PM · Maximum 6 guests</div>
-                          <div style={{ color: "#B9ACA0", fontSize: 10.5, marginTop: 2 }}>Includes ₱150 amenity fee + ₱50 service fee</div>
+                          {/* Access Pass hours — shown the same whether the toggle is on or
+                              off (owner spec, 2026-09-22): this is when the amenity itself
+                              is open, not something the guest's selection changes. */}
+                          <div style={{ color: "#B9ACA0", fontSize: 10.5, marginTop: 3 }}>Access Pass ADMIN TIME</div>
+                          <div style={{ color: "#B9ACA0", fontSize: 10.5 }}>Mon–Fri 9:00am – 5:00am</div>
+                          <div style={{ color: "#B9ACA0", fontSize: 10.5 }}>Saturday 9:00am – 11:00am</div>
+                          <div style={{ color: "#B9ACA0", fontSize: 10.5, marginTop: 3 }}>Up to {totalBookingGuests} guest{totalBookingGuests === 1 ? "" : "s"} (your full booking)</div>
+                          <div style={{ color: "#B9ACA0", fontSize: 10.5, marginTop: 2 }}>{peso(a.fee)} per person using this amenity</div>
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 9, flex: "none" }}>
                           <span style={{ fontSize: 12, fontWeight: 700, color: "#F9F5EF" }}>{peso(a.fee)}<span style={{ color: "#B9ACA0", fontSize: 9, fontWeight: 500 }}> / person</span></span>
@@ -1836,15 +1882,14 @@ function CheckoutInner() {
                       </div>
                       {state.enabled && (
                         <div style={{ marginTop: 11, paddingTop: 11, borderTop: "1px solid #51463E" }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 10, fontSize: 0 }}>
-                            <span style={{ fontSize: 11, fontWeight: 700, color: "#F9F5EF" }}>Who will use this amenity?</span>
-                            <span style={{ fontSize: 10.5, color: "#E4A76D" }}>{state.guestKeys.length} of 6 selected</span>
-                            Select the booked guests who will use this — {state.guestKeys.length} of 6 selected.
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: "#F9F5EF" }}>How many booked guests will use this?</span>
+                            <span style={{ fontSize: 10.5, color: "#E4A76D" }}>{state.guestKeys.length} of {totalBookingGuests} selected</span>
                           </div>
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "9px 18px" }}>
                             {guestKeys.map((gk, gi) => {
                               const checked = state.guestKeys.includes(gk);
-                              const disabled = !checked && state.guestKeys.length >= 6;
+                              const disabled = !checked && state.guestKeys.length >= totalBookingGuests;
                               return (
                                 <label key={gk} style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0, fontSize: 10.5, fontWeight: 600, color: disabled ? "#776C63" : "#E8E1D8", cursor: disabled ? "not-allowed" : "pointer" }}>
                                   <input type="checkbox" checked={checked} disabled={disabled} onChange={() => toggleAmenityGuest(a.key, gk)}
@@ -1853,6 +1898,10 @@ function CheckoutInner() {
                                 </label>
                               );
                             })}
+                          </div>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#E4A76D", marginTop: 10, paddingTop: 10, borderTop: "1px solid #51463E" }}>
+                            <span>{state.guestKeys.length} × {peso(a.fee)}</span>
+                            <span style={{ fontWeight: 700 }}>{peso(state.guestKeys.length * a.fee)}</span>
                           </div>
                         </div>
                       )}
@@ -1878,8 +1927,12 @@ function CheckoutInner() {
                 <h2 style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 27, fontWeight: 500, margin: "0 0 18px", letterSpacing: "-.02em" }}>How would you like to pay?</h2>
 
                 <div style={{ margin: "0 0 20px", padding: "15px 17px", borderRadius: 14, background: "#FAF7F1", border: "1px solid #E0CEB2", fontSize: 13, color: "#4A3A2A" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}><span>Amenities</span><span style={{ fontWeight: 600 }}>{selectedAmenities.length ? selectedAmenities.map((a) => a.name).join(", ") : "None"}</span></div>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 7 }}><span>Amenities fee</span><span style={{ fontWeight: 600 }}>{peso(amenitiesTotal)}</span></div>
+                  {amenitiesAvailable && (
+                    <>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}><span>Amenities</span><span style={{ fontWeight: 600 }}>{selectedAmenities.length ? selectedAmenities.map((a) => a.name).join(", ") : "None"}</span></div>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 7 }}><span>Amenities fee</span><span style={{ fontWeight: 600 }}>{peso(amenitiesTotal)}</span></div>
+                    </>
+                  )}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, marginTop: 12, paddingTop: 12, borderTop: "1px solid #E0CEB2", color: "#1F160E" }}><span style={{ fontWeight: 700 }}>Amount due now</span><span style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 22, fontWeight: 600, color: "#8C5A2E" }}>{peso(amountDueNow)}</span></div>
                   <div style={{ fontSize: 11.5, color: "#8B7458", marginTop: 4 }}>Accommodation down payment{amenitiesTotal ? " + total amenities fee" : ""}</div>
                 </div>
@@ -2025,11 +2078,13 @@ function CheckoutInner() {
                   <div style={{ fontSize: 13, color: "#8B7458", marginTop: 4 }}>{formatDateLong(date)} · {checkInTime} → {checkOutTime}</div>
                   <div style={{ fontSize: 13, color: "#8B7458" }}>{stayType === "10" ? "10-hour stay" : `Overnight · ${nights} night${nights > 1 ? "s" : ""}`} · {adults + children + infants} guest{adults + children + infants > 1 ? "s" : ""}</div>
                 </ReviewBlock>
-                <ReviewBlock title="Amenities" onEdit={() => setStep(1)}>
-                  {selectedAmenities.length ? selectedAmenities.map((a) => (
-                    <div key={a.key} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#8B7458", marginTop: 3 }}><span>{a.name} · {a.guestKeys.length} guest{a.guestKeys.length === 1 ? "" : "s"}</span><span>{peso(a.fee)}</span></div>
-                  )) : <div style={{ fontSize: 13, color: "#8B7458" }}>Amenities: None · ₱0</div>}
-                </ReviewBlock>
+                {amenitiesAvailable && (
+                  <ReviewBlock title="Amenities" onEdit={() => setStep(1)}>
+                    {selectedAmenities.length ? selectedAmenities.map((a) => (
+                      <div key={a.key} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#8B7458", marginTop: 3 }}><span>{a.name} · {a.guestKeys.length} guest{a.guestKeys.length === 1 ? "" : "s"}</span><span>{peso(a.fee)}</span></div>
+                    )) : <div style={{ fontSize: 13, color: "#8B7458" }}>Amenities: None · ₱0</div>}
+                  </ReviewBlock>
+                )}
                 <ReviewBlock title="Payment" onEdit={() => setStep(2)}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 14, fontWeight: 600 }}>{selectedMethod?.payment_name || payment.method || "—"} ·</span>
@@ -2069,7 +2124,7 @@ function CheckoutInner() {
                 the two buttons on different lines. Aligning to the bottom puts
                 them on a shared baseline whether or not the hint is showing. */}
             <div className="co-nav" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 14, rowGap: 16, flexWrap: "wrap", marginTop: 34 }}>
-              <button onClick={() => step === 0 ? router.back() : setStep(step - 1)}
+              <button onClick={() => step === 0 ? router.back() : goBack()}
                 style={{ flex: "none", display: "inline-flex", alignItems: "center", gap: 6, padding: "13px 24px", borderRadius: 999, fontSize: 14, fontWeight: 600, background: "#FFFCF4", color: "#1F160E", border: "1px solid #D4BE9A", cursor: "pointer" }}>
                 <IcoChevLeft /> {step === 0 ? "Back to stay" : "Back"}
               </button>
@@ -2080,11 +2135,11 @@ function CheckoutInner() {
                   {step === 0 && firstIncomplete != null && (
                     <span style={{ fontSize: 13, color: G.muted, textAlign: "right" }}>Finish Guest {firstIncomplete + 1} to continue</span>
                   )}
-                  <button onClick={() => tryAdvance(() => setStep(step + 1))}
+                  <button onClick={goNext}
                     style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 30px", borderRadius: 999, fontSize: 15, fontWeight: 600, border: "none", cursor: "pointer",
                       background: step === 0 && firstIncomplete != null ? G.offBg : G.accent,
                       color: step === 0 && firstIncomplete != null ? G.offInk : G.white }}>
-                    {step === 0 ? "Next: Amenities" : step === 1 ? "Next: Payment" : step === 2 ? "Next: Confirm" : "Next: Review"} <IcoArrowRight />
+                    {step === 0 ? (amenitiesAvailable ? "Next: Amenities" : "Next: Payment") : step === 1 ? "Next: Payment" : step === 2 ? "Next: Confirm" : "Next: Review"} <IcoArrowRight />
                   </button>
                 </span>
               ) : (
@@ -2122,7 +2177,7 @@ function CheckoutInner() {
                   {/* Long-term stays quote one flat nightly rate — show it. */}
                   {bundleLabel && bundleRate != null && <div style={{ fontSize: 11.5, color: "#9B8B73", marginTop: -4 }}>{peso(bundleRate)}/night</div>}
                   {paxFee > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Extra pax · {extraPaxCount} × {peso(paxFeeRate)}{nights > 1 ? ` × ${nights} nights` : ""}</span><span>{peso(paxFee)}</span></div>}
-                  <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Amenities</span><span>{selectedAmenities.length ? peso(amenitiesTotal) : "None · ₱0"}</span></div>
+                  {amenitiesAvailable && <div style={{ display: "flex", justifyContent: "space-between", color: "#4A3A2A" }}><span>Amenities</span><span>{selectedAmenities.length ? peso(amenitiesTotal) : "None · ₱0"}</span></div>}
                   {seniorDiscount > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span>Senior/PWD discount · {seniorCount} guest{seniorCount > 1 ? "s" : ""}</span><span>−{peso(seniorDiscount)}</span></div>}
                   {appliedDiscount && (
                     <div style={{ display: "flex", justifyContent: "space-between", color: "#1A7A4C" }}><span>Promo · {appliedDiscount.code}</span><span>−{peso(appliedDiscount.discount_amount)}</span></div>
@@ -2193,7 +2248,7 @@ function CheckoutInner() {
                   </div>
                   <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, marginTop: 8 }}>
                     <div className="co-pay-amt" style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 52, fontWeight: 500, lineHeight: 1 }}>{peso(amountDueNow)}</div>
-                    <div style={{ fontSize: 12, color: "#B8A68E", textAlign: "right", paddingBottom: 6 }}>down payment<br />+ amenities</div>
+                    <div style={{ fontSize: 12, color: "#B8A68E", textAlign: "right", paddingBottom: 6 }}>down payment{amenitiesTotal ? <><br />+ amenities</> : null}</div>
                   </div>
                   <div style={{ fontSize: 12.5, color: "#B8A68E", marginTop: 8, lineHeight: 1.5 }}>Secures your booking instantly. Send this amount first — the rest is paid when you arrive.</div>
                 </div>
@@ -2221,11 +2276,11 @@ function CheckoutInner() {
           <div style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 26, lineHeight: 1.15, marginTop: 1 }}>{peso(amountDueNow)}</div>
         </div>
         {step < STEPS.length - 1 ? (
-          <button onClick={() => tryAdvance(() => setStep(step + 1))}
+          <button onClick={goNext}
             style={{ flex: "none", display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 24px", borderRadius: 999, fontSize: 15, fontWeight: 600, border: "none", fontFamily: "inherit", cursor: "pointer",
               background: step === 0 && firstIncomplete != null ? "#4d4337" : G.accent,
               color: step === 0 && firstIncomplete != null ? "#A2937D" : G.white }}>
-            {step === 0 ? "Next: Amenities" : step === 1 ? "Next: Payment" : step === 2 ? "Next: Confirm" : "Next: Review"} <IcoArrowRight />
+            {step === 0 ? (amenitiesAvailable ? "Next: Amenities" : "Next: Payment") : step === 1 ? "Next: Payment" : step === 2 ? "Next: Confirm" : "Next: Review"} <IcoArrowRight />
           </button>
         ) : (
           <button onClick={() => tryAdvance(submit)} disabled={submitting}

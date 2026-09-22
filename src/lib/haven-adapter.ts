@@ -112,6 +112,10 @@ export function havenToRoom(h: Record<string, unknown>): Room & RoomExtras {
     depositTier3Amount: h.deposit_tier3_amount != null ? Number(h.deposit_tier3_amount) : undefined,
     depositTier4Amount: h.deposit_tier4_amount != null ? Number(h.deposit_tier4_amount) : undefined,
     additionalPaxFee: Number(h.extra_pax_fee ?? 200),
+    // Checkout amenity rates — see 2026-09-22-add-checkout-amenity-fees.sql.
+    // undefined = not configured, checkout falls back to its ₱150 default.
+    swimmingPoolAmenityFee: h.swimming_pool_amenity_fee != null ? Number(h.swimming_pool_amenity_fee) : undefined,
+    basketballCourtAmenityFee: h.basketball_court_amenity_fee != null ? Number(h.basketball_court_amenity_fee) : undefined,
     basePax: Number(h.base_pax ?? 2),
     maxPax: Number(h.capacity ?? 4),
     // Keep a local placeholder if the haven has no uploaded images yet, so the
