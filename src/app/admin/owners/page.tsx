@@ -30,6 +30,7 @@ import {
   PaymentMethodsSection, GuestAssistanceSection, UserManagementSection, PartnerManagementSection,
   PricingCalendarSection, Empty,
 } from "@/components/admin/owners/OwnerModules";
+import { CleaningOperationsSection } from "@/components/admin/owners/CleaningOperationsSection";
 import { SeasonalRatesSection } from "@/components/admin/owners/SeasonalRatesSection";
 import HavenWizard from "@/components/admin/owners/HavenWizard";
 import { MonthNavigator, currentMonthKey } from "@/components/admin/owners/MonthNavigator";
@@ -108,6 +109,7 @@ const navItems = [
   { icon: MessageSquare, label: "Communication" },
   { icon: Users, label: "Team" },
   { icon: Settings, label: "System" },
+  { icon: Sparkles, label: "Cleaning Operations" },
 ];
 
 const statusConfig: Record<string, { label: string; color: string; bg: string; dot: string }> = {
@@ -2437,6 +2439,8 @@ export default function OwnerDashboard() {
               </div>
             )}
           </>)}
+
+          {activeNav === "Cleaning Operations" && <CleaningOperationsSection />}
 
         </main>
       </div>

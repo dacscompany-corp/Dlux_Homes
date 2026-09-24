@@ -37,13 +37,13 @@ export async function GET(
       const totalResult = await client.query(totalQuery, [employeeId]);
       const total = parseInt(totalResult.rows[0]?.count || '0');
 
-      // Completed (status = 'cleaned' or 'inspected')
+      // Completed (awaiting inspection, ready, or the legacy terminal statuses)
       const completedQuery = `
         SELECT COUNT(*) as count
         FROM booking_cleaning bc
         INNER JOIN booking b ON bc.booking_id = b.id
         WHERE bc.assigned_to::text = $1
-        AND bc.cleaning_status IN ('cleaned', 'inspected')
+        AND bc.cleaning_status IN ('cleaned', 'inspected', 'awaiting-inspection', 'ready')
       `;
       const completedResult = await client.query(completedQuery, [employeeId]);
       const completed = parseInt(completedResult.rows[0]?.count || '0');

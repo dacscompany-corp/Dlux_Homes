@@ -172,6 +172,9 @@ function formatTimestamp(timestamp: string): string {
 function mapNotificationType(dbType: string): 'info' | 'success' | 'warning' {
   switch (dbType) {
     case 'ReportIssue':
+    case 'cleaning_rejected':
+    case 'cleaning_unassigned':
+    case 'cleaning_reassigned':
       return 'warning';
     case 'DepositStatus':
       return 'success';

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { updateCleaningTask } from "@/backend/controller/cleanersController";
+import { updateCleaningTask, VALID_CLEANING_STATUSES } from "@/backend/controller/cleanersController";
 import { requireEmployee } from "@/backend/utils/requireAdmin";
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -18,12 +18,11 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 
     // Validate cleaning status
-    const validStatuses = ["pending", "in-progress", "cleaned", "inspected"];
-    if (!validStatuses.includes(cleaning_status)) {
+    if (!VALID_CLEANING_STATUSES.includes(cleaning_status)) {
       return NextResponse.json(
         {
           success: false,
-          error: "Invalid cleaning status. Must be one of: pending, in-progress, cleaned, inspected",
+          error: `Invalid cleaning status. Must be one of: ${VALID_CLEANING_STATUSES.join(", ")}`,
         },
         { status: 400 }
       );
