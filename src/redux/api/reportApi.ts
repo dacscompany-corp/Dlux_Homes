@@ -8,6 +8,9 @@ export interface ReportIssueRequest {
   issue_description: string;
   user_id: string;
   images?: File[];
+  // Set when the report is filed from a specific cleaning assignment (My
+  // Assignments -> Report Issue), so admin sees it linked to that task.
+  booking_cleaning_id?: string;
 }
 
 export interface ReportIssueResponse {
@@ -41,14 +44,17 @@ export const reportApi = createApi({
         formData.append('specific_location', data.specific_location);
         formData.append('issue_description', data.issue_description);
         formData.append('user_id', data.user_id);
-        
+        if (data.booking_cleaning_id) {
+          formData.append('booking_cleaning_id', data.booking_cleaning_id);
+        }
+
         // Add images if any
         if (data.images && data.images.length > 0) {
           data.images.forEach((image, index) => {
             formData.append(`image_${index}`, image);
           });
         }
-        
+
         return {
           url: "/report/submit",
           method: "POST",

@@ -5,14 +5,16 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const haven_id = searchParams.get('haven_id');
-    
+    const booking_cleaning_id = searchParams.get('booking_cleaning_id');
+
     const client = await pool.connect();
-    
+
     try {
       let query = `
         SELECT
           ri.report_id,
           ri.haven_id,
+          ri.booking_cleaning_id,
           ri.issue_type,
           ri.priority_level,
           ri.specific_location,
@@ -36,13 +38,21 @@ export async function GET(request: NextRequest) {
       `;
 
       const params: (string | number)[] = [];
+      const where: string[] = [];
 
       if (haven_id) {
-        query += ' WHERE ri.haven_id = $1';
         params.push(haven_id);
+        where.push(`ri.haven_id = $${params.length}`);
+      }
+      if (booking_cleaning_id) {
+        params.push(booking_cleaning_id);
+        where.push(`ri.booking_cleaning_id = $${params.length}::uuid`);
+      }
+      if (where.length) {
+        query += ' WHERE ' + where.join(' AND ');
       }
 
-      query += ' GROUP BY ri.report_id, ri.haven_id, ri.issue_type, ri.priority_level, ri.specific_location, ri.issue_description, ri.status, ri.created_at, ri.user_id, h.haven_name';
+      query += ' GROUP BY ri.report_id, ri.haven_id, ri.booking_cleaning_id, ri.issue_type, ri.priority_level, ri.specific_location, ri.issue_description, ri.status, ri.created_at, ri.user_id, h.haven_name';
       query += ' ORDER BY ri.created_at DESC';
       
       const result = await client.query(query, params);

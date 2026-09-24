@@ -25,6 +25,7 @@ import { loadCalendarRules, loadActiveSeasons } from "@/lib/availability";
 import { havenToRoom } from "@/lib/haven-adapter";
 import { slotBlockOverlapSql } from "@/lib/blockedSlots";
 import { dispatchTransactionalEmail, type EmailDispatchResult } from "../utils/dispatchEmail";
+import { processCheckoutCleaning } from "./cleanersController";
 
 // EXISTING_START_SQL / EXISTING_END_SQL now live in @/lib/bookingWindow beside
 // occupyingBookingSql(), so the Messenger availability module shares the exact
@@ -2788,6 +2789,24 @@ export const updateBookingStatus = async (
     after(async () => {
       await pushCalendarUpdate(result.rows[0].id);
     });
+
+    // Checkout -> cleaning workflow entry point. "completed" is the only
+    // status string this codebase actually writes for a finished stay (see
+    // validStatuses above — "checked-out" is accepted for the email branches
+    // but never itself a valid status value), so that's the one trigger point
+    // for Needs Cleaning -> auto-assign. Runs after the response is sent and
+    // is itself idempotent (booking_cleaning has a UNIQUE(booking_id)), so a
+    // status update replayed for the same booking can't create a duplicate
+    // cleaning task.
+    if (status === "completed") {
+      after(async () => {
+        try {
+          await processCheckoutCleaning(result.rows[0].id);
+        } catch (err) {
+          console.error("⚠️ processCheckoutCleaning failed:", err);
+        }
+      });
+    }
 
     return NextResponse.json({
       success: true,

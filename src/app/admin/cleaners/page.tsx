@@ -11,7 +11,13 @@ import { useGetHavensQuery } from "@/redux/api/roomApi";
 import { useSubmitReportMutation } from "@/redux/api/reportApi";
 import { useGetNotificationsQuery } from "@/redux/api/notificationsApi";
 import { useGetConversationsQuery } from "@/redux/api/messagesApi";
-import { useGetCleaningTasksQuery, useStartCleaningMutation, useCompleteCleaningMutation } from "@/redux/api/cleanersApi";
+import {
+  useGetCleaningTasksQuery,
+  useStartCleaningMutation,
+  useCompleteCleaningMutation,
+  useGetChecklistQuery,
+  useToggleChecklistTaskMutation,
+} from "@/redux/api/cleanersApi";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   LayoutDashboard, ClipboardList, MapPin, CheckSquare, AlertTriangle,
@@ -24,9 +30,11 @@ import {
 // Dashboard, Tasks, Schedule, Messages, Support. "Tasks" and "Support" are
 // expandable groups (collapsed by default) that fold in what used to be
 // separate pages:
-//   - Tasks    -> Assignments (renamed from "My Assignment") + Cleaning
-//                 Checklist. Property Location is no longer its own page —
-//                 each task card now shows its own location inline instead.
+//   - Tasks    -> Assignments (renamed from "My Assignment"). Cleaning
+//                 Checklist now lives inline on each assignment card (opened
+//                 per-assignment) instead of being its own page. Property
+//                 Location is no longer its own page either — each task card
+//                 shows its own location inline instead.
 //   - Support  -> User Guide + Report an Issue.
 // Notifications moved to the header bell (already existed there); Profile
 // opens from the account card at the sidebar's bottom instead of a nav row.
@@ -37,7 +45,6 @@ const navItems: Array<
   { icon: LayoutDashboard, label: "Dashboard" },
   { icon: ClipboardList,   label: "Tasks", children: [
     { icon: ClipboardList, label: "Assignments" },
-    { icon: CheckSquare,   label: "Cleaning Checklist" },
   ] },
   { icon: CalendarDays,    label: "My Schedule" },
   { icon: MessageSquare,   label: "Messages" },
@@ -47,21 +54,14 @@ const navItems: Array<
   ] },
 ];
 
-const checklistItems = [
-  { id: 1,  label: "Change bed linens & pillowcases",  done: true  },
-  { id: 2,  label: "Clean & sanitize bathroom",         done: true  },
-  { id: 3,  label: "Vacuum floors & carpets",           done: true  },
-  { id: 4,  label: "Wipe all surfaces & mirrors",       done: false },
-  { id: 5,  label: "Restock toiletries & amenities",    done: false },
-  { id: 6,  label: "Empty trash bins",                  done: false },
-  { id: 7,  label: "Check mini bar & restock",          done: false },
-  { id: 8,  label: "Inspect AC & TV remotes",           done: false },
-];
-
+// Status pill styles for the cleaner's own view of an assignment. "completed"
+// here means the cleaner-visible normalized bucket (see normCleanStatus), not
+// a raw DB cleaning_status.
 const statusConfig: Record<string, { label: string; color: string; bg: string; dot: string }> = {
-  completed:    { label: "Completed",   color: "#065f46", bg: "#d1fae5", dot: "#10b981" },
-  "in-progress":{ label: "In Progress", color: "#8a6a2f", bg: "#F7F0E3", dot: "#B07848" },
-  pending:      { label: "Pending",     color: "#92400e", bg: "#fef3c7", dot: "#f59e0b" },
+  ready:                { label: "Ready",               color: "#065f46", bg: "#d1fae5", dot: "#10b981" },
+  "awaiting-inspection": { label: "Awaiting Inspection", color: "#5b21b6", bg: "#ede9fe", dot: "#8b5cf6" },
+  "in-progress":        { label: "In Progress",         color: "#8a6a2f", bg: "#F7F0E3", dot: "#B07848" },
+  pending:              { label: "Needs Cleaning",      color: "#92400e", bg: "#fef3c7", dot: "#f59e0b" },
 };
 
 const scheduleData = [
@@ -81,13 +81,17 @@ const PROPERTY_NAME = "D'Lux Homes — Tower 4, Grass Residences";
 const PROPERTY_ADDRESS = "Grass Residences, SM North EDSA, Quezon City";
 const propertyDirectionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${PROPERTY_COORDS[0]},${PROPERTY_COORDS[1]}`;
 
-const guideTopics = [
-  { title: "Getting Started",             desc: "How to navigate the cleaner portal and find your daily assignments.", icon: BookOpen },
-  { title: "Cleaning Standards",          desc: "D'Lux Homes cleaning protocols and quality checklist guidelines.",   icon: CheckSquare },
-  { title: "Reporting Issues",            desc: "Step-by-step guide to submitting a maintenance or damage report.",   icon: AlertTriangle },
-  { title: "Using the Checklist",         desc: "How to mark tasks complete and submit your cleaning report.",        icon: ClipboardList },
-  { title: "Communication with CSR",      desc: "How to message CSR staff and respond to instructions.",              icon: MessageSquare },
-  { title: "Schedule & Time Management",  desc: "Understanding your daily schedule and time slots.",                  icon: CalendarDays },
+// Each topic links to the real feature it describes — "goTo" is the nav
+// target, and "openChecklist" (owner spec, 2026-09-23) additionally expands
+// the Cleaning Checklist for the first assignment, since the checklist now
+// lives inline on My Assignments rather than as its own page.
+const guideTopics: { title: string; desc: string; icon: React.ElementType; goTo: string; openChecklist?: boolean }[] = [
+  { title: "Getting Started",             desc: "How to navigate the cleaner portal and find your daily assignments.", icon: BookOpen,       goTo: "Assignments" },
+  { title: "Cleaning Standards",          desc: "D'Lux Homes cleaning protocols and quality checklist guidelines.",   icon: CheckSquare,    goTo: "Assignments", openChecklist: true },
+  { title: "Reporting Issues",            desc: "Step-by-step guide to submitting a maintenance or damage report.",   icon: AlertTriangle,  goTo: "Report an Issue" },
+  { title: "Using the Checklist",         desc: "How to mark tasks complete and submit your cleaning report.",        icon: ClipboardList,  goTo: "Assignments", openChecklist: true },
+  { title: "Communication with CSR",      desc: "How to message CSR staff and respond to instructions.",              icon: MessageSquare,  goTo: "Messages" },
+  { title: "Schedule & Time Management",  desc: "Understanding your daily schedule and time slots.",                  icon: CalendarDays,   goTo: "My Schedule" },
 ];
 
 // Normalize an RTK/fetch result to an array of rows, whether it arrives as a
@@ -105,7 +109,6 @@ export default function CleanerDashboard() {
   // default (owner spec, 2026-09-22).
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const toggleGroup = (label: string) => setOpenGroups((prev) => ({ ...prev, [label]: !prev[label] }));
-  const [checklist,         setChecklist]         = useState(checklistItems);
   const [assignmentStatuses,setAssignmentStatuses]= useState<Record<string, string>>({});
   const [issueForm, setIssueForm] = useState({ haven: "", type: "", priority: "", location: "", description: "" });
   const [issueSubmitted, setIssueSubmitted] = useState(false);
@@ -114,17 +117,25 @@ export default function CleanerDashboard() {
   const { data: cleaningTasksData } = useGetCleaningTasksQuery();
   const [startCleaningM] = useStartCleaningMutation();
   const [completeCleaningM] = useCompleteCleaningMutation();
-  const normCleanStatus = (s: string) => (s === "cleaned" || s === "inspected" ? "completed" : s === "in-progress" ? "in-progress" : "pending");
+  // 'cleaned'/'inspected' are the pre-workflow terminal statuses on old rows —
+  // treated the same as 'ready' here since there's nothing left for the
+  // cleaner to do on either.
+  const normCleanStatus = (s: string) =>
+    s === "cleaned" || s === "inspected" || s === "ready" ? "ready"
+    : s === "awaiting-inspection" ? "awaiting-inspection"
+    : s === "in-progress" ? "in-progress"
+    : "pending";
   const assignments = toRows(cleaningTasksData).map((t) => ({
     id: String(t.cleaning_id ?? ""),
     room: String(t.haven ?? "—"),
     floor: String(t.booking_id ?? "—"),
-    bookingUuid: String(t.booking_uuid ?? ""),
-    depositProofUrl: t.deposit_proof_url ? String(t.deposit_proof_url) : "",
+    havenId: t.haven_id ? String(t.haven_id) : "",
+    bookingUuid: t.booking_uuid ? String(t.booking_uuid) : "",
     timeSlot: t.check_in_time && t.check_out_time ? `${t.check_in_time} – ${t.check_out_time}` : "—",
     status: normCleanStatus(String(t.cleaning_status ?? "pending")),
     priority: "normal",
     notes: `Guest: ${`${t.guest_first_name ?? ""} ${t.guest_last_name ?? ""}`.trim() || "—"}`,
+    inspectionNote: t.inspection_note ? String(t.inspection_note) : "",
   }));
   useEffect(() => {
     setAssignmentStatuses(Object.fromEntries(assignments.map((a) => [a.id, a.status])));
@@ -134,6 +145,9 @@ export default function CleanerDashboard() {
   // the first paint — fall back to the assignment's own status so status
   // lookups never see an unmapped id before that effect fires.
   const statusFor = (id: string, fallback: string) => assignmentStatuses[id] ?? fallback;
+  // "Done" from the cleaner's perspective — nothing left for them to do,
+  // whether it's sitting with admin for inspection or already approved Ready.
+  const isDoneStatus = (s: string) => s === "awaiting-inspection" || s === "ready";
 
   // ── Report an Issue → live report_issue (feeds Owner Maintenance) ──
   const { data: session } = useSession();
@@ -144,6 +158,9 @@ export default function CleanerDashboard() {
     label: String(h.haven_name || h.name || "Haven"),
   }));
   const [submitReport, { isLoading: submittingIssue }] = useSubmitReportMutation();
+  // Set when "Report Issue" is clicked from a specific assignment card, so
+  // the report stays linked to that cleaning task instead of only the haven.
+  const [issueAssignmentId, setIssueAssignmentId] = useState<string | null>(null);
 
   const submitIssue = async () => {
     if (!issueForm.haven || !issueForm.type || !issueForm.priority) {
@@ -159,6 +176,7 @@ export default function CleanerDashboard() {
         specific_location: issueForm.location,
         issue_description: issueForm.description,
         user_id: cleanerId,
+        booking_cleaning_id: issueAssignmentId ?? undefined,
       }).unwrap();
       setIssueSubmitted(true);
       toast.success("Issue reported");
@@ -185,46 +203,85 @@ export default function CleanerDashboard() {
     unread: Number(c.unread_count ?? 0) > 0,
   }));
 
-  const toggleChecklistItem = (id: number) =>
-    setChecklist((prev) => prev.map((item) => (item.id === id ? { ...item, done: !item.done } : item)));
-
   const startCleaning = async (id: string) => {
     setAssignmentStatuses((prev) => ({ ...prev, [id]: "in-progress" }));
     try { await startCleaningM(id).unwrap(); toast.success("Cleaning started"); }
     catch { toast.error("Could not start cleaning"); }
   };
+  // Completing only moves the task to Awaiting Inspection — it does NOT make
+  // the room bookable again. Only an admin's inspection approval can do that
+  // (tasks/[id]/inspect/approve -> 'ready'). The server also re-checks the
+  // checklist itself; this is just the client-side gate so the button can't
+  // even be pressed with items left.
   const markComplete = async (id: string) => {
-    setAssignmentStatuses((prev) => ({ ...prev, [id]: "completed" }));
-    try { await completeCleaningM(id).unwrap(); toast.success("Marked complete"); }
-    catch { toast.error("Could not mark complete"); }
+    if (checklistIncompleteCount > 0) {
+      toast.error(`Finish the checklist first — ${checklistIncompleteCount} item(s) remaining`);
+      return;
+    }
+    setAssignmentStatuses((prev) => ({ ...prev, [id]: "awaiting-inspection" }));
+    try {
+      await completeCleaningM(id).unwrap();
+      toast.success("Marked complete — awaiting inspection");
+    } catch (err) {
+      setAssignmentStatuses((prev) => ({ ...prev, [id]: "in-progress" }));
+      const message = (err as { data?: { error?: string } })?.data?.error;
+      toast.error(message || "Could not mark complete");
+    }
   };
 
-  const completedCount  = checklist.filter((i) => i.done).length;
-  const progressPercent = Math.round((completedCount / checklist.length) * 100);
+  // Which assignment's Cleaning Checklist is expanded inline, if any — set by
+  // clicking that assignment's "Cleaning Checklist" button.
+  const [checklistOpenFor, setChecklistOpenFor] = useState<string | null>(null);
+  const activeAssignment = assignments.find((a) => a.id === checklistOpenFor);
 
-  // ── Checklist photos — proof shots attached to the cleaner's active assignment
-  // (keyed by its cleaning_id + the task label as category). Uploaded & fetched
-  // via /api/admin/cleaners/checklist-photos; shown back as clickable thumbnails.
-  const activeAssignment = assignments.find((a) => assignmentStatuses[a.id] === "in-progress") || assignments[0];
-  const checklistCleaningId = activeAssignment?.id || "";
+  // ── Real per-assignment checklist (cleaning_checklists/cleaning_tasks),
+  // scoped to the open assignment's (haven, booking) — replaces the earlier
+  // placeholder 8-item local list. Gates markComplete above, not just display.
+  const { data: checklistData } = useGetChecklistQuery(
+    activeAssignment ? { havenId: activeAssignment.havenId, bookingId: activeAssignment.bookingUuid } : { havenId: "", bookingId: "" },
+    { skip: !activeAssignment?.havenId || !activeAssignment?.bookingUuid }
+  );
+  const [toggleChecklistTaskM] = useToggleChecklistTaskMutation();
+  const checklistCategories = checklistData?.categories ?? [];
+  const checklistFlatTasks = checklistCategories.flatMap((c) => c.tasks);
+  const completedCount = checklistFlatTasks.filter((t) => t.completed).length;
+  const checklistTotal = checklistFlatTasks.length;
+  const progressPercent = checklistTotal ? Math.round((completedCount / checklistTotal) * 100) : 0;
+  // Gates markComplete for the CURRENTLY OPEN assignment's checklist. If no
+  // checklist has been opened/loaded yet for that assignment, don't block —
+  // the complete route re-verifies server-side regardless.
+  const checklistIncompleteCount =
+    activeAssignment && activeAssignment.id === checklistOpenFor && checklistData
+      ? checklistTotal - completedCount
+      : 0;
+  const toggleChecklistItem = async (taskId: string, currentlyCompleted: boolean) => {
+    try {
+      await toggleChecklistTaskM({ taskId, completed: !currentlyCompleted }).unwrap();
+    } catch {
+      toast.error("Could not update checklist item");
+    }
+  };
+  // Photos are keyed by cleaning_checklists.id (checklistData.id), NOT the
+  // booking_cleaning id — cleaning_checklist_photos' FK points at the former.
+  const checklistRecordId = checklistData?.id || "";
   const [checklistPhotos, setChecklistPhotos] = useState<Record<string, string>>({});
   const [photoUploading, setPhotoUploading] = useState<string | null>(null);
   useEffect(() => {
-    if (!checklistCleaningId) { setChecklistPhotos({}); return; }
-    fetch(`/api/admin/cleaners/checklist-photos?checklist_id=${encodeURIComponent(checklistCleaningId)}`)
+    if (!checklistRecordId) { setChecklistPhotos({}); return; }
+    fetch(`/api/admin/cleaners/checklist-photos?checklist_id=${encodeURIComponent(checklistRecordId)}`)
       .then((r) => (r.ok ? r.json() : { data: {} }))
       .then((j) => setChecklistPhotos((j?.data as Record<string, string>) || {}))
       .catch(() => {});
-  }, [checklistCleaningId]);
+  }, [checklistRecordId]);
   const uploadChecklistPhoto = async (category: string, file: File) => {
     const err = imageFileError(file);
     if (err) { toast.error(err); return; }
-    if (!checklistCleaningId) { toast.error("No active assignment to attach the photo to"); return; }
+    if (!checklistRecordId) { toast.error("No active assignment to attach the photo to"); return; }
     setPhotoUploading(category);
     try {
       const fd = new FormData();
       fd.append("file", file);
-      fd.append("checklist_id", checklistCleaningId);
+      fd.append("checklist_id", checklistRecordId);
       fd.append("category", category);
       const r = await fetch("/api/admin/cleaners/checklist-photos", { method: "POST", body: fd });
       const j = await r.json().catch(() => ({}));
@@ -242,43 +299,24 @@ export default function CleanerDashboard() {
     f.click();
   };
 
-  // ── Security-deposit proof — the refundable deposit receipt for an
-  // assignment's booking (amount scales with nights booked, see
-  // securityDepositFor() in src/lib/pricing.ts). Read from the cleaning task
-  // (deposit_proof_url), uploaded via /api/admin/cleaners/deposit-proof
-  // (keyed by booking_uuid). Local overrides reflect a just-uploaded proof
-  // without a full refetch.
-  const [depositProofs, setDepositProofs] = useState<Record<string, string>>({});
-  const [depositUploading, setDepositUploading] = useState<string | null>(null);
-  const uploadDepositProof = async (bookingUuid: string, file: File) => {
-    const err = imageFileError(file);
-    if (err) { toast.error(err); return; }
-    if (!bookingUuid) { toast.error("No booking linked to this assignment"); return; }
-    setDepositUploading(bookingUuid);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("booking_uuid", bookingUuid);
-      const r = await fetch("/api/admin/cleaners/deposit-proof", { method: "POST", body: fd });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j?.url) { toast.error(j?.error || "Could not upload deposit proof"); return; }
-      setDepositProofs((prev) => ({ ...prev, [bookingUuid]: j.url as string }));
-      toast.success("Deposit proof uploaded");
-    } catch { toast.error("Could not upload deposit proof"); }
-    finally { setDepositUploading(null); }
-  };
-  const pickDepositProof = (bookingUuid: string) => {
-    const f = document.createElement("input");
-    f.type = "file";
-    f.accept = "image/png,image/jpeg,image/gif,image/webp";
-    f.onchange = (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (file) uploadDepositProof(bookingUuid, file); };
-    f.click();
-  };
-
+  // Finalizes the checklist itself (cleaning_checklists.status -> completed).
+  // This is NOT the same as the assignment's Completed button — finalizing
+  // the checklist just locks it in; the room still isn't bookable until an
+  // admin approves inspection on the assignment.
   const [reportSubmitted, setReportSubmitted] = useState(false);
-  const submitChecklistReport = () => {
-    setReportSubmitted(true);
-    toast.success("Cleaning report submitted — room marked ready");
+  const submitChecklistReport = async () => {
+    if (!checklistData?.id) return;
+    try {
+      const r = await fetch("/api/admin/cleaners", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "submit", checklist_id: checklistData.id }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j?.success) { toast.error(j?.error || "Could not submit the checklist"); return; }
+      setReportSubmitted(true);
+      toast.success("Checklist submitted");
+    } catch { toast.error("Could not submit the checklist"); }
   };
 
   return (
@@ -422,7 +460,7 @@ export default function CleanerDashboard() {
           <div className="flex items-center flex-shrink-0" style={{ gap: 6 }}>
             {(() => {
               const total = assignments.length;
-              const doneN = Object.values(assignmentStatuses).filter((s) => s === "completed").length;
+              const doneN = Object.values(assignmentStatuses).filter(isDoneStatus).length;
               const pct = total ? Math.round((doneN / total) * 100) : 0;
               return (
                 <div className="hidden md:flex items-center gap-2.5" style={{ padding: "8px 14px", border: "1px solid #ece5d4", fontSize: 12, color: "#6b6358" }}>
@@ -458,7 +496,7 @@ export default function CleanerDashboard() {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
               {[
                 { label: "Today's Assignments", value: assignments.length,                                                               icon: ClipboardList, iconBg: "#F7F0E3", iconColor: "#B07848" },
-                { label: "Completed Today",      value: Object.values(assignmentStatuses).filter((s) => s === "completed").length,      icon: CheckCircle2,  iconBg: "#d1fae5", iconColor: "#059669" },
+                { label: "Completed Today",      value: Object.values(assignmentStatuses).filter(isDoneStatus).length,      icon: CheckCircle2,  iconBg: "#d1fae5", iconColor: "#059669" },
                 { label: "Pending Issues",        value: 1,                                                                              icon: AlertCircle,   iconBg: "#fef3c7", iconColor: "#d97706" },
               ].map((card) => {
                 const Icon = card.icon;
@@ -504,9 +542,10 @@ export default function CleanerDashboard() {
                         <MapPin className="w-3.5 h-3.5" style={{ color: "#8a6a2f" }} />{PROPERTY_ADDRESS}
                       </div>
                       <div className="flex gap-2">
-                        {cs === "pending"     && <button onClick={() => startCleaning(a.id)} className="px-3 py-1.5 text-xs font-medium text-white cursor-pointer" style={{ background: "#1f1b16" }}><Circle className="w-3 h-3 inline mr-1" />Start</button>}
-                        {cs === "in-progress" && <button onClick={() => markComplete(a.id)}  className="px-3 py-1.5 rounded-xl text-xs font-semibold text-white cursor-pointer" style={{ backgroundColor: "#059669" }}><CheckCircle2 className="w-3 h-3 inline mr-1" />Complete</button>}
-                        {cs === "completed"   && <span className="px-3 py-1.5 rounded-xl text-xs font-semibold border" style={{ backgroundColor: "#d1fae5", color: "#065f46", borderColor: "#6ee7b7" }}><CheckCircle2 className="w-3 h-3 inline mr-1" />Done</span>}
+                        {cs === "pending"              && <button onClick={() => startCleaning(a.id)} className="px-3 py-1.5 text-xs font-medium text-white cursor-pointer" style={{ background: "#1f1b16" }}><Circle className="w-3 h-3 inline mr-1" />Start</button>}
+                        {cs === "in-progress"          && <button onClick={() => markComplete(a.id)}  className="px-3 py-1.5 rounded-xl text-xs font-semibold text-white cursor-pointer" style={{ backgroundColor: "#059669" }}><CheckCircle2 className="w-3 h-3 inline mr-1" />Complete</button>}
+                        {cs === "awaiting-inspection"  && <span className="px-3 py-1.5 rounded-xl text-xs font-semibold border" style={{ backgroundColor: "#ede9fe", color: "#5b21b6", borderColor: "#c4b5fd" }}><CheckCircle2 className="w-3 h-3 inline mr-1" />Awaiting Inspection</span>}
+                        {cs === "ready"                && <span className="px-3 py-1.5 rounded-xl text-xs font-semibold border" style={{ backgroundColor: "#d1fae5", color: "#065f46", borderColor: "#6ee7b7" }}><CheckCircle2 className="w-3 h-3 inline mr-1" />Ready</span>}
                       </div>
                     </div>
                   );
@@ -517,36 +556,17 @@ export default function CleanerDashboard() {
               <div>
                 <div className="flex items-center justify-between mb-4">
                   <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>Cleaning Checklist</h2>
-                  <button onClick={() => setActiveNav("Cleaning Checklist")} className="text-sm font-medium cursor-pointer" style={{ color: "#8a6a2f" }}>View Full →</button>
+                  <button onClick={() => { setActiveNav("Assignments"); setChecklistOpenFor(assignments[0]?.id ?? null); }} className="text-sm font-medium cursor-pointer" style={{ color: "#8a6a2f" }}>View →</button>
                 </div>
-                <div className="border p-5 mb-4" style={{ borderColor: "#ece5d4" }}>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium" style={{ color: "#5a4a3a" }}>Overall Progress</span>
-                    <span className="text-sm font-bold" style={{ color: "#8a6a2f" }}>{progressPercent}%</span>
+                {assignments.length === 0 ? (
+                  <div className="border p-5 text-center" style={{ borderColor: "#ece5d4" }}>
+                    <p className="text-sm" style={{ color: "#8B6344" }}>No assignments yet — checklists open from My Assignments.</p>
                   </div>
-                  <div className="w-full rounded-full h-3 overflow-hidden" style={{ backgroundColor: "#E0CEB8" }}>
-                    <div className="h-3 rounded-full transition-all duration-500" style={{ width: `${progressPercent}%`, background: "#d4a96a" }} />
-                  </div>
-                  <p className="text-xs mt-2" style={{ color: "#8B6344" }}>{completedCount} of {checklist.length} tasks completed</p>
-                </div>
-                <div className="border overflow-hidden" style={{ borderColor: "#ece5d4" }}>
-                  {checklist.slice(0,4).map((item, idx) => (
-                    <label key={item.id} className="flex items-center gap-4 px-5 py-3.5 cursor-pointer transition-colors"
-                      style={{ borderTop: idx > 0 ? "1px solid #F7F0E3" : "none" }}
-                      onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
-                      onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
-                      <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all"
-                        style={{ borderColor: item.done ? "#B07848" : "#D4BFA0", backgroundColor: item.done ? "#B07848" : "transparent" }}
-                        onClick={() => toggleChecklistItem(item.id)}>
-                        {item.done && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
-                      </div>
-                      <span className="text-sm flex-1" style={{ color: item.done ? "#A89080" : "#5a4a3a", textDecoration: item.done ? "line-through" : "none" }}>{item.label}</span>
-                    </label>
-                  ))}
-                  <div className="px-5 py-3 border-t text-center" style={{ borderColor: "#F7F0E3" }}>
-                    <button onClick={() => setActiveNav("Cleaning Checklist")} className="text-xs font-medium cursor-pointer" style={{ color: "#8a6a2f" }}>+ {checklist.length - 4} more tasks</button>
-                  </div>
-                </div>
+                ) : (
+                  <p className="text-sm" style={{ color: "#8B6344" }}>
+                    Each assignment has its own checklist. Open one from My Assignments to view and complete it.
+                  </p>
+                )}
               </div>
             </div>
           </>)}
@@ -604,29 +624,25 @@ export default function CleanerDashboard() {
                         <p className="text-xs" style={{ color: "#6b5040" }}>{a.notes}</p>
                       </div>
                     )}
-                    {(() => {
-                      const proof = depositProofs[a.bookingUuid] || a.depositProofUrl;
-                      const uploading = depositUploading === a.bookingUuid;
-                      return (
-                        <div className="rounded-xl p-3 mb-3 border flex items-center gap-3" style={{ backgroundColor: "#FAF7F1", borderColor: "#ece5d4" }}>
-                          {proof ? <ImageThumb src={proof} alt="Security deposit proof" size={40} /> : null}
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-semibold" style={{ color: "#5a4a3a" }}>Security deposit proof</p>
-                            <p className="text-xs" style={{ color: proof ? "#059669" : "#8B6344" }}>{proof ? "Uploaded · tap image to view" : "Not uploaded yet"}</p>
-                          </div>
-                          <button type="button" disabled={uploading || !a.bookingUuid} onClick={() => pickDepositProof(a.bookingUuid)}
-                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium border cursor-pointer disabled:opacity-50"
-                            style={{ backgroundColor: "#F7F0E3", color: "#8B6344", borderColor: "#D4BFA0" }}>
-                            <Camera className="w-3.5 h-3.5" />{uploading ? "Uploading…" : proof ? "Replace" : "Upload"}
-                          </button>
-                        </div>
-                      );
-                    })()}
-                    <div className="flex gap-2">
-                      {cs === "pending"     && <button onClick={() => startCleaning(a.id)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white cursor-pointer" style={{ background: "#1f1b16" }}><Circle className="w-3.5 h-3.5" />Start Cleaning</button>}
-                      {cs === "in-progress" && <button onClick={() => markComplete(a.id)}  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-white cursor-pointer" style={{ backgroundColor: "#059669" }}><CheckCircle2 className="w-3.5 h-3.5" />Mark Complete</button>}
-                      {cs === "completed"   && <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border" style={{ backgroundColor: "#d1fae5", color: "#065f46", borderColor: "#6ee7b7" }}><CheckCircle2 className="w-3.5 h-3.5" />Completed</div>}
-                      <button onClick={() => setActiveNav("Report an Issue")}
+                    {a.inspectionNote && cs === "in-progress" && (
+                      <div className="rounded-xl p-3 mb-3 border" style={{ backgroundColor: "#ede9fe", borderColor: "#c4b5fd" }}>
+                        <p className="text-xs font-semibold mb-0.5" style={{ color: "#5b21b6" }}>Sent back by admin — needs fixing:</p>
+                        <p className="text-xs" style={{ color: "#5b21b6" }}>{a.inspectionNote}</p>
+                      </div>
+                    )}
+                    <div className="flex flex-wrap gap-2">
+                      {cs === "pending"              && <button onClick={() => startCleaning(a.id)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white cursor-pointer" style={{ background: "#1f1b16" }}><Circle className="w-3.5 h-3.5" />Start Cleaning</button>}
+                      {cs === "in-progress"          && <button onClick={() => markComplete(a.id)}  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-white cursor-pointer" style={{ backgroundColor: "#059669" }}><CheckCircle2 className="w-3.5 h-3.5" />Mark Complete</button>}
+                      {cs === "awaiting-inspection"  && <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border" style={{ backgroundColor: "#ede9fe", color: "#5b21b6", borderColor: "#c4b5fd" }}><CheckCircle2 className="w-3.5 h-3.5" />Awaiting Inspection</div>}
+                      {cs === "ready"                && <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border" style={{ backgroundColor: "#d1fae5", color: "#065f46", borderColor: "#6ee7b7" }}><CheckCircle2 className="w-3.5 h-3.5" />Ready</div>}
+                      <button onClick={() => setChecklistOpenFor((prev) => (prev === a.id ? null : a.id))}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border cursor-pointer transition-colors"
+                        style={{ backgroundColor: checklistOpenFor === a.id ? "#EDE0CE" : "#F7F0E3", color: "#8B6344", borderColor: "#D4BFA0" }}
+                        onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#EDE0CE"}
+                        onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = checklistOpenFor === a.id ? "#EDE0CE" : "#F7F0E3"}>
+                        <CheckSquare className="w-3.5 h-3.5" />Cleaning Checklist
+                      </button>
+                      <button onClick={() => { setIssueAssignmentId(a.id); setIssueForm((prev) => ({ ...prev, haven: a.havenId || prev.haven })); setActiveNav("Report an Issue"); }}
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border cursor-pointer transition-colors"
                         style={{ backgroundColor: "#F7F0E3", color: "#8B6344", borderColor: "#D4BFA0" }}
                         onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#EDE0CE"}
@@ -634,67 +650,71 @@ export default function CleanerDashboard() {
                         <AlertCircle className="w-3.5 h-3.5" />Report Issue
                       </button>
                     </div>
+
+                    {/* Cleaning Checklist — inline, scoped to this assignment
+                        (opened via the button above; owner spec, 2026-09-23:
+                        checklist moved into My Assignments instead of its own
+                        page). */}
+                    {checklistOpenFor === a.id && (
+                      <div className="mt-4 pt-4 border-t" style={{ borderColor: "#F7F0E3" }}>
+                        <div className="border p-5 mb-4" style={{ borderColor: "#ece5d4" }}>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-sm font-medium" style={{ color: "#5a4a3a" }}>Overall Progress</span>
+                            <span className="text-sm font-bold" style={{ color: "#8a6a2f" }}>{progressPercent}%</span>
+                          </div>
+                          <div className="w-full rounded-full h-3 overflow-hidden" style={{ backgroundColor: "#E0CEB8" }}>
+                            <div className="h-3 rounded-full transition-all duration-500" style={{ width: `${progressPercent}%`, background: "#d4a96a" }} />
+                          </div>
+                          <p className="text-xs mt-2" style={{ color: "#8B6344" }}>{completedCount} of {checklistTotal} tasks completed</p>
+                        </div>
+                        <div className="border overflow-hidden mb-4" style={{ borderColor: "#ece5d4" }}>
+                          {checklistCategories.length === 0 ? (
+                            <p className="text-sm px-5 py-4" style={{ color: "#8B6344" }}>Loading checklist…</p>
+                          ) : checklistCategories.map((cat) => (
+                            <div key={cat.category}>
+                              <div className="px-3 sm:px-5 py-2 text-xs font-semibold uppercase tracking-wider" style={{ backgroundColor: "#FAF7F1", color: "#8a6a2f" }}>{cat.category}</div>
+                              {cat.tasks.map((item, idx) => (
+                                <label key={item.id} className="flex items-center gap-2 sm:gap-4 px-3 sm:px-5 py-3.5 cursor-pointer transition-colors"
+                                  style={{ borderTop: idx > 0 ? "1px solid #F7F0E3" : "none" }}
+                                  onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
+                                  onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
+                                  <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all"
+                                    style={{ borderColor: item.completed ? "#B07848" : "#D4BFA0", backgroundColor: item.completed ? "#B07848" : "transparent" }}
+                                    onClick={() => toggleChecklistItem(item.id, item.completed)}>
+                                    {item.completed && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
+                                  </div>
+                                  <span className="text-sm flex-1 min-w-0" style={{ color: item.completed ? "#A89080" : "#5a4a3a", textDecoration: item.completed ? "line-through" : "none" }}>{item.task}</span>
+                                  {checklistPhotos[item.task] ? <ImageThumb src={checklistPhotos[item.task]} alt={item.task} size={32} /> : null}
+                                  <button type="button" title={checklistPhotos[item.task] ? "Replace photo" : "Attach photo"} disabled={photoUploading === item.task}
+                                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); pickChecklistPhoto(item.task); }}
+                                    className="flex-shrink-0 p-1.5 rounded-lg cursor-pointer disabled:opacity-50" style={{ color: "#8a6a2f", border: "1px solid #E0CEB8", backgroundColor: "#FAF7F1" }}>
+                                    <Camera className="w-3.5 h-3.5" />
+                                  </button>
+                                  {item.completed && <span className="hidden sm:inline text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0" style={{ backgroundColor: "#d1fae5", color: "#065f46" }}>Done</span>}
+                                </label>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                        {checklistTotal > 0 && progressPercent === 100 ? (
+                          <div className="p-5 rounded-2xl border text-center" style={{ backgroundColor: "#d1fae5", borderColor: "#6ee7b7" }}>
+                            <CheckCircle2 className="w-8 h-8 mx-auto mb-2" style={{ color: "#059669" }} />
+                            <p className="font-bold" style={{ color: "#065f46" }}>All checklist tasks completed!</p>
+                            <p className="text-sm mt-0.5" style={{ color: "#059669" }}>Use Mark Complete above to send this for inspection</p>
+                            <button
+                              onClick={submitChecklistReport}
+                              disabled={reportSubmitted}
+                              className="mt-3 px-5 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60"
+                              style={{ backgroundColor: "#059669" }}>{reportSubmitted ? "Checklist Submitted ✓" : "Submit Checklist"}</button>
+                          </div>
+                        ) : checklistTotal > 0 ? (
+                          <p className="text-xs text-center" style={{ color: "#D4BFA0" }}>Complete all tasks before marking this assignment complete</p>
+                        ) : null}
+                      </div>
+                    )}
                   </div>
                 );
               })}
-            </div>
-          )}
-
-          {/* ── Cleaning Checklist ── */}
-          {activeNav === "Cleaning Checklist" && (
-            <div className="max-w-2xl">
-              <div className="flex items-center justify-between mb-4">
-                <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>Cleaning Checklist</h2>
-                <span className="text-xs font-medium px-2.5 py-1 rounded-full border" style={{ backgroundColor: "#F7F0E3", color: "#8a6a2f", borderColor: "#D4BFA0" }}>
-                  {activeAssignment?.room || "No active assignment"}
-                </span>
-              </div>
-              <div className="border p-5 mb-4" style={{ borderColor: "#ece5d4" }}>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium" style={{ color: "#5a4a3a" }}>Overall Progress</span>
-                  <span className="text-sm font-bold" style={{ color: "#8a6a2f" }}>{progressPercent}%</span>
-                </div>
-                <div className="w-full rounded-full h-3 overflow-hidden" style={{ backgroundColor: "#E0CEB8" }}>
-                  <div className="h-3 rounded-full transition-all duration-500" style={{ width: `${progressPercent}%`, background: "#d4a96a" }} />
-                </div>
-                <p className="text-xs mt-2" style={{ color: "#8B6344" }}>{completedCount} of {checklist.length} tasks completed</p>
-              </div>
-              <div className="border overflow-hidden mb-4" style={{ borderColor: "#ece5d4" }}>
-                {checklist.map((item, idx) => (
-                  <label key={item.id} className="flex items-center gap-2 sm:gap-4 px-3 sm:px-5 py-3.5 cursor-pointer transition-colors"
-                    style={{ borderTop: idx > 0 ? "1px solid #F7F0E3" : "none" }}
-                    onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
-                    onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
-                    <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all"
-                      style={{ borderColor: item.done ? "#B07848" : "#D4BFA0", backgroundColor: item.done ? "#B07848" : "transparent" }}
-                      onClick={() => toggleChecklistItem(item.id)}>
-                      {item.done && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
-                    </div>
-                    <span className="text-sm flex-1 min-w-0" style={{ color: item.done ? "#A89080" : "#5a4a3a", textDecoration: item.done ? "line-through" : "none" }}>{item.label}</span>
-                    {checklistPhotos[item.label] ? <ImageThumb src={checklistPhotos[item.label]} alt={item.label} size={32} /> : null}
-                    <button type="button" title={checklistPhotos[item.label] ? "Replace photo" : "Attach photo"} disabled={photoUploading === item.label}
-                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); pickChecklistPhoto(item.label); }}
-                      className="flex-shrink-0 p-1.5 rounded-lg cursor-pointer disabled:opacity-50" style={{ color: "#8a6a2f", border: "1px solid #E0CEB8", backgroundColor: "#FAF7F1" }}>
-                      <Camera className="w-3.5 h-3.5" />
-                    </button>
-                    {item.done && <span className="hidden sm:inline text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0" style={{ backgroundColor: "#d1fae5", color: "#065f46" }}>Done</span>}
-                  </label>
-                ))}
-              </div>
-              {progressPercent === 100 ? (
-                <div className="p-5 rounded-2xl border text-center" style={{ backgroundColor: "#d1fae5", borderColor: "#6ee7b7" }}>
-                  <CheckCircle2 className="w-8 h-8 mx-auto mb-2" style={{ color: "#059669" }} />
-                  <p className="font-bold" style={{ color: "#065f46" }}>All tasks completed!</p>
-                  <p className="text-sm mt-0.5" style={{ color: "#059669" }}>Room is ready for the next guest</p>
-                  <button
-                    onClick={submitChecklistReport}
-                    disabled={reportSubmitted}
-                    className="mt-3 px-5 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60"
-                    style={{ backgroundColor: "#059669" }}>{reportSubmitted ? "Report Submitted ✓" : "Submit Report"}</button>
-                </div>
-              ) : (
-                <p className="text-xs text-center" style={{ color: "#D4BFA0" }}>Complete all tasks before submitting the report</p>
-              )}
             </div>
           )}
 
@@ -707,7 +727,7 @@ export default function CleanerDashboard() {
                   <CheckCircle2 className="w-12 h-12 mx-auto mb-3" style={{ color: "#059669" }} />
                   <p className="font-bold text-lg" style={{ color: "#065f46" }}>Issue Reported!</p>
                   <p className="text-sm mt-1 mb-4" style={{ color: "#059669" }}>The owner has been notified and will assign someone to resolve it.</p>
-                  <button onClick={() => { setIssueSubmitted(false); setIssueForm({ haven: "", type: "", priority: "", location: "", description: "" }); }}
+                  <button onClick={() => { setIssueSubmitted(false); setIssueForm({ haven: "", type: "", priority: "", location: "", description: "" }); setIssueAssignmentId(null); }}
                     className="px-5 py-2 text-sm font-medium text-white cursor-pointer" style={{ backgroundColor: "#059669" }}>
                     Report Another
                   </button>
@@ -839,7 +859,13 @@ export default function CleanerDashboard() {
                 {guideTopics.map((topic) => {
                   const Icon = topic.icon;
                   return (
-                    <div key={topic.title} className="border p-5 cursor-pointer transition-shadow hover:shadow-md" style={{ borderColor: "#ece5d4" }}
+                    <button key={topic.title} type="button"
+                      onClick={() => {
+                        if (topic.openChecklist) setChecklistOpenFor(assignments[0]?.id ?? null);
+                        setActiveNav(topic.goTo);
+                        setSidebarOpen(false);
+                      }}
+                      className="border p-5 text-left cursor-pointer transition-shadow hover:shadow-md" style={{ borderColor: "#ece5d4" }}
                       onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
                       onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
                       <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-3" style={{ backgroundColor: "#F7F0E3" }}>
@@ -847,7 +873,7 @@ export default function CleanerDashboard() {
                       </div>
                       <p className="font-bold text-sm mb-1" style={{ color: "#1a1a1a" }}>{topic.title}</p>
                       <p className="text-xs" style={{ color: "#8B6344" }}>{topic.desc}</p>
-                    </div>
+                    </button>
                   );
                 })}
               </div>

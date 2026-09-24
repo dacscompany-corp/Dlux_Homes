@@ -7,14 +7,16 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!guard.ok) return guard.response;
   try {
     const { id } = await params;
+    const changedBy = (guard.session.user as { id?: string })?.id ?? null;
     // Mock the URL structure for the controller
     const url = new URL(`/api/admin/cleaners/tasks/${id}`, req.url);
     const mockReq = new Request(url, {
       method: req.method,
       headers: req.headers,
-      body: JSON.stringify({ 
+      body: JSON.stringify({
         cleaning_status: "in-progress",
-        cleaning_time_in: new Date().toISOString()
+        cleaning_time_in: new Date().toISOString(),
+        changed_by: changedBy,
       }),
     }) as NextRequest;
     

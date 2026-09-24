@@ -35,13 +35,14 @@ export async function GET(
       );
       const todaysTasks = parseInt(todaysTasksResult.rows[0]?.count || '0');
 
-      // Completed tasks today (cleaned or inspected)
+      // Completed tasks today (awaiting inspection, ready, or the legacy
+      // cleaned/inspected terminal statuses from before the inspection gate)
       const completedResult = await client.query(
         `SELECT COUNT(*) as count
          FROM booking_cleaning bc
          INNER JOIN booking b ON bc.booking_id = b.id
          WHERE bc.assigned_to::text = $1
-           AND bc.cleaning_status IN ('cleaned', 'inspected')
+           AND bc.cleaning_status IN ('cleaned', 'inspected', 'awaiting-inspection', 'ready')
            AND DATE(b.check_out_date) = $2`,
         [employeeId, todayStr]
       );

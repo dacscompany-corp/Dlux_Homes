@@ -19,8 +19,12 @@ export async function POST(request: NextRequest) {
     const specific_location = formData.get('specific_location') as string;
     const issue_description = formData.get('issue_description') as string;
     const user_id = formData.get('user_id') as string;
-    
-    console.log('📋 Extracted fields:', { haven_id, issue_type, priority_level, specific_location, issue_description: issue_description?.substring(0, 50) + '...', user_id });
+    // Optional — set when the report is filed from a specific cleaning
+    // assignment (My Assignments -> Report Issue), so admin can see it on
+    // that task instead of only on the haven in general.
+    const booking_cleaning_id = (formData.get('booking_cleaning_id') as string) || null;
+
+    console.log('📋 Extracted fields:', { haven_id, issue_type, priority_level, specific_location, issue_description: issue_description?.substring(0, 50) + '...', user_id, booking_cleaning_id });
     
     // Validate required fields
     if (!haven_id || !issue_type || !priority_level || !specific_location || !issue_description || !user_id) {
@@ -49,18 +53,19 @@ export async function POST(request: NextRequest) {
       console.log('🔍 Inserting report with data:', { haven_id, issue_type, priority_level, specific_location, issue_description: issue_description?.substring(0, 50) + '...', user_id });
       
       const reportQuery = `
-        INSERT INTO report_issue (haven_id, issue_type, priority_level, specific_location, issue_description, user_id)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING report_id, haven_id, issue_type, priority_level, specific_location, issue_description, created_at, user_id
+        INSERT INTO report_issue (haven_id, issue_type, priority_level, specific_location, issue_description, user_id, booking_cleaning_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::uuid)
+        RETURNING report_id, haven_id, issue_type, priority_level, specific_location, issue_description, created_at, user_id, booking_cleaning_id
       `;
-      
+
       const reportResult = await client.query(reportQuery, [
         haven_id,
         issue_type,
         priority_level,
         specific_location,
         issue_description,
-        user_id
+        user_id,
+        booking_cleaning_id
       ]);
       
       const newReport = reportResult.rows[0];

@@ -1,8 +1,21 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 
+// 'cleaned' / 'inspected' are the pre-workflow terminal statuses, kept only
+// so old rows still type-check — new code always moves through
+// 'awaiting-inspection' -> 'ready' instead.
+export type CleaningStatus =
+  | "pending"
+  | "assigned"
+  | "in-progress"
+  | "cleaned"
+  | "inspected"
+  | "awaiting-inspection"
+  | "ready";
+
 export interface CleaningTask {
   cleaning_id: string;
   booking_id: string;
+  booking_uuid?: string;
   haven: string;
   haven_id: string | null;
   guest_first_name: string;
@@ -13,8 +26,13 @@ export interface CleaningTask {
   check_in_time: string;
   check_out_date: string;
   check_out_time: string;
-  cleaning_status: "pending" | "assigned" | "in-progress" | "cleaned" | "inspected";
+  cleaning_status: CleaningStatus;
   assigned_cleaner_id: string | null;
+  assignment_method?: "automatic" | "manual" | null;
+  assigned_by_id?: string | null;
+  assigned_at?: string | null;
+  assigned_by_first_name?: string | null;
+  assigned_by_last_name?: string | null;
   cleaner_first_name: string | null;
   cleaner_last_name: string | null;
   cleaner_employment_id: string | null;
@@ -22,22 +40,73 @@ export interface CleaningTask {
   cleaning_time_out: string | null;
   cleaned_at: string | null;
   inspected_at: string | null;
+  inspection_note?: string | null;
+  open_issue_count?: number;
+}
+
+export interface CleaningHistoryEntry {
+  id: string;
+  booking_cleaning_id: string;
+  from_status: string | null;
+  to_status: string;
+  note: string | null;
+  changed_by: string | null;
+  changed_by_first_name?: string | null;
+  changed_by_last_name?: string | null;
+  changed_at: string;
 }
 
 export interface UpdateCleaningTaskRequest {
-  cleaning_status?: "pending" | "assigned" | "in-progress" | "cleaned" | "inspected";
+  cleaning_status?: CleaningStatus;
   assigned_to?: string | null;
   cleaning_time_in?: string | null;
   cleaning_time_out?: string | null;
   cleaned_at?: string | null;
   inspected_at?: string | null;
+  inspection_note?: string | null;
+}
+
+export interface ChecklistTaskItem {
+  id: string;
+  task: string;
+  completed: boolean;
+}
+
+export interface ChecklistCategory {
+  category: string;
+  tasks: ChecklistTaskItem[];
+}
+
+export interface Checklist {
+  id: string;
+  haven_id: string;
+  status: "pending" | "in_progress" | "completed";
+  completed_at: string | null;
+  categories: ChecklistCategory[];
 }
 
 export const cleanersApi = createApi({
   reducerPath: "cleanersApi",
   baseQuery: fetchBaseQuery({ baseUrl: "/api/admin/cleaners" }),
-  tagTypes: ["CleaningTask"],
+  tagTypes: ["CleaningTask", "CleaningHistory", "Checklist"],
   endpoints: (builder) => ({
+    // Get (or lazily create) the checklist for one assignment's (haven, booking).
+    getChecklist: builder.query<Checklist, { havenId: string; bookingId: string }>({
+      query({ havenId, bookingId }) {
+        return { url: "", params: { haven_id: havenId, booking_id: bookingId } };
+      },
+      transformResponse: (response: { success: boolean; data: { checklist: Checklist } }) => response.data.checklist,
+      providesTags: (_result, _error, arg) => [{ type: "Checklist", id: `${arg.havenId}:${arg.bookingId}` }],
+    }),
+
+    // Toggle one checklist task's completed state.
+    toggleChecklistTask: builder.mutation<{ task: ChecklistTaskItem; incompleteCount: number }, { taskId: string; completed: boolean }>({
+      query({ taskId, completed }) {
+        return { url: "", method: "PATCH", body: { task_id: taskId, completed } };
+      },
+      transformResponse: (response: { success: boolean; data: { task: ChecklistTaskItem; incompleteCount: number } }) => response.data,
+      invalidatesTags: ["Checklist"],
+    }),
     // Get all cleaning tasks
     getCleaningTasks: builder.query<CleaningTask[], { status?: string } | void>({
       query(params?: { status?: string }) {
@@ -87,7 +156,7 @@ export const cleanersApi = createApi({
     }),
 
     // Update cleaning status
-    updateCleaningStatus: builder.mutation<CleaningTask, { taskId: string; status: "pending" | "assigned" | "in-progress" | "cleaned" | "inspected" }>({
+    updateCleaningStatus: builder.mutation<CleaningTask, { taskId: string; status: CleaningStatus }>({
       query({ taskId, status }) {
         return {
           url: `/tasks/${taskId}/status`,
@@ -113,20 +182,52 @@ export const cleanersApi = createApi({
       invalidatesTags: ["CleaningTask"],
     }),
 
-    // Complete cleaning (set time_out and cleaned_at, update status)
+    // Complete cleaning — moves to 'awaiting-inspection', NOT 'ready'. The
+    // route itself gates this on the assignment's checklist being done and
+    // computes the timestamps; the client sends no body.
     completeCleaning: builder.mutation<CleaningTask, string>({
       query(taskId) {
         return {
           url: `/tasks/${taskId}/complete`,
           method: "PUT",
-          body: { 
-            cleaning_status: "cleaned",
-            cleaning_time_out: new Date().toISOString(),
-            cleaned_at: new Date().toISOString()
-          },
+          body: {},
         };
       },
       invalidatesTags: ["CleaningTask"],
+    }),
+
+    // Admin approves an inspection: awaiting-inspection -> ready. Only this
+    // call can put a task into 'ready'.
+    approveInspection: builder.mutation<CleaningTask, string>({
+      query(taskId) {
+        return {
+          url: `/tasks/${taskId}/inspect/approve`,
+          method: "PUT",
+        };
+      },
+      invalidatesTags: ["CleaningTask", "CleaningHistory"],
+    }),
+
+    // Admin fails an inspection: awaiting-inspection -> in-progress, with a
+    // required note the cleaner is notified about.
+    rejectInspection: builder.mutation<CleaningTask, { taskId: string; note: string }>({
+      query({ taskId, note }) {
+        return {
+          url: `/tasks/${taskId}/inspect/reject`,
+          method: "PUT",
+          body: { note },
+        };
+      },
+      invalidatesTags: ["CleaningTask", "CleaningHistory"],
+    }),
+
+    // Status history for one task's detail view.
+    getCleaningHistory: builder.query<CleaningHistoryEntry[], string>({
+      query(taskId) {
+        return { url: `/tasks/${taskId}/history` };
+      },
+      transformResponse: (response: { success: boolean; data: CleaningHistoryEntry[] }) => response.data || [],
+      providesTags: ["CleaningHistory"],
     }),
   }),
 });
@@ -139,4 +240,9 @@ export const {
   useUpdateCleaningStatusMutation,
   useStartCleaningMutation,
   useCompleteCleaningMutation,
+  useApproveInspectionMutation,
+  useRejectInspectionMutation,
+  useGetCleaningHistoryQuery,
+  useGetChecklistQuery,
+  useToggleChecklistTaskMutation,
 } = cleanersApi;

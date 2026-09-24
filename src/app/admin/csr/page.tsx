@@ -32,7 +32,7 @@ import {
   Clock, Sun, Users, ChevronDown, CreditCard, Package, Wrench,
   BarChart2, MapPin, Plus, FileText, AlertCircle,
   Mail, Phone, Shield, PhilippinePeso, CheckCircle2, Trash2,
-  Pencil, ImageIcon,
+  Pencil, ImageIcon, Sparkles,
 } from "lucide-react";
 
 // PromotionRecord types start_date/end_date as string, but server actions return
@@ -564,6 +564,23 @@ export default function CSRDashboard() {
             );
           })}
         </nav>
+
+        {/* Cleaning Operations — a separate route (not an in-page tab like the
+            items above), so it's a Link styled to match rather than a button
+            wired into activeNav. */}
+        <div className="px-3 pb-2">
+          <Link
+            href="/admin/cleaning-operations"
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm"
+            style={{ color: "rgba(250,247,241,0.6)", fontWeight: 500 }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "rgba(250,247,241,0.06)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
+          >
+            <Sparkles className="w-[18px] h-[18px] flex-shrink-0" strokeWidth={1.5} style={{ color: "rgba(250,247,241,0.45)" }} />
+            Cleaning Operations
+          </Link>
+        </div>
+
         <div className="px-3 py-4 border-t" style={{ borderColor: "rgba(250,247,241,0.1)" }}>
           <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl" style={{ backgroundColor: "rgba(250,247,241,0.1)" }}>
             <Avatar className="w-8 h-8 flex-shrink-0">

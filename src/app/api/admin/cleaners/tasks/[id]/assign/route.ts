@@ -3,6 +3,7 @@ import pool from "@/backend/config/db";
 import { logActivity } from "@/backend/utils/activityLogger";
 import { createNotificationForUser } from "@/backend/utils/notificationHelper";
 import { requireEmployee } from "@/backend/utils/requireAdmin";
+import { logCleaningHistory } from "@/backend/controller/cleanersController";
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const guard = await requireEmployee();
@@ -21,17 +22,24 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
     const currentUserId = (guard.session.user as { id?: string })?.id ?? '00000000-0000-0000-0000-000000000000';
 
-    // Get cleaner and task details for logging and notification
+    // Get cleaner and task details for logging and notification. Also pull
+    // the CURRENT assignee (before this update overwrites it) so a
+    // reassignment can notify whoever is being taken off the task.
     const taskDetailsQuery = `
-      SELECT 
+      SELECT
         bc.id::text as cleaning_id,
+        bc.cleaning_status,
+        bc.assigned_to::text as previous_cleaner_id,
         b.booking_id,
         b.room_name as haven,
         e.first_name as cleaner_first_name,
-        e.last_name as cleaner_last_name
+        e.last_name as cleaner_last_name,
+        prev.first_name as previous_cleaner_first_name,
+        prev.last_name as previous_cleaner_last_name
       FROM booking_cleaning bc
       INNER JOIN booking b ON bc.booking_id = b.id
       LEFT JOIN employees e ON e.id = $1::uuid
+      LEFT JOIN employees prev ON prev.id = bc.assigned_to
       WHERE bc.id = $2::uuid
     `;
 
@@ -46,6 +54,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
     const task = taskDetails.rows[0];
     const cleanerName = `${task.cleaner_first_name || 'Unknown'} ${task.cleaner_last_name || ''}`.trim();
+    const isReassignment = !!task.previous_cleaner_id && task.previous_cleaner_id !== assigned_to;
 
     // --- TIME CONFLICT CHECK ---
     // Block the assignment if the cleaner already has another active task
@@ -105,15 +114,20 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
     // --- END CONFLICT CHECK ---
 
-    // Update only the assigned_to column
+    // Manual assignment: mark it as such, record who and when, and set the
+    // status. This is the ONLY thing that distinguishes a manual assignment
+    // from an automatic one in the data — the rotation logic in
+    // processCheckoutCleaning never runs against a task that already has a
+    // booking_cleaning row, so it can't overwrite whatever this route wrote.
     const updateQuery = `
       UPDATE booking_cleaning
-      SET assigned_to = $1, cleaning_status = 'assigned'
+      SET assigned_to = $1, cleaning_status = 'assigned',
+          assignment_method = 'manual', assigned_by = $3::uuid, assigned_at = NOW()
       WHERE id = $2::uuid
       RETURNING *
     `;
 
-    const updateResult = await pool.query(updateQuery, [assigned_to, cleaningTaskId]);
+    const updateResult = await pool.query(updateQuery, [assigned_to, cleaningTaskId, currentUserId]);
 
     if (updateResult.rows.length === 0) {
       return NextResponse.json(
@@ -121,6 +135,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         { status: 404 }
       );
     }
+
+    await logCleaningHistory(
+      cleaningTaskId,
+      task.cleaning_status ?? null,
+      "assigned",
+      currentUserId,
+      isReassignment ? `Reassigned from ${task.previous_cleaner_first_name ?? "previous cleaner"} to ${cleanerName}` : `Manually assigned to ${cleanerName}`
+    );
 
     // Log the activity
     await logActivity({
@@ -132,12 +154,22 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       request: req
     });
 
-    // Create notification for the assigned cleaner
+    // Notify the newly assigned cleaner, and — on a reassignment — the
+    // outgoing cleaner too, so the task disappearing from their active
+    // assignments doesn't happen silently.
     await createNotificationForUser(assigned_to, {
       title: 'New Cleaning Assignment',
       message: `You have been assigned to clean ${task.haven} for booking ${task.booking_id}. Please check your cleaning tasks.`,
       notificationType: 'cleaning_assignment'
     });
+
+    if (isReassignment && task.previous_cleaner_id) {
+      await createNotificationForUser(task.previous_cleaner_id, {
+        title: 'Cleaning Assignment Reassigned',
+        message: `${task.haven} (Booking: ${task.booking_id}) has been reassigned to ${cleanerName}. It's no longer on your assignments.`,
+        notificationType: 'cleaning_reassigned'
+      });
+    }
 
     // Get the updated task with cleaner name
     const selectQuery = `
@@ -155,6 +187,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         b.check_out_time,
         bc.cleaning_status,
         bc.assigned_to::text as assigned_cleaner_id,
+        bc.assignment_method,
+        bc.assigned_at,
         e.first_name as cleaner_first_name,
         e.last_name as cleaner_last_name,
         e.employment_id as cleaner_employment_id,
