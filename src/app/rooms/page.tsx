@@ -44,6 +44,9 @@ function AiUtensils()  { return <svg width={18} height={18} viewBox="0 0 24 24" 
 function AiFridge()    { return <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="5" y1="10" x2="19" y2="10"/><line x1="8" y1="6" x2="8" y2="8"/><line x1="8" y1="14" x2="8" y2="18"/></svg>; }
 function AiMicrowave() { return <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><rect x="5" y="8" width="10" height="8"/><circle cx="18" cy="10" r="0.5" fill="currentColor"/><circle cx="18" cy="12" r="0.5" fill="currentColor"/><circle cx="18" cy="14" r="0.5" fill="currentColor"/></svg>; }
 function AiGames()     { return <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="12" x2="10" y2="12"/><line x1="8" y1="10" x2="8" y2="14"/><circle cx="15" cy="11" r="1" fill="currentColor"/><circle cx="17" cy="13" r="1" fill="currentColor"/></svg>; }
+function AiInductionCooker() { return <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><circle cx="9" cy="12" r="4"/><line x1="17" y1="8" x2="17" y2="8.01"/><line x1="17" y1="12" x2="17" y2="12.01"/><line x1="17" y1="16" x2="17" y2="16.01"/></svg>; }
+function AiRiceCooker()      { return <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><path d="M3 10h18l-1.2 9.2a2 2 0 0 1-2 1.8H6.2a2 2 0 0 1-2-1.8L3 10z"/><path d="M3 10a9 4 0 0 1 18 0"/><line x1="12" y1="4" x2="12" y2="2"/><circle cx="12" cy="14" r="1" fill="currentColor"/></svg>; }
+function AiKettle()          { return <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><path d="M4 12a7 7 0 0 1 7-7h2a7 7 0 0 1 7 7v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-6z"/><path d="M9 5V3"/><path d="M4 13h-2"/><path d="M22 11l-3 1 3 1"/><path d="M9 12h4"/></svg>; }
 
 const AMENITIES = [
   { icon: AiWifi,      label: "Unlimited Fibre WiFi" },
@@ -54,6 +57,9 @@ const AMENITIES = [
   { icon: AiUtensils,  label: "Kitchenette" },
   { icon: AiFridge,    label: "Refrigerator" },
   { icon: AiMicrowave, label: "Microwave" },
+  { icon: AiInductionCooker, label: "Induction Cooker" },
+  { icon: AiRiceCooker,      label: "Mini Rice Cooker" },
+  { icon: AiKettle,          label: "Electric Kettle" },
   { icon: AiGames,     label: "Board Games & Videoke" },
 ];
 
