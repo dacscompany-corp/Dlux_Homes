@@ -4,8 +4,11 @@ import {
   saveChecklistProgress,
   submitChecklist,
   updateTask as controllerUpdateTask,
+  addChecklistTask,
+  editChecklistTask,
+  removeChecklistTask,
 } from "@/backend/controller/cleaningChecklistController";
-import { requireEmployee } from "@/backend/utils/requireAdmin";
+import { requireEmployee, requireAdmin } from "@/backend/utils/requireAdmin";
 
 export async function GET(req: NextRequest) {
   const guard = await requireEmployee();
@@ -43,6 +46,18 @@ export async function POST(req: NextRequest) {
         const bodyWithRole = { ...body, role: sessionRole };
         const reqWithRole = { ...req, json: async () => bodyWithRole } as NextRequest;
         return submitChecklist(reqWithRole);
+      }
+      case "add_task":
+      case "edit_task":
+      case "remove_task": {
+        // Per-assignment checklist editing (add/edit/remove a task on one
+        // already-created checklist) is Owner/CSR only — a cleaner completes
+        // the checklist they're given, they don't redefine it.
+        const adminGuard = await requireAdmin();
+        if (!adminGuard.ok) return adminGuard.response;
+        if (action === "add_task") return addChecklistTask(reqWithParsedBody);
+        if (action === "edit_task") return editChecklistTask(reqWithParsedBody);
+        return removeChecklistTask(reqWithParsedBody);
       }
       default:
         return NextResponse.json(

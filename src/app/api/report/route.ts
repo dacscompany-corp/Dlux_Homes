@@ -23,6 +23,9 @@ export async function GET(request: NextRequest) {
           ri.created_at,
           ri.user_id,
           h.haven_name,
+          u.first_name AS reporter_first_name,
+          u.last_name AS reporter_last_name,
+          b.booking_id AS linked_booking_id,
           COALESCE(
             ARRAY_AGG(
               JSON_BUILD_OBJECT(
@@ -35,6 +38,9 @@ export async function GET(request: NextRequest) {
         FROM report_issue ri
         LEFT JOIN havens h ON ri.haven_id = h.uuid_id
         LEFT JOIN report_issue_image rii ON ri.report_id = rii.report_id
+        LEFT JOIN employees u ON ri.user_id = u.id
+        LEFT JOIN booking_cleaning bc ON ri.booking_cleaning_id = bc.id
+        LEFT JOIN booking b ON bc.booking_id = b.id
       `;
 
       const params: (string | number)[] = [];
@@ -52,7 +58,7 @@ export async function GET(request: NextRequest) {
         query += ' WHERE ' + where.join(' AND ');
       }
 
-      query += ' GROUP BY ri.report_id, ri.haven_id, ri.booking_cleaning_id, ri.issue_type, ri.priority_level, ri.specific_location, ri.issue_description, ri.status, ri.created_at, ri.user_id, h.haven_name';
+      query += ' GROUP BY ri.report_id, ri.haven_id, ri.booking_cleaning_id, ri.issue_type, ri.priority_level, ri.specific_location, ri.issue_description, ri.status, ri.created_at, ri.user_id, h.haven_name, u.first_name, u.last_name, b.booking_id';
       query += ' ORDER BY ri.created_at DESC';
       
       const result = await client.query(query, params);
