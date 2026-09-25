@@ -91,7 +91,7 @@ export const reportApi = createApi({
     }),
 
     // Update report status
-    updateReportStatus: builder.mutation({
+    updateReportStatus: builder.mutation<{ success: boolean; message: string }, { reportId: string; status: string }>({
       query: ({ reportId, status }) => ({
         url: `/report/${reportId}/status`,
         method: "PATCH",

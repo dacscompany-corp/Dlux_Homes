@@ -107,6 +107,55 @@ export const cleanersApi = createApi({
       transformResponse: (response: { success: boolean; data: { task: ChecklistTaskItem; incompleteCount: number } }) => response.data,
       invalidatesTags: ["Checklist"],
     }),
+
+    // Admin-only: add a task to an already-created checklist (per-assignment
+    // customization, e.g. "deep clean the oven" for just this booking).
+    addChecklistTask: builder.mutation<ChecklistTaskItem, { checklistId: string; category: string; taskDescription: string }>({
+      query({ checklistId, category, taskDescription }) {
+        return { url: "", method: "POST", body: { action: "add_task", checklist_id: checklistId, category, task_description: taskDescription } };
+      },
+      transformResponse: (response: { success: boolean; data: { task: ChecklistTaskItem } }) => response.data.task,
+      invalidatesTags: ["Checklist"],
+    }),
+
+    // Admin-only: edit an existing task's wording/category.
+    editChecklistTask: builder.mutation<ChecklistTaskItem, { taskId: string; category?: string; taskDescription?: string }>({
+      query({ taskId, category, taskDescription }) {
+        return { url: "", method: "POST", body: { action: "edit_task", task_id: taskId, category, task_description: taskDescription } };
+      },
+      transformResponse: (response: { success: boolean; data: { task: ChecklistTaskItem } }) => response.data.task,
+      invalidatesTags: ["Checklist"],
+    }),
+
+    // Admin-only: remove a task admin added by mistake or that no longer applies.
+    removeChecklistTask: builder.mutation<{ checklistId: string }, { taskId: string }>({
+      query({ taskId }) {
+        return { url: "", method: "POST", body: { action: "remove_task", task_id: taskId } };
+      },
+      invalidatesTags: ["Checklist"],
+    }),
+
+    // Every category name in use anywhere (template defaults + any custom
+    // ones already added), for the "Add Category" picker — so admin picks
+    // from what exists instead of retyping "Bedroom" vs "bedroom".
+    getKnownCategories: builder.query<string[], void>({
+      query() {
+        return { url: "/checklist-categories" };
+      },
+      transformResponse: (response: { success: boolean; data: string[] }) => response.data || [],
+      providesTags: ["Checklist"],
+    }),
+
+    // Photos the cleaner attached per checklist category (proof-of-work
+    // shots), keyed by cleaning_checklists.id — same store the cleaner
+    // portal writes via /api/admin/cleaners/checklist-photos.
+    getChecklistPhotos: builder.query<Record<string, string>, string>({
+      query(checklistId) {
+        return { url: "/checklist-photos", params: { checklist_id: checklistId } };
+      },
+      transformResponse: (response: { success: boolean; data: Record<string, string> }) => response.data || {},
+      providesTags: (_result, _error, checklistId) => [{ type: "Checklist", id: `photos:${checklistId}` }],
+    }),
     // Get all cleaning tasks
     getCleaningTasks: builder.query<CleaningTask[], { status?: string } | void>({
       query(params?: { status?: string }) {
@@ -245,4 +294,9 @@ export const {
   useGetCleaningHistoryQuery,
   useGetChecklistQuery,
   useToggleChecklistTaskMutation,
+  useAddChecklistTaskMutation,
+  useEditChecklistTaskMutation,
+  useRemoveChecklistTaskMutation,
+  useGetChecklistPhotosQuery,
+  useGetKnownCategoriesQuery,
 } = cleanersApi;

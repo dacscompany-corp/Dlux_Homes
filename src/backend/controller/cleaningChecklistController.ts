@@ -576,6 +576,180 @@ export const updateTask = async (
 };
 
 /* ---------------------------
+ * Admin per-assignment checklist editing — add/edit/remove individual
+ * checklist tasks on ONE already-created checklist. This is distinct from
+ * DEFAULT_CHECKLIST_TEMPLATE (which only shapes brand-new checklists going
+ * forward) — these mutate an existing cleaning_tasks row set directly, so
+ * admin can e.g. add "deep clean the oven" to just this booking's checklist
+ * without changing what every other room gets.
+ * Endpoint: POST /api/admin/cleaners with action "add_task" | "edit_task" | "remove_task"
+ * --------------------------- */
+
+// Every category name in use anywhere — the 5 canonical template ones plus
+// any custom category an admin has already created on some other checklist
+// (e.g. via "Add Category"). Lets the "Add Category" picker offer what
+// already exists instead of admin retyping "Bedroom" vs "bedroom" and
+// fragmenting the same category under two spellings.
+// Endpoint: GET /api/admin/cleaners/checklist/categories
+export const getKnownCategories = async (): Promise<NextResponse> => {
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT category FROM cleaning_tasks ORDER BY category`,
+    );
+    const fromDb = result.rows.map((r) => r.category as string);
+    const templateCategories = DEFAULT_CHECKLIST_TEMPLATE.map((c) => c.category);
+    const merged = Array.from(new Set([...templateCategories, ...fromDb])).sort((a, b) => a.localeCompare(b));
+    return NextResponse.json({ success: true, data: merged });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Error fetching known categories:", message);
+    return NextResponse.json({ success: false, error: message || "Failed to fetch categories" }, { status: 500 });
+  }
+};
+
+// Add a new task to an existing checklist. Body: { checklist_id, category, task_description }
+export const addChecklistTask = async (req: NextRequest): Promise<NextResponse> => {
+  try {
+    const body = await req.json();
+    const { checklist_id, category, task_description } = body || {};
+
+    if (!checklist_id || !category?.trim() || !task_description?.trim()) {
+      return NextResponse.json(
+        { success: false, error: "checklist_id, category, and task_description are required" },
+        { status: 400 },
+      );
+    }
+
+    const checklistRes = await pool.query(`SELECT status FROM cleaning_checklists WHERE id = $1`, [checklist_id]);
+    if (checklistRes.rows.length === 0) {
+      return NextResponse.json({ success: false, error: "Checklist not found" }, { status: 404 });
+    }
+
+    const orderRes = await pool.query(
+      `SELECT COALESCE(MAX(display_order), 0) + 1 AS next_order FROM cleaning_tasks WHERE checklist_id = $1`,
+      [checklist_id],
+    );
+
+    const insertRes = await pool.query(
+      `INSERT INTO cleaning_tasks (checklist_id, category, task_description, completed, display_order, created_at, updated_at)
+       VALUES ($1, $2, $3, false, $4, timezone('Asia/Manila', NOW()), timezone('Asia/Manila', NOW()))
+       RETURNING id, checklist_id, category, task_description, completed, display_order`,
+      [checklist_id, category.trim(), task_description.trim(), orderRes.rows[0].next_order],
+    );
+
+    // Adding an incomplete task to a checklist that had already been marked
+    // completed reopens it — otherwise it's left in whatever state it was.
+    if (checklistRes.rows[0].status === "completed") {
+      await pool.query(
+        `UPDATE cleaning_checklists SET status = 'in_progress', completed_at = NULL, updated_at = timezone('Asia/Manila', NOW()) WHERE id = $1`,
+        [checklist_id],
+      );
+    }
+
+    return NextResponse.json({ success: true, data: { task: insertRes.rows[0] } });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Error adding checklist task:", message);
+    return NextResponse.json({ success: false, error: message || "Failed to add task" }, { status: 500 });
+  }
+};
+
+// Edit an existing task's category/description (not its completion state —
+// that's still the cleaner-facing PATCH). Body: { task_id, category?, task_description? }
+export const editChecklistTask = async (req: NextRequest): Promise<NextResponse> => {
+  try {
+    const body = await req.json();
+    const { task_id, category, task_description } = body || {};
+
+    if (!task_id) {
+      return NextResponse.json({ success: false, error: "task_id is required" }, { status: 400 });
+    }
+    if (category === undefined && task_description === undefined) {
+      return NextResponse.json({ success: false, error: "Nothing to update" }, { status: 400 });
+    }
+
+    const fields: string[] = [];
+    const params: (string | null)[] = [];
+    let n = 1;
+    if (category !== undefined) { fields.push(`category = $${n++}`); params.push(String(category).trim()); }
+    if (task_description !== undefined) { fields.push(`task_description = $${n++}`); params.push(String(task_description).trim()); }
+    fields.push(`updated_at = timezone('Asia/Manila', NOW())`);
+    params.push(task_id);
+
+    const result = await pool.query(
+      `UPDATE cleaning_tasks SET ${fields.join(", ")} WHERE id = $${n}
+       RETURNING id, checklist_id, category, task_description, completed`,
+      params,
+    );
+
+    if (result.rows.length === 0) {
+      return NextResponse.json({ success: false, error: "Task not found" }, { status: 404 });
+    }
+
+    return NextResponse.json({ success: true, data: { task: result.rows[0] } });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Error editing checklist task:", message);
+    return NextResponse.json({ success: false, error: message || "Failed to edit task" }, { status: 500 });
+  }
+};
+
+// Remove a task admin added by mistake, or one no longer relevant to this
+// booking. Body: { task_id }
+export const removeChecklistTask = async (req: NextRequest): Promise<NextResponse> => {
+  try {
+    const body = await req.json();
+    const { task_id } = body || {};
+
+    if (!task_id) {
+      return NextResponse.json({ success: false, error: "task_id is required" }, { status: 400 });
+    }
+
+    const deleteRes = await pool.query(
+      `DELETE FROM cleaning_tasks WHERE id = $1 RETURNING checklist_id`,
+      [task_id],
+    );
+
+    if (deleteRes.rows.length === 0) {
+      return NextResponse.json({ success: false, error: "Task not found" }, { status: 404 });
+    }
+
+    const checklistId = deleteRes.rows[0].checklist_id;
+
+    // Recompute checklist status — removing the last incomplete task can
+    // complete the checklist; removing the only task leaves it 'pending'.
+    const incompleteRes = await pool.query(
+      `SELECT COUNT(*)::int AS incomplete_count FROM cleaning_tasks WHERE checklist_id = $1 AND completed = false`,
+      [checklistId],
+    );
+    const totalRes = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM cleaning_tasks WHERE checklist_id = $1`,
+      [checklistId],
+    );
+    const incompleteCount = incompleteRes.rows[0]?.incomplete_count ?? 0;
+    const total = totalRes.rows[0]?.total ?? 0;
+
+    if (total === 0) {
+      await pool.query(
+        `UPDATE cleaning_checklists SET status = 'pending', completed_at = NULL, updated_at = timezone('Asia/Manila', NOW()) WHERE id = $1`,
+        [checklistId],
+      );
+    } else if (incompleteCount === 0) {
+      await pool.query(
+        `UPDATE cleaning_checklists SET status = 'completed', completed_at = timezone('Asia/Manila', NOW()), updated_at = timezone('Asia/Manila', NOW()) WHERE id = $1`,
+        [checklistId],
+      );
+    }
+
+    return NextResponse.json({ success: true, data: { checklist_id: checklistId, incompleteCount } });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Error removing checklist task:", message);
+    return NextResponse.json({ success: false, error: message || "Failed to remove task" }, { status: 500 });
+  }
+};
+
+/* ---------------------------
  * POST: Save checklist progress (bulk update)
  * Endpoint: POST /api/admin/cleaners/checklist/save
  * Body: { checklist_id: string, tasks: [{ id: string, completed: boolean }] }
