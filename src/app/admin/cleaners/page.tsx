@@ -9,7 +9,7 @@ import ImageThumb from "@/components/ImageThumb";
 import { imageFileError } from "@/lib/validateImageFile";
 import { useGetHavensQuery } from "@/redux/api/roomApi";
 import { useSubmitReportMutation } from "@/redux/api/reportApi";
-import { useGetNotificationsQuery } from "@/redux/api/notificationsApi";
+import { useGetNotificationsQuery, useUpdateNotificationsMutation, type Notification } from "@/redux/api/notificationsApi";
 import { useGetConversationsQuery } from "@/redux/api/messagesApi";
 import {
   useGetCleaningTasksQuery,
@@ -18,12 +18,13 @@ import {
   useGetChecklistQuery,
   useToggleChecklistTaskMutation,
 } from "@/redux/api/cleanersApi";
+import { translateCategory, translateTask, type ChecklistLanguage } from "@/lib/checklist-translations";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   LayoutDashboard, ClipboardList, MapPin, CheckSquare, AlertTriangle,
   Bell, Menu, X, LogOut, Clock, CheckCircle2, Circle,
   AlertCircle, Building2, MessageSquare, CalendarDays, BookOpen,
-  Camera, Phone, Mail, Shield, Star, ChevronDown, ChevronRight, LifeBuoy,
+  Camera, Phone, Mail, Shield, Star, ChevronDown, ChevronRight, LifeBuoy, Languages,
 } from "lucide-react";
 
 // Simplified sidebar (owner spec, 2026-09-22): five top-level items —
@@ -183,16 +184,40 @@ export default function CleanerDashboard() {
     } catch { toast.error("Could not submit the report"); }
   };
 
-  // Notifications + Messages (live, session-scoped)
-  const { data: notifRes } = useGetNotificationsQuery({});
-  const notifications = toRows(notifRes).map((n, i) => ({
-    id: (n.notification_id as string) ?? i,
-    title: String(n.title || "Notification"),
-    desc: String(n.message || ""),
-    time: n.created_at ? new Date(String(n.created_at)).toLocaleString() : "",
-    read: Boolean(n.is_read),
-    type: String(n.notification_type || "assignment"),
-  }));
+  // Notifications + Messages (live, session-scoped). Polled every 30s so a
+  // new cleaning assignment (or a rejected-inspection note) shows up without
+  // the cleaner having to manually refresh — matches the interval already
+  // used elsewhere in the admin side for the same kind of live feed.
+  const { data: notifRes } = useGetNotificationsQuery({}, { pollingInterval: 30000 });
+  const [markNotificationsRead] = useUpdateNotificationsMutation();
+  const notifications: Notification[] = notifRes ?? [];
+  const unreadCount = notifications.filter((n) => !n.read).length;
+
+  // Toast the moment a NEW cleaning assignment notification appears in a poll
+  // — not on every unread notification (that would re-toast the same one
+  // every 30s) and not on first load (that would toast every existing
+  // unread notification the instant the page opens).
+  const [seenNotificationIds, setSeenNotificationIds] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    if (!notifRes) return;
+    if (seenNotificationIds === null) {
+      // First successful fetch — just record what's already there, don't toast it.
+      setSeenNotificationIds(new Set(notifRes.map((n) => n.id)));
+      return;
+    }
+    const newOnes = notifRes.filter((n) => !seenNotificationIds.has(n.id));
+    for (const n of newOnes) {
+      if (n.rawType === "cleaning_assignment") {
+        toast.success(n.title || "New cleaning assignment", { icon: "🧹" });
+      } else if (n.rawType === "cleaning_rejected") {
+        toast.error(n.title || "A task was sent back", { icon: "⚠️" });
+      }
+    }
+    if (newOnes.length > 0) {
+      setSeenNotificationIds(new Set(notifRes.map((n) => n.id)));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notifRes]);
   const { data: convRes } = useGetConversationsQuery({ userId: cleanerId || "" }, { skip: !cleanerId });
   const messages = toRows(convRes).map((c, i) => ({
     id: (c.id as string | number) ?? i,
@@ -242,6 +267,11 @@ export default function CleanerDashboard() {
     { skip: !activeAssignment?.havenId || !activeAssignment?.bookingUuid }
   );
   const [toggleChecklistTaskM] = useToggleChecklistTaskMutation();
+  // English/Tagalog toggle for the checklist's category names + task text.
+  // Only the fixed default-template wording is actually translated (see
+  // src/lib/checklist-translations.ts) — a custom task admin adds later just
+  // falls back to whatever it was typed in, since it has no dictionary entry.
+  const [checklistLang, setChecklistLang] = useState<ChecklistLanguage>("en");
   const checklistCategories = checklistData?.categories ?? [];
   const checklistFlatTasks = checklistCategories.flatMap((c) => c.tasks);
   const completedCount = checklistFlatTasks.filter((t) => t.completed).length;
@@ -476,7 +506,15 @@ export default function CleanerDashboard() {
             <button onClick={() => setActiveNav("Notifications")} title="Notifications" className="relative p-2.5 rounded-lg cursor-pointer transition-colors" style={{ color: "#6b6358" }}
               onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#f3eee2"} onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
               <Bell className="w-[18px] h-[18px]" />
-              <span style={{ position: "absolute", top: 8, right: 8, width: 6, height: 6, background: "#d4a96a", borderRadius: "50%", border: "2px solid #fff" }} />
+              {unreadCount > 0 && (
+                <span className="absolute flex items-center justify-center" style={{
+                  top: 2, right: 2, minWidth: 16, height: 16, padding: "0 3px",
+                  background: "#d4a96a", color: "#2c1f14", borderRadius: 999, border: "2px solid #fff",
+                  fontSize: 9, fontWeight: 700, lineHeight: 1,
+                }}>
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
             </button>
             <button type="button" onClick={() => setActiveNav("Profile")} title="Profile" className="flex items-center gap-2.5 rounded-lg cursor-pointer transition-colors" style={{ padding: "6px 12px 6px 6px", background: "transparent", border: 0 }}
               onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#f3eee2"} onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
@@ -658,9 +696,18 @@ export default function CleanerDashboard() {
                     {checklistOpenFor === a.id && (
                       <div className="mt-4 pt-4 border-t" style={{ borderColor: "#F7F0E3" }}>
                         <div className="border p-5 mb-4" style={{ borderColor: "#ece5d4" }}>
-                          <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center justify-between mb-2 gap-2">
                             <span className="text-sm font-medium" style={{ color: "#5a4a3a" }}>Overall Progress</span>
-                            <span className="text-sm font-bold" style={{ color: "#8a6a2f" }}>{progressPercent}%</span>
+                            <div className="flex items-center gap-3">
+                              <span className="text-sm font-bold" style={{ color: "#8a6a2f" }}>{progressPercent}%</span>
+                              {/* English/Tagalog toggle — only the fixed default-template
+                                  wording is translated; a custom task admin adds shows as typed. */}
+                              <button type="button" onClick={() => setChecklistLang((l) => (l === "en" ? "tl" : "en"))}
+                                className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full cursor-pointer flex-shrink-0"
+                                style={{ color: "#8a6a2f", border: "1px solid #D4BFA0", backgroundColor: "#FAF7F1" }}>
+                                <Languages className="w-3.5 h-3.5" />{checklistLang === "en" ? "Tagalog" : "English"}
+                              </button>
+                            </div>
                           </div>
                           <div className="w-full rounded-full h-3 overflow-hidden" style={{ backgroundColor: "#E0CEB8" }}>
                             <div className="h-3 rounded-full transition-all duration-500" style={{ width: `${progressPercent}%`, background: "#d4a96a" }} />
@@ -672,7 +719,7 @@ export default function CleanerDashboard() {
                             <p className="text-sm px-5 py-4" style={{ color: "#8B6344" }}>Loading checklist…</p>
                           ) : checklistCategories.map((cat) => (
                             <div key={cat.category}>
-                              <div className="px-3 sm:px-5 py-2 text-xs font-semibold uppercase tracking-wider" style={{ backgroundColor: "#FAF7F1", color: "#8a6a2f" }}>{cat.category}</div>
+                              <div className="px-3 sm:px-5 py-2 text-xs font-semibold uppercase tracking-wider" style={{ backgroundColor: "#FAF7F1", color: "#8a6a2f" }}>{translateCategory(cat.category, checklistLang)}</div>
                               {cat.tasks.map((item, idx) => (
                                 <label key={item.id} className="flex items-center gap-2 sm:gap-4 px-3 sm:px-5 py-3.5 cursor-pointer transition-colors"
                                   style={{ borderTop: idx > 0 ? "1px solid #F7F0E3" : "none" }}
@@ -683,7 +730,10 @@ export default function CleanerDashboard() {
                                     onClick={() => toggleChecklistItem(item.id, item.completed)}>
                                     {item.completed && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
                                   </div>
-                                  <span className="text-sm flex-1 min-w-0" style={{ color: item.completed ? "#A89080" : "#5a4a3a", textDecoration: item.completed ? "line-through" : "none" }}>{item.task}</span>
+                                  {/* Photo lookup/upload stays keyed by the original English task
+                                      text (item.task) regardless of display language — that's what
+                                      the server stores as the photo category key. */}
+                                  <span className="text-sm flex-1 min-w-0" style={{ color: item.completed ? "#A89080" : "#5a4a3a", textDecoration: item.completed ? "line-through" : "none" }}>{translateTask(item.task, checklistLang)}</span>
                                   {checklistPhotos[item.task] ? <ImageThumb src={checklistPhotos[item.task]} alt={item.task} size={32} /> : null}
                                   <button type="button" title={checklistPhotos[item.task] ? "Replace photo" : "Attach photo"} disabled={photoUploading === item.task}
                                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); pickChecklistPhoto(item.task); }}
@@ -791,20 +841,24 @@ export default function CleanerDashboard() {
           {activeNav === "Notifications" && (
             <div className="space-y-3 max-w-2xl">
               <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16", marginBottom: 16 }}>Notifications</h2>
+              {notifications.length === 0 && (
+                <p className="text-sm" style={{ color: "#8B6344" }}>No notifications yet.</p>
+              )}
               {notifications.map((n) => {
                 const iconMap: Record<string,{ icon: React.ElementType; color: string; bg: string }> = {
-                  assignment: { icon: ClipboardList, color: "#8a6a2f", bg: "#F7F0E3" },
-                  issue:      { icon: AlertTriangle, color: "#ea580c", bg: "#ffedd5" },
-                  schedule:   { icon: CalendarDays,  color: "#7c3aed", bg: "#ede9fe" },
-                  message:    { icon: MessageSquare, color: "#059669", bg: "#d1fae5" },
+                  cleaning_assignment: { icon: ClipboardList,  color: "#8a6a2f", bg: "#F7F0E3" },
+                  cleaning_reassigned: { icon: ClipboardList,  color: "#8a6a2f", bg: "#F7F0E3" },
+                  cleaning_rejected:   { icon: AlertTriangle,  color: "#ea580c", bg: "#ffedd5" },
+                  ReportIssue:         { icon: AlertTriangle,  color: "#ea580c", bg: "#ffedd5" },
                 };
-                const ic = iconMap[n.type] || iconMap.assignment;
+                const ic = iconMap[n.rawType ?? ""] || { icon: MessageSquare, color: "#059669", bg: "#d1fae5" };
                 const Icon = ic.icon;
                 return (
                   <div key={n.id} className="flex items-start gap-4 p-4 rounded-2xl border cursor-pointer transition-colors"
                     style={{ backgroundColor: !n.read ? "#FDF8F3" : "#ffffff", borderColor: !n.read ? "#D4BFA0" : "#E0CEB8" }}
                     onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
-                    onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = !n.read ? "#FDF8F3" : "#ffffff"}>
+                    onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = !n.read ? "#FDF8F3" : "#ffffff"}
+                    onClick={() => { if (!n.read) markNotificationsRead({ notificationIds: [n.id], markAs: "read" }); }}>
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: ic.bg }}>
                       <Icon className="w-5 h-5" strokeWidth={1.75} style={{ color: ic.color }} />
                     </div>
@@ -812,11 +866,11 @@ export default function CleanerDashboard() {
                       <div className="flex items-center justify-between gap-2 mb-0.5">
                         <p className="font-semibold text-sm" style={{ color: "#1a1a1a" }}>{n.title}</p>
                         <div className="flex items-center gap-2">
-                          <span className="text-xs flex-shrink-0" style={{ color: "#D4BFA0" }}>{n.time}</span>
+                          <span className="text-xs flex-shrink-0" style={{ color: "#D4BFA0" }}>{n.timestamp}</span>
                           {!n.read && <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />}
                         </div>
                       </div>
-                      <p className="text-sm" style={{ color: "#8B6344" }}>{n.desc}</p>
+                      <p className="text-sm" style={{ color: "#8B6344" }}>{n.description}</p>
                     </div>
                   </div>
                 );

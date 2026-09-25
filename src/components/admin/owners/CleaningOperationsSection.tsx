@@ -13,6 +13,7 @@ import {
   useAddChecklistTaskMutation,
   useEditChecklistTaskMutation,
   useRemoveChecklistTaskMutation,
+  useGetKnownCategoriesQuery,
   type CleaningTask,
 } from "@/redux/api/cleanersApi";
 import { useGetEmployeesQuery } from "@/redux/api/employeeApi";
@@ -545,17 +546,39 @@ function ChecklistTab({ tasks, isFetching }: { tasks: CleaningTask[]; isFetching
 // Admin can add/edit/remove individual tasks here (per-assignment
 // customization, e.g. "deep clean the oven" for just this booking) without
 // touching the template every other room's checklist is built from.
+// Sentinel value for the "Add Category" dropdown's custom-name option — kept
+// out of band from any real category name (which are free text and could in
+// principle collide with a short string like "other").
+const CUSTOM_CATEGORY = "__custom__";
+
 function ChecklistSection({ havenId, bookingUuid }: { havenId: string; bookingUuid: string }) {
   const { data: checklist, isFetching } = useGetChecklistQuery({ havenId, bookingId: bookingUuid });
   const { data: photos } = useGetChecklistPhotosQuery(checklist?.id ?? "", { skip: !checklist?.id });
   const [addTask, { isLoading: adding }] = useAddChecklistTaskMutation();
   const [editTask] = useEditChecklistTaskMutation();
   const [removeTask] = useRemoveChecklistTaskMutation();
+  // Every category name already in use anywhere (the 5 template ones plus
+  // any custom category some other checklist already created) — the "Add
+  // Category" picker below offers these instead of a blank text box, so
+  // admin doesn't fragment "Bedroom" vs "bedroom" across rooms.
+  const { data: knownCategories } = useGetKnownCategoriesQuery();
 
   const [addingFor, setAddingFor] = useState<string | null>(null);
   const [newTaskText, setNewTaskText] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
+  // Creating a brand-new category (title), e.g. "Bedroom", "Bathroom" — not
+  // adding a task under one that already exists. A category only exists at
+  // all because a task carries it, so "add a category" is really "add its
+  // first task under a category name that doesn't exist yet."
+  const [addingCategory, setAddingCategory] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<string>(CUSTOM_CATEGORY);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [newCategoryTask, setNewCategoryTask] = useState("");
+  const usedCategoryNames = new Set((checklist?.categories ?? []).map((c) => c.category));
+  // Only offer categories this checklist doesn't already have — no point
+  // suggesting "Bedroom" if it's already one of the sections above.
+  const availableCategories = (knownCategories ?? []).filter((c) => !usedCategoryNames.has(c));
 
   const submitAdd = async (category: string) => {
     if (!checklist?.id || !newTaskText.trim()) return;
@@ -566,6 +589,21 @@ function ChecklistSection({ havenId, bookingUuid }: { havenId: string; bookingUu
       toast.success("Task added");
     } catch (err) {
       toast.error((err as { data?: { error?: string } })?.data?.error || "Could not add task");
+    }
+  };
+
+  const submitNewCategory = async () => {
+    const category = selectedCategory === CUSTOM_CATEGORY ? newCategoryName.trim() : selectedCategory;
+    if (!checklist?.id || !category || !newCategoryTask.trim()) return;
+    try {
+      await addTask({ checklistId: checklist.id, category, taskDescription: newCategoryTask.trim() }).unwrap();
+      setNewCategoryName("");
+      setNewCategoryTask("");
+      setSelectedCategory(CUSTOM_CATEGORY);
+      setAddingCategory(false);
+      toast.success("Category added");
+    } catch (err) {
+      toast.error((err as { data?: { error?: string } })?.data?.error || "Could not add category");
     }
   };
 
@@ -592,7 +630,7 @@ function ChecklistSection({ havenId, bookingUuid }: { havenId: string; bookingUu
   if (isFetching) {
     return <p className="text-xs mb-4" style={{ color: "#8B6344" }}>Loading checklist…</p>;
   }
-  if (!checklist || checklist.categories.length === 0) {
+  if (!checklist) {
     return null;
   }
 
@@ -601,11 +639,55 @@ function ChecklistSection({ havenId, bookingUuid }: { havenId: string; bookingUu
 
   return (
     <div className="mb-6">
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-2 gap-3">
         <p className="text-sm font-semibold" style={{ color: "#1f1b16" }}>Cleaning Checklist</p>
-        <span className="text-xs" style={{ color: "#8B6344" }}>{done} / {total} done</span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs" style={{ color: "#8B6344" }}>{done} / {total} done</span>
+          <button onClick={() => {
+            setAddingCategory((v) => !v);
+            setSelectedCategory(availableCategories[0] ?? CUSTOM_CATEGORY);
+            setNewCategoryName("");
+            setNewCategoryTask("");
+          }}
+            className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full cursor-pointer"
+            style={{ color: "#8a6a2f", backgroundColor: "#FAF7F1" }}>
+            <Plus className="w-3.5 h-3.5" />Add Category
+          </button>
+        </div>
       </div>
+
+      {addingCategory && (
+        <div className="border p-3 space-y-2 mb-3" style={{ borderColor: "#D4BFA0", backgroundColor: "#FAF7F1" }}>
+          <select
+            aria-label="Category"
+            value={selectedCategory}
+            onChange={(e) => setSelectedCategory(e.target.value)}
+            className="w-full text-sm outline-none border-b py-1 cursor-pointer"
+            style={{ borderColor: "#D4BFA0", color: "#1a1a1a", backgroundColor: "transparent" }}
+          >
+            {availableCategories.map((c) => <option key={c} value={c}>{c}</option>)}
+            <option value={CUSTOM_CATEGORY}>+ New category…</option>
+          </select>
+          {selectedCategory === CUSTOM_CATEGORY && (
+            <input autoFocus placeholder="Category name (e.g. Rooftop, Garage)…" value={newCategoryName}
+              onChange={(e) => setNewCategoryName(e.target.value)}
+              className="w-full text-sm outline-none border-b py-1" style={{ borderColor: "#D4BFA0", color: "#1a1a1a", backgroundColor: "transparent" }} />
+          )}
+          <input placeholder="First task in this category…" value={newCategoryTask}
+            onChange={(e) => setNewCategoryTask(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") submitNewCategory(); if (e.key === "Escape") setAddingCategory(false); }}
+            className="w-full text-sm outline-none border-b py-1" style={{ borderColor: "#D4BFA0", color: "#1a1a1a", backgroundColor: "transparent" }} />
+          <div className="flex items-center gap-3">
+            <button onClick={submitNewCategory} disabled={adding} className="text-xs font-medium cursor-pointer disabled:opacity-50" style={{ color: "#059669" }}>Add Category</button>
+            <button onClick={() => setAddingCategory(false)} className="text-xs cursor-pointer" style={{ color: "#8B6344" }}>Cancel</button>
+          </div>
+        </div>
+      )}
+
       <div className="border" style={{ borderColor: "#ece5d4" }}>
+        {checklist.categories.length === 0 && (
+          <p className="px-3 py-4 text-xs" style={{ color: "#8B6344" }}>No categories yet — add one above (e.g. Bedroom, Bathroom, Kitchen).</p>
+        )}
         {checklist.categories.map((cat, ci) => (
           <div key={cat.category} style={{ borderTop: ci > 0 ? "1px solid #ece5d4" : "none" }}>
             <div className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider" style={{ backgroundColor: "#FAF7F1", color: "#8a6a2f" }}>

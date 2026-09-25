@@ -6,6 +6,11 @@ export interface Notification {
   description: string;
   timestamp: string;
   type: 'info' | 'success' | 'warning';
+  // The raw notification_type column (e.g. 'cleaning_assignment',
+  // 'cleaning_rejected', 'ReportIssue') — `type` above is the coarse
+  // info/success/warning bucket used for color; this is for picking a more
+  // specific icon/label when the caller cares which kind of event it was.
+  rawType?: string;
   read: boolean;
   user?: {
     first_name?: string;

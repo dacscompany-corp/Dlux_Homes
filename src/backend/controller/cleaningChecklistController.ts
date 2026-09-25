@@ -585,6 +585,28 @@ export const updateTask = async (
  * Endpoint: POST /api/admin/cleaners with action "add_task" | "edit_task" | "remove_task"
  * --------------------------- */
 
+// Every category name in use anywhere — the 5 canonical template ones plus
+// any custom category an admin has already created on some other checklist
+// (e.g. via "Add Category"). Lets the "Add Category" picker offer what
+// already exists instead of admin retyping "Bedroom" vs "bedroom" and
+// fragmenting the same category under two spellings.
+// Endpoint: GET /api/admin/cleaners/checklist/categories
+export const getKnownCategories = async (): Promise<NextResponse> => {
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT category FROM cleaning_tasks ORDER BY category`,
+    );
+    const fromDb = result.rows.map((r) => r.category as string);
+    const templateCategories = DEFAULT_CHECKLIST_TEMPLATE.map((c) => c.category);
+    const merged = Array.from(new Set([...templateCategories, ...fromDb])).sort((a, b) => a.localeCompare(b));
+    return NextResponse.json({ success: true, data: merged });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Error fetching known categories:", message);
+    return NextResponse.json({ success: false, error: message || "Failed to fetch categories" }, { status: 500 });
+  }
+};
+
 // Add a new task to an existing checklist. Body: { checklist_id, category, task_description }
 export const addChecklistTask = async (req: NextRequest): Promise<NextResponse> => {
   try {

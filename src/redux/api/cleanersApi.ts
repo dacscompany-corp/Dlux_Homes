@@ -135,6 +135,17 @@ export const cleanersApi = createApi({
       invalidatesTags: ["Checklist"],
     }),
 
+    // Every category name in use anywhere (template defaults + any custom
+    // ones already added), for the "Add Category" picker — so admin picks
+    // from what exists instead of retyping "Bedroom" vs "bedroom".
+    getKnownCategories: builder.query<string[], void>({
+      query() {
+        return { url: "/checklist-categories" };
+      },
+      transformResponse: (response: { success: boolean; data: string[] }) => response.data || [],
+      providesTags: ["Checklist"],
+    }),
+
     // Photos the cleaner attached per checklist category (proof-of-work
     // shots), keyed by cleaning_checklists.id — same store the cleaner
     // portal writes via /api/admin/cleaners/checklist-photos.
@@ -287,4 +298,5 @@ export const {
   useEditChecklistTaskMutation,
   useRemoveChecklistTaskMutation,
   useGetChecklistPhotosQuery,
+  useGetKnownCategoriesQuery,
 } = cleanersApi;

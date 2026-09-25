@@ -78,6 +78,7 @@ export async function GET(request: NextRequest) {
       description: row.message,
       timestamp: formatTimestamp(row.created_at),
       type: mapNotificationType(row.notification_type),
+      rawType: row.notification_type,
       read: row.is_read,
       user: {
         first_name: row.first_name,
