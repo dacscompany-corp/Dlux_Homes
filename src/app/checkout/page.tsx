@@ -13,7 +13,7 @@ import { fileToCompressedDataUrl } from "@/lib/compressImage";
 import ImageThumb from "@/components/ImageThumb";
 import { mockRooms } from "@/lib/mock-data";
 import { generateBookingId, addMyBookingId } from "@/lib/booking-store";
-import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
+import { useGetHavenByIdQuery, useGetHavensQuery } from "@/redux/api/roomApi";
 import { havenToRoom } from "@/lib/haven-adapter";
 import { isWeekendOrHoliday, isDaycation, addDaysISO, securityDepositFor, quoteStay, promoBlockingSeason } from "@/lib/pricing";
 import { useCalendarRules } from "@/lib/useCalendarRules";
@@ -581,6 +581,18 @@ function CheckoutInner() {
   const { data: havenRes } = useGetHavenByIdQuery(roomId, { skip: !roomId || !isUuid });
   const liveHaven = (havenRes as { data?: Record<string, unknown> } | undefined)?.data;
   const room = liveHaven ? havenToRoom(liveHaven) : (mockRooms.find((r) => r.id === roomId) || mockRooms[0]);
+  // A non-uuid roomId ("mock-1" / legacy "1") means the guest started from the
+  // placeholder room. Submitting it sends haven_id: null plus the mock's name,
+  // which the server can't price ("We couldn't verify the price for this
+  // room") — so swap in the live property's uuid before anything is quoted.
+  const { data: havensList } = useGetHavensQuery({}, { skip: isUuid });
+  const fallbackHavenId = (havensList as Record<string, unknown>[] | undefined)?.[0]?.uuid_id;
+  useEffect(() => {
+    if (isUuid || typeof fallbackHavenId !== "string" || !fallbackHavenId) return;
+    const next = new URLSearchParams(sp.toString());
+    next.set("roomId", fallbackHavenId);
+    router.replace(`/checkout?${next.toString()}`);
+  }, [isUuid, fallbackHavenId, sp, router]);
 
   const [step, setStep] = useState(0);
   // ALWAYS update this with the functional form — setInfo((prev) => ...) — never

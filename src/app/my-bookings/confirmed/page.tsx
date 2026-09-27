@@ -954,7 +954,7 @@ function ConfirmedInner() {
                 style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 20px", borderRadius: 999, background: "var(--ink)", color: "var(--white)", fontSize: 14, fontWeight: 600, textDecoration: "none" }}>
                 <IcoCalendar /> My bookings
               </Link>
-              <Link href="/rooms/1"
+              <Link href="/rooms"
                 style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 20px", borderRadius: 999, background: "var(--dlux-accent)", color: "var(--white)", fontSize: 14, fontWeight: 600, textDecoration: "none" }}>
                 Book again <IcoArrowRight />
               </Link>
