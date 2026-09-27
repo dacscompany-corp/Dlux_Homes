@@ -4,12 +4,12 @@ import { useState, useEffect, use, useRef, Suspense, type CSSProperties, type Re
 import Link from "next/link";
 import Image from "next/image";
 import DluxMark from "@/components/brand/DluxMark";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import SiteHeader from "@/components/SiteHeader";
 import { getMyBookingIds } from "@/lib/booking-store";
 import { mockRooms } from "@/lib/mock-data";
-import { useGetHavenByIdQuery } from "@/redux/api/roomApi";
+import { useGetHavenByIdQuery, useGetHavensQuery } from "@/redux/api/roomApi";
 import { useGetBlockedDatesQuery } from "@/redux/api/blockedDatesApi";
 import { useGetActivePromotionsQuery } from "@/redux/api/promotionsApi";
 import type { ActivePromotion, PromoStayType } from "@/redux/api/promotionsApi";
@@ -562,6 +562,19 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
   const { data: havenRes } = useGetHavenByIdQuery(id, { skip: !id || !isUuid });
   const liveHaven = (havenRes as { data?: Record<string, unknown> } | undefined)?.data;
   const room = liveHaven ? havenToRoom(liveHaven) : (mockRooms.find((r) => r.id === id) || mockRooms[0]);
+
+  // A non-uuid id (the "mock-1" placeholder /rooms links to before havens load,
+  // or legacy /rooms/1 links) must not be booked as-is: availability is never
+  // checked for it and the server refuses to price it at submit ("We couldn't
+  // verify the price for this room"). Swap in the live property's uuid.
+  const router = useRouter();
+  const { data: havensList } = useGetHavensQuery({}, { skip: isUuid });
+  const fallbackHavenId = (havensList as Record<string, unknown>[] | undefined)?.[0]?.uuid_id;
+  useEffect(() => {
+    if (isUuid || typeof fallbackHavenId !== "string" || !fallbackHavenId) return;
+    const qs = sp.toString();
+    router.replace(`/rooms/${fallbackHavenId}${qs ? `?${qs}` : ""}`);
+  }, [isUuid, fallbackHavenId, sp, router]);
 
   // Check-in/out windows from the haven's configured times; fall back to the
   // rate-card defaults when a live haven has no times (or in mock mode).

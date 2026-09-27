@@ -213,7 +213,7 @@ export default function MyBookingsPage() {
             <div style={{ fontSize: 44, marginBottom: 12 }}>✦</div>
             <div className="serif" style={{ fontSize: 26, fontWeight: 500, letterSpacing: "-.02em" }}>No {tab} stays yet</div>
             <p style={{ color: "var(--muted)", fontSize: 14, marginTop: 6 }}>When you book, you&apos;ll see it here.</p>
-            <Link href="/rooms/1" style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 20, padding: "11px 20px", borderRadius: 999, background: "var(--ink)", color: "var(--white)", fontSize: 14, fontWeight: 600, textDecoration: "none" }}>
+            <Link href="/rooms" style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 20, padding: "11px 20px", borderRadius: 999, background: "var(--ink)", color: "var(--white)", fontSize: 14, fontWeight: 600, textDecoration: "none" }}>
               Browse stays
             </Link>
           </div>
