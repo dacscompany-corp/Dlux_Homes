@@ -20,7 +20,7 @@ import { useGetHavensQuery, useCreateHavenMutation, useUpdateHavenMutation } fro
 import { useGetEmployeesQuery, useCreateEmployeeMutation } from "@/redux/api/employeeApi";
 import { useGetReviewsQuery } from "@/redux/api/reviewsApi";
 import { useGetReportsQuery } from "@/redux/api/reportApi";
-import { useGetConversationsQuery } from "@/redux/api/messagesApi";
+import OfficeStaffInbox from "@/components/admin/messages/OfficeStaffInbox";
 import { fmtWindow, fmtSpan } from "@/lib/stay-window";
 import { BUNDLE_TIER1_LABEL, BUNDLE_TIER2_LABEL, BUNDLE_TIER3_LABEL, BUNDLE_TIER4_LABEL, securityDepositFor, DEPOSIT_DEFAULT } from "@/lib/pricing";
 import PromotionModal, { type PromotionFormState } from "@/components/admin/PromotionModal";
@@ -328,10 +328,6 @@ export default function OwnerDashboard() {
     }
     finally { setPromotionSaving(false); }
   };
-  const { data: conversationsRes } = useGetConversationsQuery(
-    { userId: ownerId || "" },
-    { skip: !ownerId }
-  );
 
   // ── Actions / mutations ──
   const [updateBookingStatus, { isLoading: bookingUpdating }] = useUpdateBookingStatusMutation();
@@ -967,17 +963,6 @@ export default function OwnerDashboard() {
     issueStatus: String(r.status || "open").toLowerCase().replace(/\s+/g, "-"),
     reported: r.created_at ? new Date(String(r.created_at)).toLocaleDateString("en", { month: "short", day: "numeric" }) : "—",
     assignedTo: String(r.assigned_to || "Unassigned"),
-  }));
-
-  // Internal Messages (Communication) — owner's conversation threads
-  const internalMessages = toRows(conversationsRes).map((c, i) => ({
-    id: (c.id as number | string) ?? i,
-    sender: String(c.name || "Conversation"),
-    // conversations rows carry `type` ("internal" | "guest"), not a role column
-    kind: String(c.type || "internal"),
-    content: String(c.last_message || "No messages yet"),
-    time: c.last_message_time ? new Date(String(c.last_message_time)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "",
-    unread: Number(c.unread_count ?? 0) > 0,
   }));
 
   // Reusable minimalist sub-tab bar — icon + label, hairline borders
@@ -2232,28 +2217,8 @@ export default function OwnerDashboard() {
               </div>
             ))}
 
-            {commTab === "messages" && (internalMessages.length === 0 ? <Empty label="No internal conversations yet." /> : (
-              <div style={{ background: "#fff", border: "1px solid #ece5d4" }}>
-                {internalMessages.map((msg) => {
-                  const csr = msg.kind === "internal";
-                  // Read-only for now — no thread view is wired up yet, so this
-                  // row is deliberately not presented as clickable.
-                  return (
-                    <div key={msg.id} className="flex items-center" style={{ gap: 16, padding: "18px 24px", borderBottom: "1px solid #f3eee2" }}>
-                      <span style={{ width: 40, height: 40, borderRadius: "50%", flex: "none", background: csr ? "rgba(47,157,107,0.14)" : "#f3eee2", color: csr ? "#2f7d56" : "#b8754a", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 17 }}>{msg.sender.split(" ").map((n)=>n[0]).join("")}</span>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center" style={{ gap: 10 }}>
-                          <span style={{ fontSize: 14, color: "#1f1b16" }}>{msg.sender}</span>
-                          {msg.unread && <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#b8754a" }} />}
-                        </div>
-                        <div className="truncate" style={{ fontSize: 13, color: "#8a8276", marginTop: 3 }}>{msg.content}</div>
-                      </div>
-                      <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 11, color: "#b8b1a6", flex: "none" }}>{msg.time}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            ))}
+            {/* Chat with cleaners — the same shared office inbox CSR uses. */}
+            {commTab === "messages" && <OfficeStaffInbox />}
           </>)}
 
           {/* ── Team ── */}

@@ -14,7 +14,8 @@ import { useGetBookingPaymentsQuery, useUpdateBookingPaymentMutation } from "@/r
 import { useGetActivityLogsQuery } from "@/redux/api/activityLogApi";
 import { useGetCleaningTasksQuery } from "@/redux/api/cleanersApi";
 import { useGetNotificationsQuery } from "@/redux/api/notificationsApi";
-import { useGetConversationsQuery } from "@/redux/api/messagesApi";
+import { useGetStaffThreadsQuery } from "@/redux/api/messagesApi";
+import OfficeStaffInbox from "@/components/admin/messages/OfficeStaffInbox";
 import PromotionModal, { type PromotionFormState } from "@/components/admin/PromotionModal";
 import {
   getDeposits, getDeliverables, getDiscounts,
@@ -492,15 +493,10 @@ export default function CSRDashboard() {
     type: String(n.notification_type || "booking"),
   }));
   const csrUserId = (session?.user as { id?: string } | undefined)?.id;
-  const { data: convRes } = useGetConversationsQuery({ userId: csrUserId || "" }, { skip: !csrUserId });
-  const messages = toRows(convRes).map((c, i) => ({
-    id: (c.id as string | number) ?? i,
-    sender: String(c.name || "Guest"),
-    role: String(c.role || "guest"),
-    content: String(c.last_message || "No messages yet"),
-    time: c.last_message_time ? new Date(String(c.last_message_time)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "",
-    unread: Number(c.unread_count ?? 0) > 0,
-  }));
+  // Cleaner ↔ office chat threads (shared by every Owner/CSR). Polled so the
+  // unread count on the dashboard keeps up without opening Messages.
+  const { data: staffThreads = [] } = useGetStaffThreadsQuery(undefined, { skip: !csrUserId, pollingInterval: 30000 });
+  const unreadStaffMessages = staffThreads.reduce((n, t) => n + t.unread_count, 0);
 
   // Calendar — mark days with check-ins / check-outs this month from live bookings
   const calNow = new Date();
@@ -650,7 +646,7 @@ export default function CSRDashboard() {
           {/* ── Dashboard ── */}
           {activeNav === "Overview" && (() => {
             const paymentsToVerify = payments.filter((p) => p.status === "pending").length;
-            const unreadMessages = messages.filter((m) => m.unread).length;
+            const unreadMessages = unreadStaffMessages;
             const openRequests = notifications.filter((n) => !n.read).length;
             const cleaningInProgress = cleanerAssignments.filter((t) => t.status === "in-progress").length;
             const kpis = [
@@ -1283,30 +1279,11 @@ export default function CSRDashboard() {
           </>)}
           </>)}
 
-          {/* ── Messages ── */}
+          {/* ── Messages — chat with cleaners ── */}
           {activeNav === "Messages" && (
             <div>
-              <PanelHead title="Messages" sub={`${messages.length} conversations · ${messages.filter((m) => m.unread).length} unread`} />
-              <div style={{ background: "#fff", border: "1px solid #ece5d4" }}>
-                {messages.map((msg) => {
-                  const tint = msg.role === "owner" ? { bg: "#f3eee2", c: "#b8754a" } : msg.role === "cleaner" ? { bg: "#e9f2ec", c: "#2f7d55" } : { bg: "#e9f2ec", c: "#2f7d55" };
-                  return (
-                    <div key={msg.id} className="flex items-center cursor-pointer" style={{ gap: 16, padding: "18px 24px", borderBottom: "1px solid #f3eee2" }}
-                      onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#faf7f1"}
-                      onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
-                      <span style={{ width: 40, height: 40, borderRadius: "50%", flex: "none", background: tint.bg, color: tint.c, display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 17 }}>{msg.sender.split(" ").map((n)=>n[0]).join("")}</span>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center" style={{ gap: 10 }}>
-                          <span style={{ fontSize: 14, color: "#1f1b16" }}>{msg.sender}</span>
-                          {msg.unread && <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#2f7d55" }} />}
-                        </div>
-                        <div className="truncate" style={{ fontSize: 13, color: "#8a8276", marginTop: 3 }}>{msg.content}</div>
-                      </div>
-                      <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 11, color: "#b8b1a6", flex: "none" }}>{msg.time}</span>
-                    </div>
-                  );
-                })}
-              </div>
+              <PanelHead title="Messages" sub={`Chat with cleaners · ${unreadStaffMessages} unread`} />
+              <OfficeStaffInbox />
             </div>
           )}
 
