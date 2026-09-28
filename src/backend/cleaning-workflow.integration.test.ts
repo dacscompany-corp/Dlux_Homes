@@ -576,6 +576,19 @@ describe("fair assignment", () => {
     expect(after[0].unassigned_reason).toBeNull();
   });
 
+  it("checking out a booking whose room was already cleaned does not hand it out again", async () => {
+    // Legacy row: cleaned under the old flow, no assignee, no ledger entry.
+    const b = await addBooking({ status: "checked-in" });
+    await h.db.query(`INSERT INTO booking_cleaning (booking_id, cleaning_status, cleaned_at) VALUES ($1::uuid, 'cleaned', NOW())`, [b.id]);
+    await h.db.query(`UPDATE booking SET status = 'completed' WHERE id = $1::uuid`, [b.id]);
+    await onBookingStatusChanged(b.id, "completed");
+    await sweepUnassignedCleaning();
+    const [t] = await taskFor(b.id);
+    expect(t.cleaning_status).toBe("cleaned");
+    expect(t.assigned_to).toBeNull();
+    expect((await h.db.query(`SELECT * FROM cleaning_opportunities`)).rows).toHaveLength(0);
+  });
+
   it("never creates a cleaning task for a cancelled booking", async () => {
     const b = await addBooking({ status: "cancelled" });
     const out = await ensureCleaningAssignment(b.id, "booking-confirmed");
@@ -700,7 +713,16 @@ describe("access control and the inspection sequence", () => {
     as({ id: C1, role: "Cleaner" });
     const res = await startTask(req(`/x`, { method: "PUT" }), ctx(taskId));
     expect(res.status).toBe(409);
-    expect((await res.json()).error).toMatch(/after the guest checks out/);
+    expect((await res.json()).error).toMatch(/once the guest is checked out/);
+  });
+
+  it("an early checkout opens the room before the scheduled time", async () => {
+    const { booking, taskId } = await assignedTo(C1, "future");
+    await h.db.query(`UPDATE booking SET status = 'completed' WHERE id = $1::uuid`, [booking.id]);
+    as({ id: C1, role: "Cleaner" });
+    const res = await startTask(req(`/x`, { method: "PUT" }), ctx(taskId));
+    expect(res.status).toBe(200);
+    expect((await taskFor(booking.id))[0].cleaning_status).toBe("in-progress");
   });
 
   it("rejection needs a note and returns the task to In Progress", async () => {
@@ -769,6 +791,18 @@ describe("confirmation → assignment → checkout → cleaning → inspection",
     stray.append("checklist_id", ck0.data.checklist.id);
     stray.append("task_id", otherCk.data.checklist.categories[0].tasks[0].id);
     expect((await uploadPhoto(new NextRequest("http://localhost/x", { method: "POST", body: stray }))).status).toBe(400);
+
+    // Uploading a photo ticks its task in the same step.
+    await tickTask(req(`/x`, { method: "PATCH", body: { task_id: all[0].id, completed: false } }));
+    {
+      const fd0 = new FormData();
+      fd0.append("file", new File([new Uint8Array([1])], "first.jpg", { type: "image/jpeg" }));
+      fd0.append("checklist_id", ck0.data.checklist.id);
+      fd0.append("task_id", all[0].id);
+      expect((await uploadPhoto(new NextRequest("http://localhost/x", { method: "POST", body: fd0 }))).status).toBe(200);
+      const ticked = await h.db.query<{ completed: boolean }>(`SELECT completed FROM cleaning_tasks WHERE id = $1::uuid`, [all[0].id]);
+      expect(ticked.rows[0].completed).toBe(true);
+    }
 
     // Photograph every task but one → still refused, and that one is named.
     for (const task of all.slice(0, -1)) {

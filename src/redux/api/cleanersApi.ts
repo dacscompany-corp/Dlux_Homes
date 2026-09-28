@@ -30,6 +30,9 @@ export interface CleaningTask {
   check_in_time: string;
   check_out_date: string;
   check_out_time: string;
+  /** Party size — how many towels, linens and amenities to set out. */
+  adults?: number | null;
+  children?: number | null;
   /** When the cleaning is due: the guest's checkout. Cleaning can't start before it. */
   scheduled_for?: string | null;
   cleaning_status: CleaningStatus;

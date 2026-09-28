@@ -67,6 +67,17 @@ describe("evaluateChecklistGate", () => {
     expect(result.error).toMatch(/need a photo/);
   });
 
+  it("counts an untouched task once — the missing photo — since the photo ticks it", () => {
+    const result = evaluateChecklistGate([
+      task("1"),
+      task("2", { completed: false, hasPhoto: false }),
+      task("3", { completed: false, hasPhoto: false }),
+    ]);
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/^2 tasks still need a photo/);
+    expect(result.error).not.toMatch(/not ticked/);
+  });
+
   it("waits for an in-flight upload instead of failing the submission", () => {
     const result = evaluateChecklistGate([task("1"), task("2", { hasPhoto: false })], {
       pendingUploads: ["2"],
@@ -99,6 +110,16 @@ describe("evaluateChecklistGate", () => {
       ["1", "2", "3", "4", "5"].map((id) => task(id, { completed: false })),
     );
     expect(result.error).toMatch(/\+2 more/);
+  });
+
+  it("counts a task as done only when it is ticked AND photographed", () => {
+    const result = evaluateChecklistGate([
+      task("1"),
+      task("2", { hasPhoto: false }), // ticked by hand, no photo
+      task("3", { completed: false, hasPhoto: false }),
+    ]);
+    expect(result.completedTasks).toBe(2);
+    expect(result.doneTasks).toBe(1);
   });
 
   it("counts completed tasks even while blocked", () => {

@@ -3,15 +3,18 @@ import pool from "@/backend/config/db";
 import { checkoutAtSql, updateCleaningTask } from "@/backend/controller/cleanersController";
 import { requireCleaningTaskAccess } from "@/backend/utils/requireAdmin";
 import { actorForRole, checkTransition } from "@/lib/cleaning-workflow";
+import { CHECKED_OUT_STATUSES } from "@/lib/cleaning-schedule";
 
 // Assigned → In Progress.
 //
 // Two gates, both server-side so a direct API call can't skip them:
 //   1. the task must be assigned to the caller (Owner/CSR may start any task);
-//   2. cleaning cannot begin before the guest has checked out. Assignments are
-//      now issued when the booking is CONFIRMED, days ahead of the stay, so
-//      without this an advance assignment would let a cleaner mark a room
-//      in-progress while the guest was still in it.
+//   2. cleaning cannot begin while the guest is still in the room. It opens
+//      as soon as EITHER the booking has been marked checked out (so an early
+//      checkout frees the room immediately) OR the scheduled checkout time has
+//      arrived. Assignments are issued when the booking is CONFIRMED, days
+//      ahead of the stay, so without this an advance assignment would let a
+//      cleaner mark a room in-progress while the guest was still in it.
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const guard = await requireCleaningTaskAccess(id);
@@ -54,7 +57,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 
     const dueAt = row.due_at ? new Date(row.due_at) : null;
-    if (dueAt && Date.now() < dueAt.getTime()) {
+    const checkedOut = CHECKED_OUT_STATUSES.includes(String(row.booking_status));
+    if (!checkedOut && dueAt && Date.now() < dueAt.getTime()) {
       const when = dueAt.toLocaleString("en-PH", {
         timeZone: "Asia/Manila",
         month: "short",
@@ -65,7 +69,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       return NextResponse.json(
         {
           success: false,
-          error: `${row.room_name ?? "This room"} is still occupied. Cleaning can start after the guest checks out on ${when}.`,
+          error: `${row.room_name ?? "This room"} is still occupied. Cleaning can start once the guest is checked out, or from the scheduled checkout on ${when}.`,
           startsAt: dueAt.toISOString(),
         },
         { status: 409 }

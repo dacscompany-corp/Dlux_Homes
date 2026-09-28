@@ -24,8 +24,14 @@ export type GateTask = {
 export type GateResult = {
   ok: boolean;
   totalTasks: number;
-  /** Ticked-off count, for the progress line. */
+  /** Ticked-off count (a photo ticks its task on upload). */
   completedTasks: number;
+  /**
+   * Tasks that are fully done — ticked AND photographed. This is what the
+   * portals' "X of N done" shows, so the header and the "photos still needed"
+   * bar can never disagree.
+   */
+  doneTasks: number;
   /** Tasks the cleaner hasn't ticked yet. */
   incomplete: GateTask[];
   /** Tasks with no successfully uploaded photo. */
@@ -74,10 +80,12 @@ export function evaluateChecklistGate(tasks: GateTask[], options: GateOptions = 
   const incomplete = tasks.filter((t) => !t.completed);
   const missingPhotos = tasks.filter((t) => !t.hasPhoto);
   const completedTasks = tasks.length - incomplete.length;
+  const doneTasks = tasks.filter((t) => t.completed && t.hasPhoto).length;
 
   const base: Omit<GateResult, "ok" | "error"> = {
     totalTasks: tasks.length,
     completedTasks,
+    doneTasks,
     incomplete,
     missingPhotos,
     pendingUploads,
@@ -107,6 +115,19 @@ export function evaluateChecklistGate(tasks: GateTask[], options: GateOptions = 
       ...base,
       ok: false,
       error: `${failed.length} photo upload${failed.length === 1 ? "" : "s"} failed — try again: ${nameList(failed)}`,
+    };
+  }
+
+  // A photo ticks its task on upload, so an unticked task that also has no
+  // photo is ONE outstanding step. Only when some unticked task already HAS a
+  // photo (the cleaner unticked it) is ticking a separate thing to report.
+  const photoIds = new Set(missingPhotos.map((t) => t.id));
+  const tickOnly = incomplete.filter((t) => !photoIds.has(t.id));
+  if (missingPhotos.length > 0 && tickOnly.length === 0) {
+    return {
+      ...base,
+      ok: false,
+      error: `${missingPhotos.length} task${missingPhotos.length === 1 ? "" : "s"} still need a photo: ${nameList(missingPhotos)}`,
     };
   }
 

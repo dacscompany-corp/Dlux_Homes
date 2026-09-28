@@ -16,9 +16,14 @@ const en = {
   hello: "Good day,",
   nextUp: "Your next room",
   checkoutAt: "Guest checked out",
+  checksOutAt: "Guest checks out",
+  stayDay: "Daycation",
+  stayNight: "Nightcation",
   directions: "Directions",
   start: "Start cleaning",
   cont: "Continue cleaning",
+  fixCont: "Fix & continue",
+  preview: "Preview room",
   alsoToday: "Also today",
   comingUp: "Coming up",
   allDoneToday: "All rooms are done for today.",
@@ -37,7 +42,7 @@ const en = {
   // Room / checklist
   back: "Back",
   problem: "Problem?",
-  tapHint: "Tick each task and add a photo of it.",
+  tapHint: "Take a photo of each task — that ticks it off.",
   finish: "I'm done — send for checking",
   sending: "Sending…",
   sentBack: "The office asked you to fix:",
@@ -94,7 +99,7 @@ const en = {
 
   steps: [
     "Tap Start cleaning on your room.",
-    "Tick each task and take a photo of it.",
+    "Take a photo of each task — that ticks it off.",
     "Tap I'm done. The office will check.",
   ],
   quick: ["I'm on my way", "I'm done", "I need supplies", "Running late"],
@@ -105,8 +110,12 @@ const en = {
   doneBody: (room: string) => `The office will check ${room}. We'll message you if anything needs fixing.`,
   forRoom: (room: string) => `For ${room}`,
   roomsLeft: (n: number) => `${n} ${n === 1 ? "room" : "rooms"} to clean`,
-  opensAt: (when: string) => `Guest still checked in. You can start after checkout — ${when}.`,
+  opensAt: (when: string) => `Guest still checked in. You can start once they're checked out, or at checkout time — ${when}.`,
   photosLeft: (n: number) => `${n} ${n === 1 ? "photo" : "photos"} still needed`,
+  stayOvernight: (nights: number) => (nights <= 1 ? "Overnight" : `${nights} nights`),
+  guestOf: (name: string) => `Guest: ${name}`,
+  guests: (adults: number, children: number) =>
+    `${adults} ${adults === 1 ? "adult" : "adults"}${children > 0 ? `, ${children} ${children === 1 ? "child" : "children"}` : ""}`,
 };
 
 export type CleanerStrings = typeof en;
@@ -115,9 +124,14 @@ const tl: CleanerStrings = {
   hello: "Magandang araw,",
   nextUp: "Susunod mong kwarto",
   checkoutAt: "Nag-check out ang guest",
+  checksOutAt: "Magche-check out ang guest",
+  stayDay: "Daycation",
+  stayNight: "Nightcation",
   directions: "Direksyon",
   start: "Simulan ang paglilinis",
   cont: "Ituloy ang paglilinis",
+  fixCont: "Ayusin at ituloy",
+  preview: "Silipin ang kwarto",
   alsoToday: "Ngayong araw din",
   comingUp: "Mga susunod",
   allDoneToday: "Tapos na lahat ng kwarto ngayon.",
@@ -134,7 +148,7 @@ const tl: CleanerStrings = {
 
   back: "Bumalik",
   problem: "May problema?",
-  tapHint: "I-tsek ang bawat gawain at kunan ito ng litrato.",
+  tapHint: "Kunan ng litrato ang bawat gawain — matsetsek na ito.",
   finish: "Tapos na — ipasuri na",
   sending: "Ipinapadala…",
   sentBack: "Pinapaayos ng opisina:",
@@ -186,7 +200,7 @@ const tl: CleanerStrings = {
 
   steps: [
     "Pindutin ang Simulan sa iyong kwarto.",
-    "I-tsek ang bawat gawain at kunan ito ng litrato.",
+    "Kunan ng litrato ang bawat gawain — matsetsek na ito.",
     "Pindutin ang Tapos na. Susuriin ng opisina.",
   ],
   quick: ["Papunta na ako", "Tapos na ako", "Kailangan ko ng supplies", "Male-late ako"],
@@ -196,8 +210,11 @@ const tl: CleanerStrings = {
   doneBody: (room) => `Susuriin ng opisina ang ${room}. Magme-message kami kung may kailangang ayusin.`,
   forRoom: (room) => `Para sa ${room}`,
   roomsLeft: (n) => `${n} kwarto pang lilinisin`,
-  opensAt: (when) => `Nandiyan pa ang guest. Puwede kang magsimula pag-check out — ${when}.`,
+  opensAt: (when) => `Nandiyan pa ang guest. Puwede kang magsimula kapag naka-check out na sila, o sa oras ng check out — ${when}.`,
   photosLeft: (n) => `${n} litrato pa ang kailangan`,
+  stayOvernight: (nights) => (nights <= 1 ? "Overnight" : `${nights} gabi`),
+  guestOf: (name) => `Bisita: ${name}`,
+  guests: (adults, children) => `${adults} matanda${children > 0 ? `, ${children} bata` : ""}`,
 };
 
 export const CLEANER_STRINGS: Record<CleanerLanguage, CleanerStrings> = { en, tl };

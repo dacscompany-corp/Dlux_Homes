@@ -31,7 +31,7 @@ import toast from "react-hot-toast";
 import {
   Check, ChevronLeft, ChevronRight, Clock, MapPin, AlertTriangle, Camera,
   Image as ImageIcon, Phone, Home as HomeIcon, MessageSquare, LifeBuoy,
-  Wrench, Droplet, Package, HelpCircle, LogOut, CheckCircle2,
+  Wrench, Droplet, Package, HelpCircle, LogOut, CheckCircle2, Users,
 } from "lucide-react";
 import ImageThumb from "@/components/ImageThumb";
 import { imageFileError } from "@/lib/validateImageFile";
@@ -54,7 +54,7 @@ import {
   useCompleteCleaningMutation,
 } from "@/redux/api/cleanersApi";
 import { useAssignmentChecklist, gateErrorMessage } from "@/components/admin/cleaners/useAssignmentChecklist";
-import { canStartCleaning, cleaningDueAt } from "@/lib/cleaning-schedule";
+import { canStartCleaning, cleaningDueAt, stayKindFor, type StayKind } from "@/lib/cleaning-schedule";
 import { translateCategory, translateTask } from "@/lib/checklist-translations";
 import {
   CLEANER_STRINGS,
@@ -182,10 +182,23 @@ type Room = {
   checkoutTime: string;
   /** Local day the cleaning is due (the guest's checkout). */
   date: Date | null;
-  /** Exact due time — cleaning can't start before it. */
+  /** Exact due time — cleaning can start from it. */
   dueAt: Date | null;
+  /** Booking status — once the guest is checked out the room opens early. */
+  bookingStatus: string | null;
+  /** Guest first name only — no contact details reach the cleaner. */
+  guestName: string;
+  /** Party size, for towels/linens; null when the booking didn't record it. */
+  adults: number | null;
+  children: number;
+  stay: { kind: StayKind; nights: number };
   note: string;
 };
+
+/** The fields canStartCleaning needs, from a Room. */
+function roomSchedule(r: Room) {
+  return { scheduled_for: r.dueAt?.toISOString() ?? null, booking_status: r.bookingStatus };
+}
 
 /** "Sep 29, 12:00 PM" — when a not-yet-startable room opens up. */
 function formatDue(d: Date | null, lang: CleanerLanguage): string {
@@ -259,6 +272,11 @@ export default function CleanerMobilePortal() {
           checkoutTime: formatTime(r.check_out_time),
           date: dueAt ? new Date(dueAt.getFullYear(), dueAt.getMonth(), dueAt.getDate()) : toLocalDate(r.check_out_date),
           dueAt,
+          bookingStatus: r.booking_status ? String(r.booking_status) : null,
+          guestName: String(r.guest_first_name ?? "").trim(),
+          adults: r.adults == null ? null : Number(r.adults),
+          children: Number(r.children ?? 0),
+          stay: stayKindFor(r),
           note: r.inspection_note ? String(r.inspection_note) : "",
         };
       });
@@ -296,18 +314,14 @@ export default function CleanerMobilePortal() {
       : null
   );
   const categories = ck.checklist?.categories ?? [];
-  const doneCount = ck.gate.completedTasks;
+  // Done = ticked AND photographed, so this line and the "photos still
+  // needed" bar at the bottom always agree.
+  const doneCount = ck.gate.doneTasks;
   const totalCount = ck.gate.totalTasks;
   const pct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
   // Ticking and photographing are only open while the room is In Progress —
   // the server enforces the same; this just stops the phone offering it.
   const canEditChecklist = active?.status === "in-progress";
-
-  const toggleTask = async (taskId: string, completed: boolean) => {
-    if (!canEditChecklist) return;
-    const res = await ck.toggleTask(taskId, completed);
-    if (!res.ok) toast.error(res.error || (lang === "tl" ? "Hindi na-update ang gawain" : "Could not update that task"));
-  };
 
   const pickTaskPhoto = (taskId: string) => {
     if (!canEditChecklist) return;
@@ -331,7 +345,7 @@ export default function CleanerMobilePortal() {
   const openRoom = async (room: Room) => {
     setActiveId(room.id);
     setScreen("room");
-    if (room.status === "pending" && canStartCleaning({ scheduled_for: room.dueAt?.toISOString() ?? null })) {
+    if (room.status === "pending" && canStartCleaning(roomSchedule(room))) {
       try { await startCleaningM(room.id).unwrap(); }
       catch (err) { toast.error(gateErrorMessage(err, lang === "tl" ? "Hindi nasimulan" : "Could not start this room")); }
     }
@@ -509,6 +523,20 @@ export default function CleanerMobilePortal() {
 
   const showTabs = screen === "home" || screen === "messages" || screen === "help";
 
+  // ── Booking details on each card ──────────────────────────────────────────
+  // Every card is the same property, so the name alone can't tell two jobs
+  // apart — these lines can: which booking, what kind of stay, when the guest
+  // leaves (with the date), and how many people to reset the room for.
+  const stayText = (r: Room) =>
+    r.stay.kind === "day" ? t.stayDay : r.stay.kind === "night" ? t.stayNight : t.stayOvernight(r.stay.nights);
+  const guestText = (r: Room) =>
+    [r.guestName ? t.guestOf(r.guestName) : null, r.adults != null ? t.guests(r.adults, r.children) : null]
+      .filter(Boolean)
+      .join(" · ");
+  // "checked out" only once it's true — early Check Out or the time has passed.
+  const outText = (r: Room) =>
+    `${canStartCleaning(roomSchedule(r)) ? t.checkoutAt : t.checksOutAt} · ${formatDue(r.dueAt, lang)}`;
+
   // ── Shared bits ────────────────────────────────────────────────────────────
   const sectionLabel = (text: string): React.ReactElement => (
     <div style={{ fontSize: 14, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", color: C.goldInk, marginBottom: 10 }}>
@@ -590,11 +618,20 @@ export default function CleanerMobilePortal() {
               <div style={{ background: C.ink, color: C.onDark, borderRadius: 20, padding: "22px 20px 20px", marginBottom: 28 }}>
                 <div style={{ fontSize: 13, letterSpacing: "0.08em", textTransform: "uppercase", color: C.gold, fontWeight: 600 }}>{t.nextUp}</div>
                 <div style={{ fontFamily: SERIF, fontSize: 38, lineHeight: 1.05, marginTop: 8 }}>{next.name}</div>
+                <div style={{ fontSize: 15, color: C.onDarkSoft, marginTop: 8 }}>
+                  {next.bookingRef} · <strong style={{ color: C.gold, fontWeight: 600 }}>{stayText(next)}</strong>
+                </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16, fontSize: 17 }}>
-                  {next.checkoutTime && (
+                  {next.dueAt && (
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       <Clock className="w-[22px] h-[22px] flex-shrink-0" strokeWidth={2} style={{ color: C.gold }} />
-                      <span>{t.checkoutAt} <strong style={{ fontWeight: 700 }}>{next.checkoutTime}</strong></span>
+                      <span>{outText(next)}</span>
+                    </div>
+                  )}
+                  {guestText(next) && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <Users className="w-[22px] h-[22px] flex-shrink-0" strokeWidth={2} style={{ color: C.gold }} />
+                      <span>{guestText(next)}</span>
                     </div>
                   )}
                   <div style={{ display: "flex", alignItems: "center", gap: 10, color: C.onDarkSoft }}>
@@ -606,7 +643,7 @@ export default function CleanerMobilePortal() {
                     }}>{t.directions}</a>
                   </div>
                 </div>
-                {next.status === "pending" && next.dueAt && !canStartCleaning({ scheduled_for: next.dueAt.toISOString() }) && (
+                {next.status === "pending" && next.dueAt && !canStartCleaning(roomSchedule(next)) && (
                   <div style={{ marginTop: 16, background: "rgba(250,247,241,0.08)", color: C.onDarkSoft, borderRadius: 12, padding: "12px 14px", fontSize: 16, lineHeight: 1.4 }}>
                     {t.opensAt(formatDue(next.dueAt, lang))}
                   </div>
@@ -617,14 +654,30 @@ export default function CleanerMobilePortal() {
                     <div>{next.note}</div>
                   </div>
                 )}
-                <button type="button" onClick={() => openRoom(next)} style={{
-                  marginTop: 20, width: "100%", height: 64, border: 0, borderRadius: 14, background: C.gold,
-                  color: C.ink, font: `700 20px ${SANS}`, cursor: "pointer", display: "flex",
-                  alignItems: "center", justifyContent: "center", gap: 10,
-                }}>
-                  {next.status === "in-progress" ? t.cont : t.start}
-                  <ChevronRight className="w-[22px] h-[22px]" strokeWidth={2.5} />
-                </button>
+                {(() => {
+                  // One button, three looks (same rule as desktop): a real Start
+                  // once the room is open, Continue / Fix & continue while
+                  // cleaning, and only a quiet Preview while the guest is in.
+                  const locked = next.status === "pending" && !canStartCleaning(roomSchedule(next));
+                  const label = locked
+                    ? t.preview
+                    : next.status === "in-progress"
+                      ? (next.note ? t.fixCont : t.cont)
+                      : t.start;
+                  return (
+                    <button type="button" onClick={() => openRoom(next)} style={{
+                      marginTop: 20, width: "100%", height: locked ? 52 : 64, borderRadius: 14,
+                      border: locked ? `1px solid ${C.onDarkFaint}` : 0,
+                      background: locked ? "transparent" : C.gold,
+                      color: locked ? C.onDarkSoft : C.ink,
+                      font: `${locked ? 600 : 700} ${locked ? 17 : 20}px ${SANS}`, cursor: "pointer", display: "flex",
+                      alignItems: "center", justifyContent: "center", gap: 10,
+                    }}>
+                      {label}
+                      <ChevronRight className="w-[22px] h-[22px]" strokeWidth={2.5} />
+                    </button>
+                  );
+                })()}
               </div>
             ) : tasksLoading ? (
               <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 20, padding: "26px 20px", marginBottom: 28, fontSize: 17, color: C.muted }}>
@@ -662,6 +715,10 @@ export default function CleanerMobilePortal() {
                         </span>
                         <span style={{ flex: 1, minWidth: 0 }}>
                           <span style={{ display: "block", fontSize: 18, fontWeight: 600 }}>{r.name}</span>
+                          <span style={{ display: "block", fontSize: 14, color: C.muted, marginTop: 2 }}>
+                            {r.bookingRef} · {stayText(r)}
+                          </span>
+                          <span style={{ display: "block", fontSize: 14, color: C.muted }}>{outText(r)}</span>
                           <span style={{ display: "block", fontSize: 15, color: chip.fg, marginTop: 2 }}>{t[chip.label] as string}</span>
                         </span>
                         {isOpenRoom && <ChevronRight className="w-5 h-5 flex-shrink-0" style={{ color: C.creamLine }} />}
@@ -685,6 +742,9 @@ export default function CleanerMobilePortal() {
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: 14, color: C.muted }}>{formatDayLabel(r.date as Date, new Date(), lang)}</div>
                     <div style={{ fontSize: 17, fontWeight: 600, marginTop: 2 }}>{r.name}</div>
+                    <div style={{ fontSize: 14, color: C.muted, marginTop: 2 }}>
+                      {r.bookingRef} · {stayText(r)}{guestText(r) ? ` · ${guestText(r)}` : ""}
+                    </div>
                   </div>
                   <div style={{ fontSize: 15, color: C.muted, flexShrink: 0 }}>{r.checkoutTime}</div>
                 </div>
@@ -700,8 +760,13 @@ export default function CleanerMobilePortal() {
             <div style={{ flex: 1, padding: "20px 16px 120px" }}>
               <div style={{ fontFamily: SERIF, fontSize: 36, lineHeight: 1.05 }}>{active?.name ?? "—"}</div>
               <div style={{ fontSize: 15, color: C.muted, marginTop: 6 }}>
-                {active?.checkoutTime ? `${t.checkoutAt} ${active.checkoutTime} · ` : ""}{active?.bookingRef}
+                {active ? `${active.bookingRef} · ${stayText(active)}` : ""}
               </div>
+              {active && (
+                <div style={{ fontSize: 15, color: C.muted, marginTop: 2 }}>
+                  {outText(active)}{guestText(active) ? ` · ${guestText(active)}` : ""}
+                </div>
+              )}
 
               {active?.note && active.status === "in-progress" && (
                 <div style={{ marginTop: 14, background: C.violetBg, color: C.violetInk, borderRadius: 12, padding: "12px 14px", fontSize: 16, lineHeight: 1.4 }}>
@@ -712,7 +777,7 @@ export default function CleanerMobilePortal() {
 
               {active?.status === "pending" && (
                 <div style={{ marginTop: 14, background: C.amberBg, color: C.amberInk, borderRadius: 12, padding: "12px 14px", fontSize: 16, lineHeight: 1.4 }}>
-                  {active.dueAt && !canStartCleaning({ scheduled_for: active.dueAt.toISOString() })
+                  {active.dueAt && !canStartCleaning(roomSchedule(active))
                     ? t.opensAt(formatDue(active.dueAt, lang))
                     : t.notStarted}
                 </div>
@@ -749,7 +814,7 @@ export default function CleanerMobilePortal() {
                   </div>
                 )
               ) : categories.map((cat) => {
-                const catDone = cat.tasks.filter((x) => x.completed).length;
+                const catDone = cat.tasks.filter((x) => ck.isDone(x.id)).length;
                 return (
                   <div key={cat.category} style={{ marginTop: 22 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "0 4px 8px" }}>
@@ -763,18 +828,19 @@ export default function CleanerMobilePortal() {
                         const photo = ck.photoFor(item.id);
                         const upload = ck.uploadStateFor(item.id);
                         const uploadError = ck.uploadErrorFor(item.id);
-                        // Ticked but not yet proven — flag it on the row, so the
-                        // cleaner can see exactly which photos are still owed.
-                        const owesPhoto = item.completed && !photo && upload !== "uploading";
+                        // One action per task: the photo. Tapping anywhere on
+                        // the row opens the camera, and the photo ticks the task
+                        // on the server — no separate checkbox step.
+                        const done = ck.isDone(item.id);
                         return (
                           <div key={item.id} style={{
                             borderTop: i ? `1px solid ${C.hair}` : 0,
-                            background: item.completed ? "#FBFAF6" : C.card,
+                            background: done ? "#FBFAF6" : C.card,
                           }}>
                             <div style={{ display: "flex", alignItems: "center" }}>
-                              <button type="button" onClick={() => toggleTask(item.id, item.completed)}
-                                disabled={!canEditChecklist}
-                                aria-pressed={item.completed}
+                              <button type="button" onClick={() => pickTaskPhoto(item.id)}
+                                disabled={!canEditChecklist || upload === "uploading"}
+                                aria-label={`${translateTask(item.task, lang)} — ${photo ? t.replacePhoto : t.addPhoto}`}
                                 style={{
                                   flex: 1, minWidth: 0, minHeight: 64, padding: "12px 8px 12px 14px", border: 0,
                                   background: "transparent", display: "flex", alignItems: "center", gap: 14,
@@ -782,14 +848,14 @@ export default function CleanerMobilePortal() {
                                 }}>
                                 <span style={{
                                   width: 32, height: 32, borderRadius: "50%",
-                                  border: `2px solid ${item.completed ? C.green : C.creamLine}`,
-                                  background: item.completed ? C.green : C.card,
+                                  border: `2px solid ${done ? C.green : C.creamLine}`,
+                                  background: done ? C.green : C.card,
                                   display: "grid", placeItems: "center", flexShrink: 0,
-                                  opacity: canEditChecklist || item.completed ? 1 : 0.5,
+                                  opacity: canEditChecklist || done ? 1 : 0.5,
                                 }}>
-                                  {item.completed && <Check className="w-[18px] h-[18px]" strokeWidth={3} style={{ color: "#fff" }} />}
+                                  {done && <Check className="w-[18px] h-[18px]" strokeWidth={3} style={{ color: "#fff" }} />}
                                 </span>
-                                <span style={{ fontSize: 17, lineHeight: 1.35, color: item.completed ? C.faint : C.ink }}>
+                                <span style={{ fontSize: 17, lineHeight: 1.35, color: done ? C.faint : C.ink }}>
                                   {translateTask(item.task, lang)}
                                 </span>
                               </button>
@@ -813,14 +879,12 @@ export default function CleanerMobilePortal() {
                                     : <Camera className="w-[22px] h-[22px]" strokeWidth={1.8} />}
                               </button>
                             </div>
-                            {(upload || owesPhoto) && (
+                            {upload && (
                               <div style={{
                                 padding: "0 14px 10px 60px", fontSize: 14, lineHeight: 1.35,
                                 color: upload === "failed" ? C.amberInk : upload === "uploading" ? C.muted : C.goldInk,
                               }}>
-                                {upload === "uploading" ? t.uploadingPhoto
-                                  : upload === "failed" ? (uploadError || t.photoFailed)
-                                  : t.needsPhoto}
+                                {upload === "uploading" ? t.uploadingPhoto : (uploadError || t.photoFailed)}
                               </div>
                             )}
                           </div>
@@ -859,9 +923,20 @@ export default function CleanerMobilePortal() {
                   ) : (
                     <>
                       <span>
-                        {ck.gate.incomplete.length > 0 ? t.left(ck.gate.incomplete.length) : null}
-                        {ck.gate.incomplete.length > 0 && ck.gate.missingPhotos.length > 0 ? " · " : null}
-                        {ck.gate.missingPhotos.length > 0 ? t.photosLeft(ck.gate.missingPhotos.length) : null}
+                        {(() => {
+                          // A photo ticks its task, so an unticked task that
+                          // also lacks a photo is ONE thing left, not two.
+                          // Only a task ticked by hand without a photo, or
+                          // unticked after its photo, is counted separately.
+                          const photoIds = new Set(ck.gate.missingPhotos.map((x) => x.id));
+                          const tickOnly = ck.gate.incomplete.filter((x) => !photoIds.has(x.id)).length;
+                          const photos = ck.gate.missingPhotos.length;
+                          const parts = [
+                            photos > 0 ? t.photosLeft(photos) : null,
+                            tickOnly > 0 ? t.left(tickOnly) : null,
+                          ].filter(Boolean);
+                          return parts.join(" · ");
+                        })()}
                         {ck.gate.incomplete.length === 0 && ck.gate.missingPhotos.length === 0 && ck.gate.error}
                       </span>
                     </>

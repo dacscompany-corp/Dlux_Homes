@@ -121,6 +121,23 @@ export async function POST(req: NextRequest) {
          RETURNING image_url`,
         [checklistId, taskId, uploadResult.url, uploadResult.public_id],
       );
+      // The photo IS the proof the task was done, so recording it ticks the
+      // task in the same step — one action for the cleaner instead of a photo
+      // plus a separate checkbox (owner request, 2026-09-28). Same transaction,
+      // so a tick never exists without the photo that justifies it. The
+      // cleaner can still untick; submission still requires both.
+      await client.query(
+        `UPDATE cleaning_tasks
+         SET completed = true, updated_at = timezone('Asia/Manila', NOW())
+         WHERE id = $1::uuid AND checklist_id = $2::uuid AND completed = false`,
+        [taskId, checklistId],
+      );
+      await client.query(
+        `UPDATE cleaning_checklists
+         SET status = 'in_progress', updated_at = timezone('Asia/Manila', NOW())
+         WHERE id = $1::uuid AND status = 'pending'`,
+        [checklistId],
+      );
       await client.query("COMMIT");
       savedUrl = saved.rows[0]?.image_url ?? null;
     } catch (err) {

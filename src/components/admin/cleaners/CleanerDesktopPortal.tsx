@@ -163,6 +163,7 @@ export default function CleanerDesktopPortal() {
           havenId: t.haven_id ? String(t.haven_id) : "",
           bookingUuid: t.booking_uuid ? String(t.booking_uuid) : "",
           scheduled_for: t.scheduled_for ?? null,
+          booking_status: t.booking_status ?? null,
           check_out_date: t.check_out_date,
           check_out_time: t.check_out_time,
           dueAt,
@@ -279,17 +280,26 @@ export default function CleanerDesktopPortal() {
   const startCleaning = async (id: string) => {
     const a = assignments.find((x) => x.id === id);
     if (a && !canStartCleaning(a)) {
-      toast.error(`Guest still checked in — cleaning opens ${formatDue(a.dueAt)}`);
+      toast.error(`Guest still checked in — cleaning opens at checkout (${formatDue(a.dueAt)}) or once they're checked out`);
       return;
     }
+    // Starting a room opens its checklist straight away — one click from
+    // "Start" to ticking tasks, no separate checklist button.
+    setChecklistOpenFor(id);
     try { await startCleaningM(id).unwrap(); toast.success("Cleaning started"); }
     catch (err) { toast.error(gateErrorMessage(err, "Could not start cleaning")); }
   };
 
-  // Which assignment's Cleaning Checklist is expanded inline, if any — set by
-  // clicking that assignment's "Cleaning Checklist" button.
+  // Which assignment's checklist is expanded inline. There's no "Cleaning
+  // Checklist" button any more (owner spec, 2026-09-28: one button per room):
+  // it opens when cleaning starts, via "Continue checklist", and by itself for
+  // the room currently being cleaned.
   const [checklistOpenFor, setChecklistOpenFor] = useState<string | null>(null);
   const activeAssignment = assignments.find((a) => a.id === checklistOpenFor);
+  const inProgressId = assignments.find((a) => a.status === "in-progress")?.id ?? null;
+  useEffect(() => {
+    if (!checklistOpenFor && inProgressId) setChecklistOpenFor(inProgressId);
+  }, [checklistOpenFor, inProgressId]);
 
   // ── Per-assignment checklist, photo proof and gate — the same hook the
   // phone view uses, so both agree on what's done and what's missing.
@@ -304,7 +314,8 @@ export default function CleanerDesktopPortal() {
   // falls back to whatever it was typed in, since it has no dictionary entry.
   const [checklistLang, setChecklistLang] = useState<ChecklistLanguage>("en");
   const checklistCategories = ck.checklist?.categories ?? [];
-  const completedCount = ck.gate.completedTasks;
+  // Done = ticked AND photographed (a photo ticks its task on upload).
+  const completedCount = ck.gate.doneTasks;
   const checklistTotal = ck.gate.totalTasks;
   const progressPercent = checklistTotal ? Math.round((completedCount / checklistTotal) * 100) : 0;
   const checklistEditable = activeAssignment?.status === "in-progress";
@@ -334,13 +345,46 @@ export default function CleanerDesktopPortal() {
     }
   };
 
-  const toggleChecklistItem = async (taskId: string, currentlyCompleted: boolean) => {
-    if (!checklistEditable) {
-      toast.error("Start cleaning this room first — the checklist opens once it's In Progress.");
-      return;
+  // The ONE action a room card offers, by state (owner spec, 2026-09-28):
+  //   guest still in      → nothing (the card says when it opens)
+  //   ready to clean      → Start cleaning (starts + opens the checklist)
+  //   cleaning            → Continue checklist / Fix & continue (sent back)
+  //   checklist open      → nothing here; the sticky bar at the bottom of the
+  //                         checklist carries progress and "Send for inspection"
+  //   with the office     → status only
+  // `fromDashboard` jumps to Assignments so the checklist is where they land.
+  type CardAssignment = (typeof assignments)[number];
+  const renderMainAction = (a: CardAssignment, fromDashboard = false) => {
+    const cs = a.status;
+    const base = "inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white cursor-pointer";
+    if (cs === "pending") {
+      if (!canStartCleaning(a)) return null;
+      return (
+        <button type="button" className={base} style={{ background: "#1f1b16" }}
+          onClick={() => { if (fromDashboard) setActiveNav("Assignments"); startCleaning(a.id); }}>
+          <Circle className="w-4 h-4" />Start cleaning
+        </button>
+      );
     }
-    const res = await ck.toggleTask(taskId, currentlyCompleted);
-    if (!res.ok) toast.error(res.error || "Could not update checklist item");
+    if (cs === "in-progress") {
+      if (!fromDashboard && checklistOpenFor === a.id) return null;
+      return (
+        <button type="button" className={base} style={{ background: "#B07848" }}
+          onClick={() => { if (fromDashboard) setActiveNav("Assignments"); setChecklistOpenFor(a.id); }}>
+          <CheckSquare className="w-4 h-4" />{a.inspectionNote ? "Fix & continue" : "Continue checklist"}
+        </button>
+      );
+    }
+    if (cs === "awaiting-inspection") {
+      return <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border" style={{ backgroundColor: "#ede9fe", color: "#5b21b6", borderColor: "#c4b5fd" }}><CheckCircle2 className="w-3.5 h-3.5" />Awaiting Inspection</span>;
+    }
+    return <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border" style={{ backgroundColor: "#d1fae5", color: "#065f46", borderColor: "#6ee7b7" }}><CheckCircle2 className="w-3.5 h-3.5" />Ready</span>;
+  };
+
+  const reportIssueFor = (a: CardAssignment) => {
+    setIssueAssignmentId(a.id);
+    setIssueForm((prev) => ({ ...prev, haven: a.havenId || prev.haven }));
+    setActiveNav("Report an Issue");
   };
 
   const pickChecklistPhoto = (taskId: string) => {
@@ -617,11 +661,8 @@ export default function CleanerDesktopPortal() {
                         <MapPin className="w-3.5 h-3.5" style={{ color: "#8a6a2f" }} />{PROPERTY_ADDRESS}
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
-                        {cs === "pending" && !opensLater && <button onClick={() => startCleaning(a.id)} className="px-3 py-1.5 text-xs font-medium text-white cursor-pointer" style={{ background: "#1f1b16" }}><Circle className="w-3 h-3 inline mr-1" />Start</button>}
+                        {renderMainAction(a, true)}
                         {opensLater && <span className="text-xs" style={{ color: "#92400e" }}>Guest still checked in · opens {formatDue(a.dueAt)}</span>}
-                        {cs === "in-progress"          && <button onClick={() => { setActiveNav("Assignments"); markComplete(a.id); }}  className="px-3 py-1.5 rounded-xl text-xs font-semibold text-white cursor-pointer" style={{ backgroundColor: "#059669" }}><CheckCircle2 className="w-3 h-3 inline mr-1" />Complete</button>}
-                        {cs === "awaiting-inspection"  && <span className="px-3 py-1.5 rounded-xl text-xs font-semibold border" style={{ backgroundColor: "#ede9fe", color: "#5b21b6", borderColor: "#c4b5fd" }}><CheckCircle2 className="w-3 h-3 inline mr-1" />Awaiting Inspection</span>}
-                        {cs === "ready"                && <span className="px-3 py-1.5 rounded-xl text-xs font-semibold border" style={{ backgroundColor: "#d1fae5", color: "#065f46", borderColor: "#6ee7b7" }}><CheckCircle2 className="w-3 h-3 inline mr-1" />Ready</span>}
                       </div>
                     </div>
                   );
@@ -640,7 +681,7 @@ export default function CleanerDesktopPortal() {
                   </div>
                 ) : (
                   <p className="text-sm" style={{ color: "#8B6344" }}>
-                    Each assignment has its own checklist. Tick every task and attach a photo of each one — a room can&apos;t be sent for inspection until both are done.
+                    Each assignment has its own checklist. Attach a photo of each task — the photo ticks it off. A room can&apos;t be sent for inspection until every task has one.
                   </p>
                 )}
               </div>
@@ -720,35 +761,24 @@ export default function CleanerDesktopPortal() {
                     {opensLater && (
                       <div className="rounded-xl p-3 mb-3 border" style={{ backgroundColor: "#fef3c7", borderColor: "#f5d9a8" }}>
                         <p className="text-xs" style={{ color: "#92400e" }}>
-                          Guest still checked in. You can start cleaning after checkout — {formatDue(a.dueAt)}.
+                          Guest still checked in. You can start once they&apos;re checked out, or from the scheduled checkout — {formatDue(a.dueAt)}.
                         </p>
                       </div>
                     )}
-                    <div className="flex flex-wrap gap-2">
-                      {cs === "pending" && !opensLater && <button onClick={() => startCleaning(a.id)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white cursor-pointer" style={{ background: "#1f1b16" }}><Circle className="w-3.5 h-3.5" />Start Cleaning</button>}
-                      {cs === "in-progress"          && <button onClick={() => markComplete(a.id)}  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-white cursor-pointer" style={{ backgroundColor: "#059669" }}><CheckCircle2 className="w-3.5 h-3.5" />Mark Complete</button>}
-                      {cs === "awaiting-inspection"  && <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border" style={{ backgroundColor: "#ede9fe", color: "#5b21b6", borderColor: "#c4b5fd" }}><CheckCircle2 className="w-3.5 h-3.5" />Awaiting Inspection</div>}
-                      {cs === "ready"                && <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border" style={{ backgroundColor: "#d1fae5", color: "#065f46", borderColor: "#6ee7b7" }}><CheckCircle2 className="w-3.5 h-3.5" />Ready</div>}
-                      <button onClick={() => setChecklistOpenFor((prev) => (prev === a.id ? null : a.id))}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border cursor-pointer transition-colors"
-                        style={{ backgroundColor: checklistOpenFor === a.id ? "#EDE0CE" : "#F7F0E3", color: "#8B6344", borderColor: "#D4BFA0" }}
-                        onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#EDE0CE"}
-                        onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = checklistOpenFor === a.id ? "#EDE0CE" : "#F7F0E3"}>
-                        <CheckSquare className="w-3.5 h-3.5" />Cleaning Checklist
-                      </button>
-                      <button onClick={() => { setIssueAssignmentId(a.id); setIssueForm((prev) => ({ ...prev, haven: a.havenId || prev.haven })); setActiveNav("Report an Issue"); }}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border cursor-pointer transition-colors"
-                        style={{ backgroundColor: "#F7F0E3", color: "#8B6344", borderColor: "#D4BFA0" }}
-                        onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#EDE0CE"}
-                        onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}>
-                        <AlertCircle className="w-3.5 h-3.5" />Report Issue
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-2">{renderMainAction(a)}</div>
+                      {/* A quiet link, not a button — problems can come up at
+                          any step, but they're not the next thing to do. */}
+                      <button type="button" onClick={() => reportIssueFor(a)}
+                        className="inline-flex items-center gap-1 text-xs font-medium cursor-pointer underline underline-offset-2"
+                        style={{ color: "#8B6344" }}>
+                        <AlertCircle className="w-3.5 h-3.5" />Report a problem
                       </button>
                     </div>
 
-                    {/* Cleaning Checklist — inline, scoped to this assignment
-                        (opened via the button above; owner spec, 2026-09-23:
-                        checklist moved into My Assignments instead of its own
-                        page). */}
+                    {/* Cleaning Checklist — inline, scoped to this assignment.
+                        Opens on Start, on "Continue checklist", or by itself
+                        for the room being cleaned. */}
                     {checklistOpenFor === a.id && (
                       <div className="mt-4 pt-4 border-t" style={{ borderColor: "#F7F0E3" }}>
                         <div className="border p-5 mb-4" style={{ borderColor: "#ece5d4" }}>
@@ -769,7 +799,7 @@ export default function CleanerDesktopPortal() {
                             <div className="h-3 rounded-full transition-all duration-500" style={{ width: `${progressPercent}%`, background: "#d4a96a" }} />
                           </div>
                           <p className="text-xs mt-2" style={{ color: "#8B6344" }}>
-                            {completedCount} of {checklistTotal} tasks ticked · {checklistTotal - ck.gate.missingPhotos.length} of {checklistTotal} photographed
+                            {completedCount} of {checklistTotal} done · click a task to add its photo
                           </p>
                           {!checklistEditable && (
                             <p className="text-xs mt-2" style={{ color: "#92400e" }}>
@@ -798,19 +828,25 @@ export default function CleanerDesktopPortal() {
                                 const photo = ck.photoFor(item.id);
                                 const upload = ck.uploadStateFor(item.id);
                                 const uploadError = ck.uploadErrorFor(item.id);
+                                const done = ck.isDone(item.id);
                                 return (
                                 <div key={item.id} style={{ borderTop: idx > 0 ? "1px solid #F7F0E3" : "none" }}>
-                                <label className="flex items-center gap-2 sm:gap-4 px-3 sm:px-5 py-3.5 transition-colors"
+                                {/* One action per task: clicking the row attaches
+                                    its photo, and the photo ticks it — no separate
+                                    checkbox step. */}
+                                <div role="button" tabIndex={checklistEditable ? 0 : -1}
+                                  onClick={() => { if (upload !== "uploading") pickChecklistPhoto(item.id); }}
+                                  onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && upload !== "uploading") { e.preventDefault(); pickChecklistPhoto(item.id); } }}
+                                  className="flex items-center gap-2 sm:gap-4 px-3 sm:px-5 py-3.5 transition-colors"
                                   style={{ cursor: checklistEditable ? "pointer" : "default" }}
                                   onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
                                   onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
                                   <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all"
-                                    role="checkbox" aria-checked={item.completed} aria-disabled={!checklistEditable}
-                                    style={{ borderColor: item.completed ? "#B07848" : "#D4BFA0", backgroundColor: item.completed ? "#B07848" : "transparent", opacity: checklistEditable || item.completed ? 1 : 0.5 }}
-                                    onClick={() => toggleChecklistItem(item.id, item.completed)}>
-                                    {item.completed && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
+                                    aria-hidden="true"
+                                    style={{ borderColor: done ? "#B07848" : "#D4BFA0", backgroundColor: done ? "#B07848" : "transparent", opacity: checklistEditable || done ? 1 : 0.5 }}>
+                                    {done && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
                                   </div>
-                                  <span className="text-sm flex-1 min-w-0" style={{ color: item.completed ? "#A89080" : "#5a4a3a", textDecoration: item.completed ? "line-through" : "none" }}>{translateTask(item.task, checklistLang)}</span>
+                                  <span className="text-sm flex-1 min-w-0" style={{ color: done ? "#A89080" : "#5a4a3a", textDecoration: done ? "line-through" : "none" }}>{translateTask(item.task, checklistLang)}</span>
                                   {photo ? <ImageThumb src={photo} alt={item.task} size={32} /> : null}
                                   <button type="button"
                                     title={upload === "uploading" ? "Uploading…" : photo ? "Replace photo" : "Attach photo"}
@@ -824,9 +860,9 @@ export default function CleanerDesktopPortal() {
                                     }}>
                                     {upload === "failed" ? <AlertTriangle className="w-3.5 h-3.5" /> : <Camera className="w-3.5 h-3.5" />}
                                   </button>
-                                  {item.completed && photo && <span className="hidden sm:inline text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0" style={{ backgroundColor: "#d1fae5", color: "#065f46" }}>Done</span>}
+                                  {done && <span className="hidden sm:inline text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0" style={{ backgroundColor: "#d1fae5", color: "#065f46" }}>Done</span>}
                                   {!photo && upload !== "uploading" && <span className="hidden sm:inline text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0" style={{ backgroundColor: "#fef3c7", color: "#92400e" }}>Photo needed</span>}
-                                </label>
+                                </div>
                                 {upload && (
                                   <p className="px-3 sm:px-5 pb-2 -mt-1 text-xs" style={{ color: upload === "failed" ? "#92400e" : "#8B6344", paddingLeft: 52 }}>
                                     {upload === "uploading" ? "Uploading photo…" : `${uploadError || "Upload failed"} — click the camera to retry.`}
@@ -838,19 +874,30 @@ export default function CleanerDesktopPortal() {
                             </div>
                           ))}
                         </div>
-                        {checklistEditable && checklistTotal > 0 && ck.gate.ok ? (
-                          <div className="p-5 rounded-2xl border text-center" style={{ backgroundColor: "#d1fae5", borderColor: "#6ee7b7" }}>
-                            <CheckCircle2 className="w-8 h-8 mx-auto mb-2" style={{ color: "#059669" }} />
-                            <p className="font-bold" style={{ color: "#065f46" }}>Every task ticked and photographed</p>
-                            <p className="text-sm mt-0.5" style={{ color: "#059669" }}>Send it to the office for inspection.</p>
-                            <button
+                        {/* Sticky finish bar — always in view while working
+                            down a long checklist, so there's no scrolling back
+                            up to finish. Shows progress until everything has a
+                            photo, then becomes the one "Send for inspection". */}
+                        {checklistEditable && checklistTotal > 0 && (
+                          <div className="sticky bottom-0 z-10 -mx-5 px-5 py-3 border-t flex flex-wrap items-center justify-between gap-3"
+                            style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4", boxShadow: "0 -6px 16px rgba(31,27,22,0.06)" }}>
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold" style={{ color: "#1f1b16" }}>
+                                {completedCount} of {checklistTotal} done
+                              </p>
+                              {!ck.gate.ok && (
+                                <p className="text-xs" style={{ color: "#92400e" }}>{ck.gate.error}</p>
+                              )}
+                            </div>
+                            <button type="button"
                               onClick={() => markComplete(a.id)}
-                              className="mt-3 px-5 py-2 text-sm font-medium text-white cursor-pointer"
-                              style={{ backgroundColor: "#059669" }}>Mark Complete — send for inspection</button>
+                              disabled={!ck.gate.ok}
+                              className="inline-flex items-center gap-1.5 px-5 py-2.5 text-sm font-semibold text-white cursor-pointer disabled:cursor-not-allowed"
+                              style={{ backgroundColor: ck.gate.ok ? "#059669" : "#cfc6b6" }}>
+                              <CheckCircle2 className="w-4 h-4" />Send for inspection
+                            </button>
                           </div>
-                        ) : checklistEditable && checklistTotal > 0 ? (
-                          <p className="text-xs text-center" style={{ color: "#92400e" }}>{ck.gate.error}</p>
-                        ) : null}
+                        )}
                       </div>
                     )}
                   </div>

@@ -92,6 +92,8 @@ const BASE_TASK_COLUMNS = `
   b.check_in_time,
   b.check_out_date,
   b.check_out_time,
+  b.adults,
+  b.children,
   bc.scheduled_for,
   bc.cleaning_status,
   bc.assigned_to::text as assigned_cleaner_id,
@@ -467,7 +469,7 @@ export type CleaningAssignmentOutcome = {
   /** Set when the task was deliberately left for Owner/CSR to place by hand. */
   unassignedReason: string | null;
   /** Why nothing happened, when nothing happened. */
-  skipped: "already-assigned" | "booking-not-eligible" | "booking-missing" | null;
+  skipped: "already-assigned" | "already-performed" | "booking-not-eligible" | "booking-missing" | null;
   /**
    * The task was already unassigned for this same reason, so Owner/CSR have
    * been told once — a retry (e.g. the catch-up sweep) doesn't notify again.
@@ -886,6 +888,15 @@ export async function ensureCleaningAssignment(
       const row = existing.rows[0];
       outcome.taskId = row.id;
       previousReason = row.unassigned_reason ?? null;
+
+      // The cleaning was already done (including legacy 'cleaned'/'inspected'
+      // rows that never had an assignee) — there is nothing to hand out, and
+      // re-assigning it would send a cleaner back to a finished room.
+      if (isPerformed(String(row.cleaning_status))) {
+        outcome.skipped = "already-performed";
+        await client.query("COMMIT");
+        return outcome;
+      }
 
       // Already placed — leave manual assignments, in-flight work and finished
       // work exactly as they are, and don't spend a rotation turn.

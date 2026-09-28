@@ -1,3 +1,5 @@
+import { stayTypeCodeFor } from "./bookingWindow";
+
 // When a cleaning is due, and how the portals lay assignments out by day.
 //
 // A cleaning is due at the guest's checkout. The server stores that on
@@ -9,6 +11,8 @@
 
 export type SchedulableTask = {
   scheduled_for?: string | null;
+  /** The booking's own status — 'completed' means the guest has checked out. */
+  booking_status?: string | null;
   check_out_date?: string | null;
   check_out_time?: string | null;
 };
@@ -40,10 +44,51 @@ export function cleaningDueAt(task: SchedulableTask): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-/** True once the guest has checked out and the room may be cleaned. */
+/**
+ * Booking statuses that mean the guest has actually left. 'completed' is what
+ * the Owner/CSR "Check Out" button writes; 'checked-out' is accepted too in
+ * case a caller ever stores it literally.
+ */
+export const CHECKED_OUT_STATUSES: readonly string[] = ["completed", "checked-out"];
+
+/** The guest has been marked checked out, whatever the clock says. */
+export function guestCheckedOut(task: SchedulableTask): boolean {
+  return !!task.booking_status && CHECKED_OUT_STATUSES.includes(task.booking_status);
+}
+
+/**
+ * True once the room may be cleaned: EITHER the guest has been checked out
+ * (an early checkout opens the room immediately) OR the scheduled checkout
+ * time has arrived. Mirrors the server gate in tasks/[id]/start.
+ */
 export function canStartCleaning(task: SchedulableTask, now: Date = new Date()): boolean {
+  if (guestCheckedOut(task)) return true;
   const due = cleaningDueAt(task);
   return !due || now.getTime() >= due.getTime();
+}
+
+export type StayKind = "day" | "night" | "overnight";
+
+/**
+ * Daycation / Nightcation / Overnight for a booking, for the cleaner's card.
+ * Built on stayTypeCodeFor (the booking code's own rule: a ~10h session vs a
+ * ~21h+ stay), then split: a session inside one date is a Daycation, one that
+ * crosses midnight is a Nightcation. `nights` counts calendar nights.
+ */
+export function stayKindFor(task: {
+  check_in_date?: string | null;
+  check_in_time?: string | null;
+  check_out_date?: string | null;
+  check_out_time?: string | null;
+}): { kind: StayKind; nights: number } {
+  const inDay = String(task.check_in_date ?? "").slice(0, 10);
+  const outDay = String(task.check_out_date ?? "").slice(0, 10);
+  const nights = inDay && outDay
+    ? Math.max(0, Math.round((Date.parse(outDay) - Date.parse(inDay)) / 86_400_000))
+    : 0;
+  const code = stayTypeCodeFor(inDay, outDay, task.check_in_time, task.check_out_time);
+  if (code === "10") return { kind: nights === 0 ? "day" : "night", nights };
+  return { kind: "overnight", nights: Math.max(1, nights) };
 }
 
 export function startOfLocalDay(d: Date): Date {

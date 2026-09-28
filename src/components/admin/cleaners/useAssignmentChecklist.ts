@@ -16,7 +16,9 @@
 // submission never throws away progress already made.
 
 import { useCallback, useMemo, useState } from "react";
+import { useAppDispatch } from "@/redux/hooks";
 import {
+  cleanersApi,
   useGetChecklistQuery,
   useToggleChecklistTaskMutation,
   type Checklist,
@@ -36,6 +38,8 @@ export type AssignmentChecklist = {
   gate: GateResult;
   /** URL of the proof photo for a task, including one just uploaded. */
   photoFor: (taskId: string) => string | null;
+  /** Ticked AND photographed — the only state the portals show as done. */
+  isDone: (taskId: string) => boolean;
   uploadStateFor: (taskId: string) => UploadState | null;
   /** Last upload error per task, for inline display. */
   uploadErrorFor: (taskId: string) => string | null;
@@ -59,6 +63,7 @@ export function useAssignmentChecklist(target: Target): AssignmentChecklist {
 
   const { data: checklist, isLoading, isFetching, isError, refetch } = useGetChecklistQuery(args, { skip });
   const [toggleM] = useToggleChecklistTaskMutation();
+  const dispatch = useAppDispatch();
 
   // Photos uploaded this session, shown before the checklist refetch lands.
   const [freshPhotos, setFreshPhotos] = useState<Record<string, string>>({});
@@ -146,6 +151,19 @@ export function useAssignmentChecklist(target: Target): AssignmentChecklist {
           return { ok: false, error: msg };
         }
         setFreshPhotos((p) => ({ ...p, [taskId]: String(body.url) }));
+        // The server ticks the task in the same step as saving its photo, so
+        // show it ticked now rather than after the refetch lands.
+        dispatch(
+          cleanersApi.util.updateQueryData("getChecklist", args, (draft) => {
+            for (const category of draft.categories) {
+              const item = category.tasks.find((t) => t.id === taskId);
+              if (item) {
+                item.completed = true;
+                item.photo_url = String(body.url);
+              }
+            }
+          })
+        );
         setUploads((u) => {
           const next = { ...u };
           delete next[taskId];
@@ -160,7 +178,7 @@ export function useAssignmentChecklist(target: Target): AssignmentChecklist {
         return { ok: false, error: msg };
       }
     },
-    [checklist?.id, refetch],
+    [checklist?.id, refetch, dispatch, args],
   );
 
   return {
@@ -173,6 +191,10 @@ export function useAssignmentChecklist(target: Target): AssignmentChecklist {
     },
     gate,
     photoFor,
+    isDone: (taskId) => {
+      const t = tasks.find((x) => x.id === taskId);
+      return !!t && t.completed && !!(t.photo_url || freshPhotos[taskId]);
+    },
     uploadStateFor: (taskId) => uploads[taskId] ?? null,
     uploadErrorFor: (taskId) => uploadErrors[taskId] ?? null,
     toggleTask,

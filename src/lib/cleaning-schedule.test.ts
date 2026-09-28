@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { canStartCleaning, cleaningDueAt, groupByDueDay } from "./cleaning-schedule";
+import { canStartCleaning, cleaningDueAt, groupByDueDay, stayKindFor } from "./cleaning-schedule";
 
 // Booking times are Manila wall-clock (+08:00). Assertions use exact instants
 // so they hold on any machine, whatever its local timezone.
@@ -58,8 +58,37 @@ describe("canStartCleaning", () => {
     expect(canStartCleaning(task, new Date("2026-10-06T01:00:00Z"))).toBe(true);
   });
 
+  it("opens early once the guest is checked out, whatever the clock says", () => {
+    const early = new Date("2026-10-05T01:00:00Z"); // 3 hours before checkout
+    expect(canStartCleaning({ ...task, booking_status: "completed" }, early)).toBe(true);
+    expect(canStartCleaning({ ...task, booking_status: "checked-out" }, early)).toBe(true);
+  });
+
+  it("stays closed for a guest still in the room before checkout time", () => {
+    const early = new Date("2026-10-05T01:00:00Z");
+    for (const status of ["approved", "checked-in", "on-going"]) {
+      expect(canStartCleaning({ ...task, booking_status: status }, early)).toBe(false);
+    }
+  });
+
   it("doesn't block a task with no dates at all", () => {
     expect(canStartCleaning({}, new Date())).toBe(true);
+  });
+});
+
+describe("stayKindFor", () => {
+  it("reads the three stay types from the booking's own times", () => {
+    expect(stayKindFor({ check_in_date: "2026-09-28", check_in_time: "07:00", check_out_date: "2026-09-28", check_out_time: "17:00" }))
+      .toEqual({ kind: "day", nights: 0 });
+    expect(stayKindFor({ check_in_date: "2026-09-27", check_in_time: "19:00", check_out_date: "2026-09-28", check_out_time: "05:00" }))
+      .toEqual({ kind: "night", nights: 1 });
+    expect(stayKindFor({ check_in_date: "2026-09-25", check_in_time: "19:00", check_out_date: "2026-09-26", check_out_time: "17:00" }))
+      .toEqual({ kind: "overnight", nights: 1 });
+  });
+
+  it("counts nights on a multi-night stay", () => {
+    expect(stayKindFor({ check_in_date: "2026-11-05", check_in_time: "19:00:00", check_out_date: "2026-11-24", check_out_time: "17:00:00" }))
+      .toEqual({ kind: "overnight", nights: 19 });
   });
 });
 
