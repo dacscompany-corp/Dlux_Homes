@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
 import { upload_image_from_form } from "@/backend/utils/fileUpload";
-import { requireEmployee } from "@/backend/utils/requireAdmin";
+import { requireAdmin } from "@/backend/utils/requireAdmin";
+
+// Security-deposit payment proof. Payment records are Owner/CSR business — a
+// cleaner needs none of it to clean a room — so both reading and replacing the
+// proof are admin-only (this sat under /cleaners with requireEmployee(), which
+// let any cleaner read or overwrite any booking's deposit proof).
 
 export async function GET(req: NextRequest) {
-  const guard = await requireEmployee();
+  const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const bookingUuid = req.nextUrl.searchParams.get("booking_uuid");
   if (!bookingUuid) {
@@ -27,7 +32,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const guard = await requireEmployee();
+  const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const client = await pool.connect();
   try {

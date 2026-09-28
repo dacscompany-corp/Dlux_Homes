@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
 import { createNotificationsForRoles } from "@/backend/utils/notificationHelper";
 import { requireBookingAccess } from "@/backend/utils/requireAdmin";
+import { releaseCleaningForCancelledBooking } from "@/backend/controller/cleanersController";
 
 export const runtime = "nodejs";
 
@@ -58,6 +59,11 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
       `UPDATE booking SET status = 'cancelled', updated_at = NOW() WHERE id = $1`,
       [booking.id]
     );
+
+    // A cleaner may already hold this booking's cleaning (it's assigned at
+    // confirmation). Hand it back with replacement priority. Idempotent and
+    // non-throwing, so a failure here can't undo the guest's cancellation.
+    await releaseCleaningForCancelledBooking(String(booking.id));
 
     // Notify staff (non-fatal).
     try {

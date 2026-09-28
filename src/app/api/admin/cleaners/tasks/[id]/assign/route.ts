@@ -2,11 +2,23 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
 import { logActivity } from "@/backend/utils/activityLogger";
 import { createNotificationForUser } from "@/backend/utils/notificationHelper";
-import { requireEmployee } from "@/backend/utils/requireAdmin";
-import { logCleaningHistory } from "@/backend/controller/cleanersController";
+import { requireAdmin } from "@/backend/utils/requireAdmin";
+import { logCleaningHistory, reassignCleaningTask } from "@/backend/controller/cleanersController";
+import { checkTransition, isPerformed } from "@/lib/cleaning-workflow";
 
+// Manual assign / reassign — Owner/CSR only.
+//
+// This used to be requireEmployee(), so any cleaner could hand any task to
+// anyone (themselves included) straight from the API. Now:
+//   - only Owner/CSR can call it;
+//   - the target must be an ACTIVE Cleaner account;
+//   - a task already approved Ready can't be reassigned;
+//   - the fairness ledger moves with the task: unperformed work releases the
+//     outgoing cleaner's opportunity (restoring it, with replacement priority)
+//     and counts toward the incoming cleaner; performed work stays credited to
+//     whoever performed it. See reassignCleaningTask().
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireEmployee();
+  const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   try {
     const { id: cleaningTaskId } = await params;
@@ -53,6 +65,54 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 
     const task = taskDetails.rows[0];
+
+    if (task.cleaning_status === "ready") {
+      return NextResponse.json(
+        { success: false, error: "This room has already been approved Ready and can't be reassigned." },
+        { status: 400 }
+      );
+    }
+    // Re-sending the current assignee is a replay, not a change: no ledger
+    // movement, no second "new assignment" notification, no history row.
+    if (task.previous_cleaner_id && task.previous_cleaner_id === assigned_to) {
+      return NextResponse.json({
+        success: true,
+        message: "That cleaner is already assigned to this task",
+      });
+    }
+
+    // Awaiting Inspection is the one status reassignment may leave untouched
+    // (the cleaning already happened); everything else must be allowed to
+    // become Assigned under the sequence.
+    if (task.cleaning_status !== "awaiting-inspection") {
+      const move = checkTransition(task.cleaning_status, "assigned", "admin");
+      if (!move.ok) {
+        return NextResponse.json({ success: false, error: move.error }, { status: 400 });
+      }
+    }
+
+    // Only an active Cleaner account can receive cleaning work.
+    const cleanerCheck = await pool.query(
+      `SELECT role, COALESCE(status, 'active') AS status FROM employees WHERE id = $1::uuid`,
+      [assigned_to]
+    );
+    const target = cleanerCheck.rows[0];
+    if (!target) {
+      return NextResponse.json({ success: false, error: "Cleaner not found" }, { status: 404 });
+    }
+    if (target.role !== "Cleaner") {
+      return NextResponse.json(
+        { success: false, error: "Cleaning tasks can only be assigned to Cleaner accounts." },
+        { status: 400 }
+      );
+    }
+    if (target.status !== "active") {
+      return NextResponse.json(
+        { success: false, error: "That cleaner's account is inactive. Reactivate it or pick another cleaner." },
+        { status: 400 }
+      );
+    }
+
     const cleanerName = `${task.cleaner_first_name || 'Unknown'} ${task.cleaner_last_name || ''}`.trim();
     const isReassignment = !!task.previous_cleaner_id && task.previous_cleaner_id !== assigned_to;
 
@@ -114,34 +174,30 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
     // --- END CONFLICT CHECK ---
 
-    // Manual assignment: mark it as such, record who and when, and set the
-    // status. This is the ONLY thing that distinguishes a manual assignment
-    // from an automatic one in the data — the rotation logic in
-    // processCheckoutCleaning never runs against a task that already has a
-    // booking_cleaning row, so it can't overwrite whatever this route wrote.
-    const updateQuery = `
-      UPDATE booking_cleaning
-      SET assigned_to = $1, cleaning_status = 'assigned',
-          assignment_method = 'manual', assigned_by = $3::uuid, assigned_at = NOW()
-      WHERE id = $2::uuid
-      RETURNING *
-    `;
-
-    const updateResult = await pool.query(updateQuery, [assigned_to, cleaningTaskId, currentUserId]);
-
-    if (updateResult.rows.length === 0) {
-      return NextResponse.json(
-        { success: false, error: "Cleaning task not found" },
-        { status: 404 }
-      );
-    }
+    // Manual assignment, ledger included. A task sitting in Awaiting Inspection
+    // keeps its status (the cleaning already happened); anything earlier becomes
+    // or stays Assigned so the incoming cleaner starts from the top.
+    const { releasedFrom, newStatus } = await reassignCleaningTask({
+      cleaningTaskId,
+      toEmployeeId: assigned_to,
+      assignedBy: currentUserId,
+      currentStatus: task.cleaning_status,
+      currentAssigneeId: task.previous_cleaner_id ?? null,
+    });
 
     await logCleaningHistory(
       cleaningTaskId,
       task.cleaning_status ?? null,
-      "assigned",
+      newStatus,
       currentUserId,
-      isReassignment ? `Reassigned from ${task.previous_cleaner_first_name ?? "previous cleaner"} to ${cleanerName}` : `Manually assigned to ${cleanerName}`
+      isReassignment
+        ? `Reassigned from ${task.previous_cleaner_first_name ?? "previous cleaner"} to ${cleanerName}` +
+            (releasedFrom
+              ? " — unperformed, so the original cleaner's opportunity was restored"
+              : isPerformed(task.cleaning_status)
+                ? " — cleaning already performed, still credited to the original cleaner"
+                : "")
+        : `Manually assigned to ${cleanerName}`
     );
 
     // Log the activity
@@ -188,7 +244,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         bc.cleaning_status,
         bc.assigned_to::text as assigned_cleaner_id,
         bc.assignment_method,
+        bc.assigned_by::text as assigned_by_id,
         bc.assigned_at,
+        bc.scheduled_for,
+        bc.unassigned_reason,
         e.first_name as cleaner_first_name,
         e.last_name as cleaner_last_name,
         e.employment_id as cleaner_employment_id,

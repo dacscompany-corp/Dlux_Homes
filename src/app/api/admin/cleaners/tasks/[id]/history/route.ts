@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
-import { requireEmployee } from "@/backend/utils/requireAdmin";
+import { requireCleaningTaskAccess } from "@/backend/utils/requireAdmin";
 
-// Full status-change trail for one cleaning task's admin detail view.
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireEmployee();
+// Full status-change trail for one cleaning task's detail view. A cleaner may
+// read the trail of their own task only.
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const guard = await requireCleaningTaskAccess(id);
   if (!guard.ok) return guard.response;
   try {
-    const { id } = await params;
 
     const result = await pool.query(
       `SELECT

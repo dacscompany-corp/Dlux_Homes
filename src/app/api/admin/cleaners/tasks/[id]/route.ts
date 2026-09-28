@@ -1,75 +1,73 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCleaningTaskById, updateCleaningTask } from "@/backend/controller/cleanersController";
-import { requireEmployee } from "@/backend/utils/requireAdmin";
+import { requireAdmin, requireCleaningTaskAccess } from "@/backend/utils/requireAdmin";
 
+// GET one task. A cleaner may read only their own (requireCleaningTaskAccess),
+// and the projection they get leaves out guest contact and payment details.
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireEmployee();
-  if (!guard.ok) return guard.response;
   const { id } = await params;
-  console.log("🔍 API Route called: GET /api/admin/cleaners/tasks/[id]", id);
+  const guard = await requireCleaningTaskAccess(id);
+  if (!guard.ok) return guard.response;
+
   try {
-    // Mock the URL structure for the controller
     const url = new URL(`/api/admin/cleaners/tasks/${id}`, req.url);
-    const mockReq = new Request(url, {
-      method: req.method,
-      headers: req.headers,
-    }) as NextRequest;
-    
-    console.log("📋 Calling getCleaningTaskById with ID:", id);
-    const result = await getCleaningTaskById(mockReq);
-    console.log("✅ getCleaningTaskById result:", result);
-    return result;
+    const forwarded = new Request(url, { method: "GET", headers: req.headers }) as NextRequest;
+    return await getCleaningTaskById(forwarded, {
+      id: guard.actorId,
+      role: guard.role,
+    });
   } catch (error) {
-    console.error("❌ API Route Error in GET:", error);
+    console.error("❌ Error in GET /tasks/[id]:", error);
     return NextResponse.json(
       {
         success: false,
         error: error instanceof Error ? error.message : "Failed to get cleaning task",
-        details: String(error)
       },
       { status: 500 }
     );
   }
 }
 
+// PUT is the generic "write these columns" endpoint. Owner/CSR only — this is
+// the API a cleaner previously could have used to set any status on any task,
+// inspection included. Cleaners use /start and /complete, which enforce the
+// sequence and the checklist gate; the inspection outcomes are their own routes.
+//
+// The status itself is still validated against the workflow sequence inside the
+// controller, so not even an admin can move a task straight to Ready.
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireEmployee();
+  const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const { id } = await params;
-  console.log("🔍 API Route called: PUT /api/admin/cleaners/tasks/[id]", id);
+
   try {
-    // Read the request body first
-    let body;
+    let body: unknown;
     try {
       body = await req.json();
-      console.log("📦 Request body:", body);
-    } catch (bodyError) {
-      console.error("❌ Error reading request body:", bodyError);
+    } catch {
       return NextResponse.json(
         { success: false, error: "Invalid request body" },
         { status: 400 }
       );
     }
 
-    // Mock the URL structure for the controller
     const url = new URL(`/api/admin/cleaners/tasks/${id}`, req.url);
-    const mockReq = new Request(url, {
-      method: req.method,
+    const forwarded = new Request(url, {
+      method: "PUT",
       headers: req.headers,
       body: JSON.stringify(body),
     }) as NextRequest;
-    
-    console.log("📋 Calling updateCleaningTask with ID:", id);
-    const result = await updateCleaningTask(mockReq);
-    console.log("✅ updateCleaningTask result:", result);
-    return result;
+
+    return await updateCleaningTask(forwarded, {
+      id: (guard.session.user as { id?: string }).id ?? null,
+      role: guard.role,
+    });
   } catch (error) {
-    console.error("❌ API Route Error in PUT:", error);
+    console.error("❌ Error in PUT /tasks/[id]:", error);
     return NextResponse.json(
       {
         success: false,
         error: error instanceof Error ? error.message : "Failed to update cleaning task",
-        details: String(error)
       },
       { status: 500 }
     );

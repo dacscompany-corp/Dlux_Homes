@@ -16,16 +16,22 @@ export interface CleaningTask {
   cleaning_id: string;
   booking_id: string;
   booking_uuid?: string;
+  /** The booking's own status — 'pending' means it isn't confirmed yet. */
+  booking_status?: string;
   haven: string;
   haven_id: string | null;
   guest_first_name: string;
   guest_last_name: string;
-  guest_email: string;
-  guest_phone: string;
+  // Owner/CSR only — the server leaves guest contact and every payment figure
+  // out of a Cleaner's response entirely.
+  guest_email?: string;
+  guest_phone?: string;
   check_in_date: string;
   check_in_time: string;
   check_out_date: string;
   check_out_time: string;
+  /** When the cleaning is due: the guest's checkout. Cleaning can't start before it. */
+  scheduled_for?: string | null;
   cleaning_status: CleaningStatus;
   assigned_cleaner_id: string | null;
   assignment_method?: "automatic" | "manual" | null;
@@ -41,6 +47,8 @@ export interface CleaningTask {
   cleaned_at: string | null;
   inspected_at: string | null;
   inspection_note?: string | null;
+  /** Why automatic assignment left this task for Owner/CSR, when it did. */
+  unassigned_reason?: string | null;
   open_issue_count?: number;
 }
 
@@ -70,6 +78,18 @@ export interface ChecklistTaskItem {
   id: string;
   task: string;
   completed: boolean;
+  /** The uploaded proof photo for this exact task, if any. */
+  photo_url?: string | null;
+}
+
+/** Proof photo per checklist task, keyed by cleaning_tasks.id. */
+export type ChecklistPhotos = Record<string, { url: string; uploaded_at: string | null }>;
+
+/** Error body the complete/submit endpoints return when the gate fails. */
+export interface ChecklistGateError {
+  error?: string;
+  incompleteTasks?: { id: string; category: string; task: string }[];
+  missingPhotoTasks?: { id: string; category: string; task: string }[];
 }
 
 export interface ChecklistCategory {
@@ -99,12 +119,33 @@ export const cleanersApi = createApi({
       providesTags: (_result, _error, arg) => [{ type: "Checklist", id: `${arg.havenId}:${arg.bookingId}` }],
     }),
 
-    // Toggle one checklist task's completed state.
-    toggleChecklistTask: builder.mutation<{ task: ChecklistTaskItem; incompleteCount: number }, { taskId: string; completed: boolean }>({
+    // Toggle one checklist task's completed state. Pass `checklist` (the args
+    // the checklist was loaded with) to tick it on screen immediately; if the
+    // server refuses, the tick is rolled back so a failed save never looks saved.
+    toggleChecklistTask: builder.mutation<
+      { task: ChecklistTaskItem; incompleteCount: number },
+      { taskId: string; completed: boolean; checklist?: { havenId: string; bookingId: string } }
+    >({
       query({ taskId, completed }) {
         return { url: "", method: "PATCH", body: { task_id: taskId, completed } };
       },
       transformResponse: (response: { success: boolean; data: { task: ChecklistTaskItem; incompleteCount: number } }) => response.data,
+      async onQueryStarted({ taskId, completed, checklist }, { dispatch, queryFulfilled }) {
+        if (!checklist) return;
+        const patch = dispatch(
+          cleanersApi.util.updateQueryData("getChecklist", checklist, (draft) => {
+            for (const category of draft.categories) {
+              const item = category.tasks.find((t) => t.id === taskId);
+              if (item) item.completed = completed;
+            }
+          })
+        );
+        try {
+          await queryFulfilled;
+        } catch {
+          patch.undo();
+        }
+      },
       invalidatesTags: ["Checklist"],
     }),
 
@@ -146,14 +187,13 @@ export const cleanersApi = createApi({
       providesTags: ["Checklist"],
     }),
 
-    // Photos the cleaner attached per checklist category (proof-of-work
-    // shots), keyed by cleaning_checklists.id — same store the cleaner
-    // portal writes via /api/admin/cleaners/checklist-photos.
-    getChecklistPhotos: builder.query<Record<string, string>, string>({
+    // Proof photo per checklist task, keyed by cleaning_tasks.id — the same
+    // store the cleaner portal writes via /api/admin/cleaners/checklist-photos.
+    getChecklistPhotos: builder.query<ChecklistPhotos, string>({
       query(checklistId) {
         return { url: "/checklist-photos", params: { checklist_id: checklistId } };
       },
-      transformResponse: (response: { success: boolean; data: Record<string, string> }) => response.data || {},
+      transformResponse: (response: { success: boolean; data: ChecklistPhotos }) => response.data || {},
       providesTags: (_result, _error, checklistId) => [{ type: "Checklist", id: `photos:${checklistId}` }],
     }),
     // Get all cleaning tasks
@@ -216,33 +256,52 @@ export const cleanersApi = createApi({
       invalidatesTags: ["CleaningTask"],
     }),
 
-    // Start cleaning (set time_in and update status to in-progress)
+    // Start cleaning: assigned -> in-progress. The server refuses before the
+    // guest's checkout and for anyone but the assigned cleaner. Shown as started
+    // straight away; rolled back if the server says no.
     startCleaning: builder.mutation<CleaningTask, string>({
       query(taskId) {
-        return {
-          url: `/tasks/${taskId}/start`,
-          method: "PUT",
-          body: { 
-            cleaning_status: "in-progress",
-            cleaning_time_in: new Date().toISOString()
-          },
-        };
+        return { url: `/tasks/${taskId}/start`, method: "PUT" };
+      },
+      async onQueryStarted(taskId, { dispatch, queryFulfilled }) {
+        const patch = dispatch(
+          cleanersApi.util.updateQueryData("getCleaningTasks", undefined, (draft) => {
+            const row = draft.find((t) => t.cleaning_id === taskId);
+            if (row) row.cleaning_status = "in-progress";
+          })
+        );
+        try {
+          await queryFulfilled;
+        } catch {
+          patch.undo();
+        }
       },
       invalidatesTags: ["CleaningTask"],
     }),
 
     // Complete cleaning — moves to 'awaiting-inspection', NOT 'ready'. The
-    // route itself gates this on the assignment's checklist being done and
-    // computes the timestamps; the client sends no body.
+    // route verifies the checklist (every task ticked, every task photographed)
+    // server-side and computes the timestamps; the client sends no body. On a
+    // refusal the task is put back to In Progress on screen, and the error body
+    // (ChecklistGateError) names what's missing.
     completeCleaning: builder.mutation<CleaningTask, string>({
       query(taskId) {
-        return {
-          url: `/tasks/${taskId}/complete`,
-          method: "PUT",
-          body: {},
-        };
+        return { url: `/tasks/${taskId}/complete`, method: "PUT", body: {} };
       },
-      invalidatesTags: ["CleaningTask"],
+      async onQueryStarted(taskId, { dispatch, queryFulfilled }) {
+        const patch = dispatch(
+          cleanersApi.util.updateQueryData("getCleaningTasks", undefined, (draft) => {
+            const row = draft.find((t) => t.cleaning_id === taskId);
+            if (row) row.cleaning_status = "awaiting-inspection";
+          })
+        );
+        try {
+          await queryFulfilled;
+        } catch {
+          patch.undo();
+        }
+      },
+      invalidatesTags: ["CleaningTask", "Checklist"],
     }),
 
     // Admin approves an inspection: awaiting-inspection -> ready. Only this

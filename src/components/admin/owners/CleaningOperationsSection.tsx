@@ -19,6 +19,7 @@ import {
 import { useGetEmployeesQuery } from "@/redux/api/employeeApi";
 import { useGetReportsQuery, useUpdateReportStatusMutation } from "@/redux/api/reportApi";
 import ImageThumb from "@/components/ImageThumb";
+import { cleaningDueAt } from "@/lib/cleaning-schedule";
 import {
   Clock, Building2, User, AlertTriangle, CheckCircle2, ChevronRight,
   Timer, ClipboardList, UserPlus, X, Plus, Pencil, Trash2, Camera, Search,
@@ -34,7 +35,7 @@ import {
 // "Cleaning Operations" nav tab. Both call this component so the monitoring
 // logic and markup live in exactly one place.
 
-type Cleaner = { id: string; first_name: string; last_name: string };
+type Cleaner = { id: string; first_name: string; last_name: string; status?: string | null };
 
 const STATUS_LABELS: Record<string, { label: string; color: string; bg: string; dot: string }> = {
   pending:               { label: "Needs Cleaning",      color: "#92400e", bg: "#fef3c7", dot: "#f59e0b" },
@@ -46,11 +47,26 @@ const STATUS_LABELS: Record<string, { label: string; color: string; bg: string; 
   inspected:             { label: "Ready",               color: "#065f46", bg: "#d1fae5", dot: "#10b981" },
 };
 
+// When the cleaning is due — the guest's checkout, via the same helper both
+// cleaner portals use, so "overdue" here and "can start" there always agree.
 function checkoutMoment(task: CleaningTask): Date | null {
-  if (!task.check_out_date) return null;
-  const time = task.check_out_time && task.check_out_time !== "00:00" ? task.check_out_time : "23:59:59";
-  const d = new Date(`${String(task.check_out_date).slice(0, 10)}T${time}`);
-  return Number.isNaN(d.getTime()) ? null : d;
+  return cleaningDueAt(task);
+}
+
+/**
+ * Why a task has no cleaner, in words an Owner/CSR can act on. A task created
+ * at booking time is expected to be unassigned until the booking is confirmed;
+ * after that, the stored reason from the rotation says what went wrong.
+ */
+function unassignedExplanation(task: CleaningTask): string | null {
+  if (task.assigned_cleaner_id) return null;
+  if (task.booking_status === "pending") return "Waiting for booking confirmation — assigned automatically when confirmed.";
+  return task.unassigned_reason || "Not assigned yet — pick a cleaner.";
+}
+
+/** A confirmed booking whose cleaning nobody holds — needs a human. */
+function needsAssignment(task: CleaningTask): boolean {
+  return !task.assigned_cleaner_id && task.booking_status !== "pending" && task.cleaning_status !== "ready";
 }
 
 // Overdue: checkout has passed and cleaning hasn't even started yet.
@@ -105,7 +121,10 @@ function SearchBox({ value, onChange, placeholder }: { value: string; onChange: 
 }
 
 export function CleaningOperationsSection() {
-  const { data: tasksData, isFetching } = useGetCleaningTasksQuery();
+  // Polled, so a new confirmation's assignment, a cleaner's hand-in and a
+  // cancellation all show up without a refresh.
+  const { data: tasksData, isFetching, isLoading: tasksLoading, isError: tasksFailed, refetch: refetchTasks } =
+    useGetCleaningTasksQuery(undefined, { pollingInterval: 30000 });
   const tasks = tasksData ?? [];
 
   // Manual assignment — same /assign endpoint the automatic checkout trigger
@@ -113,7 +132,10 @@ export function CleaningOperationsSection() {
   // logic. Available any time before Ready, so admin can hand-assign an
   // unassigned task or reassign one mid-flow.
   const { data: cleanersRes, error: cleanersError } = useGetEmployeesQuery({ role: "Cleaner" });
-  const cleaners: Cleaner[] = (cleanersRes as { data?: Cleaner[] } | undefined)?.data ?? [];
+  // Only active accounts can receive work — the assign endpoint refuses an
+  // inactive one, so offering it would just produce an error.
+  const cleaners: Cleaner[] = ((cleanersRes as { data?: Cleaner[] } | undefined)?.data ?? [])
+    .filter((c) => (c.status ?? "active") === "active");
   const cleanersLoadFailed = !!cleanersError;
 
   // Top-level view — "Tasks" is the existing monitoring table + drawer;
@@ -131,11 +153,12 @@ export function CleaningOperationsSection() {
   const overdueCount = tasks.filter(isOverdue).length;
   const issueCount = tasks.filter((t) => (t.open_issue_count ?? 0) > 0).length;
   const awaitingCount = tasks.filter((t) => t.cleaning_status === "awaiting-inspection").length;
+  const unassignedCount = tasks.filter(needsAssignment).length;
 
   const normTaskQuery = taskQuery.trim().toLowerCase();
   const visibleTasks = tasks.filter((t) => {
     if (filter === "awaiting-inspection" && t.cleaning_status !== "awaiting-inspection") return false;
-    if (filter === "attention" && !(isOverdue(t) || (t.open_issue_count ?? 0) > 0 || t.cleaning_status === "awaiting-inspection")) return false;
+    if (filter === "attention" && !(isOverdue(t) || needsAssignment(t) || (t.open_issue_count ?? 0) > 0 || t.cleaning_status === "awaiting-inspection")) return false;
     return matchesQuery(normTaskQuery, [t.haven, t.booking_id, t.guest_first_name, t.guest_last_name, t.cleaner_first_name, t.cleaner_last_name]);
   });
 
@@ -167,8 +190,9 @@ export function CleaningOperationsSection() {
       ) : (
       <>
       {/* KPI row */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
         {[
+          { label: "Needs Assignment",    value: unassignedCount, icon: UserPlus,   iconBg: "#fef3c7", iconColor: "#d97706", onClick: () => setFilter("attention") },
           { label: "Overdue",             value: overdueCount, icon: AlertTriangle, iconBg: "#fee2e2", iconColor: "#dc2626", onClick: () => setFilter("attention") },
           { label: "Open Issues",         value: issueCount,   icon: AlertTriangle, iconBg: "#ffedd5", iconColor: "#ea580c", onClick: () => setFilter("attention") },
           { label: "Awaiting Inspection", value: awaitingCount,icon: ClipboardList, iconBg: "#ede9fe", iconColor: "#7c3aed", onClick: () => setFilter("awaiting-inspection") },
@@ -218,8 +242,21 @@ export function CleaningOperationsSection() {
             </tr>
           </thead>
           <tbody>
-            {!isFetching && visibleTasks.length === 0 && (
+            {tasksLoading ? (
+              <tr><td colSpan={8} className="px-4 py-8 text-center text-sm" style={{ color: "#8B6344" }}>Loading cleaning tasks…</td></tr>
+            ) : tasksFailed && !tasksData ? (
+              <tr><td colSpan={8} className="px-4 py-8 text-center text-sm" style={{ color: "#dc2626" }}>
+                Couldn&apos;t load cleaning tasks.{" "}
+                <button type="button" onClick={() => refetchTasks()} className="underline cursor-pointer">Try again</button>
+              </td></tr>
+            ) : !isFetching && visibleTasks.length === 0 ? (
               <tr><td colSpan={8} className="px-4 py-8 text-center text-sm" style={{ color: "#8B6344" }}>No cleaning tasks match this filter.</td></tr>
+            ) : null}
+            {tasksFailed && tasksData && (
+              <tr><td colSpan={8} className="px-4 py-2 text-xs" style={{ color: "#92400e", backgroundColor: "#fef3c7" }}>
+                Couldn&apos;t refresh — showing the last update.{" "}
+                <button type="button" onClick={() => refetchTasks()} className="underline cursor-pointer">Try again</button>
+              </td></tr>
             )}
             {visibleTasks.map((t) => {
               const st = STATUS_LABELS[t.cleaning_status] || STATUS_LABELS.pending;
@@ -255,9 +292,17 @@ export function CleaningOperationsSection() {
                       <AssignCleanerControl task={t} cleaners={cleaners} loadFailed={cleanersLoadFailed} />
                     )}
                     <MethodBadge task={t} />
+                    {unassignedExplanation(t) && (
+                      <p className="text-xs mt-1 max-w-[16rem]" style={{ color: needsAssignment(t) ? "#b45309" : "#8B6344" }}>
+                        {unassignedExplanation(t)}
+                      </p>
+                    )}
                   </td>
                   <td className="px-4 py-3" style={{ color: "#5a4a3a" }}>
-                    {t.check_out_date ? new Date(t.check_out_date).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"} {t.check_out_time?.slice(0, 5)}
+                    {(() => {
+                      const due = checkoutMoment(t);
+                      return due ? due.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—";
+                    })()}
                   </td>
                   <td className="px-4 py-3" style={{ color: "#5a4a3a" }}>{fmtDateTime(t.cleaning_time_in)}</td>
                   <td className="px-4 py-3" style={{ color: "#5a4a3a" }}>
@@ -345,10 +390,19 @@ function TaskDetailDrawer({ task, cleaners, cleanersLoadFailed, onClose }: { tas
             <div className="flex justify-between"><span style={{ color: "#8B6344" }}>Assigned at</span><span>{fmtDateTime(task.assigned_at)}</span></div>
           )}
           <div className="flex justify-between"><span style={{ color: "#8B6344" }}>Guest</span><span>{`${task.guest_first_name ?? ""} ${task.guest_last_name ?? ""}`.trim() || "—"}</span></div>
-          <div className="flex justify-between"><span style={{ color: "#8B6344" }}>Checkout</span><span>{task.check_out_date ? new Date(task.check_out_date).toLocaleDateString() : "—"} {task.check_out_time?.slice(0, 5)}</span></div>
+          <div className="flex justify-between"><span style={{ color: "#8B6344" }}>Cleaning due (checkout)</span><span>{fmtDateTime(checkoutMoment(task)?.toISOString() ?? null)}</span></div>
           <div className="flex justify-between"><span style={{ color: "#8B6344" }}>Started</span><span>{fmtDateTime(task.cleaning_time_in)}</span></div>
           <div className="flex justify-between"><span style={{ color: "#8B6344" }}>Completed</span><span>{fmtDateTime(task.cleaning_time_out)}</span></div>
         </div>
+
+        {unassignedExplanation(task) && (
+          <div className="rounded-xl p-3 mb-4 border" style={{ backgroundColor: "#fef3c7", borderColor: "#f5d9a8" }}>
+            <p className="text-xs font-semibold mb-0.5" style={{ color: "#92400e" }}>
+              {needsAssignment(task) ? "Needs manual assignment" : "Not assigned yet"}
+            </p>
+            <p className="text-xs" style={{ color: "#92400e" }}>{unassignedExplanation(task)}</p>
+          </div>
+        )}
 
         {task.inspection_note && (
           <div className="rounded-xl p-3 mb-4 border" style={{ backgroundColor: "#ede9fe", borderColor: "#c4b5fd" }}>
@@ -694,7 +748,9 @@ function ChecklistSection({ havenId, bookingUuid }: { havenId: string; bookingUu
               {cat.category}
             </div>
             {cat.tasks.map((item) => {
-              const photo = photos?.[item.task];
+              // Keyed by the task's id (photos are linked to the exact task they
+              // prove), falling back to the url the checklist itself carries.
+              const photo = item.photo_url || photos?.[item.id]?.url || null;
               return (
                 <div key={item.id} className="flex items-center gap-2 px-3 py-2 text-sm" style={{ borderTop: "1px solid #F7F0E3" }}>
                   {item.completed
@@ -709,7 +765,9 @@ function ChecklistSection({ havenId, bookingUuid }: { havenId: string; bookingUu
                       {item.task}
                     </span>
                   )}
-                  {photo && <ImageThumb src={photo} alt={item.task} size={28} />}
+                  {photo
+                    ? <ImageThumb src={photo} alt={item.task} size={28} />
+                    : <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ backgroundColor: "#fef3c7", color: "#92400e" }}>No photo</span>}
                   {editingId === item.id ? (
                     <button onClick={() => submitEdit(item.id)} className="text-xs font-medium cursor-pointer flex-shrink-0" style={{ color: "#059669" }}>Save</button>
                   ) : (

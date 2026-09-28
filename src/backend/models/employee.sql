@@ -19,6 +19,11 @@ CREATE TABLE employees (
     ip_address VARCHAR(45) DEFAULT NULL,
     user_agent TEXT DEFAULT NULL,
     login_attempts INT DEFAULT 0,
+    -- 'active' | 'inactive' (CHECK added in 2026-09-24-cleaning-round-robin.sql).
+    -- Existed in production without being tracked here, so a fresh
+    -- `npm run db:setup` failed that migration; cleaner-rotation eligibility
+    -- reads it.
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
     last_login TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

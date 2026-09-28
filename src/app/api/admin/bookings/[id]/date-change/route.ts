@@ -4,6 +4,7 @@ import { pushCalendarUpdate } from "@/backend/controller/bookingController";
 import { dispatchTransactionalEmail } from "@/backend/utils/dispatchEmail";
 import { movedStayDates } from "@/lib/dateChange";
 import { requireAdmin } from "@/backend/utils/requireAdmin";
+import { syncCleaningSchedule } from "@/backend/controller/cleanersController";
 
 export const runtime = "nodejs";
 
@@ -123,6 +124,9 @@ export async function PATCH(req: NextRequest, { params }: RouteContext): Promise
     // cannot undo a date change that is already committed.
     if (action === "approve") {
       await pushCalendarUpdate(booking.id);
+      // The cleaning is due at the new checkout — without this the cleaner's
+      // schedule would still show (and the start gate still enforce) the old one.
+      await syncCleaningSchedule(String(booking.id));
     }
 
     // Tell the guest. This used to write a `notifications` row, which could

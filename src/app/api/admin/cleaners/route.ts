@@ -8,17 +8,30 @@ import {
   editChecklistTask,
   removeChecklistTask,
 } from "@/backend/controller/cleaningChecklistController";
-import { requireEmployee, requireAdmin } from "@/backend/utils/requireAdmin";
+import { requireAdmin, requireChecklistAccess } from "@/backend/utils/requireAdmin";
+
+// Checklist endpoints. Every one of them now resolves the checklist to its
+// cleaning assignment first: Owner/CSR may act on any, a Cleaner only on the
+// checklist of a room assigned to them — and may only CHANGE it while that room
+// is In Progress.
 
 export async function GET(req: NextRequest) {
-  const guard = await requireEmployee();
+  const bookingId = req.nextUrl.searchParams.get("booking_id");
+
+  if (bookingId) {
+    const guard = await requireChecklistAccess({ bookingId });
+    if (!guard.ok) return guard.response;
+    return getChecklistByHaven(req);
+  }
+
+  // The haven-only lookup (no booking) is a legacy admin navigation path. It
+  // isn't tied to any one assignment, so a cleaner can't be authorised for it.
+  const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   return getChecklistByHaven(req);
 }
 
 export async function POST(req: NextRequest) {
-  const guard = await requireEmployee();
-  if (!guard.ok) return guard.response;
   try {
     const body = await req.json().catch(() => ({}));
     const { action } = body || {};
@@ -37,14 +50,29 @@ export async function POST(req: NextRequest) {
 
     switch (action) {
       case "save":
-        // Expect body: { checklist_id, tasks: [{ id, completed }, ...] }
-        return saveChecklistProgress(reqWithParsedBody);
       case "submit": {
-        // Inject the caller's role so the controller can bypass the
-        // incomplete-task check for CSR and admin users.
-        const sessionRole = (guard.session.user as { role?: string })?.role ?? "";
-        const bodyWithRole = { ...body, role: sessionRole };
-        const reqWithRole = { ...req, json: async () => bodyWithRole } as NextRequest;
+        if (!body.checklist_id) {
+          return NextResponse.json(
+            { success: false, error: "checklist_id is required" },
+            { status: 400 },
+          );
+        }
+        const guard = await requireChecklistAccess(
+          { checklistId: String(body.checklist_id) },
+          { forWrite: true },
+        );
+        if (!guard.ok) return guard.response;
+
+        if (action === "save") {
+          // Expect body: { checklist_id, tasks: [{ id, completed }, ...] }
+          return saveChecklistProgress(reqWithParsedBody);
+        }
+        // The role comes from the session, never the body — a cleaner can't
+        // claim to be admin to skip the gate.
+        const reqWithRole = {
+          ...req,
+          json: async () => ({ ...body, role: guard.role }),
+        } as NextRequest;
         return submitChecklist(reqWithRole);
       }
       case "add_task":
@@ -76,8 +104,6 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
-  const guard = await requireEmployee();
-  if (!guard.ok) return guard.response;
   try {
     // Accept body with a task identifier and new completed value:
     // { task_id: string, completed: boolean }
@@ -90,6 +116,12 @@ export async function PATCH(req: NextRequest) {
         { status: 400 },
       );
     }
+
+    const guard = await requireChecklistAccess(
+      { checklistTaskId: String(taskId) },
+      { forWrite: true },
+    );
+    if (!guard.ok) return guard.response;
 
     // Wrap the request so controller can safely call req.json() without causing
     // "Body has already been read". The wrapped request returns the parsed

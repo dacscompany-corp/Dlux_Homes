@@ -25,7 +25,7 @@ import { loadCalendarRules, loadActiveSeasons } from "@/lib/availability";
 import { havenToRoom } from "@/lib/haven-adapter";
 import { slotBlockOverlapSql } from "@/lib/blockedSlots";
 import { dispatchTransactionalEmail, type EmailDispatchResult } from "../utils/dispatchEmail";
-import { processCheckoutCleaning } from "./cleanersController";
+import { onBookingStatusChanged, syncCleaningSchedule } from "./cleanersController";
 
 // EXISTING_START_SQL / EXISTING_END_SQL now live in @/lib/bookingWindow beside
 // occupyingBookingSql(), so the Messenger availability module shares the exact
@@ -671,6 +671,15 @@ export const updateBookingDetails = async (
     // the admin's save.
     after(async () => {
       await pushCalendarUpdate(id);
+    });
+
+    // A full edit can move the checkout (so the cleaning's due time moves with
+    // it) and can change the status (so confirmation / cancellation has to
+    // reach the cleaning workflow exactly as it does from the status-only
+    // endpoint). Schedule first, so a fresh assignment is scheduled correctly.
+    after(async () => {
+      await syncCleaningSchedule(id);
+      if (typeof status === "string") await onBookingStatusChanged(id, status);
     });
 
     return NextResponse.json({
@@ -1748,7 +1757,11 @@ export const createBooking = async (
       }
     }
 
-    // Step 6: Create cleaning record
+    // Step 6: Create cleaning record — unassigned. Assignment (and its
+    // checkout-based scheduled_for) happens when the booking is confirmed:
+    // onBookingStatusChanged → ensureCleaningAssignment reuses this row rather
+    // than creating another. Deliberately touches no column newer than the
+    // table itself, so guest checkout never depends on a cleaning migration.
     const cleaningQuery = `
       INSERT INTO booking_cleaning (booking_id, cleaning_status)
       VALUES ($1, 'pending')
@@ -2790,21 +2803,16 @@ export const updateBookingStatus = async (
       await pushCalendarUpdate(result.rows[0].id);
     });
 
-    // Checkout -> cleaning workflow entry point. "completed" is the only
-    // status string this codebase actually writes for a finished stay (see
-    // validStatuses above — "checked-out" is accepted for the email branches
-    // but never itself a valid status value), so that's the one trigger point
-    // for Needs Cleaning -> auto-assign. Runs after the response is sent and
-    // is itself idempotent (booking_cleaning has a UNIQUE(booking_id)), so a
-    // status update replayed for the same booking can't create a duplicate
-    // cleaning task.
-    if (status === "completed") {
+    // Cleaning workflow. Confirmation ("approved" — the stored status for a
+    // confirmed booking) creates the cleaning task and assigns it fairly,
+    // scheduled for the guest's checkout; "completed" is the checkout safety
+    // net; "cancelled"/"rejected" hand an unperformed assignment back with
+    // replacement priority. Runs after the response is sent, and every branch
+    // is idempotent — a replayed status update can't create a second task,
+    // consume a second rotation turn, or restore an opportunity twice.
+    if (typeof status === "string") {
       after(async () => {
-        try {
-          await processCheckoutCleaning(result.rows[0].id);
-        } catch (err) {
-          console.error("⚠️ processCheckoutCleaning failed:", err);
-        }
+        await onBookingStatusChanged(result.rows[0].id, status);
       });
     }
 
@@ -2963,112 +2971,6 @@ export const getUserBookings = async (
           error instanceof Error
             ? error.message
             : "Failed to fetch user bookings",
-      },
-      { status: 500 },
-    );
-  }
-};
-
-// UPDATE Cleaning Status
-export const updateCleaningStatus = async (
-  req: NextRequest,
-): Promise<NextResponse> => {
-  try {
-    const url = new URL(req.url);
-    const segments = url.pathname.split("/");
-    const cleaningIndex = segments.indexOf("cleaning");
-    const id = cleaningIndex > 0 ? segments[cleaningIndex - 1] : null;
-
-    if (!id) {
-      return NextResponse.json(
-        { success: false, error: "Booking ID is required" },
-        { status: 400 },
-      );
-    }
-
-    const body = await req.json();
-    const { cleaning_status } = body;
-
-    const validCleaningStatuses = [
-      "pending",
-      "assigned",
-      "in-progress",
-      "cleaned",
-      "inspected",
-    ];
-    if (!cleaning_status || !validCleaningStatuses.includes(cleaning_status)) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Invalid cleaning status. Must be one of: pending, assigned, in-progress, cleaned, inspected",
-        },
-        { status: 400 },
-      );
-    }
-
-    // Update the cleaning status in the booking_cleaning table
-    const cleaningQuery = `
-      UPDATE booking_cleaning
-      SET cleaning_status = $1,
-          cleaned_at = CASE WHEN $1 = 'cleaned' THEN NOW() ELSE cleaned_at END,
-          inspected_at = CASE WHEN $1 = 'inspected' THEN NOW() ELSE inspected_at END
-      WHERE booking_id = $2
-      RETURNING *
-    `;
-
-    const cleaningResult = await pool.query(cleaningQuery, [
-      cleaning_status,
-      id,
-    ]);
-
-    if (cleaningResult.rows.length === 0) {
-      return NextResponse.json(
-        { success: false, error: "Booking cleaning record not found" },
-        { status: 404 },
-      );
-    }
-
-    // Get the complete booking data for response
-    const bookingQuery = `
-      SELECT
-        b.*,
-        bg.first_name,
-        bg.last_name,
-        bg.email,
-        bg.phone,
-        bg.valid_id_url,
-        bp.payment_method,
-        bp.total_amount,
-        bc.cleaning_status
-      FROM booking b
-      JOIN booking_guests bg ON b.id = bg.booking_id
-      JOIN booking_payments bp ON b.id = bp.booking_id
-      JOIN booking_cleaning bc ON b.id = bc.booking_id
-      WHERE b.id = $1 AND bg.id = (
-        SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY guest_index, id LIMIT 1
-      )
-      LIMIT 1
-    `;
-
-    const bookingResult = await pool.query(bookingQuery, [id]);
-
-    console.log("✅ Cleaning status updated:", cleaningResult.rows[0]);
-
-    return NextResponse.json({
-      success: true,
-      data: bookingResult.rows[0],
-      message: `Cleaning status updated to ${cleaning_status}`,
-    });
-  } catch (error) {
-    console.log("❌ Error updating cleaning status:", error);
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to update cleaning status",
       },
       { status: 500 },
     );

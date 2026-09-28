@@ -1,86 +1,88 @@
 import { NextRequest, NextResponse } from "next/server";
-import { updateCleaningTask } from "@/backend/controller/cleanersController";
-import { requireEmployee } from "@/backend/utils/requireAdmin";
 import pool from "@/backend/config/db";
+import { updateCleaningTask } from "@/backend/controller/cleanersController";
+import { verifyAssignmentChecklist } from "@/backend/controller/cleaningChecklistController";
+import { requireCleaningTaskAccess } from "@/backend/utils/requireAdmin";
+import { actorForRole, checkTransition } from "@/lib/cleaning-workflow";
 
-// Completing a cleaning task does NOT make the room bookable again — it only
-// moves the task to "awaiting-inspection". Only an admin's inspection
-// approval (tasks/[id]/inspect/approve) can move it to "ready". This route
-// also gates completion on the assignment's checklist actually being done,
-// so "Completed" can't be pressed with required tasks still outstanding.
+// In Progress → Awaiting Inspection.
+//
+// Completing does NOT make the room bookable again — only an Owner/CSR
+// inspection approval (tasks/[id]/inspect/approve) moves it to Ready.
+//
+// Server-side gates, so a direct API call can't skip any of them:
+//   1. the task must be assigned to the caller;
+//   2. it must be In Progress (the sequence can't be skipped);
+//   3. its checklist must exist, every task on it must be ticked, and every
+//      task must have a successfully uploaded photo linked to THIS checklist.
+//
+// Nothing here ticks anything on the cleaner's behalf. The old flow
+// force-completed unticked tasks at submission and let a missing checklist
+// pass; both are gone.
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireEmployee();
+  const { id } = await params;
+  const guard = await requireCleaningTaskAccess(id);
   if (!guard.ok) return guard.response;
+
   try {
-    const { id } = await params;
-    const changedBy = (guard.session.user as { id?: string })?.id ?? null;
+    const transition = checkTransition(guard.status, "awaiting-inspection", actorForRole(guard.role));
+    if (!transition.ok) {
+      return NextResponse.json({ success: false, error: transition.error }, { status: 400 });
+    }
 
-    // Find this task's haven + booking, then its most recent checklist for
-    // that (haven, booking) pair — same lookup getChecklistByHaven uses.
-    const taskRes = await pool.query(
-      `SELECT b.id::text AS booking_uuid, h.uuid_id::text AS haven_id
-       FROM booking_cleaning bc
-       INNER JOIN booking b ON bc.booking_id = b.id
-       LEFT JOIN havens h ON REPLACE(LOWER(h.haven_name), 'room', 'haven') = REPLACE(LOWER(b.room_name), 'room', 'haven')
-       WHERE bc.id = $1::uuid`,
-      [id]
-    );
+    if (guard.status === "awaiting-inspection") {
+      return NextResponse.json({
+        success: true,
+        message: "This room is already awaiting inspection",
+      });
+    }
 
-    if (taskRes.rows.length === 0) {
+    const { checklistId, gate } = await verifyAssignmentChecklist(id);
+
+    if (!gate.ok) {
       return NextResponse.json(
-        { success: false, error: "Cleaning task not found" },
-        { status: 404 }
+        {
+          success: false,
+          error: gate.error,
+          incompleteCount: gate.incomplete.length,
+          missingPhotoCount: gate.missingPhotos.length,
+          incompleteTasks: gate.incomplete.map((t) => ({ id: t.id, category: t.category, task: t.task })),
+          missingPhotoTasks: gate.missingPhotos.map((t) => ({ id: t.id, category: t.category, task: t.task })),
+        },
+        { status: 400 }
       );
     }
 
-    const { booking_uuid: bookingUuid, haven_id: havenId } = taskRes.rows[0];
-
-    if (havenId) {
-      const checklistRes = await pool.query(
-        `SELECT id, status FROM cleaning_checklists
-         WHERE haven_id = $1 AND booking_id = $2::uuid
-         ORDER BY CASE WHEN status != 'completed' THEN 0 ELSE 1 END ASC, created_at DESC
-         LIMIT 1`,
-        [havenId, bookingUuid]
+    // The checklist genuinely passed — record it as submitted alongside the
+    // status change, so the two can't disagree.
+    if (checklistId) {
+      await pool.query(
+        `UPDATE cleaning_checklists
+         SET status = 'completed', completed_at = timezone('Asia/Manila', NOW()), updated_at = timezone('Asia/Manila', NOW())
+         WHERE id = $1::uuid AND status <> 'completed'`,
+        [checklistId]
       );
-
-      if (checklistRes.rows.length > 0 && checklistRes.rows[0].status !== "completed") {
-        const incompleteRes = await pool.query(
-          `SELECT COUNT(*)::int AS incomplete_count FROM cleaning_tasks WHERE checklist_id = $1 AND completed = false`,
-          [checklistRes.rows[0].id]
-        );
-        const incompleteCount = incompleteRes.rows[0]?.incomplete_count ?? 0;
-        if (incompleteCount > 0) {
-          return NextResponse.json(
-            {
-              success: false,
-              error: `Cannot mark complete: ${incompleteCount} checklist item(s) still incomplete`,
-              incompleteCount,
-            },
-            { status: 400 }
-          );
-        }
-      }
-      // No checklist yet at all -> nothing to gate on (matches submitChecklist's
-      // own behavior of only blocking when incomplete tasks actually exist).
     }
 
-    // Mock the URL structure for the controller
+    const now = new Date().toISOString();
     const url = new URL(`/api/admin/cleaners/tasks/${id}`, req.url);
-    const mockReq = new Request(url, {
-      method: req.method,
+    const forwarded = new Request(url, {
+      method: "PUT",
       headers: req.headers,
       body: JSON.stringify({
         cleaning_status: "awaiting-inspection",
-        cleaning_time_out: new Date().toISOString(),
-        cleaned_at: new Date().toISOString(),
-        changed_by: changedBy,
+        cleaning_time_out: now,
+        cleaned_at: now,
+        // A previous rejection's note has been acted on — clear it so the
+        // inspector isn't shown a stale correction.
+        inspection_note: null,
+        changed_by: guard.actorId,
       }),
     }) as NextRequest;
 
-    return updateCleaningTask(mockReq);
+    return await updateCleaningTask(forwarded, { id: guard.actorId, role: guard.role });
   } catch (error) {
-    console.log("❌ Error completing cleaning:", error);
+    console.error("❌ Error completing cleaning:", error);
     return NextResponse.json(
       {
         success: false,

@@ -4,9 +4,13 @@ import { requireEmployee } from "@/backend/utils/requireAdmin";
 
 export const runtime = "nodejs";
 
-// Cleaning tasks are staff-only (Owner/CSR/Cleaner). Was fully unauthenticated.
+// Alias of /api/admin/cleaners/tasks, kept for older callers. Same scoping: a
+// Cleaner sees only their own tasks, without guest contact or payment details.
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const guard = await requireEmployee();
   if (!guard.ok) return guard.response;
-  return getAllCleaningTasks(request);
+  return getAllCleaningTasks(request, {
+    id: (guard.session.user as { id?: string }).id ?? null,
+    role: guard.role,
+  });
 }

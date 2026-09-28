@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "../config/db";
 import { upload_file } from "../utils/cloudinary";
 import { validateImageDataUrl } from "../utils/imageGuard";
+import { onBookingStatusChanged } from "./cleanersController";
 
 /**
  * Controller for booking payments (booking_payments table)
@@ -672,11 +673,13 @@ export const updateBookingPayment = async (
 
     // If payment_status_effective is rejected, update booking.status to rejected.
     // If payment_status_effective is approved and remaining_balance is zero, mark booking as approved (fully paid).
+    let bookingStatusWritten: "approved" | "rejected" | null = null;
     if (payment_status_effective === "rejected") {
       await client.query(
         `UPDATE booking SET status = $1, rejection_reason = $2, updated_at = NOW() WHERE id = $3`,
         ["rejected", rejection_reason ?? null, updatedPayment.booking_id],
       );
+      bookingStatusWritten = "rejected";
     } else if (payment_status_effective === "approved") {
       const remainingAfter = Number(updatedPayment.remaining_balance ?? 0);
       if (remainingAfter === 0) {
@@ -684,11 +687,19 @@ export const updateBookingPayment = async (
           `UPDATE booking SET status = $1, rejection_reason = $2, updated_at = NOW() WHERE id = $3`,
           ["approved", null, updatedPayment.booking_id],
         );
+        bookingStatusWritten = "approved";
       }
     }
 
     // Commit transaction
     await client.query("COMMIT");
+
+    // The booking's status just changed, so the cleaning workflow has to hear
+    // about it the same way it would from the status endpoint: a confirmation
+    // assigns the cleaning, a rejection releases it. Idempotent, never throws.
+    if (bookingStatusWritten && updatedPayment.booking_id) {
+      await onBookingStatusChanged(String(updatedPayment.booking_id), bookingStatusWritten);
+    }
 
     // If approved (effective), send confirmation email similar to bookingController
     if (payment_status_effective === "approved") {

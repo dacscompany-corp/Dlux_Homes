@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "../config/db";
+import {
+  evaluateChecklistGate,
+  type GateResult,
+  type GateTask,
+} from "@/lib/cleaning-checklist-gate";
 
 /**
  * Cleaning Checklist Controller
@@ -78,6 +83,7 @@ type TaskRow = {
   task_description: string;
   completed: boolean;
   display_order?: number;
+  photo_url?: string | null;
 };
 
 function groupTasksByCategory(rows: TaskRow[]) {
@@ -85,7 +91,7 @@ function groupTasksByCategory(rows: TaskRow[]) {
     string,
     {
       category: string;
-      tasks: { id: string; task: string; completed: boolean }[];
+      tasks: { id: string; task: string; completed: boolean; photo_url: string | null }[];
     }
   > = {};
 
@@ -97,11 +103,99 @@ function groupTasksByCategory(rows: TaskRow[]) {
       id: String(row.id),
       task: String(row.task_description),
       completed: !!row.completed,
+      // The proof photo for this exact task, so the portals can show what's
+      // attached and gate submission without a second round trip.
+      photo_url: row.photo_url ? String(row.photo_url) : null,
     });
   });
 
   // Preserve insertion order of categories as they appeared
   return Object.values(categoriesMap);
+}
+
+// One query for a checklist's tasks, photo proof included. Photos are joined on
+// task_id (2026-09-28 migration) — before that they were matched by storing the
+// task's text in a column called `category`, which broke whenever admin edited
+// the wording.
+const CHECKLIST_TASKS_QUERY = `
+  SELECT t.id, t.checklist_id, t.category, t.task_description, t.completed, t.display_order,
+         p.image_url AS photo_url
+  FROM cleaning_tasks t
+  LEFT JOIN cleaning_checklist_photos p
+    ON p.task_id = t.id AND p.checklist_id = t.checklist_id
+  WHERE t.checklist_id = $1
+  ORDER BY t.display_order ASC, t.created_at ASC
+`;
+
+type Queryable = { query: (sql: string, params?: unknown[]) => Promise<{ rows: TaskRow[] }> };
+
+async function fetchChecklistTasks(db: Queryable, checklistId: string): Promise<TaskRow[]> {
+  const result = await db.query(CHECKLIST_TASKS_QUERY, [checklistId]);
+  return result.rows;
+}
+
+/**
+ * Turns a checklist's rows into the shape the shared gate reasons about.
+ * Exported so the complete-cleaning route and the submit endpoint apply exactly
+ * the same rule, rather than each re-implementing "is this checklist finished".
+ */
+export async function loadChecklistGateTasks(checklistId: string): Promise<GateTask[]> {
+  const rows = await fetchChecklistTasks(pool, checklistId);
+  return rows.map((row) => ({
+    id: String(row.id),
+    category: String(row.category ?? ""),
+    task: String(row.task_description ?? ""),
+    completed: !!row.completed,
+    hasPhoto: !!row.photo_url,
+  }));
+}
+
+/**
+ * The checklist belonging to one cleaning assignment: matched on the
+ * assignment's (haven, booking) pair, preferring an active checklist over a
+ * completed one — the same lookup getChecklistByHaven does, so the gate always
+ * verifies the checklist the cleaner was actually working in.
+ */
+export async function findAssignmentChecklist(
+  cleaningTaskId: string,
+): Promise<{ id: string; status: string } | null> {
+  const taskRes = await pool.query(
+    `SELECT b.id::text AS booking_uuid, h.uuid_id::text AS haven_id
+     FROM booking_cleaning bc
+     INNER JOIN booking b ON bc.booking_id = b.id
+     LEFT JOIN havens h ON REPLACE(LOWER(h.haven_name), 'room', 'haven') = REPLACE(LOWER(b.room_name), 'room', 'haven')
+     WHERE bc.id = $1::uuid`,
+    [cleaningTaskId],
+  );
+
+  const task = taskRes.rows[0];
+  if (!task?.haven_id || !task?.booking_uuid) return null;
+
+  const checklistRes = await pool.query(
+    `SELECT id::text AS id, status FROM cleaning_checklists
+     WHERE haven_id = $1 AND booking_id = $2::uuid
+     ORDER BY CASE WHEN status != 'completed' THEN 0 ELSE 1 END ASC, created_at DESC
+     LIMIT 1`,
+    [task.haven_id, task.booking_uuid],
+  );
+
+  return checklistRes.rows[0] ?? null;
+}
+
+/**
+ * The single server-side answer to "may this assignment leave In Progress?".
+ * Fails a missing checklist as loudly as an unfinished one — a room with no
+ * checklist at all used to sail straight through to inspection.
+ */
+export async function verifyAssignmentChecklist(
+  cleaningTaskId: string,
+): Promise<{ checklistId: string | null; gate: GateResult }> {
+  const checklist = await findAssignmentChecklist(cleaningTaskId);
+  if (!checklist) {
+    return { checklistId: null, gate: evaluateChecklistGate([]) };
+  }
+  const tasks = await loadChecklistGateTasks(checklist.id);
+  return { checklistId: checklist.id, gate: evaluateChecklistGate(tasks) };
 }
 
 /* ---------------------------
@@ -161,15 +255,7 @@ export const getChecklistByHaven = async (
     // If checklist exists, fetch tasks and return grouped result
     if (checklistResult.rows.length > 0) {
       const checklist = checklistResult.rows[0];
-      const tasksResult = await pool.query(
-        `SELECT id, checklist_id, category, task_description, completed, display_order
-         FROM cleaning_tasks
-         WHERE checklist_id = $1
-         ORDER BY display_order ASC, created_at ASC`,
-        [checklist.id],
-      );
-
-      const categories = groupTasksByCategory(tasksResult.rows);
+      const categories = groupTasksByCategory(await fetchChecklistTasks(pool, checklist.id));
 
       return NextResponse.json({
         success: true,
@@ -216,15 +302,7 @@ export const getChecklistByHaven = async (
         await client.query("COMMIT");
 
         const existing = recheckRes.rows[0];
-        const tasksRes = await pool.query(
-          `SELECT id, checklist_id, category, task_description, completed, display_order
-           FROM cleaning_tasks
-           WHERE checklist_id = $1
-           ORDER BY display_order ASC, created_at ASC`,
-          [existing.id],
-        );
-
-        const categories = groupTasksByCategory(tasksRes.rows as TaskRow[]);
+        const categories = groupTasksByCategory(await fetchChecklistTasks(client, existing.id));
 
         return NextResponse.json({
           success: true,
@@ -266,15 +344,7 @@ export const getChecklistByHaven = async (
       await client.query("COMMIT");
 
       // Fetch inserted tasks to return
-      const tasksResult = await pool.query(
-        `SELECT id, checklist_id, category, task_description, completed, display_order
-         FROM cleaning_tasks
-         WHERE checklist_id = $1
-         ORDER BY display_order ASC, created_at ASC`,
-        [checklistId],
-      );
-
-      const categories = groupTasksByCategory(tasksResult.rows);
+      const categories = groupTasksByCategory(await fetchChecklistTasks(client, checklistId));
 
       return NextResponse.json({
         success: true,
@@ -303,7 +373,7 @@ export const getChecklistByHaven = async (
           pgErr.constraint === "uniq_active_checklist_per_haven_legacy")
       ) {
         try {
-          const existingRes = await pool.query(
+          const existingRes = await client.query(
             `SELECT id, haven_id, booking_id, status, completed_at, created_at, updated_at
              FROM cleaning_checklists
              ${checklistWhere}
@@ -316,16 +386,7 @@ export const getChecklistByHaven = async (
 
           if (existingRes.rows.length > 0) {
             const existing = existingRes.rows[0];
-
-            const tasksRes = await pool.query(
-              `SELECT id, checklist_id, category, task_description, completed, display_order
-               FROM cleaning_tasks
-               WHERE checklist_id = $1
-               ORDER BY display_order ASC, created_at ASC`,
-              [existing.id],
-            );
-
-            const categories = groupTasksByCategory(tasksRes.rows as TaskRow[]);
+            const categories = groupTasksByCategory(await fetchChecklistTasks(client, existing.id));
 
             return NextResponse.json({
               success: true,
@@ -774,11 +835,14 @@ export const saveChecklistProgress = async (
 
       for (const t of tasks) {
         if (!t || !t.id || typeof t.completed !== "boolean") continue;
+        // Scoped to THIS checklist: access was authorised for checklist_id, so a
+        // task id from some other checklist in the same payload is ignored
+        // rather than written.
         await client.query(
           `UPDATE cleaning_tasks
            SET completed = $1, updated_at = timezone('Asia/Manila', NOW())
-           WHERE id = $2`,
-          [t.completed, t.id],
+           WHERE id = $2 AND checklist_id = $3`,
+          [t.completed, t.id, checklist_id],
         );
       }
 
@@ -958,7 +1022,17 @@ export const saveChecklistProgress = async (
  * Endpoint: POST /api/admin/cleaners/checklist/submit
  * Body: { checklist_id: string }
  *
- * Submission is only allowed when all tasks are completed.
+ * Every task must be ticked AND have a successfully uploaded photo. Three things
+ * this used to do, and no longer does:
+ *   - let a cleaner through when only the "General" category was ticked, on the
+ *     theory that other categories were covered by photos (they weren't checked
+ *     either);
+ *   - force-complete every unticked task on the way out, so submitting was
+ *     itself what "finished" the checklist;
+ *   - accept a checklist with no tasks at all as complete.
+ *
+ * Owner/CSR keep an override — they inspect the room themselves — but it is now
+ * explicit in the response rather than a silent bypass.
  * --------------------------- */
 export const submitChecklist = async (
   req: NextRequest,
@@ -974,49 +1048,39 @@ export const submitChecklist = async (
       );
     }
 
-    const isPrivilegedRole = role === "csr" || role === "admin";
-
-    if (!isPrivilegedRole) {
-      // For cleaners, only the General-category tasks count toward the submit
-      // gate. Non-General categories (Bedroom, Bathroom, etc.) use photo proof
-      // instead of individual task checkboxes, so those task rows may still be
-      // false in the DB. Only block if General tasks are incomplete.
-      const incompleteCountRes = await pool.query(
-        `SELECT COUNT(*)::int AS incomplete_count
-         FROM cleaning_tasks
-         WHERE checklist_id = $1
-         AND category = 'General'
-         AND completed = false`,
-        [checklist_id],
-      );
-
-      const incompleteCount = parseInt(
-        incompleteCountRes.rows[0]?.incomplete_count || "0",
-        10,
-      );
-
-      if (incompleteCount > 0) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: "Cannot submit: there are incomplete tasks",
-            incompleteCount,
-          },
-          { status: 400 },
-        );
-      }
-    }
-
-    // Force-complete all tasks before finalising so the DB is consistent
-    // regardless of whether non-General categories had task rows still false.
-    await pool.query(
-      `UPDATE cleaning_tasks
-       SET completed = true, updated_at = timezone('Asia/Manila', NOW())
-       WHERE checklist_id = $1 AND completed = false`,
+    const exists = await pool.query(
+      `SELECT id FROM cleaning_checklists WHERE id = $1`,
       [checklist_id],
     );
+    if (exists.rows.length === 0) {
+      return NextResponse.json(
+        { success: false, error: "Checklist not found" },
+        { status: 404 },
+      );
+    }
 
-    // Mark checklist as completed
+    const isPrivilegedRole = role === "Owner" || role === "CSR" || role === "csr" || role === "admin";
+
+    const gate = evaluateChecklistGate(await loadChecklistGateTasks(checklist_id));
+
+    if (!gate.ok && !isPrivilegedRole) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: gate.error,
+          // Named, not just counted, so the portal can point at the exact rows.
+          incompleteCount: gate.incomplete.length,
+          missingPhotoCount: gate.missingPhotos.length,
+          incompleteTasks: gate.incomplete.map((t) => ({ id: t.id, category: t.category, task: t.task })),
+          missingPhotoTasks: gate.missingPhotos.map((t) => ({ id: t.id, category: t.category, task: t.task })),
+        },
+        { status: 400 },
+      );
+    }
+
+    // Only a checklist that genuinely passed is marked completed. An Owner/CSR
+    // override records the completion without pretending the tasks were ticked —
+    // nothing here writes to cleaning_tasks.
     const updateRes = await pool.query(
       `UPDATE cleaning_checklists
        SET status = 'completed', completed_at = timezone('Asia/Manila', NOW()), updated_at = timezone('Asia/Manila', NOW())
@@ -1025,17 +1089,12 @@ export const submitChecklist = async (
       [checklist_id],
     );
 
-    if (updateRes.rows.length === 0) {
-      return NextResponse.json(
-        { success: false, error: "Checklist not found" },
-        { status: 404 },
-      );
-    }
-
     return NextResponse.json({
       success: true,
-      message: "Checklist submitted successfully",
-      data: { checklist: updateRes.rows[0] },
+      message: gate.ok
+        ? "Checklist submitted successfully"
+        : "Checklist closed by Owner/CSR override",
+      data: { checklist: updateRes.rows[0], overridden: !gate.ok },
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

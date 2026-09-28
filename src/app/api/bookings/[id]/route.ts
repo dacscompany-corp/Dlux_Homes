@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getBookingById, updateBookingDetails, updateBookingStatus, deleteBooking } from "@/backend/controller/bookingController";
-import { requireAdmin, requireEmployee, requireBookingAccess } from "@/backend/utils/requireAdmin";
+import { requireAdmin, requireBookingAccess } from "@/backend/utils/requireAdmin";
+import { updateCleaningTask } from "@/backend/controller/cleanersController";
 import pool from "@/backend/config/db";
 
 interface RouteContext {
@@ -48,128 +49,63 @@ export async function PUT(request: NextRequest, { params }: RouteContext): Promi
   return isDetailsUpdate ? updateBookingDetails(request) : updateBookingStatus(request);
 }
 
+// Cleaning-status updates addressed by booking id. This used to be
+// requireEmployee() writing cleaning_status / assigned_to straight into
+// booking_cleaning — so any cleaner could mark any room 'inspected', or hand a
+// task to anyone, and skip checklist, photos and inspection alike. It now takes
+// the same path as every other status write: Owner/CSR only, validated against
+// the workflow sequence, and never to Ready (that's inspection approval's job).
+// Assignment goes through /api/admin/cleaners/tasks/[id]/assign so the fairness
+// ledger stays correct.
 export async function PATCH(request: NextRequest, { params }: RouteContext): Promise<NextResponse> {
-  // Cleaning-status updates are staff-only (Owner/CSR/Cleaner).
-  const guard = await requireEmployee();
+  const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
-  try {
-    const { id } = await params;
-    const body = await request.json();
-    const { cleaning_status, assigned_to, cleaned_at, inspected_at, cleaning_time_in } = body;
 
-    if (!id) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Booking ID is required",
-        },
-        { status: 400 }
-      );
-    }
+  const { id } = await params;
+  const body = await request.json().catch(() => ({}));
+  const { cleaning_status, assigned_to } = (body ?? {}) as { cleaning_status?: unknown; assigned_to?: unknown };
 
-    // If cleaning_status is provided, validate it
-    if (cleaning_status) {
-      const validStatuses = ["pending", "in-progress", "cleaned", "inspected"];
-      if (!validStatuses.includes(cleaning_status)) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: "Invalid cleaning status",
-          },
-          { status: 400 }
-        );
-      }
-    }
-
-    // Update the booking_cleaning table instead of bookings
-    let query = `
-      UPDATE booking_cleaning
-      SET
-    `;
-    const updateFields: string[] = [];
-    const params_arr: string[] = [];
-    let paramCount = 1;
-
-    if (cleaning_status !== undefined) {
-      updateFields.push(`cleaning_status = $${paramCount}`);
-      params_arr.push(cleaning_status);
-      paramCount++;
-    }
-
-    if (assigned_to !== undefined) {
-      updateFields.push(`assigned_to = $${paramCount}`);
-      params_arr.push(assigned_to);
-      paramCount++;
-    }
-
-    if (cleaning_time_in !== undefined) {
-      updateFields.push(`cleaning_time_in = $${paramCount}`);
-      params_arr.push(cleaning_time_in);
-      paramCount++;
-    }
-
-    if (cleaned_at !== undefined) {
-      updateFields.push(`cleaned_at = $${paramCount}`);
-      params_arr.push(cleaned_at);
-      paramCount++;
-    }
-
-    if (inspected_at !== undefined) {
-      updateFields.push(`inspected_at = $${paramCount}`);
-      params_arr.push(inspected_at);
-      paramCount++;
-    }
-
-    if (updateFields.length === 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "No fields to update",
-        },
-        { status: 400 }
-      );
-    }
-
-    query += updateFields.join(", ");
-    query += ` WHERE booking_id = $${paramCount}
-      RETURNING *
-    `;
-    params_arr.push(id);
-
-    console.log("Executing query:", query);
-    console.log("With params:", params_arr);
-
-    const result = await pool.query(query, params_arr);
-
-    if (result.rows.length === 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Cleaning record not found for this booking",
-        },
-        { status: 404 }
-      );
-    }
-
-    console.log("Update successful:", result.rows[0]);
-
+  if (assigned_to !== undefined) {
     return NextResponse.json(
-      {
-        success: true,
-        data: result.rows[0],
-      },
-      { status: 200 }
-    );
-  } catch (error) {
-    console.error("Error updating cleaning record:", error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to update cleaning record",
-      },
-      { status: 500 }
+      { success: false, error: "Use /api/admin/cleaners/tasks/[id]/assign to assign or reassign a cleaner." },
+      { status: 400 }
     );
   }
+  if (typeof cleaning_status !== "string" || !cleaning_status) {
+    return NextResponse.json({ success: false, error: "cleaning_status is required" }, { status: 400 });
+  }
+  if (cleaning_status === "ready" || cleaning_status === "inspected" || cleaning_status === "cleaned") {
+    return NextResponse.json(
+      { success: false, error: "Rooms become Ready only through inspection approval." },
+      { status: 400 }
+    );
+  }
+
+  const taskRes = await pool.query(
+    `SELECT bc.id::text AS id
+       FROM booking_cleaning bc
+       JOIN booking b ON b.id = bc.booking_id
+      WHERE b.id::text = $1 OR b.booking_id = $1
+      LIMIT 1`,
+    [id]
+  );
+  const taskId: string | undefined = taskRes.rows[0]?.id;
+  if (!taskId) {
+    return NextResponse.json(
+      { success: false, error: "Cleaning record not found for this booking" },
+      { status: 404 }
+    );
+  }
+
+  const actorId = (guard.session.user as { id?: string }).id ?? null;
+  const url = new URL(`/api/admin/cleaners/tasks/${taskId}`, request.url);
+  const forwarded = new Request(url, {
+    method: "PUT",
+    headers: request.headers,
+    body: JSON.stringify({ cleaning_status, changed_by: actorId }),
+  }) as NextRequest;
+
+  return updateCleaningTask(forwarded, { id: actorId, role: guard.role });
 }
 
 export async function DELETE(request: NextRequest, { params }: RouteContext): Promise<NextResponse> {
