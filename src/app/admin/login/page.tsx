@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { signIn, getSession } from "next-auth/react";
+import { signIn, signOut, getSession } from "next-auth/react";
 import Link from "next/link";
 import Image from "next/image";
 import DluxMark from "@/components/brand/DluxMark";
@@ -19,6 +19,13 @@ const rolePaths: Record<AdminRole, string> = {
   owner:   "/admin/owners",
   csr:     "/admin/csr",
   cleaner: "/admin/cleaners",
+};
+
+// The account role (employees.role) each tab accepts.
+const roleForTab: Record<AdminRole, string> = {
+  owner:   "Owner",
+  csr:     "CSR",
+  cleaner: "Cleaner",
 };
 
 // Maps the role stored on the account (employees.role) to its dashboard.
@@ -93,11 +100,31 @@ export default function AdminLoginPage() {
         return;
       }
 
-      // Authenticated — route by the account's actual role, not the chosen tab.
+      // Authenticated. The account's stored role (employees.role) must match
+      // the portal chosen on this page: an Owner account signs in through the
+      // Owner tab only, a CSR account through CSR, a Cleaner through Cleaner.
+      // Anything else is signed straight back out, so no session is left
+      // behind for the wrong portal.
       const session = await getSession();
-      const role = (session?.user as { role?: string } | undefined)?.role;
-      const dest = (role && dbRoleToPath[role]) || rolePaths[selectedRole];
-      router.push(dest);
+      const role = (session?.user as { role?: string } | undefined)?.role ?? "";
+      const accountPortal = Object.entries(roleForTab).find(([, dbRole]) => dbRole === role)?.[0] as AdminRole | undefined;
+
+      if (!accountPortal) {
+        await signOut({ redirect: false });
+        setError("This isn't a staff account. Use the guest sign-in on the main site instead.");
+        setLoading(false);
+        return;
+      }
+      if (accountPortal !== selectedRole) {
+        await signOut({ redirect: false });
+        const label = roles.find((r) => r.value === accountPortal)?.label ?? role;
+        setError(`This is a ${label} account. Choose the ${label} tab to sign in.`);
+        setSelectedRole(accountPortal);
+        setLoading(false);
+        return;
+      }
+
+      router.push(dbRoleToPath[role] ?? rolePaths[selectedRole]);
       router.refresh();
     } catch {
       setError("Something went wrong. Please try again.");

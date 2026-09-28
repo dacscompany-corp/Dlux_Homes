@@ -92,6 +92,7 @@ import {
   Receipt,
   CalendarRange,
 } from "lucide-react";
+import { useSignedInStaff } from "@/components/admin/useSignedInStaff";
 
 // PromotionRecord types start_date/end_date as string, but server actions return
 // raw pg rows where TIMESTAMP columns are Date objects (no JSON serialization
@@ -151,6 +152,8 @@ function toRows(v: unknown): Record<string, unknown>[] {
 }
 
 export default function OwnerDashboard() {
+  // The signed-in account — shown in the sidebar, header and Profile.
+  const me = useSignedInStaff("Owner");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeNav, setActiveNav] = useState("Overview");
   const [propertyTab, setPropertyTab] = useState<"havens"|"maintenance"|"cleaning">("havens");
@@ -1061,11 +1064,11 @@ export default function OwnerDashboard() {
         <div className="px-3 py-4 border-t" style={{ borderColor: "rgba(250,247,241,0.1)" }}>
           <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl" style={{ backgroundColor: "rgba(250,247,241,0.1)" }}>
             <Avatar className="w-8 h-8 flex-shrink-0">
-              <AvatarFallback className="text-white text-xs font-bold" style={{ backgroundColor: "#B07848" }}>AO</AvatarFallback>
+              <AvatarFallback className="text-white text-xs font-bold" style={{ backgroundColor: "#B07848" }}>{me.initials}</AvatarFallback>
             </Avatar>
             <div className="flex-1 min-w-0">
-              <p className="text-white text-sm font-medium truncate">Admin Owner</p>
-              <p className="text-xs truncate" style={{ color: "#6b5040" }}>owner@dluxhomes.com</p>
+              <p className="text-white text-sm font-medium truncate">{me.name}</p>
+              <p className="text-xs truncate" style={{ color: "#6b5040" }}>{me.email}</p>
             </div>
             <button type="button" onClick={() => signOut({ callbackUrl: "/admin/login" })} aria-label="Sign out" className="cursor-pointer">
               <LogOut className="w-4 h-4 flex-shrink-0 transition-colors" style={{ color: "#6b5040" }} />
@@ -1128,10 +1131,10 @@ export default function OwnerDashboard() {
               onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#f3eee2"}
               onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}
             >
-              <span style={{ width: 28, height: 28, borderRadius: "50%", background: "#b8754a", color: "#faf7f1", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 14 }}>A</span>
+              <span style={{ width: 28, height: 28, borderRadius: "50%", background: "#b8754a", color: "#faf7f1", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 14 }}>{me.initials.slice(0, 1)}</span>
               <span className="flex flex-col items-start" style={{ lineHeight: 1.2 }}>
-                <span style={{ fontSize: 13, color: "#1f1b16" }}>Admin Owner</span>
-                <span style={{ fontSize: 11, color: "#8a8276" }}>Owner</span>
+                <span style={{ fontSize: 13, color: "#1f1b16" }}>{me.name}</span>
+                <span style={{ fontSize: 11, color: "#8a8276" }}>{me.role || "Owner"}</span>
               </span>
             </button>
           </div>

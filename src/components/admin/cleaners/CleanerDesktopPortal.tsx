@@ -38,6 +38,7 @@ import {
   AlertCircle, Building2, MessageSquare, CalendarDays, BookOpen,
   Camera, Phone, Mail, Shield, Star, ChevronDown, ChevronRight, LifeBuoy, Languages,
 } from "lucide-react";
+import { useSignedInStaff } from "@/components/admin/useSignedInStaff";
 
 // Simplified sidebar (owner spec, 2026-09-22): five top-level items —
 // Dashboard, Tasks, Schedule, Messages, Support. "Tasks" and "Support" are
@@ -110,6 +111,8 @@ function toRows(v: unknown): Record<string, unknown>[] {
 }
 
 export default function CleanerDesktopPortal() {
+  // The signed-in account — shown in the sidebar, header and Profile.
+  const me = useSignedInStaff("Cleaner");
   const [sidebarOpen,       setSidebarOpen]       = useState(false);
   const [activeNav,         setActiveNav]         = useState("Dashboard");
   // Which expandable nav groups (Tasks, Support) are open — collapsed by
@@ -267,7 +270,9 @@ export default function CleanerDesktopPortal() {
   // The cleaner's one chat thread with the office (created on first load).
   // Polled on every tab so the Messages nav can show unread office replies.
   const { data: staffThreads = [] } = useGetStaffThreadsQuery(undefined, { skip: !cleanerId, pollingInterval: 30000 });
-  const officeThread = staffThreads[0] ?? null;
+  // Only the signed-in cleaner's own thread — an Owner/CSR opening this portal
+  // gets the whole office list back, and must not land in someone else's chat.
+  const officeThread = staffThreads.find((t) => t.cleaner_id === cleanerId) ?? null;
   const unreadOfficeMessages = officeThread?.unread_count ?? 0;
 
   // Start and Complete show their result immediately (RTK's optimistic
@@ -510,11 +515,11 @@ export default function CleanerDesktopPortal() {
             onMouseEnter={(e) => { if (activeNav !== "Profile") (e.currentTarget as HTMLElement).style.backgroundColor = "rgba(250,247,241,0.16)"; }}
             onMouseLeave={(e) => { if (activeNav !== "Profile") (e.currentTarget as HTMLElement).style.backgroundColor = "rgba(250,247,241,0.1)"; }}>
             <Avatar className="w-8 h-8 flex-shrink-0">
-              <AvatarFallback className="text-xs font-bold" style={{ backgroundColor: "#D4A96A", color: "#2C1F14" }}>CL</AvatarFallback>
+              <AvatarFallback className="text-xs font-bold" style={{ backgroundColor: "#D4A96A", color: "#2C1F14" }}>{me.initials}</AvatarFallback>
             </Avatar>
             <div className="flex-1 min-w-0">
-              <p className="text-white text-sm font-medium truncate">Cleaner Staff</p>
-              <p className="text-xs truncate" style={{ color: "#6b5040" }}>cleaner@dluxhomes.com</p>
+              <p className="text-white text-sm font-medium truncate">{me.name}</p>
+              <p className="text-xs truncate" style={{ color: "#6b5040" }}>{me.email}</p>
             </div>
             <span role="button" tabIndex={0} aria-label="Sign out"
               onClick={(e) => { e.stopPropagation(); signOut({ callbackUrl: "/admin/login" }); }}
@@ -577,10 +582,10 @@ export default function CleanerDesktopPortal() {
             </button>
             <button type="button" onClick={() => setActiveNav("Profile")} title="Profile" className="flex items-center gap-2.5 rounded-lg cursor-pointer transition-colors" style={{ padding: "6px 12px 6px 6px", background: "transparent", border: 0 }}
               onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#f3eee2"} onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
-              <span className="flex-shrink-0" style={{ width: 28, height: 28, borderRadius: "50%", background: "#d4a96a", color: "#2c1f14", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 14 }}>L</span>
+              <span className="flex-shrink-0" style={{ width: 28, height: 28, borderRadius: "50%", background: "#d4a96a", color: "#2c1f14", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 14 }}>{me.initials.slice(0, 1)}</span>
               <span className="hidden sm:flex flex-col items-start" style={{ lineHeight: 1.2 }}>
-                <span style={{ fontSize: 13, color: "#1f1b16" }}>Cleaner Staff</span>
-                <span style={{ fontSize: 11, color: "#8a8276" }}>On route</span>
+                <span style={{ fontSize: 13, color: "#1f1b16" }}>{me.name}</span>
+                <span style={{ fontSize: 11, color: "#8a8276" }}>{me.role || "Cleaner"}</span>
               </span>
             </button>
           </div>
@@ -1127,9 +1132,9 @@ export default function CleanerDesktopPortal() {
               <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16", marginBottom: 24 }}>My Profile</h2>
               <div className="border p-6 mb-4" style={{ borderColor: "#ece5d4" }}>
                 <div className="flex items-center gap-4 mb-6">
-                  <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-lg font-bold" style={{ backgroundColor: "#D4A96A", color: "#2C1F14" }}>CL</div>
+                  <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-lg font-bold" style={{ backgroundColor: "#D4A96A", color: "#2C1F14" }}>{me.initials}</div>
                   <div>
-                    <p style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 19, lineHeight: 1, color: "#1f1b16" }}>Cleaner Staff</p>
+                    <p style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 19, lineHeight: 1, color: "#1f1b16" }}>{me.name}</p>
                     <p className="text-sm" style={{ color: "#8B6344" }}>Housekeeping Staff</p>
                     <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full mt-1" style={{ backgroundColor: "#d1fae5", color: "#065f46" }}>
                       <span className="w-1.5 h-1.5 rounded-full bg-current" />Active
@@ -1138,7 +1143,7 @@ export default function CleanerDesktopPortal() {
                 </div>
                 <div className="space-y-3">
                   {[
-                    { icon: Mail,     label: "Email",    value: "cleaner@dluxhomes.com" },
+                    { icon: Mail,     label: "Email",    value: me.email || "—" },
                     { icon: Phone,    label: "Phone",    value: "+63 917 234 5678" },
                     { icon: Building2,label: "Location", value: "Mother Ignacia Ave, Diliman, QC" },
                     { icon: Shield,   label: "Role",     value: "Cleaner — Housekeeping Staff" },

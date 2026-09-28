@@ -43,10 +43,9 @@ import {
   type Notification,
 } from "@/redux/api/notificationsApi";
 import {
-  useGetConversationsQuery,
-  useGetMessagesQuery,
-  useSendMessageMutation,
-  useMarkMessagesAsReadMutation,
+  useGetStaffThreadsQuery,
+  useGetStaffMessagesQuery,
+  useSendStaffMessageMutation,
 } from "@/redux/api/messagesApi";
 import {
   useGetCleaningTasksQuery,
@@ -469,21 +468,22 @@ export default function CleanerMobilePortal() {
     if (fresh.length) seenRef.current = new Set(notifRes.map((n) => n.id));
   }, [notifRes]);
 
-  const { data: convRes } = useGetConversationsQuery({ userId: myId }, { skip: !myId });
-  const conversation = useMemo(() => {
-    const rows = convRes?.data ?? [];
-    // Staff threads first; otherwise whatever thread the office started.
-    return rows.find((c) => c.type === "internal") ?? rows[0] ?? null;
-  }, [convRes]);
-  const conversationId = conversation?.id ?? "";
-  const { data: msgRes } = useGetMessagesQuery(
-    { conversationId },
-    { skip: !conversationId, pollingInterval: 30000 }
-  );
-  const thread = msgRes?.data ?? [];
-  const [sendMessageM] = useSendMessageMutation();
-  const [markThreadRead] = useMarkMessagesAsReadMutation();
-  const unreadMsgs = (convRes?.data ?? []).reduce((n, c) => n + Number(c.unread_count ?? 0), 0);
+  // The cleaner's one chat thread with the office — created on first load,
+  // so the cleaner can write first instead of waiting for the office to.
+  // Everyone in the office (Owner and CSR) sees it and can answer.
+  const { data: staffThreads = [] } = useGetStaffThreadsQuery(undefined, { skip: !myId, pollingInterval: 30000 });
+  const conversation = staffThreads.find((th) => th.cleaner_id === myId) ?? null;
+  const conversationId = conversation?.conversation_id ?? "";
+  // Fetched only while Messages is open: loading the thread marks the office's
+  // messages read, which should happen when the cleaner actually looks.
+  const { data: thread = [] } = useGetStaffMessagesQuery(conversationId, {
+    skip: !conversationId || screen !== "messages",
+    pollingInterval: 8000,
+    refetchOnMountOrArgChange: true,
+  });
+  const [sendStaffMessageM, { isLoading: sendingMsg }] = useSendStaffMessageMutation();
+  const [msgDraft, setMsgDraft] = useState("");
+  const unreadMsgs = conversation?.unread_count ?? 0;
   const unreadTotal = unreadNotifs + unreadMsgs;
 
   const threadEndRef = useRef<HTMLDivElement | null>(null);
@@ -491,23 +491,23 @@ export default function CleanerMobilePortal() {
     if (screen === "messages") threadEndRef.current?.scrollIntoView({ block: "end" });
   }, [screen, thread.length]);
 
-  const openMessages = () => {
-    setScreen("messages");
-    if (conversationId && myId && unreadMsgs > 0) {
-      markThreadRead({ conversation_id: conversationId, user_id: myId }).catch(() => {});
+  const openMessages = () => setScreen("messages");
+
+  // Sender and name come from the session server-side; nothing to pass here.
+  const sendQuick = async (text: string): Promise<boolean> => {
+    const body = text.trim();
+    if (!body || !myId) return false;
+    try {
+      await sendStaffMessageM({ conversation_id: conversationId || null, message_text: body }).unwrap();
+      return true;
+    } catch {
+      toast.error(lang === "tl" ? "Hindi naipadala" : "Could not send that message");
+      return false;
     }
   };
-
-  const sendQuick = async (text: string) => {
-    if (!conversationId || !myId) return;
-    try {
-      await sendMessageM({
-        conversation_id: conversationId,
-        sender_id: myId,
-        sender_name: me?.name || "Cleaner",
-        message_text: text,
-      }).unwrap();
-    } catch { toast.error(lang === "tl" ? "Hindi naipadala" : "Could not send that message"); }
+  const sendDraft = async () => {
+    if (sendingMsg) return;
+    if (await sendQuick(msgDraft)) setMsgDraft("");
   };
 
   const readNotification = (n: Notification) => {
@@ -1072,7 +1072,7 @@ export default function CleanerMobilePortal() {
               display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
             }}>
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontFamily: SERIF, fontSize: 32, lineHeight: 1 }}>{conversation?.name || t.office}</div>
+                <div style={{ fontFamily: SERIF, fontSize: 32, lineHeight: 1 }}>{t.office}</div>
                 <div style={{ fontSize: 14, color: C.muted, marginTop: 4 }}>{t.officeSub}</div>
               </div>
               {OFFICE_PHONE && (
@@ -1121,11 +1121,7 @@ export default function CleanerMobilePortal() {
                 </>
               )}
 
-              {!conversationId ? (
-                <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: 16, fontSize: 16, color: C.muted, lineHeight: 1.45 }}>
-                  {t.noThread}
-                </div>
-              ) : thread.length === 0 ? (
+              {thread.length === 0 ? (
                 <div style={{ fontSize: 16, color: C.muted }}>{t.noMessages}</div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1139,6 +1135,7 @@ export default function CleanerMobilePortal() {
                           border: mine ? 0 : `1px solid ${C.line}`, fontSize: 17, lineHeight: 1.4,
                         }}>{m.message_text}</div>
                         <div style={{ fontSize: 13, color: C.faint, margin: "4px 6px 0" }}>
+                          {!mine && `${m.sender_name} · `}
                           {new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                         </div>
                       </div>
@@ -1149,19 +1146,38 @@ export default function CleanerMobilePortal() {
               )}
             </div>
 
-            {conversationId && (
+            {myId && (
               <div style={{
                 position: "sticky", bottom: 0, background: C.card, borderTop: `1px solid ${C.line}`,
                 padding: `10px 12px calc(env(safe-area-inset-bottom, 0px) + 100px)`,
               }}>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                   {t.quick.map((q) => (
-                    <button key={q} type="button" onClick={() => sendQuick(q)} style={{
+                    <button key={q} type="button" onClick={() => sendQuick(q)} disabled={sendingMsg} style={{
                       height: 44, padding: "0 16px", border: `1px solid ${C.creamLine}`, background: C.cream,
                       color: C.ink, borderRadius: 999, font: `500 16px ${SANS}`, cursor: "pointer",
                     }}>{q}</button>
                   ))}
                 </div>
+                <form onSubmit={(e) => { e.preventDefault(); sendDraft(); }} style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                  <input
+                    type="text"
+                    value={msgDraft}
+                    maxLength={2000}
+                    onChange={(e) => setMsgDraft(e.target.value)}
+                    placeholder={t.typeMessage}
+                    aria-label={t.typeMessage}
+                    style={{
+                      flex: 1, minWidth: 0, height: 52, padding: "0 16px", borderRadius: 999,
+                      border: `1px solid ${C.line}`, background: C.bg, font: `400 17px ${SANS}`, color: C.ink,
+                    }}
+                  />
+                  <button type="submit" disabled={sendingMsg || !msgDraft.trim()} style={{
+                    height: 52, padding: "0 20px", border: 0, borderRadius: 999, background: C.ink,
+                    color: C.onDark, font: `600 17px ${SANS}`, cursor: "pointer",
+                    opacity: sendingMsg || !msgDraft.trim() ? 0.5 : 1, flexShrink: 0,
+                  }}>{sendingMsg ? t.sending : t.sendMsg}</button>
+                </form>
               </div>
             )}
           </>

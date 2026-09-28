@@ -81,7 +81,9 @@ const en = {
   officeSub: "Messages from the office show up here",
   call: "Call",
   fromOffice: "From the office",
-  noMessages: "No messages yet.",
+  noMessages: "No messages yet. Write to the office below — anyone there can answer.",
+  typeMessage: "Write a message…",
+  sendMsg: "Send",
   noThread: "The office hasn't started a chat with you yet. Call them if you need something now.",
 
   // Help
@@ -184,7 +186,9 @@ const tl: CleanerStrings = {
   officeSub: "Dito lalabas ang mensahe ng opisina",
   call: "Tawag",
   fromOffice: "Mula sa opisina",
-  noMessages: "Wala pang mensahe.",
+  noMessages: "Wala pang mensahe. Sumulat sa opisina sa ibaba — puwedeng sumagot ang kahit sino roon.",
+  typeMessage: "Magsulat ng mensahe…",
+  sendMsg: "Ipadala",
   noThread: "Wala pang chat na sinimulan ang opisina. Tawagan mo sila kung may kailangan ka ngayon.",
 
   helpTitle: "Kailangan ng tulong?",
