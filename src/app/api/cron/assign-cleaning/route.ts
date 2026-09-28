@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sweepUnassignedCleaning } from "@/backend/controller/cleanersController";
+import { reconcileCleaningCalendars } from "@/backend/utils/cleaningCalendar";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,7 +38,11 @@ export async function GET(req: NextRequest) {
 
   try {
     const result = await sweepUnassignedCleaning();
-    return NextResponse.json({ success: true, ...result });
+    // Then heal cleaners' Google Calendars: picks up anything a live sync
+    // missed (a Google blip, a new booking that ends a cleaning window sooner,
+    // an event deleted by hand).
+    const calendar = await reconcileCleaningCalendars();
+    return NextResponse.json({ success: true, ...result, calendar });
   } catch (error) {
     console.error("[cron/assign-cleaning] sweep failed:", error);
     return NextResponse.json(

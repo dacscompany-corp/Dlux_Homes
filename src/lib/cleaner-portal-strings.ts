@@ -92,6 +92,17 @@ const en = {
   how: "How it works",
   signOut: "Sign out",
 
+  // Google Calendar
+  calTitle: "Google Calendar",
+  calIntro: "Your cleaning schedule, in your own Google Calendar. It updates by itself when rooms are added, moved or cancelled.",
+  calSetUp: "Add to my Google Calendar",
+  calOpen: "Open in Google Calendar",
+  calResend: "Resend invite",
+  calWorking: "Setting up…",
+  calTip: "Turn on reminders once: in Google Calendar, open this calendar's settings → Event notifications → add \"1 hour before\".",
+  calOff: "Google Calendar isn't available right now.",
+  calResent: "Invite sent — check your email.",
+
   // Nav
   tabToday: "Today",
   tabMsg: "Messages",
@@ -114,6 +125,7 @@ const en = {
   photosLeft: (n: number) => `${n} ${n === 1 ? "photo" : "photos"} still needed`,
   stayOvernight: (nights: number) => (nights <= 1 ? "Overnight" : `${nights} nights`),
   guestOf: (name: string) => `Guest: ${name}`,
+  calSharedTo: (email: string) => `Shared to ${email}. Open the email from Google and tap "Add this calendar".`,
   guests: (adults: number, children: number) =>
     `${adults} ${adults === 1 ? "adult" : "adults"}${children > 0 ? `, ${children} ${children === 1 ? "child" : "children"}` : ""}`,
 };
@@ -194,6 +206,16 @@ const tl: CleanerStrings = {
   how: "Paano gamitin",
   signOut: "Mag-sign out",
 
+  calTitle: "Google Calendar",
+  calIntro: "Ang iskedyul ng paglilinis mo, nasa sarili mong Google Calendar. Kusa itong nag-a-update kapag may bagong kwarto, nailipat, o na-cancel.",
+  calSetUp: "Idagdag sa Google Calendar ko",
+  calOpen: "Buksan sa Google Calendar",
+  calResend: "Ipadala ulit ang imbitasyon",
+  calWorking: "Inaayos…",
+  calTip: "Buksan ang paalala isang beses: sa Google Calendar, pumunta sa settings ng calendar na ito → Event notifications → idagdag ang \"1 hour before\".",
+  calOff: "Hindi available ang Google Calendar ngayon.",
+  calResent: "Naipadala na — tingnan ang email mo.",
+
   tabToday: "Ngayon",
   tabMsg: "Mensahe",
   tabHelp: "Tulong",
@@ -214,6 +236,7 @@ const tl: CleanerStrings = {
   photosLeft: (n) => `${n} litrato pa ang kailangan`,
   stayOvernight: (nights) => (nights <= 1 ? "Overnight" : `${nights} gabi`),
   guestOf: (name) => `Bisita: ${name}`,
+  calSharedTo: (email) => `Naipadala sa ${email}. Buksan ang email mula sa Google at pindutin ang "Add this calendar".`,
   guests: (adults, children) => `${adults} matanda${children > 0 ? `, ${children} bata` : ""}`,
 };
 

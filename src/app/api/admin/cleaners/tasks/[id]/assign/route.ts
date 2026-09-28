@@ -44,6 +44,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         bc.assigned_to::text as previous_cleaner_id,
         b.booking_id,
         b.room_name as haven,
+        b.check_out_date,
+        bc.scheduled_for,
         e.first_name as cleaner_first_name,
         e.last_name as cleaner_last_name,
         prev.first_name as previous_cleaner_first_name,
@@ -210,12 +212,19 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       request: req
     });
 
+    // Same wording as an automatic assignment, so every "New Cleaning
+    // Assignment" tells the cleaner WHEN the room opens, not just that it exists.
+    const due = task.scheduled_for ? new Date(task.scheduled_for) : task.check_out_date ? new Date(task.check_out_date) : null;
+    const startsLine = due
+      ? `Cleaning starts after the guest checks out on ${due.toLocaleDateString("en-PH", { timeZone: "Asia/Manila", month: "short", day: "numeric" })}.`
+      : "Please check your cleaning tasks.";
+
     // Notify the newly assigned cleaner, and — on a reassignment — the
     // outgoing cleaner too, so the task disappearing from their active
     // assignments doesn't happen silently.
     await createNotificationForUser(assigned_to, {
       title: 'New Cleaning Assignment',
-      message: `You have been assigned to clean ${task.haven} for booking ${task.booking_id}. Please check your cleaning tasks.`,
+      message: `You have been assigned to clean ${task.haven} for booking ${task.booking_id}. ${startsLine}`,
       notificationType: 'cleaning_assignment'
     });
 

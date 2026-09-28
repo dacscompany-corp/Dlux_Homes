@@ -55,6 +55,18 @@ export interface CleaningTask {
   open_issue_count?: number;
 }
 
+export interface CleanerCalendarStatus {
+  /** The server has Google credentials. */
+  configured: boolean;
+  isCleaner: boolean;
+  email: string | null;
+  calendarId: string | null;
+  /** Email the calendar was last shared to. */
+  sharedTo: string | null;
+  /** Opens (and offers to add) the calendar in Google Calendar. */
+  addUrl: string | null;
+}
+
 export interface CleaningHistoryEntry {
   id: string;
   booking_cleaning_id: string;
@@ -111,7 +123,7 @@ export interface Checklist {
 export const cleanersApi = createApi({
   reducerPath: "cleanersApi",
   baseQuery: fetchBaseQuery({ baseUrl: "/api/admin/cleaners" }),
-  tagTypes: ["CleaningTask", "CleaningHistory", "Checklist"],
+  tagTypes: ["CleaningTask", "CleaningHistory", "Checklist", "CleanerCalendar"],
   endpoints: (builder) => ({
     // Get (or lazily create) the checklist for one assignment's (haven, booking).
     getChecklist: builder.query<Checklist, { havenId: string; bookingId: string }>({
@@ -332,6 +344,22 @@ export const cleanersApi = createApi({
       invalidatesTags: ["CleaningTask", "CleaningHistory"],
     }),
 
+    // The signed-in cleaner's own Google Calendar: status, and set up / resend.
+    getMyCleaningCalendar: builder.query<CleanerCalendarStatus, void>({
+      query() {
+        return { url: "/calendar" };
+      },
+      transformResponse: (response: { success: boolean; data: CleanerCalendarStatus }) => response.data,
+      providesTags: ["CleanerCalendar"],
+    }),
+    setupMyCleaningCalendar: builder.mutation<CleanerCalendarStatus, { resend?: boolean } | void>({
+      query(arg) {
+        return { url: "/calendar", method: "POST", body: { action: arg && arg.resend ? "resend" : "setup" } };
+      },
+      transformResponse: (response: { success: boolean; data: CleanerCalendarStatus }) => response.data,
+      invalidatesTags: ["CleanerCalendar"],
+    }),
+
     // Status history for one task's detail view.
     getCleaningHistory: builder.query<CleaningHistoryEntry[], string>({
       query(taskId) {
@@ -361,4 +389,6 @@ export const {
   useRemoveChecklistTaskMutation,
   useGetChecklistPhotosQuery,
   useGetKnownCategoriesQuery,
+  useGetMyCleaningCalendarQuery,
+  useSetupMyCleaningCalendarMutation,
 } = cleanersApi;

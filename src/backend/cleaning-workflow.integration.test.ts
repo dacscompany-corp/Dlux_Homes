@@ -14,7 +14,7 @@
 // cleaning_rotation_state guarantees in production — but it does not exercise
 // the lock itself.
 
-import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
@@ -119,6 +119,12 @@ import { POST as uploadPhoto } from "@/app/api/admin/cleaners/checklist-photos/r
 import { PATCH as patchBookingCleaning } from "@/app/api/bookings/[id]/route";
 import { PUT as putBookingCleaning } from "@/app/api/bookings/[id]/cleaning/route";
 import { PUT as putAliasTask } from "@/app/api/cleaning-tasks/[id]/route";
+import {
+  __setCleaningCalendarApiForTests,
+  __flushCleaningCalendarSyncs,
+  syncCleaningCalendarEvent,
+  type CleaningCalendarApi,
+} from "@/backend/utils/cleaningCalendar";
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
@@ -915,4 +921,155 @@ describe("2026-09-28 migration", () => {
     const sched = await q<{ scheduled_for: Date }>(`SELECT scheduled_for FROM booking_cleaning WHERE booking_id = $1::uuid`, [open]);
     expect(new Date(sched[0].scheduled_for).toISOString()).toBe("2020-02-05T16:00:00.000Z");
   }, 60_000);
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Cleaner Google Calendar sync (against a recording fake of the Google API)
+// ═════════════════════════════════════════════════════════════════════════════
+
+type FakeEvent = { id: string; summary: string; start: string; end: string; description: string };
+
+function fakeGoogle() {
+  const calendars = new Map<string, { summary: string; events: Map<string, FakeEvent> }>();
+  const shares: Array<{ calendarId: string; email: string }> = [];
+  let seq = 0;
+  let failNext = false;
+  const cal = (id: string) => {
+    const c = calendars.get(id);
+    if (!c) throw Object.assign(new Error("calendar not found"), { code: 404 });
+    return c;
+  };
+  const api: CleaningCalendarApi = {
+    async createCalendar(summary) {
+      const id = `cal${++seq}@group.calendar.google.com`;
+      calendars.set(id, { summary, events: new Map() });
+      return id;
+    },
+    async shareCalendar(calendarId, email) {
+      shares.push({ calendarId, email });
+    },
+    async insertEvent(calendarId, body) {
+      if (failNext) { failNext = false; throw new Error("Google is down"); }
+      const id = `ev${++seq}`;
+      cal(calendarId).events.set(id, { id, summary: body.summary, start: body.start.dateTime, end: body.end.dateTime, description: body.description });
+      return id;
+    },
+    async updateEvent(calendarId, eventId, body) {
+      const c = cal(calendarId);
+      if (!c.events.has(eventId)) throw Object.assign(new Error("gone"), { code: 410 });
+      c.events.set(eventId, { id: eventId, summary: body.summary, start: body.start.dateTime, end: body.end.dateTime, description: body.description });
+    },
+    async deleteEvent(calendarId, eventId) {
+      calendars.get(calendarId)?.events.delete(eventId);
+    },
+  };
+  return {
+    api,
+    calendars,
+    shares,
+    failOnce: () => { failNext = true; },
+    eventsOf: (email: string) => {
+      const share = shares.find((x) => x.email === email);
+      return share ? [...(calendars.get(share.calendarId)?.events.values() ?? [])] : [];
+    },
+  };
+}
+
+describe("cleaner Google Calendar sync", () => {
+  let g: ReturnType<typeof fakeGoogle>;
+  const emailOf = async (id: string) =>
+    (await h.db.query<{ email: string }>(`SELECT email FROM employees WHERE id = $1::uuid`, [id])).rows[0].email.toLowerCase();
+
+  beforeEach(() => {
+    g = fakeGoogle();
+    __setCleaningCalendarApiForTests(g.api);
+  });
+  afterEach(() => __setCleaningCalendarApiForTests(null));
+
+  it("an assignment creates the cleaner's calendar, shares it once, and adds the event", async () => {
+    const a = await addBooking();
+    const b = await addBooking();
+    await h.db.query(`UPDATE employees SET status = 'inactive' WHERE id IN ($1::uuid, $2::uuid, $3::uuid)`, [C2, C3, C4]);
+    await confirm(a.id);
+    await confirm(b.id);
+    await __flushCleaningCalendarSyncs();
+
+    expect(g.calendars.size).toBe(1);
+    expect(g.shares).toEqual([{ calendarId: [...g.calendars.keys()][0], email: await emailOf(C1) }]);
+    const events = g.eventsOf(await emailOf(C1));
+    expect(events).toHaveLength(2);
+    expect(events[0].summary).toMatch(/^🧹 Clean · DL-TEST-\d+ · Overnight$/);
+    // 12:00 Manila checkout, no guest for days → a 2-hour block.
+    expect(events[0].start).toMatch(/T04:00:00/);
+    expect(new Date(events[0].end).getTime() - new Date(events[0].start).getTime()).toBe(2 * 3_600_000);
+  });
+
+  it("ends the event at the next guest's check-in when they arrive the same day", async () => {
+    const a = await addBooking();
+    await confirm(a.id);
+    await __flushCleaningCalendarSyncs();
+    const out = (await h.db.query<{ d: string }>(`SELECT check_out_date::text AS d FROM booking WHERE id = $1::uuid`, [a.id])).rows[0].d;
+    await h.db.query(
+      `INSERT INTO booking (booking_id, room_name, check_in_date, check_out_date, check_in_time, check_out_time, status)
+       VALUES ('DL-NEXT', 'Haven 1', $1::date, $1::date + 1, '14:00', '12:00', 'approved')`,
+      [out],
+    );
+    const [t] = await taskFor(a.id);
+    await syncCleaningCalendarEvent(t.id);
+    const [ev] = g.eventsOf(await emailOf(C1));
+    expect(ev.end).toMatch(/T06:00:00/); // 14:00 Manila
+    expect(ev.description).toContain("Next guest checks in");
+  });
+
+  it("status changes update the title, and re-syncing never duplicates", async () => {
+    const a = await addBooking();
+    await confirm(a.id);
+    await __flushCleaningCalendarSyncs();
+    const [t] = await taskFor(a.id);
+    as({ id: C1, role: "Cleaner" });
+    await startTask(req(`/x`, { method: "PUT" }), ctx(t.id));
+    await __flushCleaningCalendarSyncs();
+    await syncCleaningCalendarEvent(t.id);
+    await syncCleaningCalendarEvent(t.id);
+    const events = g.eventsOf(await emailOf(C1));
+    expect(events).toHaveLength(1);
+    expect(events[0].summary.startsWith("🟡 Cleaning")).toBe(true);
+  });
+
+  it("a reassignment moves the event to the new cleaner's calendar", async () => {
+    const a = await addBooking();
+    await confirm(a.id); // C1
+    await __flushCleaningCalendarSyncs();
+    const [t] = await taskFor(a.id);
+    as({ id: OWNER, role: "Owner" });
+    await assignTask(req(`/x`, { method: "PUT", body: { assigned_to: C2 } }), ctx(t.id));
+    await __flushCleaningCalendarSyncs();
+    expect(g.eventsOf(await emailOf(C1))).toHaveLength(0);
+    expect(g.eventsOf(await emailOf(C2))).toHaveLength(1);
+  });
+
+  it("a cancellation removes the event", async () => {
+    const a = await addBooking();
+    await confirm(a.id);
+    await __flushCleaningCalendarSyncs();
+    await cancel(a.id);
+    await __flushCleaningCalendarSyncs();
+    expect(g.eventsOf(await emailOf(C1))).toHaveLength(0);
+    const [t] = await taskFor(a.id);
+    const row = await h.db.query<{ gcal_event_id: string | null }>(`SELECT gcal_event_id FROM booking_cleaning WHERE id = $1::uuid`, [t.id]);
+    expect(row.rows[0].gcal_event_id).toBeNull();
+  });
+
+  it("a Google failure never blocks the cleaning action and is recorded for the heal pass", async () => {
+    g.failOnce();
+    const a = await addBooking();
+    await confirm(a.id);
+    await __flushCleaningCalendarSyncs();
+    const [t] = await taskFor(a.id);
+    expect(t.assigned_to).toBe(C1);
+    const row = await h.db.query<{ gcal_error: string | null }>(`SELECT gcal_error FROM booking_cleaning WHERE id = $1::uuid`, [t.id]);
+    expect(row.rows[0].gcal_error).toMatch(/Google is down/);
+    expect(await syncCleaningCalendarEvent(t.id)).toBe("created");
+    expect(g.eventsOf(await emailOf(C1))).toHaveLength(1);
+  });
 });
