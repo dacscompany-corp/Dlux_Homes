@@ -489,7 +489,6 @@ export default function CleanerMobilePortal() {
   });
   const [sendStaffMessageM, { isLoading: sendingMsg }] = useSendStaffMessageMutation();
   const [msgDraft, setMsgDraft] = useState("");
-  const [showUpdates, setShowUpdates] = useState(false);
   const unreadMsgs = conversation?.unread_count ?? 0;
 
   const threadEndRef = useRef<HTMLDivElement | null>(null);
@@ -1140,50 +1139,6 @@ export default function CleanerMobilePortal() {
 
             {/* Conversation — the only scrolling part */}
             <div style={{ flex: 1, minHeight: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "12px 12px 16px" }} aria-live="polite">
-              {/* Office updates (system notifications) — one compact row that
-                  opens on tap, kept apart from the typed conversation. */}
-              {notifications.length > 0 && (
-                <div style={{ marginBottom: 14 }}>
-                  <button type="button" onClick={() => setShowUpdates((v) => !v)} aria-expanded={showUpdates} style={{
-                    width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px",
-                    background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, cursor: "pointer",
-                    font: `600 15px ${SANS}`, color: C.ink, textAlign: "left",
-                  }}>
-                    <Check className="w-[18px] h-[18px] flex-shrink-0" strokeWidth={2.5} style={{ color: C.goldInk }} />
-                    <span style={{ flex: 1 }}>{t.fromOffice}</span>
-                    {unreadNotifs > 0 && (
-                      <span style={{ minWidth: 22, height: 22, padding: "0 7px", borderRadius: 999, background: C.gold, color: C.ink, fontSize: 12, fontWeight: 700, display: "grid", placeItems: "center" }}>
-                        {unreadNotifs}
-                      </span>
-                    )}
-                    <ChevronRight className="w-5 h-5 flex-shrink-0" style={{ color: C.faint, transform: showUpdates ? "rotate(90deg)" : "none", transition: "transform .2s" }} />
-                  </button>
-                  {showUpdates && (
-                    <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, marginTop: 6, overflow: "hidden" }}>
-                      {notifications.slice(0, 8).map((n, i) => (
-                        <button key={n.id} type="button" onClick={() => readNotification(n)} style={{
-                          width: "100%", textAlign: "left", border: 0, borderTop: i ? `1px solid ${C.hair}` : 0,
-                          background: n.read ? C.card : "#FDF8F3", padding: "12px 14px", cursor: "pointer",
-                          display: "flex", gap: 10, alignItems: "flex-start", fontFamily: SANS,
-                        }}>
-                          {n.rawType === "cleaning_rejected"
-                            ? <AlertTriangle className="w-[18px] h-[18px] flex-shrink-0" strokeWidth={2} style={{ color: C.violetInk, marginTop: 2 }} />
-                            : <Check className="w-[18px] h-[18px] flex-shrink-0" strokeWidth={2.5} style={{ color: C.goldInk, marginTop: 2 }} />}
-                          <span style={{ flex: 1, minWidth: 0 }}>
-                            <span style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
-                              <span style={{ fontSize: 15, fontWeight: 600 }}>{n.title}</span>
-                              <span style={{ fontSize: 12, color: C.faint, flexShrink: 0 }}>{n.timestamp}</span>
-                            </span>
-                            <span style={{ display: "block", fontSize: 14, color: C.muted, marginTop: 2, lineHeight: 1.4 }}>{n.description}</span>
-                          </span>
-                          {!n.read && <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.gold, flexShrink: 0, marginTop: 7 }} />}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
               {thread.length === 0 ? (
                 <div style={{ textAlign: "center", padding: "40px 20px", fontSize: 16, color: C.muted, lineHeight: 1.45 }}>
                   <MessageSquare className="w-10 h-10" strokeWidth={1.5} style={{ color: C.creamLine, margin: "0 auto 10px" }} />

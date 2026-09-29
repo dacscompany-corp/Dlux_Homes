@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
 import {
   useGetCleaningTasksQuery,
@@ -20,9 +21,11 @@ import { useGetEmployeesQuery } from "@/redux/api/employeeApi";
 import { useGetReportsQuery, useUpdateReportStatusMutation } from "@/redux/api/reportApi";
 import ImageThumb from "@/components/ImageThumb";
 import { cleaningDueAt } from "@/lib/cleaning-schedule";
+import { MonthNavigator, currentMonthKey } from "@/components/admin/owners/MonthNavigator";
 import {
   Clock, Building2, User, AlertTriangle, CheckCircle2, ChevronRight,
-  Timer, ClipboardList, UserPlus, X, Plus, Pencil, Trash2, Camera, Search,
+  Timer, ClipboardList, UserPlus, X, Plus, Pencil, Trash2, Camera, Search, ChevronDown,
+  Check, Bookmark,
 } from "lucide-react";
 
 // Shared body for the Cleaning Operations view — Owner/CSR monitoring over
@@ -51,6 +54,219 @@ const STATUS_LABELS: Record<string, { label: string; color: string; bg: string; 
 // cleaner portals use, so "overdue" here and "can start" there always agree.
 function checkoutMoment(task: CleaningTask): Date | null {
   return cleaningDueAt(task);
+}
+
+// ── Status / assignment filters ──────────────────────────────────────────────
+// Both are the same multi-select panel as the Bookings status filter.
+type CleaningStatusKey = "pending" | "assigned" | "in-progress" | "awaiting-inspection" | "ready";
+type AssignKey = "automatic" | "manual" | "unassigned";
+
+type FilterItem<K extends string> = { key: K; label: string; dot: string };
+/** `wide` groups span the full panel width, on a row of their own. */
+type FilterGroup<K extends string> = { title: string; items: FilterItem<K>[]; wide?: boolean };
+
+const statusItem = (key: CleaningStatusKey): FilterItem<CleaningStatusKey> => ({
+  key, label: STATUS_LABELS[key].label, dot: STATUS_LABELS[key].dot,
+});
+
+// Grouped like the Bookings status panel.
+const STATUS_FILTER_GROUPS: FilterGroup<CleaningStatusKey>[] = [
+  { title: "To clean", items: [statusItem("pending"), statusItem("assigned"), statusItem("in-progress")] },
+  { title: "After cleaning", items: [statusItem("awaiting-inspection"), statusItem("ready")] },
+];
+
+// Colours match the Automatic / Manual badges in the Cleaner column.
+const ASSIGN_FILTER_GROUPS: FilterGroup<AssignKey>[] = [
+  {
+    title: "Assignment",
+    wide: true,
+    items: [
+      { key: "automatic", label: "Automatic", dot: "#3b82f6" },
+      { key: "manual", label: "Manual", dot: "#f59e0b" },
+      { key: "unassigned", label: "Not assigned", dot: "#a8a29e" },
+    ],
+  },
+];
+
+const CLEANING_STATUS_KEYS = STATUS_FILTER_GROUPS.flatMap((g) => g.items.map((i) => i.key));
+const ASSIGN_KEYS = ASSIGN_FILTER_GROUPS.flatMap((g) => g.items.map((i) => i.key));
+const STATUS_FILTER_STORAGE = "dlux-cleaning-status-filter";
+const ASSIGN_FILTER_STORAGE = "dlux-cleaning-assignment-filter";
+
+/** Legacy 'cleaned' / 'inspected' rows count as Ready, same as the status pill. */
+function statusGroup(status: string): CleaningStatusKey {
+  return status === "cleaned" || status === "inspected" ? "ready" : (status as CleaningStatusKey);
+}
+
+/** How the task got its cleaner: automatic rotation, by hand, or not yet. */
+function assignmentKind(task: CleaningTask): AssignKey {
+  if (!task.assigned_cleaner_id) return "unassigned";
+  return task.assignment_method === "automatic" ? "automatic" : "manual";
+}
+
+/**
+ * A multi-select filter remembered in this browser, like the Bookings status
+ * filter. Restored after mount, not in useState's initialiser: reading
+ * localStorage during the first render would make server and client markup
+ * disagree (hydration mismatch). Unknown keys from an older version are dropped
+ * so a stale filter can never silently hide everything.
+ */
+function useRememberedFilter<K extends string>(storageKey: string, validKeys: readonly K[]) {
+  const [value, setValue] = useState<K[]>([]);
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(storageKey) || "[]");
+      if (Array.isArray(saved)) {
+        const valid = saved.filter((k): k is K => validKeys.includes(k));
+        if (valid.length) setValue(valid);
+      }
+    } catch { /* storage blocked — start unfiltered */ }
+    // validKeys is a module constant; storageKey never changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const apply = (next: K[]) => {
+    setValue(next);
+    try { window.localStorage.setItem(storageKey, JSON.stringify(next)); } catch { /* ignore */ }
+  };
+  return [value, apply] as const;
+}
+
+/**
+ * The filter button and panel, built to match the Bookings table's Status
+ * filter: grouped checkboxes with a colour dot and count, Select all / Clear,
+ * and a summary footer. Rendered through a portal so no clipping ancestor can
+ * cut it off, positioned under (or, near the bottom of the window, above) the
+ * button.
+ */
+function MultiFilterButton<K extends string>({ label, title, groups, value, onChange, counts, resultCount }: {
+  label: string;
+  title: string;
+  groups: FilterGroup<K>[];
+  value: K[];
+  onChange: (next: K[]) => void;
+  counts: Record<string, number>;
+  resultCount: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const measure = () => {
+      const r = btnRef.current?.getBoundingClientRect();
+      if (r) setRect(r);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
+  }, [open]);
+
+  const allKeys = groups.flatMap((g) => g.items.map((i) => i.key));
+  const width = groups.length > 1 ? 460 : 300;
+  const PANEL_H = 300;
+  const up = !!rect && window.innerHeight - rect.bottom < PANEL_H && rect.top > window.innerHeight - rect.bottom;
+  const toggle = (key: K) => onChange(value.includes(key) ? value.filter((s) => s !== key) : [...value, key]);
+
+  return (
+    <div style={{ position: "relative" }}>
+      <button type="button" ref={btnRef} onClick={() => setOpen((v) => !v)} aria-expanded={open}
+        className="flex items-center gap-2 px-3.5 py-2 text-sm font-medium cursor-pointer"
+        style={{ backgroundColor: "#F7F0E3", color: "#5a4a3a", border: "1px solid #D4BFA0" }}>
+        {label}
+        {value.length > 0 && (
+          <span style={{ fontFamily: "var(--font-geist-mono), ui-monospace, monospace", fontSize: 11, padding: "1px 6px", background: "#1f1b16", color: "#faf7f1" }}>{value.length}</span>
+        )}
+        <ChevronDown className="w-3.5 h-3.5" style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s ease" }} />
+      </button>
+
+      {open && rect && typeof document !== "undefined" && createPortal(
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 69 }} />
+          <div role="dialog" aria-label={title} style={{
+            position: "fixed",
+            left: Math.max(16, Math.min(rect.left, window.innerWidth - 16 - Math.min(width, window.innerWidth - 32))),
+            ...(up ? { bottom: window.innerHeight - rect.top + 8 } : { top: rect.bottom + 8 }),
+            zIndex: 70, width, maxWidth: "calc(100vw - 32px)", maxHeight: "calc(100vh - 32px)", overflowY: "auto",
+            background: "#ffffff", border: "1px solid #e4dac5", boxShadow: "0 24px 56px -18px rgba(40,30,18,.34)", borderRadius: 6,
+          }}>
+            <div style={{ padding: "13px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, borderBottom: "1px solid #F2EADA", background: "#FCFAF5" }}>
+              <span style={{ whiteSpace: "nowrap", fontSize: 11.5, fontWeight: 600, color: "#8B6344", textTransform: "uppercase", letterSpacing: ".06em" }}>{title}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 14, whiteSpace: "nowrap" }}>
+                <button type="button" onClick={() => onChange(allKeys)} style={{ fontFamily: "inherit", fontSize: 12.5, color: "#5a4a3a", background: "transparent", border: 0, cursor: "pointer" }}>Select all</button>
+                <span style={{ width: 1, height: 12, background: "#e4dac5" }} />
+                <button type="button" onClick={() => onChange([])} style={{ fontFamily: "inherit", fontSize: 12.5, color: "#B07848", background: "transparent", border: 0, cursor: "pointer" }}>Clear</button>
+              </div>
+            </div>
+            {/* The 1px gaps over a sand background draw the dividers between groups. */}
+            <div style={{ display: "grid", gridTemplateColumns: groups.length > 1 ? "1fr 1fr" : "1fr", gap: 1, background: "#F2EADA" }}>
+              {groups.map((g) => (
+                <div key={g.title} style={{ background: "#fff", padding: "14px 8px 14px 14px", gridColumn: g.wide ? "1 / -1" : undefined }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 6px 9px" }}>
+                    <span style={{ fontFamily: "var(--font-geist-mono), ui-monospace, monospace", fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".1em", color: "#a2957f", whiteSpace: "nowrap" }}>{g.title}</span>
+                    <span style={{ flex: 1, height: 1, background: "#F2EADA" }} />
+                  </div>
+                  {/* A wide group lays its options out in a row instead of a column. */}
+                  <div style={g.wide
+                    ? { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 1 }
+                    : { display: "flex", flexDirection: "column", gap: 1 }}>
+                    {g.items.map((item) => {
+                      const checked = value.includes(item.key);
+                      return (
+                        <label key={item.key} onClick={() => toggle(item.key)}
+                          style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 4, fontSize: 13.5, color: "#1f1b16", cursor: "pointer", background: checked ? "#FAF6EE" : "transparent" }}
+                          onMouseEnter={(e) => { if (!checked) (e.currentTarget as HTMLElement).style.background = "#FAF6EE"; }}
+                          onMouseLeave={(e) => { if (!checked) (e.currentTarget as HTMLElement).style.background = "transparent"; }}>
+                          <span style={{ width: 16, height: 16, flex: "none", borderRadius: 4, display: "grid", placeItems: "center", border: `1.5px solid ${checked ? "#1f1b16" : "#D4BFA0"}`, background: checked ? "#1f1b16" : "transparent" }}>
+                            {checked && <Check className="w-[11px] h-[11px]" style={{ color: "#fff" }} />}
+                          </span>
+                          <span style={{ width: 7, height: 7, flex: "none", borderRadius: "50%", background: item.dot }} />
+                          <span style={{ flex: 1, whiteSpace: "nowrap" }}>{item.label}</span>
+                          <span style={{ fontFamily: "var(--font-geist-mono), ui-monospace, monospace", fontSize: 11.5, color: "#a2957f" }}>{counts[item.key] ?? 0}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{ padding: "11px 18px", borderTop: "1px solid #F2EADA", background: "#FCFAF5", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <span style={{ fontSize: 12.5, color: "#8a8276" }}>
+                {value.length ? `${value.length} selected · ${resultCount} tasks` : "Nothing selected — showing everything"}
+              </span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#a2957f", whiteSpace: "nowrap" }}>
+                <Bookmark className="w-3 h-3" /> Filter is remembered
+              </span>
+            </div>
+          </div>
+        </>,
+        document.body,
+      )}
+    </div>
+  );
+}
+
+// Tasks table columns. Lower-priority ones hide on narrower screens so the
+// table always fits without a sideways scroll; the task panel shows them all.
+const TASK_COLUMNS: { h: string; cls: string }[] = [
+  { h: "Room", cls: "" },
+  { h: "Status", cls: "" },
+  { h: "Cleaner", cls: "" },
+  { h: "Checkout", cls: "hidden sm:table-cell" },
+  { h: "Started", cls: "hidden xl:table-cell" },
+  { h: "Elapsed", cls: "hidden lg:table-cell" },
+  { h: "Issues", cls: "hidden md:table-cell" },
+  { h: "", cls: "" },
+];
+
+/** 'YYYY-MM' of the task's checkout in Manila time (the property's clock), or null. */
+function taskMonthKey(task: CleaningTask): string | null {
+  const due = checkoutMoment(task);
+  return due ? due.toLocaleDateString("en-CA", { timeZone: "Asia/Manila" }).slice(0, 7) : null;
 }
 
 /**
@@ -143,7 +359,7 @@ export function CleaningOperationsSection() {
   // viewing/editing its checklist directly, without opening the drawer;
   // "Reports & Issues" lists every cleaner-submitted issue report across all
   // tasks in one place, instead of only inside one task's drawer.
-  const [topTab, setTopTab] = useState<"tasks" | "checklist" | "reports">("tasks");
+  const [topTab, setTopTab] = useState<"tasks" | "checklist" | "reports" | "workload">("tasks");
 
   const [filter, setFilter] = useState<"all" | "attention" | "awaiting-inspection">("all");
   const [taskQuery, setTaskQuery] = useState("");
@@ -155,12 +371,52 @@ export function CleaningOperationsSection() {
   const awaitingCount = tasks.filter((t) => t.cleaning_status === "awaiting-inspection").length;
   const unassignedCount = tasks.filter(needsAssignment).length;
 
+  // Month shown in the table ('YYYY-MM', by the guest's checkout in Manila
+  // time); null = All time. Starts on the current month.
+  const [month, setMonth] = useState<string | null>(() => currentMonthKey());
+  const monthsWithTasks = [...new Set(tasks.map(taskMonthKey).filter((k): k is string => !!k))];
+
+  // Status and Assignment filters — the same multi-select panel as the
+  // Bookings table, each remembered between visits. Empty = no filter.
+  const [statusFilters, applyStatusFilters] = useRememberedFilter<CleaningStatusKey>(STATUS_FILTER_STORAGE, CLEANING_STATUS_KEYS);
+  const [assignFilters, applyAssignFilters] = useRememberedFilter<AssignKey>(ASSIGN_FILTER_STORAGE, ASSIGN_KEYS);
+
+  // Month, filter bar and search apply to everything; each panel's counts then
+  // leave out that panel's own filter, so they say how many rows ticking it
+  // would show.
   const normTaskQuery = taskQuery.trim().toLowerCase();
-  const visibleTasks = tasks.filter((t) => {
+  const baseTasks = tasks.filter((t) => {
+    if (month && taskMonthKey(t) !== month) return false;
     if (filter === "awaiting-inspection" && t.cleaning_status !== "awaiting-inspection") return false;
     if (filter === "attention" && !(isOverdue(t) || needsAssignment(t) || (t.open_issue_count ?? 0) > 0 || t.cleaning_status === "awaiting-inspection")) return false;
     return matchesQuery(normTaskQuery, [t.haven, t.booking_id, t.guest_first_name, t.guest_last_name, t.cleaner_first_name, t.cleaner_last_name]);
   });
+  const statusOk = (t: CleaningTask) => !statusFilters.length || statusFilters.includes(statusGroup(t.cleaning_status));
+  const assignOk = (t: CleaningTask) => !assignFilters.length || assignFilters.includes(assignmentKind(t));
+  const countBy = (list: CleaningTask[], keyOf: (t: CleaningTask) => string) =>
+    list.reduce<Record<string, number>>((acc, t) => {
+      const k = keyOf(t);
+      acc[k] = (acc[k] ?? 0) + 1;
+      return acc;
+    }, {});
+  const statusCounts = countBy(baseTasks.filter(assignOk), (t) => statusGroup(t.cleaning_status));
+  const assignCounts = countBy(baseTasks.filter(statusOk), assignmentKind);
+  const visibleTasks = baseTasks.filter((t) => statusOk(t) && assignOk(t));
+
+  // Every active filter as a removable chip.
+  const activeChips = [
+    ...statusFilters.map((key) => ({
+      id: `s-${key}`, label: STATUS_LABELS[key].label, dot: STATUS_LABELS[key].dot,
+      remove: () => applyStatusFilters(statusFilters.filter((s) => s !== key)),
+    })),
+    ...assignFilters.map((key) => {
+      const item = ASSIGN_FILTER_GROUPS[0].items.find((i) => i.key === key)!;
+      return {
+        id: `a-${key}`, label: item.label, dot: item.dot,
+        remove: () => applyAssignFilters(assignFilters.filter((s) => s !== key)),
+      };
+    }),
+  ];
 
   return (
     <div>
@@ -170,6 +426,7 @@ export function CleaningOperationsSection() {
           { id: "tasks", label: "Tasks" },
           { id: "checklist", label: "Cleaning Checklist" },
           { id: "reports", label: "Reports & Issues" },
+          { id: "workload", label: "Cleaner Workload" },
         ] as const).map((t) => (
           <button key={t.id} onClick={() => setTopTab(t.id)}
             className="px-4 py-2 text-sm font-medium border cursor-pointer transition-colors"
@@ -187,6 +444,8 @@ export function CleaningOperationsSection() {
         <ChecklistTab tasks={tasks} isFetching={isFetching} />
       ) : topTab === "reports" ? (
         <ReportsIssuesTab />
+      ) : topTab === "workload" ? (
+        <CleanerWorkloadTab tasks={tasks} cleaners={cleaners} isLoading={tasksLoading} />
       ) : (
       <>
       {/* KPI row */}
@@ -229,15 +488,53 @@ export function CleaningOperationsSection() {
         ))}
       </div>
 
-      <SearchBox value={taskQuery} onChange={setTaskQuery} placeholder="Search room, booking, guest, or cleaner…" />
+      {/* Search + month, side by side */}
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <div className="flex-1 min-w-[14rem] max-w-sm [&>div]:mb-0">
+          <SearchBox value={taskQuery} onChange={setTaskQuery} placeholder="Search room, booking, guest, or cleaner…" />
+        </div>
+        <MonthNavigator value={month} onChange={setMonth} monthsWithData={monthsWithTasks} />
+        {/* One Status button: the statuses plus an Assignment group in the same panel. */}
+        <MultiFilterButton<CleaningStatusKey | AssignKey>
+          label="Status" title="Filter by status"
+          groups={[...STATUS_FILTER_GROUPS, ...ASSIGN_FILTER_GROUPS]}
+          value={[...statusFilters, ...assignFilters]}
+          onChange={(next) => {
+            applyStatusFilters(next.filter((k): k is CleaningStatusKey => (CLEANING_STATUS_KEYS as string[]).includes(k)));
+            applyAssignFilters(next.filter((k): k is AssignKey => (ASSIGN_KEYS as string[]).includes(k)));
+          }}
+          counts={{ ...statusCounts, ...assignCounts }}
+          resultCount={visibleTasks.length} />
+      </div>
 
-      {/* Table */}
-      <div className="border overflow-x-auto" style={{ borderColor: "#ece5d4" }}>
+      {/* Active filters, restated outside the panels (as on Bookings) so a
+          remembered filter never looks like "the tasks disappeared". */}
+      {activeChips.length > 0 && (
+        <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 12, border: "1px solid #F2EADA", background: "#FCFAF5" }}>
+          <span style={{ fontSize: 12, color: "#8a8276", marginRight: 2 }}>Showing</span>
+          {activeChips.map((chip) => (
+            <span key={chip.id} onClick={chip.remove}
+              role="button" tabIndex={0} aria-label={`Remove ${chip.label} filter`}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") chip.remove(); }}
+              style={{ display: "inline-flex", flex: "none", whiteSpace: "nowrap", alignItems: "center", gap: 7, padding: "4px 8px 4px 9px", borderRadius: 999, fontSize: 12.5, color: "#4a4034", background: "#fff", border: "1px solid #e4dac5", cursor: "pointer" }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: chip.dot }} />
+              {chip.label}
+              <X className="w-[11px] h-[11px]" style={{ color: "#a2957f" }} />
+            </span>
+          ))}
+          <button type="button" onClick={() => { applyStatusFilters([]); applyAssignFilters([]); }}
+            style={{ fontFamily: "inherit", fontSize: 12.5, color: "#B07848", background: "transparent", border: 0, cursor: "pointer", padding: "4px 2px" }}>Clear all</button>
+        </div>
+      )}
+
+      {/* Table — fits its container, no sideways scroll. On narrower screens
+          the lower-priority columns hide; the task panel still shows them. */}
+      <div className="border overflow-hidden" style={{ borderColor: "#ece5d4" }}>
         <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ backgroundColor: "#FAF7F1", borderBottom: "1px solid #ece5d4" }}>
-              {["Room", "Status", "Cleaner", "Checkout", "Started", "Elapsed", "Issues", ""].map((h) => (
-                <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold uppercase tracking-wider" style={{ color: "#8a6a2f" }}>{h}</th>
+              {TASK_COLUMNS.map(({ h, cls }) => (
+                <th key={h} className={`text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider ${cls}`} style={{ color: "#8a6a2f" }}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -267,23 +564,25 @@ export function CleaningOperationsSection() {
                   onClick={() => setSelectedId(t.cleaning_id)}
                   onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#FAF7F1"}
                   onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-1.5 font-medium" style={{ color: "#1a1a1a" }}>
-                      <Building2 className="w-3.5 h-3.5" style={{ color: "#8a6a2f" }} />{t.haven}
+                  <td className="px-3 py-3">
+                    <div className="flex items-start gap-1.5 font-medium break-words" style={{ color: "#1a1a1a" }}>
+                      <Building2 className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: "#8a6a2f" }} /><span className="min-w-0">{t.haven}</span>
                     </div>
                     <div className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{t.booking_id}</div>
                   </td>
-                  <td className="px-4 py-3">
-                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full" style={{ backgroundColor: st.bg, color: st.color }}>
-                      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: st.dot }} />{st.label}
-                    </span>
-                    {overdue && (
-                      <span className="inline-flex items-center gap-1 ml-2 text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: "#fee2e2", color: "#dc2626" }}>
-                        <AlertTriangle className="w-3 h-3" />Overdue
+                  <td className="px-3 py-3">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap" style={{ backgroundColor: st.bg, color: st.color }}>
+                        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: st.dot }} />{st.label}
                       </span>
-                    )}
+                      {overdue && (
+                        <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap" style={{ backgroundColor: "#fee2e2", color: "#dc2626" }}>
+                          <AlertTriangle className="w-3 h-3" />Overdue
+                        </span>
+                      )}
+                    </div>
                   </td>
-                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                  <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                     {t.cleaning_status === "ready" ? (
                       <div className="flex items-center gap-1.5" style={{ color: "#5a4a3a" }}>
                         <User className="w-3.5 h-3.5" style={{ color: "#8a6a2f" }} />{cleanerName}
@@ -298,26 +597,26 @@ export function CleaningOperationsSection() {
                       </p>
                     )}
                   </td>
-                  <td className="px-4 py-3" style={{ color: "#5a4a3a" }}>
+                  <td className="px-3 py-3 hidden sm:table-cell" style={{ color: "#5a4a3a" }}>
                     {(() => {
                       const due = checkoutMoment(t);
                       return due ? due.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—";
                     })()}
                   </td>
-                  <td className="px-4 py-3" style={{ color: "#5a4a3a" }}>{fmtDateTime(t.cleaning_time_in)}</td>
-                  <td className="px-4 py-3" style={{ color: "#5a4a3a" }}>
+                  <td className="px-3 py-3 hidden xl:table-cell" style={{ color: "#5a4a3a" }}>{fmtDateTime(t.cleaning_time_in)}</td>
+                  <td className="px-3 py-3 hidden lg:table-cell" style={{ color: "#5a4a3a" }}>
                     {t.cleaning_status === "in-progress" ? (
                       <span className="flex items-center gap-1"><Timer className="w-3.5 h-3.5" style={{ color: "#B07848" }} />{elapsedSince(t.cleaning_time_in)}</span>
                     ) : "—"}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-3 py-3 hidden md:table-cell">
                     {(t.open_issue_count ?? 0) > 0 ? (
                       <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: "#ffedd5", color: "#ea580c" }}>
                         <AlertTriangle className="w-3 h-3" />{t.open_issue_count}
                       </span>
                     ) : <span style={{ color: "#D4BFA0" }}>—</span>}
                   </td>
-                  <td className="px-4 py-3"><ChevronRight className="w-4 h-4" style={{ color: "#D4BFA0" }} /></td>
+                  <td className="px-3 py-3"><ChevronRight className="w-4 h-4" style={{ color: "#D4BFA0" }} /></td>
                 </tr>
               );
             })}
@@ -877,6 +1176,280 @@ const REPORT_STATUSES = ["Open", "Pending", "In Progress", "Resolved", "Closed"]
 // All issue reports across every cleaning task, in one place — the
 // per-task IssueReportsSection above only shows a single task's reports;
 // this is the "everything, with status control" view.
+// "Cleaner Workload" — who received the most rooms to clean, for a month (by
+// the guest's checkout) or all time. Built from the same task list the Tasks
+// tab shows, so the numbers always agree with it. Every active cleaner is
+// listed, including anyone with nothing yet, so an uneven split is visible.
+function CleanerWorkloadTab({ tasks, cleaners, isLoading }: { tasks: CleaningTask[]; cleaners: Cleaner[]; isLoading: boolean }) {
+  const [month, setMonth] = useState<string | null>(() => currentMonthKey());
+  const monthsWithTasks = [...new Set(tasks.map(taskMonthKey).filter((k): k is string => !!k))];
+  const inPeriod = tasks.filter((t) => !month || taskMonthKey(t) === month);
+
+  type Row = {
+    id: string; name: string; total: number; done: number; active: number; toDo: number;
+    automatic: number; manual: number; inactive: boolean;
+  };
+  const rows = new Map<string, Row>();
+  const blank = (id: string, name: string, inactive = false): Row =>
+    ({ id, name, total: 0, done: 0, active: 0, toDo: 0, automatic: 0, manual: 0, inactive });
+  for (const c of cleaners) rows.set(c.id, blank(c.id, `${c.first_name} ${c.last_name}`.trim()));
+
+  let unassigned = 0;
+  for (const t of inPeriod) {
+    if (!t.assigned_cleaner_id) { unassigned++; continue; }
+    const id = t.assigned_cleaner_id;
+    // A cleaner who has since been deactivated still keeps the rooms they had.
+    const row = rows.get(id) ?? blank(id, `${t.cleaner_first_name ?? ""} ${t.cleaner_last_name ?? ""}`.trim() || "Former cleaner", true);
+    rows.set(id, row);
+    row.total++;
+    const s = statusGroup(t.cleaning_status);
+    if (s === "awaiting-inspection" || s === "ready") row.done++;
+    else if (s === "in-progress") row.active++;
+    else row.toDo++;
+    if (t.assignment_method === "automatic") row.automatic++; else row.manual++;
+  }
+
+  const ranked = [...rows.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+  // The cleaner whose detail panel is open.
+  const [selectedCleaner, setSelectedCleaner] = useState<string | null>(null);
+  const selectedRow = ranked.find((r) => r.id === selectedCleaner) ?? null;
+  const assignedTotal = ranked.reduce((n, r) => n + r.total, 0);
+  const max = Math.max(1, ...ranked.map((r) => r.total));
+  const top = ranked[0]?.total ? ranked[0] : null;
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-3 mb-5">
+        <MonthNavigator value={month} onChange={setMonth} monthsWithData={monthsWithTasks} />
+      </div>
+
+      {/* Summary */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+        {[
+          { label: "Rooms assigned", value: String(assignedTotal) },
+          { label: "Not assigned yet", value: String(unassigned) },
+          { label: "Cleaners", value: String(ranked.length) },
+          { label: "Most rooms", value: top ? top.name : "—", small: true },
+        ].map((card) => (
+          <div key={card.label} className="border p-4" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }}>
+            <p className="truncate" style={{ fontFamily: card.small ? "inherit" : "'Geist Mono', ui-monospace, monospace", fontSize: card.small ? 16 : 24, fontWeight: card.small ? 600 : 500, lineHeight: 1.1, color: "#1f1b16" }}>{card.value}</p>
+            <p className="text-xs mt-1" style={{ color: "#8B6344" }}>{card.label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Ranking — fits its container, no sideways scroll. On narrow screens
+          the detail columns hide; the panel behind each row still has them. */}
+      <div className="border overflow-hidden" style={{ borderColor: "#ece5d4" }}>
+        <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ backgroundColor: "#FAF7F1", borderBottom: "1px solid #ece5d4" }}>
+              {[
+                { h: "#", cls: "" },
+                { h: "Cleaner", cls: "" },
+                { h: "Rooms received", cls: "" },
+                { h: "Done", cls: "hidden sm:table-cell" },
+                { h: "Cleaning now", cls: "hidden md:table-cell" },
+                { h: "To do", cls: "hidden md:table-cell" },
+                { h: "Auto / Manual", cls: "hidden lg:table-cell" },
+                { h: "", cls: "" },
+              ].map(({ h, cls }) => (
+                <th key={h} className={`text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider ${cls}`} style={{ color: "#8a6a2f" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {isLoading ? (
+              <tr><td colSpan={8} className="px-4 py-8 text-center text-sm" style={{ color: "#8B6344" }}>Loading…</td></tr>
+            ) : ranked.length === 0 ? (
+              <tr><td colSpan={8} className="px-4 py-8 text-center text-sm" style={{ color: "#8B6344" }}>No cleaner accounts yet.</td></tr>
+            ) : ranked.map((r, i) => {
+              const share = assignedTotal ? Math.round((r.total / assignedTotal) * 100) : 0;
+              const leader = i === 0 && r.total > 0;
+              return (
+                <tr key={r.id} className="cursor-pointer transition-colors"
+                  tabIndex={0} aria-label={`Open ${r.name}'s workload`}
+                  onClick={() => setSelectedCleaner(r.id)}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedCleaner(r.id); } }}
+                  style={{ borderBottom: "1px solid #F7F0E3", backgroundColor: leader ? "#FDF8F3" : "transparent" }}
+                  onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = "#FAF7F1")}
+                  onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = leader ? "#FDF8F3" : "transparent")}>
+                  <td className="px-3 py-3" style={{ color: leader ? "#B07848" : "#a2957f", fontFamily: "'Geist Mono', ui-monospace, monospace", fontWeight: leader ? 700 : 400 }}>{i + 1}</td>
+                  <td className="px-3 py-3">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-medium" style={{ color: "#1a1a1a" }}>
+                      <User className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#8a6a2f" }} />
+                      <span className="break-words min-w-0">{r.name}</span>
+                      {leader && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: "#F7F0E3", color: "#B07848" }}>Most rooms</span>}
+                      {r.inactive && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ backgroundColor: "#f3f0ea", color: "#8a8276" }}>Inactive</span>}
+                    </div>
+                  </td>
+                  <td className="px-3 py-3 w-[40%]">
+                    <div className="flex items-center gap-2">
+                      <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 15, fontWeight: 600, color: "#1f1b16", minWidth: 20 }}>{r.total}</span>
+                      <span className="flex-1 h-2 rounded-full overflow-hidden" style={{ backgroundColor: "#F2EADA", minWidth: 30 }} aria-hidden="true">
+                        <span className="block h-full rounded-full" style={{ width: `${(r.total / max) * 100}%`, backgroundColor: leader ? "#B07848" : "#d4a96a" }} />
+                      </span>
+                      <span className="text-xs" style={{ color: "#8a8276", minWidth: 32 }}>{share}%</span>
+                    </div>
+                  </td>
+                  <td className="px-3 py-3 hidden sm:table-cell" style={{ color: "#065f46" }}>{r.done}</td>
+                  <td className="px-3 py-3 hidden md:table-cell" style={{ color: "#8a6a2f" }}>{r.active}</td>
+                  <td className="px-3 py-3 hidden md:table-cell" style={{ color: "#1e40af" }}>{r.toDo}</td>
+                  <td className="px-3 py-3 text-xs whitespace-nowrap hidden lg:table-cell" style={{ color: "#6b6358" }}>
+                    <span style={{ color: "#1e40af" }}>{r.automatic}</span> / <span style={{ color: "#92400e" }}>{r.manual}</span>
+                  </td>
+                  <td className="px-3 py-3"><ChevronRight className="w-4 h-4" style={{ color: "#D4BFA0" }} /></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs mt-2" style={{ color: "#8a8276" }}>
+        Counted by the month of the guest&apos;s checkout. &quot;Done&quot; includes rooms waiting for inspection. Click a cleaner to see their rooms.
+      </p>
+
+      {selectedRow && (
+        <CleanerWorkloadDrawer
+          name={selectedRow.name}
+          inactive={selectedRow.inactive}
+          periodLabel={month ? new Date(`${month}-01T00:00:00`).toLocaleDateString("en-US", { month: "long", year: "numeric" }) : "All time"}
+          tasks={inPeriod.filter((t) => t.assigned_cleaner_id === selectedRow.id)}
+          onClose={() => setSelectedCleaner(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Minutes a cleaning took, from start to hand-in; null if it hasn't finished. */
+function cleaningMinutes(t: CleaningTask): number | null {
+  const end = t.cleaning_time_out ?? t.cleaned_at;
+  if (!t.cleaning_time_in || !end) return null;
+  const mins = (new Date(end).getTime() - new Date(t.cleaning_time_in).getTime()) / 60000;
+  return Number.isFinite(mins) && mins >= 0 ? Math.round(mins) : null;
+}
+
+const fmtMinutes = (mins: number) => (mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`);
+
+// One cleaner's workload for the chosen period: the numbers, how long their
+// cleanings take, and every room they were given.
+function CleanerWorkloadDrawer({ name, inactive, periodLabel, tasks, onClose }: {
+  name: string;
+  inactive: boolean;
+  periodLabel: string;
+  tasks: CleaningTask[];
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const sorted = [...tasks].sort((a, b) => (checkoutMoment(a)?.getTime() ?? 0) - (checkoutMoment(b)?.getTime() ?? 0));
+  const groups = { done: 0, active: 0, toDo: 0 };
+  for (const t of tasks) {
+    const s = statusGroup(t.cleaning_status);
+    if (s === "awaiting-inspection" || s === "ready") groups.done++;
+    else if (s === "in-progress") groups.active++;
+    else groups.toDo++;
+  }
+  const durations = tasks.map(cleaningMinutes).filter((m): m is number => m != null);
+  const avg = durations.length ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : null;
+  const fastest = durations.length ? Math.min(...durations) : null;
+  const slowest = durations.length ? Math.max(...durations) : null;
+  const openIssues = tasks.reduce((n, t) => n + (t.open_issue_count ?? 0), 0);
+  const sentBack = tasks.filter((t) => !!t.inspection_note).length;
+  const automatic = tasks.filter((t) => t.assignment_method === "automatic").length;
+
+  const stat = (label: string, value: string, color = "#1f1b16") => (
+    <div className="border p-3" style={{ borderColor: "#ece5d4" }}>
+      <p style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 20, fontWeight: 500, lineHeight: 1, color }}>{value}</p>
+      <p className="text-xs mt-1" style={{ color: "#8B6344" }}>{label}</p>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <div className="fixed inset-0 bg-black/40" onClick={onClose} />
+      <div role="dialog" aria-label={`${name} workload`} className="relative w-full max-w-lg h-full overflow-y-auto p-6"
+        style={{ backgroundColor: "#ffffff", borderLeft: "1px solid #ece5d4" }}>
+        <div className="flex items-start justify-between mb-5">
+          <div className="min-w-0">
+            <h2 className="truncate" style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 22, lineHeight: 1.1, color: "#1f1b16" }}>{name}</h2>
+            <p className="text-xs mt-1" style={{ color: "#8B6344" }}>
+              Cleaner workload · {periodLabel}{inactive ? " · Inactive account" : ""}
+            </p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" className="cursor-pointer" style={{ color: "#8B6344" }}><X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+          {stat("Rooms received", String(tasks.length))}
+          {stat("Done", String(groups.done), "#065f46")}
+          {stat("Cleaning now", String(groups.active), "#8a6a2f")}
+          {stat("To do", String(groups.toDo), "#1e40af")}
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-6">
+          {stat("Avg. cleaning time", avg != null ? fmtMinutes(avg) : "—")}
+          {stat("Fastest / slowest", fastest != null && slowest != null ? `${fmtMinutes(fastest)} / ${fmtMinutes(slowest)}` : "—")}
+          {stat("Sent back to fix", String(sentBack), sentBack ? "#5b21b6" : "#1f1b16")}
+          {stat("Open issues", String(openIssues), openIssues ? "#ea580c" : "#1f1b16")}
+        </div>
+
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-sm font-semibold" style={{ color: "#1f1b16" }}>Rooms ({tasks.length})</p>
+          <p className="text-xs" style={{ color: "#8a8276" }}>{automatic} automatic · {tasks.length - automatic} manual</p>
+        </div>
+
+        {sorted.length === 0 ? (
+          <p className="text-sm border p-4" style={{ color: "#8B6344", borderColor: "#ece5d4" }}>
+            No rooms for this cleaner in {periodLabel === "All time" ? "any period" : periodLabel}.
+          </p>
+        ) : (
+          <div className="border divide-y" style={{ borderColor: "#ece5d4" }}>
+            {sorted.map((t) => {
+              const st = STATUS_LABELS[t.cleaning_status] || STATUS_LABELS.pending;
+              const due = checkoutMoment(t);
+              const mins = cleaningMinutes(t);
+              return (
+                <div key={t.cleaning_id} className="px-4 py-3" style={{ borderColor: "#F7F0E3" }}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate" style={{ color: "#1a1a1a" }}>{t.haven}</p>
+                      <p className="text-xs" style={{ color: "#8B6344" }}>{t.booking_id}</p>
+                    </div>
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0" style={{ backgroundColor: st.bg, color: st.color }}>
+                      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: st.dot }} />{st.label}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs" style={{ color: "#6b6358" }}>
+                    <span className="flex items-center gap-1"><Clock className="w-3 h-3" style={{ color: "#8a6a2f" }} />
+                      Checkout {due ? due.toLocaleString("en-US", { timeZone: "Asia/Manila", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—"}
+                    </span>
+                    {t.cleaning_time_in && <span>Started {fmtDateTime(t.cleaning_time_in)}</span>}
+                    {mins != null && <span className="flex items-center gap-1"><Timer className="w-3 h-3" style={{ color: "#B07848" }} />Took {fmtMinutes(mins)}</span>}
+                    <span style={{ color: t.assignment_method === "automatic" ? "#1e40af" : "#92400e" }}>
+                      {t.assignment_method === "automatic" ? "Automatic" : "Manual"}
+                    </span>
+                    {(t.open_issue_count ?? 0) > 0 && (
+                      <span className="flex items-center gap-1" style={{ color: "#ea580c" }}><AlertTriangle className="w-3 h-3" />{t.open_issue_count} issue{t.open_issue_count === 1 ? "" : "s"}</span>
+                    )}
+                  </div>
+                  {t.inspection_note && (
+                    <p className="text-xs mt-1.5" style={{ color: "#5b21b6" }}>Sent back: {t.inspection_note}</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ReportsIssuesTab() {
   const { data: reportsRes, isFetching } = useGetReportsQuery(undefined);
   const reports = (reportsRes as { data?: ReportRow[] } | undefined)?.data ?? [];
