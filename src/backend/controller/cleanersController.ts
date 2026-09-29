@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
 import type { PoolClient } from "pg";
 import { createNotificationForUser, createNotificationsForRoles } from "@/backend/utils/notificationHelper";
+import { scheduleCleaningCalendarSync } from "@/backend/utils/cleaningCalendar";
 import {
   CLEANING_STATUSES,
   actorForRole,
@@ -420,6 +421,9 @@ export const updateCleaningTask = async (
     }
 
     const actor = actorForRole(viewer.role);
+    // The cleaner's Google Calendar event shows the status in its title.
+    scheduleCleaningCalendarSync(id);
+
     const selectResult = await pool.query(
       `
       SELECT DISTINCT ON (bc.id)
@@ -685,6 +689,8 @@ export async function reassignCleaningTask(params: {
     );
 
     await client.query("COMMIT");
+    // Moves the event from the old cleaner's calendar to the new one's.
+    scheduleCleaningCalendarSync(cleaningTaskId);
     return { releasedFrom, newStatus: updated.rows[0]?.cleaning_status ?? currentStatus };
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
@@ -703,6 +709,7 @@ export async function reassignCleaningTask(params: {
  */
 export async function releaseCleaningForCancelledBooking(bookingId: string): Promise<void> {
   let released: { employeeId: string; taskId: string; status: string; bookingRef: string; room: string | null } | null = null;
+  let touchedTaskId: string | null = null;
 
   const client = await pool.connect();
   try {
@@ -722,6 +729,7 @@ export async function releaseCleaningForCancelledBooking(bookingId: string): Pro
     );
 
     const task = taskRes.rows[0];
+    touchedTaskId = task?.id ?? null;
 
     // Cleaning that was already performed stays credited to whoever performed
     // it — a late cancellation doesn't erase finished work.
@@ -758,6 +766,9 @@ export async function releaseCleaningForCancelledBooking(bookingId: string): Pro
   } finally {
     client.release();
   }
+
+  // A cancelled booking's event comes off the cleaner's calendar.
+  scheduleCleaningCalendarSync(touchedTaskId);
 
   if (!released) return;
 
@@ -969,6 +980,8 @@ export async function ensureCleaningAssignment(
 
   // Notifications and history are best-effort and outside the transaction — a
   // failure here must not undo a committed assignment.
+  if (!outcome.skipped) scheduleCleaningCalendarSync(outcome.taskId);
+
   await notifyAssignmentOutcome(bookingId, trigger, outcome).catch((err) =>
     console.error(`⚠️ Assignment notification failed for booking ${bookingId}:`, err)
   );
@@ -1092,15 +1105,18 @@ export async function processCheckoutCleaning(bookingId: string): Promise<void> 
  */
 export async function syncCleaningSchedule(bookingId: string): Promise<void> {
   try {
-    await pool.query(
+    const res = await pool.query(
       `UPDATE booking_cleaning bc
        SET scheduled_for = ${checkoutAtSql("b")}
        FROM booking b
        WHERE b.id = bc.booking_id
          AND bc.booking_id = $1::uuid
-         AND bc.cleaning_status IN ('pending', 'assigned')`,
+         AND bc.cleaning_status IN ('pending', 'assigned')
+       RETURNING bc.id::text AS id`,
       [bookingId]
     );
+    // The calendar event moves with the new checkout.
+    for (const row of res.rows) scheduleCleaningCalendarSync(row.id);
   } catch (err) {
     console.error(`⚠️ syncCleaningSchedule failed for booking ${bookingId}:`, err);
   }

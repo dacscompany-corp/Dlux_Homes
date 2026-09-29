@@ -53,6 +53,7 @@ import {
   useCompleteCleaningMutation,
 } from "@/redux/api/cleanersApi";
 import { useAssignmentChecklist, gateErrorMessage } from "@/components/admin/cleaners/useAssignmentChecklist";
+import CleanerCalendarCard from "@/components/admin/cleaners/CleanerCalendarCard";
 import { canStartCleaning, cleaningDueAt, stayKindFor, type StayKind } from "@/lib/cleaning-schedule";
 import { translateCategory, translateTask } from "@/lib/checklist-translations";
 import {
@@ -1385,6 +1386,10 @@ export default function CleanerMobilePortal() {
               }}>
                 <AlertTriangle className="w-[26px] h-[26px] flex-shrink-0" strokeWidth={2} />{t.report}
               </button>
+            </div>
+
+            <div style={{ marginTop: 30 }}>
+              <CleanerCalendarCard lang={lang} size="mobile" />
             </div>
 
             <div style={{ marginTop: 30 }}>{sectionLabel(t.how)}</div>

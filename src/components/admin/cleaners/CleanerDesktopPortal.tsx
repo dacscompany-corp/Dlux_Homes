@@ -29,6 +29,7 @@ import {
   useCompleteCleaningMutation,
 } from "@/redux/api/cleanersApi";
 import { useAssignmentChecklist, gateErrorMessage } from "@/components/admin/cleaners/useAssignmentChecklist";
+import CleanerCalendarCard from "@/components/admin/cleaners/CleanerCalendarCard";
 import { canStartCleaning, cleaningDueAt, groupByDueDay, startOfLocalDay } from "@/lib/cleaning-schedule";
 import { translateCategory, translateTask, type ChecklistLanguage } from "@/lib/checklist-translations";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -1028,6 +1029,7 @@ export default function CleanerDesktopPortal() {
           {activeNav === "My Schedule" && (
             <div className="space-y-4">
               <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16", marginBottom: 8 }}>My Schedule</h2>
+              <CleanerCalendarCard size="desktop" />
               <p className="text-sm" style={{ color: "#8B6344" }}>
                 Your upcoming and unfinished cleanings, by the day the guest checks out.
               </p>
