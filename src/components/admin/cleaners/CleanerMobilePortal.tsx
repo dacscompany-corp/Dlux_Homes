@@ -31,7 +31,7 @@ import toast from "react-hot-toast";
 import {
   Check, ChevronLeft, ChevronRight, Clock, MapPin, AlertTriangle, Camera,
   Image as ImageIcon, Phone, Home as HomeIcon, MessageSquare, LifeBuoy,
-  Wrench, Droplet, Package, HelpCircle, LogOut, CheckCircle2, Users,
+  Wrench, Droplet, Package, HelpCircle, LogOut, CheckCircle2, Users, Send, Bell,
 } from "lucide-react";
 import ImageThumb from "@/components/ImageThumb";
 import { imageFileError } from "@/lib/validateImageFile";
@@ -43,10 +43,9 @@ import {
   type Notification,
 } from "@/redux/api/notificationsApi";
 import {
-  useGetConversationsQuery,
-  useGetMessagesQuery,
-  useSendMessageMutation,
-  useMarkMessagesAsReadMutation,
+  useGetStaffThreadsQuery,
+  useGetStaffMessagesQuery,
+  useSendStaffMessageMutation,
 } from "@/redux/api/messagesApi";
 import {
   useGetCleaningTasksQuery,
@@ -109,7 +108,12 @@ const OFFICE_PHONE = process.env.NEXT_PUBLIC_OFFICE_PHONE?.trim() || "";
 
 const LANG_KEY = "dlux-cleaner-lang";
 
-type Screen = "home" | "room" | "done" | "problem" | "messages" | "help";
+// Height the floating tab bar occupies at the bottom of the screen (22px
+// offset + 60px buttons + 16px padding) plus a small gap, so content pinned to
+// the bottom — the Messages reply bar — sits above it instead of under it.
+const TAB_BAR_CLEARANCE = 108;
+
+type Screen = "home" | "room" | "done" | "problem" | "messages" | "notifications" | "help";
 type CleanStatus = "pending" | "in-progress" | "awaiting-inspection" | "ready";
 type ProblemType = "broken" | "dirty" | "missing" | "other";
 
@@ -470,45 +474,58 @@ export default function CleanerMobilePortal() {
     if (fresh.length) seenRef.current = new Set(notifRes.map((n) => n.id));
   }, [notifRes]);
 
-  const { data: convRes } = useGetConversationsQuery({ userId: myId }, { skip: !myId });
-  const conversation = useMemo(() => {
-    const rows = convRes?.data ?? [];
-    // Staff threads first; otherwise whatever thread the office started.
-    return rows.find((c) => c.type === "internal") ?? rows[0] ?? null;
-  }, [convRes]);
-  const conversationId = conversation?.id ?? "";
-  const { data: msgRes } = useGetMessagesQuery(
-    { conversationId },
-    { skip: !conversationId, pollingInterval: 30000 }
-  );
-  const thread = msgRes?.data ?? [];
-  const [sendMessageM] = useSendMessageMutation();
-  const [markThreadRead] = useMarkMessagesAsReadMutation();
-  const unreadMsgs = (convRes?.data ?? []).reduce((n, c) => n + Number(c.unread_count ?? 0), 0);
-  const unreadTotal = unreadNotifs + unreadMsgs;
+  // The cleaner's one chat thread with the office — created on first load,
+  // so the cleaner can write first instead of waiting for the office to.
+  // Everyone in the office (Owner and CSR) sees it and can answer.
+  const { data: staffThreads = [] } = useGetStaffThreadsQuery(undefined, { skip: !myId, pollingInterval: 30000 });
+  const conversation = staffThreads.find((th) => th.cleaner_id === myId) ?? null;
+  const conversationId = conversation?.conversation_id ?? "";
+  // Fetched only while Messages is open: loading the thread marks the office's
+  // messages read, which should happen when the cleaner actually looks.
+  const { data: thread = [] } = useGetStaffMessagesQuery(conversationId, {
+    skip: !conversationId || screen !== "messages",
+    pollingInterval: 8000,
+    refetchOnMountOrArgChange: true,
+  });
+  const [sendStaffMessageM, { isLoading: sendingMsg }] = useSendStaffMessageMutation();
+  const [msgDraft, setMsgDraft] = useState("");
+  const [showUpdates, setShowUpdates] = useState(false);
+  const unreadMsgs = conversation?.unread_count ?? 0;
 
   const threadEndRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    if (screen === "messages") threadEndRef.current?.scrollIntoView({ block: "end" });
+    if (screen === "messages") threadEndRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
   }, [screen, thread.length]);
 
-  const openMessages = () => {
-    setScreen("messages");
-    if (conversationId && myId && unreadMsgs > 0) {
-      markThreadRead({ conversation_id: conversationId, user_id: myId }).catch(() => {});
+  const openMessages = () => setScreen("messages");
+
+  // Sender and name come from the session server-side; nothing to pass here.
+  const sendQuick = async (text: string): Promise<boolean> => {
+    const body = text.trim();
+    if (!body || !myId) return false;
+    try {
+      await sendStaffMessageM({ conversation_id: conversationId || null, message_text: body }).unwrap();
+      return true;
+    } catch {
+      toast.error(lang === "tl" ? "Hindi naipadala" : "Could not send that message");
+      return false;
     }
   };
+  const sendDraft = async () => {
+    if (sendingMsg) return;
+    if (await sendQuick(msgDraft)) setMsgDraft("");
+  };
 
-  const sendQuick = async (text: string) => {
-    if (!conversationId || !myId) return;
-    try {
-      await sendMessageM({
-        conversation_id: conversationId,
-        sender_id: myId,
-        sender_name: me?.name || "Cleaner",
-        message_text: text,
-      }).unwrap();
-    } catch { toast.error(lang === "tl" ? "Hindi naipadala" : "Could not send that message"); }
+  const markAllNotificationsRead = () => {
+    const ids = notifications.filter((n) => !n.read).map((n) => n.id);
+    if (ids.length) markNotificationsRead({ notificationIds: ids, markAs: "read" }).catch(() => {});
+  };
+  // Tapping a notification marks it read and, where it points somewhere,
+  // goes there: a staff message opens the chat, a cleaning event opens Today.
+  const openNotification = (n: Notification) => {
+    readNotification(n);
+    if (n.rawType === "staff_message") setScreen("messages");
+    else if (n.rawType?.startsWith("cleaning")) setScreen("home");
   };
 
   const readNotification = (n: Notification) => {
@@ -522,7 +539,7 @@ export default function CleanerMobilePortal() {
     if (screen === "room" && activeId && !tasksLoading && !active) setScreen("home");
   }, [screen, activeId, active, tasksLoading]);
 
-  const showTabs = screen === "home" || screen === "messages" || screen === "help";
+  const showTabs = screen === "home" || screen === "messages" || screen === "notifications" || screen === "help";
 
   // ── Booking details on each card ──────────────────────────────────────────
   // Every card is the same property, so the name alone can't tell two jobs
@@ -584,15 +601,34 @@ export default function CleanerMobilePortal() {
                 <div style={{ fontFamily: SERIF, fontSize: 40, lineHeight: 1.05, letterSpacing: "-0.01em" }}>{firstName}</div>
                 <div style={{ fontSize: 15, color: C.muted, marginTop: 6 }}>{formatDateLine(new Date(), lang)}</div>
               </div>
-              <div style={{ display: "flex", background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: 3, flexShrink: 0, marginTop: 4 }}>
-                {(["en", "tl"] as CleanerLanguage[]).map((code) => (
-                  <button key={code} type="button" onClick={() => pickLang(code)} style={{
-                    height: 40, minWidth: 48, padding: "0 12px", border: 0, borderRadius: 999,
-                    font: `600 14px ${SANS}`, cursor: "pointer",
-                    background: lang === code ? C.ink : "transparent",
-                    color: lang === code ? C.onDark : C.muted,
-                  }}>{code.toUpperCase()}</button>
-                ))}
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10, flexShrink: 0, marginTop: 4 }}>
+                <div style={{ display: "flex", background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: 3 }}>
+                  {(["en", "tl"] as CleanerLanguage[]).map((code) => (
+                    <button key={code} type="button" onClick={() => pickLang(code)} style={{
+                      height: 40, minWidth: 48, padding: "0 12px", border: 0, borderRadius: 999,
+                      font: `600 14px ${SANS}`, cursor: "pointer",
+                      background: lang === code ? C.ink : "transparent",
+                      color: lang === code ? C.onDark : C.muted,
+                    }}>{code.toUpperCase()}</button>
+                  ))}
+                </div>
+                {/* Notifications — bell with the unread count */}
+                <button type="button" onClick={() => setScreen("notifications")}
+                  aria-label={unreadNotifs > 0 ? `${t.notifications} (${unreadNotifs})` : t.notifications}
+                  style={{
+                    position: "relative", width: 48, height: 48, borderRadius: "50%",
+                    background: C.card, border: `1px solid ${C.line}`, color: C.ink,
+                    display: "grid", placeItems: "center", cursor: "pointer",
+                  }}>
+                  <Bell className="w-6 h-6" strokeWidth={2} />
+                  {unreadNotifs > 0 && (
+                    <span style={{
+                      position: "absolute", top: -4, right: -4, minWidth: 22, height: 22, padding: "0 6px",
+                      borderRadius: 999, background: C.gold, color: C.ink, border: `2px solid ${C.bg}`,
+                      fontSize: 12, fontWeight: 700, display: "grid", placeItems: "center",
+                    }}>{unreadNotifs > 9 ? "9+" : unreadNotifs}</span>
+                  )}
+                </button>
               </div>
             </div>
 
@@ -1065,107 +1101,261 @@ export default function CleanerMobilePortal() {
         )}
 
         {/* ═════════ MESSAGES ═════════ */}
+        {/* Messenger layout: the header and reply bar stay put and only the
+            conversation scrolls. Sized to the visible viewport (100dvh) so the
+            reply bar sits right above the on-screen keyboard. The floating tab
+            bar stays visible; the reply bar's bottom padding reserves its
+            space (see TAB_BAR_CLEARANCE) so it never covers the text box. */}
         {screen === "messages" && (
-          <>
+          <div style={{ height: "100dvh", display: "flex", flexDirection: "column", background: C.bg }}>
+            {/* Header */}
             <div style={{
-              position: "sticky", top: 0, zIndex: 20, background: C.card, borderBottom: `1px solid ${C.line}`,
-              padding: `calc(env(safe-area-inset-top, 0px) + 24px) 20px 14px`,
-              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+              flexShrink: 0, background: C.card, borderBottom: `1px solid ${C.line}`,
+              padding: `calc(env(safe-area-inset-top, 0px) + 10px) 12px 10px 6px`,
+              display: "flex", alignItems: "center", gap: 10,
             }}>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontFamily: SERIF, fontSize: 32, lineHeight: 1 }}>{conversation?.name || t.office}</div>
-                <div style={{ fontSize: 14, color: C.muted, marginTop: 4 }}>{t.officeSub}</div>
+              <button type="button" onClick={() => setScreen("home")} aria-label={t.back} style={{
+                width: 44, height: 44, border: 0, borderRadius: "50%", background: "transparent",
+                color: C.ink, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0,
+              }}>
+                <ChevronLeft className="w-7 h-7" strokeWidth={2} />
+              </button>
+              <span aria-hidden="true" style={{
+                width: 42, height: 42, borderRadius: "50%", background: C.ink, color: C.gold,
+                display: "grid", placeItems: "center", fontFamily: SERIF, fontSize: 18, flexShrink: 0,
+              }}>D</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.office}</div>
+                <div style={{ fontSize: 13, color: C.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.officeSub}</div>
               </div>
               {OFFICE_PHONE && (
-                <a href={`tel:${OFFICE_PHONE}`} style={{
-                  height: 48, padding: "0 18px", borderRadius: 999, background: C.ink, color: C.onDark,
-                  display: "flex", alignItems: "center", gap: 8, font: `600 16px ${SANS}`,
-                  textDecoration: "none", flexShrink: 0,
+                <a href={`tel:${OFFICE_PHONE}`} aria-label={t.call} style={{
+                  width: 44, height: 44, borderRadius: "50%", background: C.cream, color: C.ink,
+                  display: "grid", placeItems: "center", flexShrink: 0,
                 }}>
-                  <Phone className="w-[18px] h-[18px]" strokeWidth={2} />{t.call}
+                  <Phone className="w-5 h-5" strokeWidth={2} />
                 </a>
               )}
             </div>
 
-            <div style={{ flex: 1, padding: "16px 16px 124px" }}>
-              {/* Office updates — the notification feed, kept distinct from the
-                  chat so a system event isn't dressed up as a typed message. */}
+            {/* Conversation — the only scrolling part */}
+            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "12px 12px 16px" }} aria-live="polite">
+              {/* Office updates (system notifications) — one compact row that
+                  opens on tap, kept apart from the typed conversation. */}
               {notifications.length > 0 && (
-                <>
-                  {sectionLabel(t.fromOffice)}
-                  <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, marginBottom: 22, overflow: "hidden" }}>
-                    {notifications.slice(0, 6).map((n, i) => (
-                      <button key={n.id} type="button" onClick={() => readNotification(n)} style={{
-                        width: "100%", textAlign: "left", border: 0, borderTop: i ? `1px solid ${C.hair}` : 0,
-                        background: n.read ? C.card : "#FDF8F3", padding: "14px 16px", cursor: "pointer",
-                        display: "flex", gap: 12, alignItems: "flex-start", fontFamily: SANS,
-                      }}>
-                        <span style={{
-                          width: 36, height: 36, borderRadius: "50%", flexShrink: 0, display: "grid", placeItems: "center",
-                          background: n.rawType === "cleaning_rejected" ? C.violetBg : C.cream,
+                <div style={{ marginBottom: 14 }}>
+                  <button type="button" onClick={() => setShowUpdates((v) => !v)} aria-expanded={showUpdates} style={{
+                    width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px",
+                    background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, cursor: "pointer",
+                    font: `600 15px ${SANS}`, color: C.ink, textAlign: "left",
+                  }}>
+                    <Check className="w-[18px] h-[18px] flex-shrink-0" strokeWidth={2.5} style={{ color: C.goldInk }} />
+                    <span style={{ flex: 1 }}>{t.fromOffice}</span>
+                    {unreadNotifs > 0 && (
+                      <span style={{ minWidth: 22, height: 22, padding: "0 7px", borderRadius: 999, background: C.gold, color: C.ink, fontSize: 12, fontWeight: 700, display: "grid", placeItems: "center" }}>
+                        {unreadNotifs}
+                      </span>
+                    )}
+                    <ChevronRight className="w-5 h-5 flex-shrink-0" style={{ color: C.faint, transform: showUpdates ? "rotate(90deg)" : "none", transition: "transform .2s" }} />
+                  </button>
+                  {showUpdates && (
+                    <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, marginTop: 6, overflow: "hidden" }}>
+                      {notifications.slice(0, 8).map((n, i) => (
+                        <button key={n.id} type="button" onClick={() => readNotification(n)} style={{
+                          width: "100%", textAlign: "left", border: 0, borderTop: i ? `1px solid ${C.hair}` : 0,
+                          background: n.read ? C.card : "#FDF8F3", padding: "12px 14px", cursor: "pointer",
+                          display: "flex", gap: 10, alignItems: "flex-start", fontFamily: SANS,
                         }}>
                           {n.rawType === "cleaning_rejected"
-                            ? <AlertTriangle className="w-[18px] h-[18px]" strokeWidth={2} style={{ color: C.violetInk }} />
-                            : <Check className="w-[18px] h-[18px]" strokeWidth={2.5} style={{ color: C.goldInk }} />}
-                        </span>
-                        <span style={{ flex: 1, minWidth: 0 }}>
-                          <span style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
-                            <span style={{ fontSize: 16, fontWeight: 600 }}>{n.title}</span>
-                            <span style={{ fontSize: 13, color: C.faint, flexShrink: 0 }}>{n.timestamp}</span>
+                            ? <AlertTriangle className="w-[18px] h-[18px] flex-shrink-0" strokeWidth={2} style={{ color: C.violetInk, marginTop: 2 }} />
+                            : <Check className="w-[18px] h-[18px] flex-shrink-0" strokeWidth={2.5} style={{ color: C.goldInk, marginTop: 2 }} />}
+                          <span style={{ flex: 1, minWidth: 0 }}>
+                            <span style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
+                              <span style={{ fontSize: 15, fontWeight: 600 }}>{n.title}</span>
+                              <span style={{ fontSize: 12, color: C.faint, flexShrink: 0 }}>{n.timestamp}</span>
+                            </span>
+                            <span style={{ display: "block", fontSize: 14, color: C.muted, marginTop: 2, lineHeight: 1.4 }}>{n.description}</span>
                           </span>
-                          <span style={{ display: "block", fontSize: 15, color: C.muted, marginTop: 2, lineHeight: 1.4 }}>{n.description}</span>
-                        </span>
-                        {!n.read && <span style={{ width: 10, height: 10, borderRadius: "50%", background: C.gold, flexShrink: 0, marginTop: 6 }} />}
-                      </button>
-                    ))}
-                  </div>
-                </>
+                          {!n.read && <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.gold, flexShrink: 0, marginTop: 7 }} />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
 
-              {!conversationId ? (
-                <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: 16, fontSize: 16, color: C.muted, lineHeight: 1.45 }}>
-                  {t.noThread}
+              {thread.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "40px 20px", fontSize: 16, color: C.muted, lineHeight: 1.45 }}>
+                  <MessageSquare className="w-10 h-10" strokeWidth={1.5} style={{ color: C.creamLine, margin: "0 auto 10px" }} />
+                  {t.noMessages}
                 </div>
-              ) : thread.length === 0 ? (
-                <div style={{ fontSize: 16, color: C.muted }}>{t.noMessages}</div>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {thread.map((m) => {
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  {thread.map((m, i) => {
                     const mine = String(m.sender_id) === myId;
+                    const at = new Date(m.created_at);
+                    const prev = i > 0 ? thread[i - 1] : null;
+                    const next = i < thread.length - 1 ? thread[i + 1] : null;
+                    const newDay = !prev || new Date(prev.created_at).toDateString() !== at.toDateString();
+                    // Consecutive messages from the same person group together:
+                    // the name shows once, the tail only on the last bubble.
+                    const firstOfRun = newDay || !prev || prev.sender_id !== m.sender_id;
+                    const lastOfRun = !next || next.sender_id !== m.sender_id
+                      || new Date(next.created_at).toDateString() !== at.toDateString();
+                    const r = 20;
                     return (
-                      <div key={m.id} style={{ display: "flex", flexDirection: "column", alignItems: mine ? "flex-end" : "flex-start" }}>
+                      <div key={m.id}>
+                        {newDay && (
+                          <div style={{ display: "flex", justifyContent: "center", margin: "14px 0 10px" }}>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: C.muted, background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "4px 12px" }}>
+                              {formatDateLine(at, lang)}
+                            </span>
+                          </div>
+                        )}
                         <div style={{
-                          maxWidth: "80%", padding: "12px 14px", borderRadius: 18,
-                          background: mine ? C.ink : C.card, color: mine ? C.onDark : C.ink,
-                          border: mine ? 0 : `1px solid ${C.line}`, fontSize: 17, lineHeight: 1.4,
-                        }}>{m.message_text}</div>
-                        <div style={{ fontSize: 13, color: C.faint, margin: "4px 6px 0" }}>
-                          {new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          display: "flex", flexDirection: "column", alignItems: mine ? "flex-end" : "flex-start",
+                          marginTop: firstOfRun ? 8 : 2,
+                        }}>
+                          {!mine && firstOfRun && (
+                            <span style={{ fontSize: 13, color: C.goldInk, fontWeight: 600, margin: "0 0 3px 12px" }}>{m.sender_name}</span>
+                          )}
+                          <div style={{
+                            maxWidth: "82%", padding: "10px 14px",
+                            borderRadius: mine
+                              ? `${r}px ${r}px ${lastOfRun ? 6 : r}px ${r}px`
+                              : `${r}px ${r}px ${r}px ${lastOfRun ? 6 : r}px`,
+                            background: mine ? C.ink : C.card, color: mine ? C.onDark : C.ink,
+                            border: mine ? 0 : `1px solid ${C.line}`,
+                            fontSize: 17, lineHeight: 1.4, whiteSpace: "pre-wrap", overflowWrap: "anywhere",
+                            boxShadow: mine ? "none" : "0 1px 1px rgba(31,27,22,0.04)",
+                          }}>
+                            {m.message_text}
+                            <span style={{
+                              display: "block", textAlign: "right", fontSize: 12, marginTop: 4,
+                              color: mine ? C.onDarkFaint : C.faint,
+                            }}>
+                              {at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                              {mine && m.is_read ? ` · ${t.seen}` : ""}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     );
                   })}
-                  <div ref={threadEndRef} />
                 </div>
               )}
+              <div ref={threadEndRef} />
             </div>
 
-            {conversationId && (
+            {/* Reply bar — pinned to the bottom */}
+            {myId && (
               <div style={{
-                position: "sticky", bottom: 0, background: C.card, borderTop: `1px solid ${C.line}`,
-                padding: `10px 12px calc(env(safe-area-inset-bottom, 0px) + 100px)`,
+                flexShrink: 0, background: C.card, borderTop: `1px solid ${C.line}`,
+                // Room for the floating tab bar below: 22px offset + 76px bar + 10px gap.
+                padding: `8px 0 calc(env(safe-area-inset-bottom, 0px) + ${TAB_BAR_CLEARANCE}px)`,
               }}>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {/* Quick replies scroll sideways so they never eat the screen. */}
+                <div style={{ display: "flex", gap: 8, overflowX: "auto", padding: "0 12px 8px", scrollbarWidth: "none" }}>
                   {t.quick.map((q) => (
-                    <button key={q} type="button" onClick={() => sendQuick(q)} style={{
-                      height: 44, padding: "0 16px", border: `1px solid ${C.creamLine}`, background: C.cream,
-                      color: C.ink, borderRadius: 999, font: `500 16px ${SANS}`, cursor: "pointer",
+                    <button key={q} type="button" onClick={() => sendQuick(q)} disabled={sendingMsg} style={{
+                      flexShrink: 0, height: 38, padding: "0 14px", border: `1px solid ${C.creamLine}`, background: C.cream,
+                      color: C.ink, borderRadius: 999, font: `500 15px ${SANS}`, cursor: "pointer", whiteSpace: "nowrap",
                     }}>{q}</button>
                   ))}
                 </div>
+                <form onSubmit={(e) => { e.preventDefault(); sendDraft(); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 12px" }}>
+                  <input
+                    type="text"
+                    value={msgDraft}
+                    maxLength={2000}
+                    enterKeyHint="send"
+                    onChange={(e) => setMsgDraft(e.target.value)}
+                    placeholder={t.typeMessage}
+                    aria-label={t.typeMessage}
+                    style={{
+                      flex: 1, minWidth: 0, height: 48, padding: "0 18px", borderRadius: 999,
+                      border: `1px solid ${C.line}`, background: C.bg, font: `400 17px ${SANS}`, color: C.ink, outline: "none",
+                    }}
+                  />
+                  <button type="submit" disabled={sendingMsg || !msgDraft.trim()} aria-label={t.sendMsg} style={{
+                    width: 48, height: 48, border: 0, borderRadius: "50%", flexShrink: 0,
+                    background: msgDraft.trim() ? C.gold : C.cream, color: C.ink,
+                    display: "grid", placeItems: "center", cursor: "pointer",
+                    opacity: sendingMsg ? 0.5 : 1, transition: "background .2s",
+                  }}>
+                    <Send className="w-[22px] h-[22px]" strokeWidth={2} style={{ marginLeft: -2 }} />
+                  </button>
+                </form>
               </div>
             )}
-          </>
+          </div>
+        )}
+
+        {/* ═════════ NOTIFICATIONS ═════════ */}
+        {screen === "notifications" && (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+            <div style={{
+              position: "sticky", top: 0, zIndex: 20, background: C.card, borderBottom: `1px solid ${C.line}`,
+              padding: `calc(env(safe-area-inset-top, 0px) + 10px) 12px 10px 6px`,
+              display: "flex", alignItems: "center", gap: 8,
+            }}>
+              <button type="button" onClick={() => setScreen("home")} aria-label={t.back} style={{
+                width: 44, height: 44, border: 0, borderRadius: "50%", background: "transparent",
+                color: C.ink, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0,
+              }}>
+                <ChevronLeft className="w-7 h-7" strokeWidth={2} />
+              </button>
+              <div style={{ flex: 1, minWidth: 0, fontSize: 20, fontWeight: 700 }}>{t.notifications}</div>
+              {unreadNotifs > 0 && (
+                <button type="button" onClick={markAllNotificationsRead} style={{
+                  height: 40, padding: "0 14px", border: `1px solid ${C.creamLine}`, borderRadius: 999,
+                  background: C.cream, color: C.goldInk, font: `600 14px ${SANS}`, cursor: "pointer", flexShrink: 0,
+                }}>{t.markAllRead}</button>
+              )}
+            </div>
+
+            <div style={{ flex: 1, padding: `12px 12px ${TAB_BAR_CLEARANCE + 16}px` }}>
+              {notifications.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "48px 20px", fontSize: 16, color: C.muted, lineHeight: 1.45 }}>
+                  <Bell className="w-10 h-10" strokeWidth={1.5} style={{ color: C.creamLine, margin: "0 auto 10px" }} />
+                  {t.noNotifications}
+                </div>
+              ) : (
+                <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, overflow: "hidden" }}>
+                  {notifications.map((n, i) => {
+                    const icon =
+                      n.rawType === "cleaning_rejected" ? { bg: C.violetBg, fg: C.violetInk, Icon: AlertTriangle }
+                      : n.rawType === "staff_message" ? { bg: C.cream, fg: C.goldInk, Icon: MessageSquare }
+                      : n.rawType === "cleaning_assignment" ? { bg: C.greenBg, fg: C.greenInk, Icon: CheckCircle2 }
+                      : { bg: C.cream, fg: C.goldInk, Icon: Bell };
+                    const Icon = icon.Icon;
+                    return (
+                      <button key={n.id} type="button" onClick={() => openNotification(n)} style={{
+                        width: "100%", textAlign: "left", border: 0, borderTop: i ? `1px solid ${C.hair}` : 0,
+                        background: n.read ? C.card : "#FDF8F3", padding: "14px 14px", cursor: "pointer",
+                        display: "flex", gap: 12, alignItems: "flex-start", fontFamily: SANS, color: C.ink,
+                      }}>
+                        <span style={{
+                          width: 40, height: 40, borderRadius: "50%", flexShrink: 0, display: "grid", placeItems: "center",
+                          background: icon.bg,
+                        }}>
+                          <Icon className="w-5 h-5" strokeWidth={2} style={{ color: icon.fg }} />
+                        </span>
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
+                            <span style={{ fontSize: 16, fontWeight: n.read ? 500 : 700 }}>{n.title}</span>
+                            <span style={{ fontSize: 12, color: C.faint, flexShrink: 0 }}>{n.timestamp}</span>
+                          </span>
+                          <span style={{ display: "block", fontSize: 15, color: C.muted, marginTop: 3, lineHeight: 1.4 }}>{n.description}</span>
+                        </span>
+                        {!n.read && <span style={{ width: 10, height: 10, borderRadius: "50%", background: C.gold, flexShrink: 0, marginTop: 7 }} />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
         )}
 
         {/* ═════════ HELP ═════════ */}
@@ -1251,7 +1441,10 @@ export default function CleanerMobilePortal() {
             }}>
               {([
                 { id: "home" as Screen, label: t.tabToday, Icon: HomeIcon, onClick: () => setScreen("home"), badge: false },
-                { id: "messages" as Screen, label: t.tabMsg, Icon: MessageSquare, onClick: openMessages, badge: unreadTotal > 0 },
+                // Notifications have their own tab now, so each dot means one thing:
+                // Messages = unread office messages, Notifications = unread notifications.
+                { id: "messages" as Screen, label: t.tabMsg, Icon: MessageSquare, onClick: openMessages, badge: unreadMsgs > 0 },
+                { id: "notifications" as Screen, label: t.notifications, Icon: Bell, onClick: () => setScreen("notifications"), badge: unreadNotifs > 0 },
                 { id: "help" as Screen, label: t.tabHelp, Icon: LifeBuoy, onClick: () => setScreen("help"), badge: false },
               ]).map(({ id, label, Icon, onClick, badge }) => {
                 const on = screen === id;

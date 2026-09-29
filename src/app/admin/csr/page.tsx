@@ -14,7 +14,8 @@ import { useGetBookingPaymentsQuery, useUpdateBookingPaymentMutation } from "@/r
 import { useGetActivityLogsQuery } from "@/redux/api/activityLogApi";
 import { useGetCleaningTasksQuery } from "@/redux/api/cleanersApi";
 import { useGetNotificationsQuery } from "@/redux/api/notificationsApi";
-import { useGetConversationsQuery } from "@/redux/api/messagesApi";
+import { useGetStaffThreadsQuery } from "@/redux/api/messagesApi";
+import OfficeStaffInbox from "@/components/admin/messages/OfficeStaffInbox";
 import PromotionModal, { type PromotionFormState } from "@/components/admin/PromotionModal";
 import {
   getDeposits, getDeliverables, getDiscounts,
@@ -34,6 +35,7 @@ import {
   Mail, Phone, Shield, PhilippinePeso, CheckCircle2, Trash2,
   Pencil, ImageIcon, Sparkles,
 } from "lucide-react";
+import { useSignedInStaff } from "@/components/admin/useSignedInStaff";
 
 // PromotionRecord types start_date/end_date as string, but server actions return
 // raw pg rows where TIMESTAMP columns are Date objects (no JSON serialization
@@ -73,6 +75,8 @@ function toRows(v: unknown): Record<string, unknown>[] {
 }
 
 export default function CSRDashboard() {
+  // The signed-in account — shown in the sidebar, header and Profile.
+  const me = useSignedInStaff("CSR");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeNav, setActiveNav] = useState("Overview");
   const [bkTab, setBkTab] = useState<"all" | "calendar">("all");
@@ -492,15 +496,10 @@ export default function CSRDashboard() {
     type: String(n.notification_type || "booking"),
   }));
   const csrUserId = (session?.user as { id?: string } | undefined)?.id;
-  const { data: convRes } = useGetConversationsQuery({ userId: csrUserId || "" }, { skip: !csrUserId });
-  const messages = toRows(convRes).map((c, i) => ({
-    id: (c.id as string | number) ?? i,
-    sender: String(c.name || "Guest"),
-    role: String(c.role || "guest"),
-    content: String(c.last_message || "No messages yet"),
-    time: c.last_message_time ? new Date(String(c.last_message_time)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "",
-    unread: Number(c.unread_count ?? 0) > 0,
-  }));
+  // Cleaner ↔ office chat threads (shared by every Owner/CSR). Polled so the
+  // unread count on the dashboard keeps up without opening Messages.
+  const { data: staffThreads = [] } = useGetStaffThreadsQuery(undefined, { skip: !csrUserId, pollingInterval: 30000 });
+  const unreadStaffMessages = staffThreads.reduce((n, t) => n + t.unread_count, 0);
 
   // Calendar — mark days with check-ins / check-outs this month from live bookings
   const calNow = new Date();
@@ -584,11 +583,11 @@ export default function CSRDashboard() {
         <div className="px-3 py-4 border-t" style={{ borderColor: "rgba(250,247,241,0.1)" }}>
           <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl" style={{ backgroundColor: "rgba(250,247,241,0.1)" }}>
             <Avatar className="w-8 h-8 flex-shrink-0">
-              <AvatarFallback className="text-white text-xs font-bold" style={{ backgroundColor: "#059669" }}>CS</AvatarFallback>
+              <AvatarFallback className="text-white text-xs font-bold" style={{ backgroundColor: "#059669" }}>{me.initials}</AvatarFallback>
             </Avatar>
             <div className="flex-1 min-w-0">
-              <p className="text-white text-sm font-medium truncate">CSR Staff</p>
-              <p className="text-xs truncate" style={{ color: "#6b5040" }}>csr@dluxhomes.com</p>
+              <p className="text-white text-sm font-medium truncate">{me.name}</p>
+              <p className="text-xs truncate" style={{ color: "#6b5040" }}>{me.email}</p>
             </div>
             <button type="button" onClick={() => signOut({ callbackUrl: "/admin/login" })} aria-label="Sign out" className="cursor-pointer">
               <LogOut className="w-4 h-4 flex-shrink-0" style={{ color: "#6b5040" }} />
@@ -636,10 +635,10 @@ export default function CSRDashboard() {
             </button>
             <button type="button" onClick={() => setActiveNav("Profile")} title="Profile & settings" className="flex items-center gap-2.5 rounded-lg cursor-pointer transition-colors" style={{ padding: "6px 12px 6px 6px", background: "transparent", border: 0 }}
               onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#f3eee2"} onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
-              <span style={{ width: 28, height: 28, borderRadius: "50%", background: "#2f9e6b", color: "#faf7f1", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 14 }}>C</span>
+              <span style={{ width: 28, height: 28, borderRadius: "50%", background: "#2f9e6b", color: "#faf7f1", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 14 }}>{me.initials.slice(0, 1)}</span>
               <span className="flex flex-col items-start" style={{ lineHeight: 1.2 }}>
-                <span style={{ fontSize: 13, color: "#1f1b16" }}>CSR Staff</span>
-                <span style={{ fontSize: 11, color: "#8a8276" }}>On shift</span>
+                <span style={{ fontSize: 13, color: "#1f1b16" }}>{me.name}</span>
+                <span style={{ fontSize: 11, color: "#8a8276" }}>{me.role || "CSR"}</span>
               </span>
             </button>
           </div>
@@ -650,7 +649,7 @@ export default function CSRDashboard() {
           {/* ── Dashboard ── */}
           {activeNav === "Overview" && (() => {
             const paymentsToVerify = payments.filter((p) => p.status === "pending").length;
-            const unreadMessages = messages.filter((m) => m.unread).length;
+            const unreadMessages = unreadStaffMessages;
             const openRequests = notifications.filter((n) => !n.read).length;
             const cleaningInProgress = cleanerAssignments.filter((t) => t.status === "in-progress").length;
             const kpis = [
@@ -1283,30 +1282,11 @@ export default function CSRDashboard() {
           </>)}
           </>)}
 
-          {/* ── Messages ── */}
+          {/* ── Messages — chat with cleaners ── */}
           {activeNav === "Messages" && (
             <div>
-              <PanelHead title="Messages" sub={`${messages.length} conversations · ${messages.filter((m) => m.unread).length} unread`} />
-              <div style={{ background: "#fff", border: "1px solid #ece5d4" }}>
-                {messages.map((msg) => {
-                  const tint = msg.role === "owner" ? { bg: "#f3eee2", c: "#b8754a" } : msg.role === "cleaner" ? { bg: "#e9f2ec", c: "#2f7d55" } : { bg: "#e9f2ec", c: "#2f7d55" };
-                  return (
-                    <div key={msg.id} className="flex items-center cursor-pointer" style={{ gap: 16, padding: "18px 24px", borderBottom: "1px solid #f3eee2" }}
-                      onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#faf7f1"}
-                      onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
-                      <span style={{ width: 40, height: 40, borderRadius: "50%", flex: "none", background: tint.bg, color: tint.c, display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 17 }}>{msg.sender.split(" ").map((n)=>n[0]).join("")}</span>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center" style={{ gap: 10 }}>
-                          <span style={{ fontSize: 14, color: "#1f1b16" }}>{msg.sender}</span>
-                          {msg.unread && <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#2f7d55" }} />}
-                        </div>
-                        <div className="truncate" style={{ fontSize: 13, color: "#8a8276", marginTop: 3 }}>{msg.content}</div>
-                      </div>
-                      <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 11, color: "#b8b1a6", flex: "none" }}>{msg.time}</span>
-                    </div>
-                  );
-                })}
-              </div>
+              <PanelHead title="Messages" sub={`Chat with cleaners · ${unreadStaffMessages} unread`} />
+              <OfficeStaffInbox />
             </div>
           )}
 
@@ -1413,9 +1393,9 @@ export default function CSRDashboard() {
               <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16", marginBottom: 24 }}>My Profile</h2>
               <div className="border p-6 mb-4" style={{ borderColor: "#ece5d4" }}>
                 <div className="flex items-center gap-4 mb-6">
-                  <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-white text-xl font-bold" style={{ backgroundColor: "#059669" }}>CS</div>
+                  <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-white text-xl font-bold" style={{ backgroundColor: "#059669" }}>{me.initials}</div>
                   <div>
-                    <p className="font-bold text-lg" style={{ color: "#1a1a1a" }}>CSR Staff</p>
+                    <p className="font-bold text-lg" style={{ color: "#1a1a1a" }}>{me.name}</p>
                     <p className="text-sm" style={{ color: "#8B6344" }}>Customer Service Representative</p>
                     <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full mt-1" style={{ backgroundColor: "#d1fae5", color: "#065f46" }}>
                       <span className="w-1.5 h-1.5 rounded-full bg-current" />Active
@@ -1424,7 +1404,7 @@ export default function CSRDashboard() {
                 </div>
                 <div className="space-y-3">
                   {[
-                    { icon: Mail,  label: "Email",  value: "csr@dluxhomes.com" },
+                    { icon: Mail,  label: "Email",  value: me.email || "—" },
                     { icon: Phone, label: "Phone",  value: "+63 912 345 6789" },
                     { icon: MapPin,label: "Office", value: "Mother Ignacia Ave, Diliman, QC" },
                     { icon: Shield,label: "Role",   value: "CSR — Customer Service Representative" },

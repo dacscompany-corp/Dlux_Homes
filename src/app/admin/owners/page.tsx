@@ -20,7 +20,7 @@ import { useGetHavensQuery, useCreateHavenMutation, useUpdateHavenMutation } fro
 import { useGetEmployeesQuery, useCreateEmployeeMutation } from "@/redux/api/employeeApi";
 import { useGetReviewsQuery } from "@/redux/api/reviewsApi";
 import { useGetReportsQuery } from "@/redux/api/reportApi";
-import { useGetConversationsQuery } from "@/redux/api/messagesApi";
+import OfficeStaffInbox from "@/components/admin/messages/OfficeStaffInbox";
 import { fmtWindow, fmtSpan } from "@/lib/stay-window";
 import { BUNDLE_TIER1_LABEL, BUNDLE_TIER2_LABEL, BUNDLE_TIER3_LABEL, BUNDLE_TIER4_LABEL, securityDepositFor, DEPOSIT_DEFAULT } from "@/lib/pricing";
 import PromotionModal, { type PromotionFormState } from "@/components/admin/PromotionModal";
@@ -92,6 +92,7 @@ import {
   Receipt,
   CalendarRange,
 } from "lucide-react";
+import { useSignedInStaff } from "@/components/admin/useSignedInStaff";
 
 // PromotionRecord types start_date/end_date as string, but server actions return
 // raw pg rows where TIMESTAMP columns are Date objects (no JSON serialization
@@ -151,6 +152,8 @@ function toRows(v: unknown): Record<string, unknown>[] {
 }
 
 export default function OwnerDashboard() {
+  // The signed-in account — shown in the sidebar, header and Profile.
+  const me = useSignedInStaff("Owner");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeNav, setActiveNav] = useState("Overview");
   const [propertyTab, setPropertyTab] = useState<"havens"|"maintenance"|"cleaning">("havens");
@@ -328,10 +331,6 @@ export default function OwnerDashboard() {
     }
     finally { setPromotionSaving(false); }
   };
-  const { data: conversationsRes } = useGetConversationsQuery(
-    { userId: ownerId || "" },
-    { skip: !ownerId }
-  );
 
   // ── Actions / mutations ──
   const [updateBookingStatus, { isLoading: bookingUpdating }] = useUpdateBookingStatusMutation();
@@ -969,17 +968,6 @@ export default function OwnerDashboard() {
     assignedTo: String(r.assigned_to || "Unassigned"),
   }));
 
-  // Internal Messages (Communication) — owner's conversation threads
-  const internalMessages = toRows(conversationsRes).map((c, i) => ({
-    id: (c.id as number | string) ?? i,
-    sender: String(c.name || "Conversation"),
-    // conversations rows carry `type` ("internal" | "guest"), not a role column
-    kind: String(c.type || "internal"),
-    content: String(c.last_message || "No messages yet"),
-    time: c.last_message_time ? new Date(String(c.last_message_time)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "",
-    unread: Number(c.unread_count ?? 0) > 0,
-  }));
-
   // Reusable minimalist sub-tab bar — icon + label, hairline borders
   const tabBar = (tabs: { id: string; label: string; icon?: React.ElementType }[], active: string, onPick: (id: string) => void) => (
     <div className="flex gap-1.5 mb-6 flex-wrap">
@@ -1076,11 +1064,11 @@ export default function OwnerDashboard() {
         <div className="px-3 py-4 border-t" style={{ borderColor: "rgba(250,247,241,0.1)" }}>
           <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl" style={{ backgroundColor: "rgba(250,247,241,0.1)" }}>
             <Avatar className="w-8 h-8 flex-shrink-0">
-              <AvatarFallback className="text-white text-xs font-bold" style={{ backgroundColor: "#B07848" }}>AO</AvatarFallback>
+              <AvatarFallback className="text-white text-xs font-bold" style={{ backgroundColor: "#B07848" }}>{me.initials}</AvatarFallback>
             </Avatar>
             <div className="flex-1 min-w-0">
-              <p className="text-white text-sm font-medium truncate">Admin Owner</p>
-              <p className="text-xs truncate" style={{ color: "#6b5040" }}>owner@dluxhomes.com</p>
+              <p className="text-white text-sm font-medium truncate">{me.name}</p>
+              <p className="text-xs truncate" style={{ color: "#6b5040" }}>{me.email}</p>
             </div>
             <button type="button" onClick={() => signOut({ callbackUrl: "/admin/login" })} aria-label="Sign out" className="cursor-pointer">
               <LogOut className="w-4 h-4 flex-shrink-0 transition-colors" style={{ color: "#6b5040" }} />
@@ -1143,10 +1131,10 @@ export default function OwnerDashboard() {
               onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#f3eee2"}
               onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}
             >
-              <span style={{ width: 28, height: 28, borderRadius: "50%", background: "#b8754a", color: "#faf7f1", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 14 }}>A</span>
+              <span style={{ width: 28, height: 28, borderRadius: "50%", background: "#b8754a", color: "#faf7f1", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 14 }}>{me.initials.slice(0, 1)}</span>
               <span className="flex flex-col items-start" style={{ lineHeight: 1.2 }}>
-                <span style={{ fontSize: 13, color: "#1f1b16" }}>Admin Owner</span>
-                <span style={{ fontSize: 11, color: "#8a8276" }}>Owner</span>
+                <span style={{ fontSize: 13, color: "#1f1b16" }}>{me.name}</span>
+                <span style={{ fontSize: 11, color: "#8a8276" }}>{me.role || "Owner"}</span>
               </span>
             </button>
           </div>
@@ -2232,28 +2220,8 @@ export default function OwnerDashboard() {
               </div>
             ))}
 
-            {commTab === "messages" && (internalMessages.length === 0 ? <Empty label="No internal conversations yet." /> : (
-              <div style={{ background: "#fff", border: "1px solid #ece5d4" }}>
-                {internalMessages.map((msg) => {
-                  const csr = msg.kind === "internal";
-                  // Read-only for now — no thread view is wired up yet, so this
-                  // row is deliberately not presented as clickable.
-                  return (
-                    <div key={msg.id} className="flex items-center" style={{ gap: 16, padding: "18px 24px", borderBottom: "1px solid #f3eee2" }}>
-                      <span style={{ width: 40, height: 40, borderRadius: "50%", flex: "none", background: csr ? "rgba(47,157,107,0.14)" : "#f3eee2", color: csr ? "#2f7d56" : "#b8754a", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 17 }}>{msg.sender.split(" ").map((n)=>n[0]).join("")}</span>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center" style={{ gap: 10 }}>
-                          <span style={{ fontSize: 14, color: "#1f1b16" }}>{msg.sender}</span>
-                          {msg.unread && <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#b8754a" }} />}
-                        </div>
-                        <div className="truncate" style={{ fontSize: 13, color: "#8a8276", marginTop: 3 }}>{msg.content}</div>
-                      </div>
-                      <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 11, color: "#b8b1a6", flex: "none" }}>{msg.time}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            ))}
+            {/* Chat with cleaners — the same shared office inbox CSR uses. */}
+            {commTab === "messages" && <OfficeStaffInbox />}
           </>)}
 
           {/* ── Team ── */}

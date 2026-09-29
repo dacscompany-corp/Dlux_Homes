@@ -21,7 +21,8 @@ import ImageThumb from "@/components/ImageThumb";
 import { useGetHavensQuery } from "@/redux/api/roomApi";
 import { useSubmitReportMutation } from "@/redux/api/reportApi";
 import { useGetNotificationsQuery, useUpdateNotificationsMutation, type Notification } from "@/redux/api/notificationsApi";
-import { useGetConversationsQuery } from "@/redux/api/messagesApi";
+import { useGetStaffThreadsQuery } from "@/redux/api/messagesApi";
+import StaffChatThread from "@/components/admin/messages/StaffChatThread";
 import {
   useGetCleaningTasksQuery,
   useStartCleaningMutation,
@@ -38,6 +39,7 @@ import {
   AlertCircle, Building2, MessageSquare, CalendarDays, BookOpen,
   Camera, Phone, Mail, Shield, Star, ChevronDown, ChevronRight, LifeBuoy, Languages,
 } from "lucide-react";
+import { useSignedInStaff } from "@/components/admin/useSignedInStaff";
 
 // Simplified sidebar (owner spec, 2026-09-22): five top-level items —
 // Dashboard, Tasks, Schedule, Messages, Support. "Tasks" and "Support" are
@@ -110,6 +112,8 @@ function toRows(v: unknown): Record<string, unknown>[] {
 }
 
 export default function CleanerDesktopPortal() {
+  // The signed-in account — shown in the sidebar, header and Profile.
+  const me = useSignedInStaff("Cleaner");
   const [sidebarOpen,       setSidebarOpen]       = useState(false);
   const [activeNav,         setActiveNav]         = useState("Dashboard");
   // Which expandable nav groups (Tasks, Support) are open — collapsed by
@@ -264,15 +268,13 @@ export default function CleanerDesktopPortal() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [notifRes]);
-  const { data: convRes } = useGetConversationsQuery({ userId: cleanerId || "" }, { skip: !cleanerId });
-  const messages = toRows(convRes).map((c, i) => ({
-    id: (c.id as string | number) ?? i,
-    sender: String(c.name || "Staff"),
-    role: String(c.role || "csr"),
-    content: String(c.last_message || "No messages yet"),
-    time: c.last_message_time ? new Date(String(c.last_message_time)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "",
-    unread: Number(c.unread_count ?? 0) > 0,
-  }));
+  // The cleaner's one chat thread with the office (created on first load).
+  // Polled on every tab so the Messages nav can show unread office replies.
+  const { data: staffThreads = [] } = useGetStaffThreadsQuery(undefined, { skip: !cleanerId, pollingInterval: 30000 });
+  // Only the signed-in cleaner's own thread — an Owner/CSR opening this portal
+  // gets the whole office list back, and must not land in someone else's chat.
+  const officeThread = staffThreads.find((t) => t.cleaner_id === cleanerId) ?? null;
+  const unreadOfficeMessages = officeThread?.unread_count ?? 0;
 
   // Start and Complete show their result immediately (RTK's optimistic
   // update) and roll it back if the server refuses — so a failed request never
@@ -453,7 +455,13 @@ export default function CleanerDesktopPortal() {
                   onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}>
                   <Icon className="w-[18px] h-[18px] flex-shrink-0" strokeWidth={isActive ? 2 : 1.5} style={{ color: isActive ? "#D4A96A" : "#8C7660" }} />
                   {item.label}
-                  {isActive && <span className="ml-auto w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#D4A96A" }} />}
+                  {item.label === "Messages" && unreadOfficeMessages > 0 ? (
+                    <span className="ml-auto min-w-5 h-5 px-1.5 rounded-full text-[11px] font-bold flex items-center justify-center"
+                      title={`${unreadOfficeMessages} unread message${unreadOfficeMessages === 1 ? "" : "s"}`}
+                      style={{ backgroundColor: "#D4A96A", color: "#1f1b16" }}>
+                      {unreadOfficeMessages}
+                    </span>
+                  ) : isActive && <span className="ml-auto w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#D4A96A" }} />}
                 </button>
               );
             }
@@ -508,11 +516,11 @@ export default function CleanerDesktopPortal() {
             onMouseEnter={(e) => { if (activeNav !== "Profile") (e.currentTarget as HTMLElement).style.backgroundColor = "rgba(250,247,241,0.16)"; }}
             onMouseLeave={(e) => { if (activeNav !== "Profile") (e.currentTarget as HTMLElement).style.backgroundColor = "rgba(250,247,241,0.1)"; }}>
             <Avatar className="w-8 h-8 flex-shrink-0">
-              <AvatarFallback className="text-xs font-bold" style={{ backgroundColor: "#D4A96A", color: "#2C1F14" }}>CL</AvatarFallback>
+              <AvatarFallback className="text-xs font-bold" style={{ backgroundColor: "#D4A96A", color: "#2C1F14" }}>{me.initials}</AvatarFallback>
             </Avatar>
             <div className="flex-1 min-w-0">
-              <p className="text-white text-sm font-medium truncate">Cleaner Staff</p>
-              <p className="text-xs truncate" style={{ color: "#6b5040" }}>cleaner@dluxhomes.com</p>
+              <p className="text-white text-sm font-medium truncate">{me.name}</p>
+              <p className="text-xs truncate" style={{ color: "#6b5040" }}>{me.email}</p>
             </div>
             <span role="button" tabIndex={0} aria-label="Sign out"
               onClick={(e) => { e.stopPropagation(); signOut({ callbackUrl: "/admin/login" }); }}
@@ -575,10 +583,10 @@ export default function CleanerDesktopPortal() {
             </button>
             <button type="button" onClick={() => setActiveNav("Profile")} title="Profile" className="flex items-center gap-2.5 rounded-lg cursor-pointer transition-colors" style={{ padding: "6px 12px 6px 6px", background: "transparent", border: 0 }}
               onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#f3eee2"} onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
-              <span className="flex-shrink-0" style={{ width: 28, height: 28, borderRadius: "50%", background: "#d4a96a", color: "#2c1f14", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 14 }}>L</span>
+              <span className="flex-shrink-0" style={{ width: 28, height: 28, borderRadius: "50%", background: "#d4a96a", color: "#2c1f14", display: "grid", placeItems: "center", fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 14 }}>{me.initials.slice(0, 1)}</span>
               <span className="hidden sm:flex flex-col items-start" style={{ lineHeight: 1.2 }}>
-                <span style={{ fontSize: 13, color: "#1f1b16" }}>Cleaner Staff</span>
-                <span style={{ fontSize: 11, color: "#8a8276" }}>On route</span>
+                <span style={{ fontSize: 13, color: "#1f1b16" }}>{me.name}</span>
+                <span style={{ fontSize: 11, color: "#8a8276" }}>{me.role || "Cleaner"}</span>
               </span>
             </button>
           </div>
@@ -1093,33 +1101,30 @@ export default function CleanerDesktopPortal() {
             </div>
           )}
 
-          {/* ── Messages ── */}
+          {/* ── Messages — chat with the office (Owner/CSR) ── */}
           {activeNav === "Messages" && (
-            <div className="space-y-3 max-w-2xl">
-              <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16", marginBottom: 16 }}>Messages</h2>
-              {messages.map((msg) => (
-                <div key={msg.id} className="flex items-start gap-4 p-4 rounded-2xl border cursor-pointer transition-colors"
-                  style={{ backgroundColor: msg.unread ? "#FDF8F3" : "#ffffff", borderColor: msg.unread ? "#D4BFA0" : "#E0CEB8" }}
-                  onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
-                  onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = msg.unread ? "#FDF8F3" : "#ffffff"}>
-                  <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
-                    style={{ backgroundColor: msg.role === "owner" ? "#F7F0E3" : "#d1fae5" }}>
-                    <span className="text-xs font-bold" style={{ color: msg.role === "owner" ? "#B07848" : "#059669" }}>
-                      {msg.sender.split(" ").map((n)=>n[0]).join("")}
-                    </span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2 mb-0.5">
-                      <p className="font-semibold text-sm" style={{ color: "#1a1a1a" }}>{msg.sender}</p>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs" style={{ color: "#D4BFA0" }}>{msg.time}</span>
-                        {msg.unread && <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />}
-                      </div>
-                    </div>
-                    <p className="text-sm truncate" style={{ color: "#8B6344" }}>{msg.content}</p>
-                  </div>
+            <div className="max-w-2xl">
+              <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16", marginBottom: 4 }}>Messages</h2>
+              <p className="text-sm mb-4" style={{ color: "#8B6344" }}>
+                Chat with the D&apos;Lux office. Everyone in the office (Owner and CSR) can see and answer your messages.
+              </p>
+              <div className="border flex flex-col" style={{ borderColor: "#ece5d4", height: 560 }}>
+                <div className="px-4 py-3 border-b" style={{ borderColor: "#ece5d4" }}>
+                  <p className="text-sm font-semibold" style={{ color: "#1f1b16" }}>D&apos;Lux Office</p>
+                  <p className="text-xs" style={{ color: "#8B6344" }}>Owner &amp; CSR</p>
                 </div>
-              ))}
+                {officeThread?.conversation_id ? (
+                  <StaffChatThread
+                    className="flex-1"
+                    conversationId={officeThread.conversation_id}
+                    emptyHint="No messages yet. Ask the office anything — supplies, access, a problem in a room."
+                  />
+                ) : (
+                  <p className="p-4 text-sm" style={{ color: "#8B6344" }}>
+                    {cleanerId ? "Opening your conversation with the office…" : "Sign in with a cleaner account to message the office."}
+                  </p>
+                )}
+              </div>
             </div>
           )}
 
@@ -1129,9 +1134,9 @@ export default function CleanerDesktopPortal() {
               <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16", marginBottom: 24 }}>My Profile</h2>
               <div className="border p-6 mb-4" style={{ borderColor: "#ece5d4" }}>
                 <div className="flex items-center gap-4 mb-6">
-                  <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-lg font-bold" style={{ backgroundColor: "#D4A96A", color: "#2C1F14" }}>CL</div>
+                  <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-lg font-bold" style={{ backgroundColor: "#D4A96A", color: "#2C1F14" }}>{me.initials}</div>
                   <div>
-                    <p style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 19, lineHeight: 1, color: "#1f1b16" }}>Cleaner Staff</p>
+                    <p style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 19, lineHeight: 1, color: "#1f1b16" }}>{me.name}</p>
                     <p className="text-sm" style={{ color: "#8B6344" }}>Housekeeping Staff</p>
                     <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full mt-1" style={{ backgroundColor: "#d1fae5", color: "#065f46" }}>
                       <span className="w-1.5 h-1.5 rounded-full bg-current" />Active
@@ -1140,7 +1145,7 @@ export default function CleanerDesktopPortal() {
                 </div>
                 <div className="space-y-3">
                   {[
-                    { icon: Mail,     label: "Email",    value: "cleaner@dluxhomes.com" },
+                    { icon: Mail,     label: "Email",    value: me.email || "—" },
                     { icon: Phone,    label: "Phone",    value: "+63 917 234 5678" },
                     { icon: Building2,label: "Location", value: "Mother Ignacia Ave, Diliman, QC" },
                     { icon: Shield,   label: "Role",     value: "Cleaner — Housekeeping Staff" },

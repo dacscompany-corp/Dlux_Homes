@@ -23,11 +23,69 @@ interface Message {
   is_read: boolean;
 }
 
+/** A cleaner's thread with the office, as either side sees it. */
+export interface StaffThread {
+  /** Null when nobody has written yet (office view only). */
+  conversation_id: string | null;
+  cleaner_id: string;
+  cleaner_name: string;
+  cleaner_email: string | null;
+  last_message: string | null;
+  last_message_at: string | null;
+  last_sender_name: string | null;
+  /** Unread for the viewer's side (office: cleaner's messages; cleaner: office's). */
+  unread_count: number;
+}
+
+export interface StaffMessage {
+  id: string;
+  conversation_id: string;
+  sender_id: string;
+  sender_name: string;
+  message_text: string;
+  created_at: string;
+  is_read: boolean;
+  from_office: boolean;
+}
+
 export const messagesApi = createApi({
   reducerPath: "messagesApi",
   baseQuery: fetchBaseQuery({ baseUrl: "/api/messages" }),
-  tagTypes: ["Conversations", "Messages"],
+  tagTypes: ["Conversations", "Messages", "StaffThreads", "StaffMessages"],
   endpoints: (builder) => ({
+    // ── Cleaner ↔ office (Owner/CSR) chat ─────────────────────────────────
+    // Identity comes from the session server-side; nothing here sends ids.
+    getStaffThreads: builder.query<StaffThread[], void>({
+      query: () => ({ url: "/staff" }),
+      transformResponse: (res: { success: boolean; data: StaffThread[] }) => res.data ?? [],
+      providesTags: ["StaffThreads"],
+    }),
+
+    getStaffMessages: builder.query<StaffMessage[], string>({
+      query: (conversationId) => ({ url: `/staff/${conversationId}` }),
+      transformResponse: (res: { success: boolean; data: StaffMessage[] }) => res.data ?? [],
+      providesTags: (_r, _e, id) => [{ type: "StaffMessages", id }],
+      // Opening a thread marks it read, so the list's unread counts change too.
+      async onQueryStarted(_id, { dispatch, queryFulfilled }) {
+        try {
+          await queryFulfilled;
+          dispatch(messagesApi.util.invalidateTags(["StaffThreads"]));
+        } catch { /* the query's own error state covers it */ }
+      },
+    }),
+
+    sendStaffMessage: builder.mutation<
+      StaffMessage,
+      { conversation_id?: string | null; cleaner_id?: string | null; message_text: string }
+    >({
+      query: (body) => ({ url: "/staff", method: "POST", body }),
+      transformResponse: (res: { success: boolean; data: StaffMessage }) => res.data,
+      invalidatesTags: (result) => [
+        "StaffThreads",
+        ...(result ? [{ type: "StaffMessages" as const, id: result.conversation_id }] : []),
+      ],
+    }),
+
     // Get all conversations for a user
     getConversations: builder.query<
       { success: boolean; data: Conversation[] },
@@ -114,4 +172,7 @@ export const {
   useSendMessageMutation,
   useMarkMessagesAsReadMutation,
   useCreateConversationMutation,
+  useGetStaffThreadsQuery,
+  useGetStaffMessagesQuery,
+  useSendStaffMessageMutation,
 } = messagesApi;
