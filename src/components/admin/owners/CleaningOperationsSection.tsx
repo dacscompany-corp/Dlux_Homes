@@ -366,15 +366,18 @@ export function CleaningOperationsSection() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedTask = tasks.find((t) => t.cleaning_id === selectedId) ?? null;
 
-  const overdueCount = tasks.filter(isOverdue).length;
-  const issueCount = tasks.filter((t) => (t.open_issue_count ?? 0) > 0).length;
-  const awaitingCount = tasks.filter((t) => t.cleaning_status === "awaiting-inspection").length;
-  const unassignedCount = tasks.filter(needsAssignment).length;
-
-  // Month shown in the table ('YYYY-MM', by the guest's checkout in Manila
-  // time); null = All time. Starts on the current month.
+  // The month the whole page shows ('YYYY-MM', by the guest's checkout in
+  // Manila time); null = All time. One setting for every tab — the summary
+  // cards, the task table, the checklist picker and the workload ranking all
+  // show only the chosen month, and everything when it's All time.
   const [month, setMonth] = useState<string | null>(() => currentMonthKey());
   const monthsWithTasks = [...new Set(tasks.map(taskMonthKey).filter((k): k is string => !!k))];
+  const monthTasks = month ? tasks.filter((t) => taskMonthKey(t) === month) : tasks;
+
+  const overdueCount = monthTasks.filter(isOverdue).length;
+  const issueCount = monthTasks.filter((t) => (t.open_issue_count ?? 0) > 0).length;
+  const awaitingCount = monthTasks.filter((t) => t.cleaning_status === "awaiting-inspection").length;
+  const unassignedCount = monthTasks.filter(needsAssignment).length;
 
   // Status and Assignment filters — the same multi-select panel as the
   // Bookings table, each remembered between visits. Empty = no filter.
@@ -441,11 +444,17 @@ export function CleaningOperationsSection() {
       </div>
 
       {topTab === "checklist" ? (
-        <ChecklistTab tasks={tasks} isFetching={isFetching} />
+        <>
+          <div className="mb-4">
+            <MonthNavigator value={month} onChange={setMonth} monthsWithData={monthsWithTasks} />
+          </div>
+          <ChecklistTab key={month ?? "all"} tasks={monthTasks} isFetching={isFetching} />
+        </>
       ) : topTab === "reports" ? (
         <ReportsIssuesTab />
       ) : topTab === "workload" ? (
-        <CleanerWorkloadTab tasks={tasks} cleaners={cleaners} isLoading={tasksLoading} />
+        <CleanerWorkloadTab tasks={tasks} cleaners={cleaners} isLoading={tasksLoading}
+          month={month} onMonthChange={setMonth} monthsWithTasks={monthsWithTasks} />
       ) : (
       <>
       {/* KPI row */}
@@ -1180,9 +1189,16 @@ const REPORT_STATUSES = ["Open", "Pending", "In Progress", "Resolved", "Closed"]
 // the guest's checkout) or all time. Built from the same task list the Tasks
 // tab shows, so the numbers always agree with it. Every active cleaner is
 // listed, including anyone with nothing yet, so an uneven split is visible.
-function CleanerWorkloadTab({ tasks, cleaners, isLoading }: { tasks: CleaningTask[]; cleaners: Cleaner[]; isLoading: boolean }) {
-  const [month, setMonth] = useState<string | null>(() => currentMonthKey());
-  const monthsWithTasks = [...new Set(tasks.map(taskMonthKey).filter((k): k is string => !!k))];
+function CleanerWorkloadTab({ tasks, cleaners, isLoading, month, onMonthChange, monthsWithTasks }: {
+  tasks: CleaningTask[];
+  cleaners: Cleaner[];
+  isLoading: boolean;
+  /** The page-wide month (shared with the other tabs); null = All time. */
+  month: string | null;
+  onMonthChange: (month: string | null) => void;
+  monthsWithTasks: string[];
+}) {
+  const setMonth = onMonthChange;
   const inPeriod = tasks.filter((t) => !month || taskMonthKey(t) === month);
 
   type Row = {
@@ -1229,7 +1245,7 @@ function CleanerWorkloadTab({ tasks, cleaners, isLoading }: { tasks: CleaningTas
           { label: "Rooms assigned", value: String(assignedTotal) },
           { label: "Not assigned yet", value: String(unassigned) },
           { label: "Cleaners", value: String(ranked.length) },
-          { label: "Most rooms", value: top ? top.name : "—", small: true },
+          { label: "Top cleaner", value: top ? top.name : "—", small: true },
         ].map((card) => (
           <div key={card.label} className="border p-4" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }}>
             <p className="truncate" style={{ fontFamily: card.small ? "inherit" : "'Geist Mono', ui-monospace, monospace", fontSize: card.small ? 16 : 24, fontWeight: card.small ? 600 : 500, lineHeight: 1.1, color: "#1f1b16" }}>{card.value}</p>
@@ -1279,7 +1295,7 @@ function CleanerWorkloadTab({ tasks, cleaners, isLoading }: { tasks: CleaningTas
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-medium" style={{ color: "#1a1a1a" }}>
                       <User className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#8a6a2f" }} />
                       <span className="break-words min-w-0">{r.name}</span>
-                      {leader && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: "#F7F0E3", color: "#B07848" }}>Most rooms</span>}
+                      {leader && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: "#F7F0E3", color: "#B07848" }}>Top cleaner</span>}
                       {r.inactive && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ backgroundColor: "#f3f0ea", color: "#8a8276" }}>Inactive</span>}
                     </div>
                   </td>
