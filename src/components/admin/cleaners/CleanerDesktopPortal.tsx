@@ -29,6 +29,7 @@ import {
   useCompleteCleaningMutation,
 } from "@/redux/api/cleanersApi";
 import { useAssignmentChecklist, gateErrorMessage } from "@/components/admin/cleaners/useAssignmentChecklist";
+import { bookingRefFrom, sameBookingRef } from "@/components/admin/NotificationBell";
 import CleanerCalendarCard from "@/components/admin/cleaners/CleanerCalendarCard";
 import { canStartCleaning, cleaningDueAt, groupByDueDay, startOfLocalDay } from "@/lib/cleaning-schedule";
 import { translateCategory, translateTask, type ChecklistLanguage } from "@/lib/checklist-translations";
@@ -299,6 +300,32 @@ export default function CleanerDesktopPortal() {
   // the room currently being cleaned.
   const [checklistOpenFor, setChecklistOpenFor] = useState<string | null>(null);
   const activeAssignment = assignments.find((a) => a.id === checklistOpenFor);
+
+  // Clicking a notification marks it read and opens what it's about: a room
+  // notification jumps to that room on Assignments (scrolled into view and
+  // briefly highlighted, checklist open); an office message opens Messages.
+  const [flashAssignmentId, setFlashAssignmentId] = useState<string | null>(null);
+  const openNotification = (n: Notification) => {
+    if (!n.read) markNotificationsRead({ notificationIds: [n.id], markAs: "read" });
+    if (n.rawType === "staff_message") { setActiveNav("Messages"); return; }
+
+    const ref = bookingRefFrom(n);
+    const target = ref ? assignments.find((a) => sameBookingRef(a.floor, ref)) : undefined;
+    if (target) {
+      setActiveNav("Assignments");
+      setChecklistOpenFor(target.id);
+      setFlashAssignmentId(target.id);
+      window.setTimeout(() => {
+        document.getElementById(`assignment-${target.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 60);
+      window.setTimeout(() => setFlashAssignmentId((id) => (id === target.id ? null : id)), 2200);
+      return;
+    }
+    if (n.rawType?.startsWith("cleaning") || ref) {
+      setActiveNav("Assignments");
+      if (ref) toast("That room isn't on your list any more.", { icon: "ℹ️" });
+    }
+  };
   const inProgressId = assignments.find((a) => a.status === "in-progress")?.id ?? null;
   useEffect(() => {
     if (!checklistOpenFor && inProgressId) setChecklistOpenFor(inProgressId);
@@ -722,8 +749,14 @@ export default function CleanerDesktopPortal() {
                 const st = statusConfig[cs] || statusConfig.pending;
                 const opensLater = cs === "pending" && !canStartCleaning(a);
                 return (
-                  <div key={a.id} className="border p-5 transition-shadow hover:shadow-md"
-                    style={{ borderColor: cs === "in-progress" ? "#D4BFA0" : "#E0CEB8", borderLeftWidth: "4px", borderLeftColor: st.dot }}>
+                  <div key={a.id} id={`assignment-${a.id}`} className="border p-5 transition-shadow hover:shadow-md"
+                    style={{
+                      borderColor: cs === "in-progress" ? "#D4BFA0" : "#E0CEB8", borderLeftWidth: "4px", borderLeftColor: st.dot,
+                      scrollMarginTop: 90,
+                      // Briefly ring the card a notification just opened.
+                      boxShadow: flashAssignmentId === a.id ? "0 0 0 3px #d4a96a" : undefined,
+                      transition: "box-shadow .4s ease",
+                    }}>
                     <div className="flex items-start justify-between gap-3 mb-3">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
@@ -1005,7 +1038,9 @@ export default function CleanerDesktopPortal() {
                     style={{ backgroundColor: !n.read ? "#FDF8F3" : "#ffffff", borderColor: !n.read ? "#D4BFA0" : "#E0CEB8" }}
                     onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
                     onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = !n.read ? "#FDF8F3" : "#ffffff"}
-                    onClick={() => { if (!n.read) markNotificationsRead({ notificationIds: [n.id], markAs: "read" }); }}>
+                    role="button" tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openNotification(n); } }}
+                    onClick={() => openNotification(n)}>
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: ic.bg }}>
                       <Icon className="w-5 h-5" strokeWidth={1.75} style={{ color: ic.color }} />
                     </div>

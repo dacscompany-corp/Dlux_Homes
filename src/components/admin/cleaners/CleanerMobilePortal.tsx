@@ -53,6 +53,7 @@ import {
   useCompleteCleaningMutation,
 } from "@/redux/api/cleanersApi";
 import { useAssignmentChecklist, gateErrorMessage } from "@/components/admin/cleaners/useAssignmentChecklist";
+import { bookingRefFrom, sameBookingRef } from "@/components/admin/NotificationBell";
 import CleanerCalendarCard from "@/components/admin/cleaners/CleanerCalendarCard";
 import { canStartCleaning, cleaningDueAt, stayKindFor, type StayKind } from "@/lib/cleaning-schedule";
 import { translateCategory, translateTask } from "@/lib/checklist-translations";
@@ -519,12 +520,32 @@ export default function CleanerMobilePortal() {
     const ids = notifications.filter((n) => !n.read).map((n) => n.id);
     if (ids.length) markNotificationsRead({ notificationIds: ids, markAs: "read" }).catch(() => {});
   };
-  // Tapping a notification marks it read and, where it points somewhere,
-  // goes there: a staff message opens the chat, a cleaning event opens Today.
+  // Tapping a notification marks it read and opens what it's about: an office
+  // message opens the chat; a room notification opens that room (just opens it
+  // — it never starts cleaning on its own). A room due on a later day can't be
+  // opened yet, so Today shows it under Coming up with a note saying when.
   const openNotification = (n: Notification) => {
     readNotification(n);
-    if (n.rawType === "staff_message") setScreen("messages");
-    else if (n.rawType?.startsWith("cleaning")) setScreen("home");
+    if (n.rawType === "staff_message") { setScreen("messages"); return; }
+
+    const ref = bookingRefFrom(n);
+    const room = ref ? today.find((r) => sameBookingRef(r.bookingRef, ref)) : undefined;
+    if (room) {
+      setActiveId(room.id);
+      setScreen("room");
+      return;
+    }
+    const later = ref ? upcoming.find((r) => sameBookingRef(r.bookingRef, ref)) : undefined;
+    if (later) {
+      setScreen("home");
+      const when = later.date ? formatDayLabel(later.date, new Date(), lang) : "";
+      toast(lang === "tl" ? `${later.name} — ${when}. Nasa "Mga susunod".` : `${later.name} is on ${when}. See "Coming up".`, { icon: "📅" });
+      return;
+    }
+    if (n.rawType?.startsWith("cleaning") || ref) {
+      setScreen("home");
+      if (ref) toast(lang === "tl" ? "Wala na sa listahan mo ang kwartong ito." : "That room isn't on your list any more.", { icon: "ℹ️" });
+    }
   };
 
   const readNotification = (n: Notification) => {

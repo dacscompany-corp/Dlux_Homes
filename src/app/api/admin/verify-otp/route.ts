@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
     const query = `
       SELECT id, email, otp_code, otp_type, expires_at, is_used, attempts
       FROM otp_verification
-      WHERE email = $1
+      WHERE LOWER(email) = LOWER(TRIM($1))
         AND otp_type = $2
         AND is_used = false
       ORDER BY created_at DESC
@@ -105,7 +105,7 @@ export async function POST(request: NextRequest) {
         `UPDATE employees
          SET login_attempts = 0,
              updated_at = NOW()
-         WHERE email = $1`,
+         WHERE LOWER(email) = LOWER(TRIM($1))`,
         [email]
       );
       await pool.query(

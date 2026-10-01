@@ -8,6 +8,7 @@ import DluxMark from "@/components/brand/DluxMark";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { CleaningOperationsSection } from "@/components/admin/owners/CleaningOperationsSection";
 import { LayoutDashboard, Menu, X, LogOut } from "lucide-react";
+import { useSignedInStaff } from "@/components/admin/useSignedInStaff";
 
 // Standalone route for Cleaning Operations — same content as the Owner
 // portal's "Cleaning Operations" nav tab (both render CleaningOperationsSection),
@@ -19,7 +20,8 @@ export default function CleaningOperationsPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { data: session, status: sessionStatus } = useSession();
   const role = (session?.user as { role?: string } | undefined)?.role;
-  const displayName = role === "Owner" ? "Admin Owner" : "CSR Staff";
+  // The signed-in account's own name (this used to be a fixed demo name).
+  const displayName = useSignedInStaff(role === "Owner" ? "Owner" : "CSR").name;
   const router = useRouter();
 
   // Owner/CSR only — this is a monitoring + inspection-approval page for
@@ -87,7 +89,7 @@ export default function CleaningOperationsPage() {
           <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl" style={{ backgroundColor: "rgba(250,247,241,0.1)" }}>
             <Avatar className="w-8 h-8 flex-shrink-0">
               <AvatarFallback className="text-white text-xs font-bold" style={{ backgroundColor: "#B07848" }}>
-                {displayName.split(" ").map((n) => n[0]).join("")}
+                {displayName.split(" ").filter(Boolean).slice(0, 2).map((n) => n[0]).join("")}
               </AvatarFallback>
             </Avatar>
             <div className="flex-1 min-w-0">

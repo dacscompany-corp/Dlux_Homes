@@ -21,7 +21,7 @@ import { useGetEmployeesQuery, useCreateEmployeeMutation } from "@/redux/api/emp
 import { useGetReviewsQuery } from "@/redux/api/reviewsApi";
 import { useGetReportsQuery } from "@/redux/api/reportApi";
 import OfficeStaffInbox from "@/components/admin/messages/OfficeStaffInbox";
-import NotificationBell from "@/components/admin/NotificationBell";
+import NotificationBell, { bookingRefFrom, sameBookingRef } from "@/components/admin/NotificationBell";
 import { fmtWindow, fmtSpan } from "@/lib/stay-window";
 import { BUNDLE_TIER1_LABEL, BUNDLE_TIER2_LABEL, BUNDLE_TIER3_LABEL, BUNDLE_TIER4_LABEL, securityDepositFor, DEPOSIT_DEFAULT } from "@/lib/pricing";
 import PromotionModal, { type PromotionFormState } from "@/components/admin/PromotionModal";
@@ -161,6 +161,12 @@ export default function OwnerDashboard() {
   const [systemTab, setSystemTab]     = useState<"settings"|"logs">("settings");
   const [overviewTab, setOverviewTab] = useState<"dashboard"|"analytics">("dashboard");
   const [bookingsTab, setBookingsTab] = useState<"list"|"calendar"|"blocked">("list");
+  // Where a clicked notification sends Cleaning Operations: which tab, and
+  // which booking's task to open. `nonce` remounts the section so the same
+  // notification can be followed twice.
+  const [cleaningFocus, setCleaningFocus] = useState<{
+    tab: "tasks" | "reports"; ref: string | null; nonce: number;
+  }>({ tab: "tasks", ref: null, nonce: 0 });
   // Booking guide starts open, matching the design — it is reference material an
   // owner can collapse once the flow is familiar.
   const [guideOpen, setGuideOpen] = useState(false);
@@ -1113,15 +1119,29 @@ export default function OwnerDashboard() {
 
           {/* right: bell + account */}
           <div className="flex items-center gap-1">
-            {/* Notifications — opens the list here; a notification then goes
-                to the page it's about (it used to jump to Communication). */}
+            {/* Notifications — opens the list here; clicking one opens the exact
+                thing it's about: that booking's details, that cleaning task, the
+                issue reports, or the cleaner messages. */}
             <NotificationBell onOpen={(n) => {
               const kind = (n.rawType ?? "").toLowerCase();
-              if (kind.includes("payment") || kind.includes("booking")) setActiveNav("Bookings");
-              else if (kind.includes("report") || kind.includes("issue") || kind.includes("clean")) setActiveNav("Cleaning Operations");
-              else if (kind.includes("message")) { setActiveNav("Communication"); setCommTab("messages"); }
-              else if (kind.includes("review")) { setActiveNav("Communication"); setCommTab("reviews"); }
-              else return;
+              const ref = bookingRefFrom(n);
+              if (kind.includes("payment") || kind.includes("booking")) {
+                setActiveNav("Bookings");
+                setBookingsTab("list");
+                const booking = ref ? allAdminBookings.find((b) => sameBookingRef(b.displayId, ref)) : undefined;
+                if (booking) setBookingModal(booking);
+                else if (ref) toast(`Booking ${ref} isn't in the list any more.`, { icon: "ℹ️" });
+              } else if (kind.includes("report") || kind.includes("issue")) {
+                setActiveNav("Cleaning Operations");
+                setCleaningFocus((f) => ({ tab: "reports", ref: null, nonce: f.nonce + 1 }));
+              } else if (kind.includes("clean")) {
+                setActiveNav("Cleaning Operations");
+                setCleaningFocus((f) => ({ tab: "tasks", ref, nonce: f.nonce + 1 }));
+              } else if (kind.includes("message")) {
+                setActiveNav("Communication"); setCommTab("messages");
+              } else if (kind.includes("review")) {
+                setActiveNav("Communication"); setCommTab("reviews");
+              } else return;
               setSidebarOpen(false);
             }} />
             <button
@@ -2408,7 +2428,10 @@ export default function OwnerDashboard() {
             )}
           </>)}
 
-          {activeNav === "Cleaning Operations" && <CleaningOperationsSection />}
+          {activeNav === "Cleaning Operations" && (
+            <CleaningOperationsSection key={cleaningFocus.nonce}
+              initialTab={cleaningFocus.tab} focusBookingRef={cleaningFocus.ref} />
+          )}
 
         </main>
       </div>

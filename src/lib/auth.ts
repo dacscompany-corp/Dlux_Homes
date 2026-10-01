@@ -92,7 +92,9 @@ export const authOptions: NextAuthOptions = {
           // First check employee table (for admin/staff users)
           console.log("📊 Querying employees table...");
           const employeeResult = await pool.query(
-            "SELECT id, email, password, role, first_name, last_name, ip_address, user_agent, login_attempts FROM employees WHERE email = $1",
+            // Case- and space-insensitive, like the customer login: an account
+            // added as "Juan@Gmail.com" signs in as "juan@gmail.com" too.
+            "SELECT id, email, password, role, first_name, last_name, ip_address, user_agent, login_attempts FROM employees WHERE LOWER(email) = LOWER(TRIM($1)) LIMIT 1",
             [credentials.email]
           );
 
@@ -141,17 +143,19 @@ export const authOptions: NextAuthOptions = {
             if (!isValid) {
               console.log("❌ Invalid password for employee:", user.email);
 
-              // ⬆ Increment login attempts
+              // ⬆ Increment login attempts. By id, not by the email as typed —
+              // the lookup above is case-insensitive, so the typed email may
+              // differ in case from the stored one and match no row here.
               const attemptUpdate = await pool.query(
                 `UPDATE employees
                 SET login_attempts = COALESCE(login_attempts, 0) + 1,
                     updated_at = NOW()
-                WHERE email = $1
+                WHERE id = $1
                 RETURNING login_attempts`,
-                [credentials.email]
+                [user.id]
               );
 
-              const attempts = attemptUpdate.rows[0].login_attempts;
+              const attempts = attemptUpdate.rows[0]?.login_attempts ?? 0;
               console.log(`📊 Login attempts for ${user.email}: ${attempts}`);
 
               // 🔒 LOCK ACCOUNT AT 3 ATTEMPTS
@@ -159,11 +163,12 @@ export const authOptions: NextAuthOptions = {
                 const otp = Math.floor(100000 + Math.random() * 900000).toString();
                 const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-                // Remove old OTP
+                // Remove old OTP. Keyed by the STORED email (the typed one may
+                // differ in case), matching the case-insensitive unlock route.
                 await pool.query(
                   `DELETE FROM otp_verification
-                  WHERE email = $1 AND otp_type = 'ACCOUNT_LOCK'`,
-                  [credentials.email]
+                  WHERE LOWER(email) = LOWER($1) AND otp_type = 'ACCOUNT_LOCK'`,
+                  [user.email]
                 );
 
                 // Insert new OTP
@@ -172,7 +177,7 @@ export const authOptions: NextAuthOptions = {
                   (email, otp_code, otp_type, expires_at, ip_address, user_agent, created_at)
                   VALUES ($1, $2, 'ACCOUNT_LOCK', $3, $4, $5, NOW())`,
                   [
-                    credentials.email,
+                    user.email,
                     otp,
                     expiresAt,
                     ipAddress !== 'unknown' ? ipAddress : null,
@@ -184,7 +189,7 @@ export const authOptions: NextAuthOptions = {
                 // can be locked down later without breaking the lockout flow.
                 try {
                   await sendOtpEmail({
-                    email: credentials.email,
+                    email: user.email,
                     otp,
                     type: "ACCOUNT_LOCK",
                     userName: `${user.first_name} ${user.last_name}`,
