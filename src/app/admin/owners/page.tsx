@@ -21,6 +21,7 @@ import { useGetEmployeesQuery, useCreateEmployeeMutation } from "@/redux/api/emp
 import { useGetReviewsQuery } from "@/redux/api/reviewsApi";
 import { useGetReportsQuery } from "@/redux/api/reportApi";
 import OfficeStaffInbox from "@/components/admin/messages/OfficeStaffInbox";
+import NotificationBell from "@/components/admin/NotificationBell";
 import { fmtWindow, fmtSpan } from "@/lib/stay-window";
 import { BUNDLE_TIER1_LABEL, BUNDLE_TIER2_LABEL, BUNDLE_TIER3_LABEL, BUNDLE_TIER4_LABEL, securityDepositFor, DEPOSIT_DEFAULT } from "@/lib/pricing";
 import PromotionModal, { type PromotionFormState } from "@/components/admin/PromotionModal";
@@ -48,7 +49,6 @@ import {
   Users,
   Settings,
   Search,
-  Bell,
   TrendingUp,
   Star,
   BedDouble,
@@ -1113,17 +1113,17 @@ export default function OwnerDashboard() {
 
           {/* right: bell + account */}
           <div className="flex items-center gap-1">
-            <button
-              onClick={() => { setActiveNav("Communication"); setSidebarOpen(false); }}
-              title="Messages & notifications"
-              className="relative p-2.5 rounded-lg transition-colors cursor-pointer"
-              style={{ color: "#6b6358" }}
-              onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#f3eee2"}
-              onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}
-            >
-              <Bell className="w-[18px] h-[18px]" />
-              <span style={{ position: "absolute", top: 8, right: 8, width: 6, height: 6, background: "#b8754a", borderRadius: "50%", border: "2px solid #fff" }} />
-            </button>
+            {/* Notifications — opens the list here; a notification then goes
+                to the page it's about (it used to jump to Communication). */}
+            <NotificationBell onOpen={(n) => {
+              const kind = (n.rawType ?? "").toLowerCase();
+              if (kind.includes("payment") || kind.includes("booking")) setActiveNav("Bookings");
+              else if (kind.includes("report") || kind.includes("issue") || kind.includes("clean")) setActiveNav("Cleaning Operations");
+              else if (kind.includes("message")) { setActiveNav("Communication"); setCommTab("messages"); }
+              else if (kind.includes("review")) { setActiveNav("Communication"); setCommTab("reviews"); }
+              else return;
+              setSidebarOpen(false);
+            }} />
             <button
               type="button"
               className="flex items-center gap-2.5 rounded-lg transition-colors cursor-pointer"

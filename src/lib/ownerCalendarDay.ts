@@ -81,7 +81,7 @@ export function resolveDayCell(list: DayBooking[]): DayCell | null {
 
   // Mid-stay day of a multi-night full stay — both halves held, but a lighter
   // slate so a pass-through day reads apart from the check-in day.
-  if (overnightMiddle) return cell(COLOR.continuing, COLOR.continuing, "Full stay", "Continuing", { moon: true, dayText: "Guest in unit", nightText: "Guest in unit", dayBooking: overnightMiddle, nightBooking: overnightMiddle });
+  if (overnightMiddle) return cell(COLOR.continuing, COLOR.continuing, "Overnight", "Continuing", { moon: true, dayText: "Guest in unit", nightText: "Guest in unit", dayBooking: overnightMiddle, nightBooking: overnightMiddle });
 
   // Handover day of two back-to-back full stays: yesterday's guest holds the
   // unit until the 5PM checkout and tonight's arrives 7PM, so BOTH halves are
@@ -109,7 +109,7 @@ export function resolveDayCell(list: DayBooking[]): DayCell | null {
     const t = fmt12h(overnightCheckIn.checkInTime);
     const arrives = t ? `Arrives ${t}` : "Arrives";
     if (daycation) return cell(COLOR.day, COLOR.full, "Day + Full", dayRange, { sun: true, moon: true, asterisk: true, dayText: "Daycation", nightText: arrives, dayBooking: daycation, nightBooking: overnightCheckIn });
-    return cell(COLOR.empty, COLOR.full, "Full stay", t ? `In ${t}` : "", { moon: true, nightText: arrives, nightBooking: overnightCheckIn });
+    return cell(COLOR.empty, COLOR.full, "Overnight", t ? `In ${t}` : "", { moon: true, nightText: arrives, nightBooking: overnightCheckIn });
   }
 
   // Full-stay checkout (out 4PM): the daytime is held to checkout, the
@@ -119,7 +119,7 @@ export function resolveDayCell(list: DayBooking[]): DayCell | null {
     const sub = t ? `Out ${t}` : "Checkout";
     const leaves = t ? `Leaves ${t}` : "Leaves";
     if (nightcation) return cell(COLOR.full, COLOR.night, "Full + Night", sub, { moon: true, asterisk: true, dayText: leaves, nightText: "Nightcation", dayBooking: overnightCheckOut, nightBooking: nightcation });
-    return cell(COLOR.full, COLOR.empty, "Full stay", sub, { dayText: leaves, dayBooking: overnightCheckOut });
+    return cell(COLOR.full, COLOR.empty, "Overnight", sub, { dayText: leaves, dayBooking: overnightCheckOut });
   }
 
   // Two separate bookings sharing the date: Daycation by day, Nightcation at night.
