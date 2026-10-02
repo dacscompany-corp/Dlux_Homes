@@ -44,5 +44,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
-  return createEmployee(request);
+  // The caller's role decides what they may create (only an Owner makes an Owner).
+  return createEmployee(request, { callerRole: guard.role });
 }

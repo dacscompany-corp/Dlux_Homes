@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import { upload_file } from '../utils/cloudinary';
 import { validateImageDataUrl } from '../utils/imageGuard';
 import { sendEmployeeWelcomeEmail } from '../utils/mailer';
+import { checkNewStaff, checkRoleChange, normalizeEmail } from '@/lib/staff-accounts';
 
 export type EmployeeRole = 'Owner' | 'CSR' | 'Cleaner' | 'Partner';
 
@@ -31,13 +32,16 @@ export interface Employee {
 }
 
 // CREATE Employee
-export const createEmployee = async (req: NextRequest): Promise<NextResponse> => {
+export const createEmployee = async (
+  req: NextRequest,
+  auth: { callerRole?: string } = {},
+): Promise<NextResponse> => {
   try {
     const body = await req.json();
     const {
       first_name,
       last_name,
-      email,
+      email: rawEmail,
       phone,
       employment_id,
       hire_date,
@@ -53,6 +57,20 @@ export const createEmployee = async (req: NextRequest): Promise<NextResponse> =>
       emergency_contact_phone,
       emergency_contact_relation
     } = body;
+
+    // A new account must be able to sign in to its portal: a real role, a
+    // usable email and password, and only an Owner may create an Owner.
+    const check = checkNewStaff({ first_name, last_name, email: rawEmail, password, role }, auth.callerRole);
+    if (!check.ok) {
+      return NextResponse.json({ success: false, error: check.error, message: check.error }, { status: check.status });
+    }
+    // Stored lowercase; staff login matches case-insensitively.
+    const email = normalizeEmail(rawEmail);
+    const taken = await pool.query(`SELECT 1 FROM employees WHERE LOWER(email) = $1 LIMIT 1`, [email]);
+    if (taken.rows.length > 0) {
+      const error = 'An account with this email already exists.';
+      return NextResponse.json({ success: false, error, message: error }, { status: 409 });
+    }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -289,6 +307,35 @@ export const updateEmployee = async (
       fields.push(`profile_image_url = $${paramCount}`);
       values.push(profileImageUrl);
       paramCount++;
+    }
+
+    // Role and email changes are checked against the account as it is now: a
+    // role must be one the portals accept, only an Owner can give or remove
+    // the Owner role (so a CSR can't promote themselves), and an email stays
+    // lowercase and unique so its owner can still sign in.
+    if (isAdmin && employeeData.role !== undefined) {
+      const current = await pool.query(`SELECT role FROM employees WHERE id = $1`, [id]);
+      if (current.rows.length === 0) {
+        return NextResponse.json({ success: false, error: 'Employee not found' }, { status: 404 });
+      }
+      const roleCheck = checkRoleChange(auth.callerRole, current.rows[0].role, employeeData.role);
+      if (!roleCheck.ok) {
+        return NextResponse.json({ success: false, error: roleCheck.error, message: roleCheck.error }, { status: roleCheck.status });
+      }
+    }
+    if (employeeData.email !== undefined) {
+      const email = normalizeEmail(employeeData.email);
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return NextResponse.json({ success: false, error: 'Enter a valid email address.' }, { status: 400 });
+      }
+      const taken = await pool.query(
+        `SELECT 1 FROM employees WHERE LOWER(email) = $1 AND id::text <> $2 LIMIT 1`,
+        [email, String(id)],
+      );
+      if (taken.rows.length > 0) {
+        return NextResponse.json({ success: false, error: 'Another account already uses this email.' }, { status: 409 });
+      }
+      employeeData.email = email;
     }
 
     Object.entries(employeeData).forEach(([key, value]) => {

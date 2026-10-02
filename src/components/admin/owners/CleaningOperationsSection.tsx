@@ -22,6 +22,7 @@ import { useGetReportsQuery, useUpdateReportStatusMutation } from "@/redux/api/r
 import ImageThumb from "@/components/ImageThumb";
 import { cleaningDueAt } from "@/lib/cleaning-schedule";
 import { MonthNavigator, currentMonthKey } from "@/components/admin/owners/MonthNavigator";
+import { sameBookingRef } from "@/components/admin/NotificationBell";
 import {
   Clock, Building2, User, AlertTriangle, CheckCircle2, ChevronRight,
   Timer, ClipboardList, UserPlus, X, Plus, Pencil, Trash2, Camera, Search, ChevronDown,
@@ -336,7 +337,12 @@ function SearchBox({ value, onChange, placeholder }: { value: string; onChange: 
   );
 }
 
-export function CleaningOperationsSection() {
+export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRef = null }: {
+  /** Tab to open on — e.g. Reports & Issues when coming from an issue notification. */
+  initialTab?: "tasks" | "checklist" | "reports" | "workload";
+  /** Open this booking's cleaning task straight away (from a notification). */
+  focusBookingRef?: string | null;
+} = {}) {
   // Polled, so a new confirmation's assignment, a cleaner's hand-in and a
   // cancellation all show up without a refresh.
   const { data: tasksData, isFetching, isLoading: tasksLoading, isError: tasksFailed, refetch: refetchTasks } =
@@ -359,12 +365,18 @@ export function CleaningOperationsSection() {
   // viewing/editing its checklist directly, without opening the drawer;
   // "Reports & Issues" lists every cleaner-submitted issue report across all
   // tasks in one place, instead of only inside one task's drawer.
-  const [topTab, setTopTab] = useState<"tasks" | "checklist" | "reports" | "workload">("tasks");
+  const [topTab, setTopTab] = useState<"tasks" | "checklist" | "reports" | "workload">(initialTab);
 
   const [filter, setFilter] = useState<"all" | "attention" | "awaiting-inspection">("all");
   const [taskQuery, setTaskQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const selectedTask = tasks.find((t) => t.cleaning_id === selectedId) ?? null;
+  // A booking a notification pointed at: its task opens as soon as the task
+  // list has loaded (it may still be loading on the first render).
+  const [focusRef, setFocusRef] = useState<string | null>(focusBookingRef);
+  const selectedTask =
+    tasks.find((t) => t.cleaning_id === selectedId)
+    ?? (focusRef ? tasks.find((t) => sameBookingRef(t.booking_id, focusRef)) ?? null : null);
+  const closeTask = () => { setSelectedId(null); setFocusRef(null); };
 
   // The month the whole page shows ('YYYY-MM', by the guest's checkout in
   // Manila time); null = All time. One setting for every tab — the summary
@@ -634,7 +646,7 @@ export function CleaningOperationsSection() {
       </div>
 
       {selectedTask && (
-        <TaskDetailDrawer task={selectedTask} cleaners={cleaners} cleanersLoadFailed={cleanersLoadFailed} onClose={() => setSelectedId(null)} />
+        <TaskDetailDrawer task={selectedTask} cleaners={cleaners} cleanersLoadFailed={cleanersLoadFailed} onClose={closeTask} />
       )}
       </>
       )}

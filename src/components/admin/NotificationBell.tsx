@@ -17,6 +17,23 @@ import {
   type Notification,
 } from "@/redux/api/notificationsApi";
 
+/**
+ * The booking a notification is about, read from its text ("Booking:
+ * DL-BK0659667270316711", "booking BK3149466324"). Notifications don't store a
+ * link, but every booking/payment/cleaning message names the booking.
+ */
+export function bookingRefFrom(n: Pick<Notification, "title" | "description">): string | null {
+  const m = /\b(?:DL-)?BK\d{6,}\b/i.exec(`${n.description ?? ""} ${n.title ?? ""}`);
+  return m ? m[0].toUpperCase() : null;
+}
+
+/** Same booking whether or not one side carries the "DL-" prefix. */
+export function sameBookingRef(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  const norm = (s: string) => s.trim().toUpperCase().replace(/^DL-/, "");
+  return norm(a) === norm(b);
+}
+
 /** Icon + colour per notification kind (notification_type, case-insensitive). */
 function lookFor(rawType: string | undefined) {
   const t = (rawType ?? "").toLowerCase();
@@ -88,13 +105,16 @@ export default function NotificationBell({ onOpen }: {
       </button>
 
       {open && (
-        <div role="dialog" aria-label="Notifications" style={{
-          position: "absolute", right: 0, top: "calc(100% + 8px)", zIndex: 80,
-          width: 380, maxWidth: "calc(100vw - 24px)",
-          background: "#ffffff", border: "1px solid #e4dac5", borderRadius: 6,
-          boxShadow: "0 24px 56px -18px rgba(40,30,18,.34)", overflow: "hidden",
-        }}>
-          <div style={{ padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, borderBottom: "1px solid #F2EADA", background: "#FCFAF5" }}>
+        // Phone: a full-width panel pinned under the header. Wider screens: a
+        // 380px dropdown under the bell.
+        <div role="dialog" aria-label="Notifications"
+          className="fixed left-3 right-3 top-[76px] sm:absolute sm:left-auto sm:right-0 sm:top-[calc(100%+8px)] sm:w-[380px]"
+          style={{
+            zIndex: 80,
+            background: "#ffffff", border: "1px solid #e4dac5", borderRadius: 6,
+            boxShadow: "0 24px 56px -18px rgba(40,30,18,.34)", overflow: "hidden",
+          }}>
+          <div style={{ padding: "12px 16px", display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: "6px 12px", borderBottom: "1px solid #F2EADA", background: "#FCFAF5" }}>
             <span style={{ fontSize: 11.5, fontWeight: 600, color: "#8B6344", textTransform: "uppercase", letterSpacing: ".06em" }}>
               Notifications{unread ? ` · ${unread} unread` : ""}
             </span>
@@ -111,7 +131,7 @@ export default function NotificationBell({ onOpen }: {
             </div>
           </div>
 
-          <div style={{ maxHeight: 420, overflowY: "auto" }}>
+          <div style={{ maxHeight: "min(420px, calc(100dvh - 160px))", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
             {isLoading ? (
               <p style={{ padding: "18px 16px", fontSize: 13, color: "#8B6344", margin: 0 }}>Loading…</p>
             ) : isError ? (
@@ -130,9 +150,10 @@ export default function NotificationBell({ onOpen }: {
                 const Icon = look.Icon;
                 return (
                   <button key={n.id} type="button" onClick={() => openNotification(n)}
+                    className="py-3.5 sm:py-3"
                     style={{
                       width: "100%", textAlign: "left", display: "flex", gap: 12, alignItems: "flex-start",
-                      padding: "12px 16px", border: 0, borderTop: i ? "1px solid #F7F0E3" : 0,
+                      paddingLeft: 16, paddingRight: 16, border: 0, borderTop: i ? "1px solid #F7F0E3" : 0,
                       background: n.read ? "#ffffff" : "#FDF8F3", cursor: "pointer", fontFamily: "inherit",
                     }}
                     onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "#FAF6EE")}

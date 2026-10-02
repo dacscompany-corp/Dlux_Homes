@@ -21,7 +21,7 @@ import { useGetEmployeesQuery, useCreateEmployeeMutation } from "@/redux/api/emp
 import { useGetReviewsQuery } from "@/redux/api/reviewsApi";
 import { useGetReportsQuery } from "@/redux/api/reportApi";
 import OfficeStaffInbox from "@/components/admin/messages/OfficeStaffInbox";
-import NotificationBell from "@/components/admin/NotificationBell";
+import NotificationBell, { bookingRefFrom, sameBookingRef } from "@/components/admin/NotificationBell";
 import { fmtWindow, fmtSpan } from "@/lib/stay-window";
 import { BUNDLE_TIER1_LABEL, BUNDLE_TIER2_LABEL, BUNDLE_TIER3_LABEL, BUNDLE_TIER4_LABEL, securityDepositFor, DEPOSIT_DEFAULT } from "@/lib/pricing";
 import PromotionModal, { type PromotionFormState } from "@/components/admin/PromotionModal";
@@ -161,6 +161,12 @@ export default function OwnerDashboard() {
   const [systemTab, setSystemTab]     = useState<"settings"|"logs">("settings");
   const [overviewTab, setOverviewTab] = useState<"dashboard"|"analytics">("dashboard");
   const [bookingsTab, setBookingsTab] = useState<"list"|"calendar"|"blocked">("list");
+  // Where a clicked notification sends Cleaning Operations: which tab, and
+  // which booking's task to open. `nonce` remounts the section so the same
+  // notification can be followed twice.
+  const [cleaningFocus, setCleaningFocus] = useState<{
+    tab: "tasks" | "reports"; ref: string | null; nonce: number;
+  }>({ tab: "tasks", ref: null, nonce: 0 });
   // Booking guide starts open, matching the design — it is reference material an
   // owner can collapse once the flow is familiar.
   const [guideOpen, setGuideOpen] = useState(false);
@@ -363,6 +369,8 @@ export default function OwnerDashboard() {
     selfCheckinEmailSentAt: string;
     // Everyone on the booking beyond the main guest, each with their own ID.
     additionalGuests: { name: string; age: string; gender: string; validIdUrl: string }[];
+    // The add-ons the guest picked (price is per unit).
+    addOnItems: { name: string; price: number; quantity: number; status: string; guests: string }[];
   };
   const [bookingModal, setBookingModal] = useState<AdminBookingRow | null>(null);
 
@@ -454,25 +462,41 @@ export default function OwnerDashboard() {
     toast.success(okMessage);
   };
 
-  const handleApproveBooking = async (id: string) => {
+  // Per-row busy flag. The mutation's own isLoading is shared by every row, so
+  // one slow update (approve waits on the confirmation email) used to disable
+  // the buttons on the whole table. Each action also waits for the refetched
+  // list before clearing, so the row never sits on its old status with its old
+  // buttons live — clicking those again is what read as "not working".
+  const [busyBookingId, setBusyBookingId] = useState<string | null>(null);
+  const runBookingAction = async (id: string, action: () => Promise<void>) => {
+    if (busyBookingId) return;
+    setBusyBookingId(id);
+    try {
+      await action();
+    } finally {
+      try { await refetchBookings(); } catch { /* list refresh is best-effort */ }
+      setBusyBookingId(null);
+    }
+  };
+
+  const handleApproveBooking = (id: string) => runBookingAction(id, async () => {
     try {
       const res = await updateBookingStatus({ id, status: "approved" }).unwrap();
       reportStatusChange(res, "Booking approved");
     }
     catch { toast.error("Could not approve booking"); }
-  };
+  });
   // Approve the down payment → moves an "Awaiting Payment" booking to Confirmed.
   // Two steps (same as CSR): approveDownPayment flips status to "on-going" and
   // marks the payment approved, then setting status back to "approved" with the
   // payment already approved normalizes to "confirmed" (ready to check in).
-  const handleConfirmPayment = async (id: string) => {
+  const handleConfirmPayment = (id: string) => runBookingAction(id, async () => {
     try {
       await approveDownPaymentByBookingId(id);
       const res = await updateBookingStatus({ id, status: "approved" }).unwrap();
       reportStatusChange(res, "Down payment approved — booking confirmed");
-      refetchBookings();
     } catch { toast.error("Could not confirm the down payment"); }
-  };
+  });
   const submitRejectBooking = async () => {
     try {
       const res = await updateBookingStatus({ id: rejectModal.id, status: "rejected", rejection_reason: rejectModal.reason.trim() || "Rejected by admin" }).unwrap();
@@ -489,8 +513,14 @@ export default function OwnerDashboard() {
   const [checkIn, setCheckIn] = useState<{ open: boolean; id: string; displayId: string; guest: string; remaining: number; deposit: number; method: string; busy: boolean }>(
     { open: false, id: "", displayId: "", guest: "", remaining: 0, deposit: DEPOSIT_DEFAULT, method: "Cash", busy: false }
   );
-  const openCheckIn = (b: { id: string; displayId: string; guest: string; remaining: number; checkInRaw: string; checkOutRaw: string }) =>
-    setCheckIn({ open: true, id: b.id, displayId: b.displayId, guest: b.guest, remaining: Math.max(0, b.remaining), deposit: securityDepositFor(nightsBetween(b.checkInRaw, b.checkOutRaw), undefined, depositRates), method: "Cash", busy: false });
+  // The deposit shown must be the one the server will split off the collected
+  // total: updateDepositStatusByBookingId prefers the amount stored on the
+  // booking's deposit row (set at booking time) over the current tiers. Using
+  // the current tiers here meant that after an owner changed them, part of the
+  // balance was booked as "deposit", the balance never reached zero, and the
+  // Collect button never went away.
+  const openCheckIn = (b: { id: string; displayId: string; guest: string; remaining: number; deposit: number; checkInRaw: string; checkOutRaw: string }) =>
+    setCheckIn({ open: true, id: b.id, displayId: b.displayId, guest: b.guest, remaining: Math.max(0, b.remaining), deposit: b.deposit > 0 ? b.deposit : securityDepositFor(nightsBetween(b.checkInRaw, b.checkOutRaw), undefined, depositRates), method: "Cash", busy: false });
   // Send the self check-in instructions — the four steps, what to pay on
   // arrival, and where to send it. House rules are not part of this email; they
   // go out with Collect. The route re-stamps self_checkin_email_sent_at, so the
@@ -514,7 +544,7 @@ export default function OwnerDashboard() {
   // normal moment (it matches 'checked-in' rows too — see the cron's status
   // filter). If the cron isn't running, the Bookings row keeps a manual
   // "Send instructions now" button as the backstop.
-  const handleCheckInOnly = async (b: { id: string; checkInRaw: string; checkInTime: string }) => {
+  const handleCheckInOnly = (b: { id: string; checkInRaw: string; checkInTime: string }) => runBookingAction(b.id, async () => {
     const { id } = b;
     try {
       await updateBookingStatus({ id, status: "checked-in" }).unwrap();
@@ -529,11 +559,10 @@ export default function OwnerDashboard() {
             : "Guest checked in early — instructions not sent yet",
         );
       }
-      refetchBookings();
     } catch {
       toast.error("Could not check the guest in");
     }
-  };
+  });
 
   // Backstop for an early check-in whose instructions are still pending. The
   // cron that would normally release them runs off an external pinger, so if
@@ -563,6 +592,7 @@ export default function OwnerDashboard() {
   // Collect the remaining balance + refundable deposit in one handover, then
   // send the house-rules email.
   const confirmCollect = async () => {
+    if (checkIn.busy) return;
     setCheckIn((c) => ({ ...c, busy: true }));
     try {
       const collected = checkIn.remaining + checkIn.deposit;
@@ -571,23 +601,24 @@ export default function OwnerDashboard() {
       // look like the collection failed.
       fetch(`/api/send-checkin-email/for-booking/${encodeURIComponent(checkIn.id)}`, { method: "POST" })
         .catch(() => {});
+      // Server actions don't touch the RTK cache — wait for the fresh list so
+      // the row shows Check out (not a stale Collect) once the modal closes.
+      try { await refetchBookings(); } catch { /* list refresh is best-effort */ }
       toast.success("Balance & deposit collected — house rules sent");
       setCheckIn({ open: false, id: "", displayId: "", guest: "", remaining: 0, deposit: DEPOSIT_DEFAULT, method: "Cash", busy: false });
-      refetchBookings();
     } catch {
       toast.error("Could not record the payment");
       setCheckIn((c) => ({ ...c, busy: false }));
     }
   };
   // Check out → completes the booking (keeps the record + unlocks guest review).
-  const handleCheckOut = async (id: string) => {
+  const handleCheckOut = (id: string) => runBookingAction(id, async () => {
     try {
       const res = await updateBookingStatus({ id, status: "completed" }).unwrap();
       reportStatusChange(res, "Guest checked out — booking completed");
-      refetchBookings();
     }
     catch { toast.error("Could not check out the guest"); }
-  };
+  });
   const decideDateChange = async (id: string, action: "approve" | "reject") => {
     try {
       const res = await fetch(`/api/admin/bookings/${encodeURIComponent(id)}/date-change`, {
@@ -763,6 +794,18 @@ export default function OwnerDashboard() {
         age: x.age == null ? "" : String(x.age),
         gender: String(x.gender ?? ""),
         validIdUrl: String(x.valid_id_url ?? ""),
+      };
+    }),
+    addOnItems: (Array.isArray(b.add_ons) ? b.add_ons : []).map((a) => {
+      const x = (a ?? {}) as Record<string, unknown>;
+      return {
+        name: String(x.name ?? "Add-on"),
+        price: Number(x.price ?? 0),
+        quantity: Number(x.quantity ?? 1) || 1,
+        status: String(x.status ?? ""),
+        // Amenities (Swimming Pool, Basketball Court) are per person and are
+        // stored with notes "Guests: A, B" naming who is using them.
+        guests: String(x.notes ?? "").replace(/^Guests:\s*/i, ""),
       };
     }),
   }));
@@ -1113,15 +1156,29 @@ export default function OwnerDashboard() {
 
           {/* right: bell + account */}
           <div className="flex items-center gap-1">
-            {/* Notifications — opens the list here; a notification then goes
-                to the page it's about (it used to jump to Communication). */}
+            {/* Notifications — opens the list here; clicking one opens the exact
+                thing it's about: that booking's details, that cleaning task, the
+                issue reports, or the cleaner messages. */}
             <NotificationBell onOpen={(n) => {
               const kind = (n.rawType ?? "").toLowerCase();
-              if (kind.includes("payment") || kind.includes("booking")) setActiveNav("Bookings");
-              else if (kind.includes("report") || kind.includes("issue") || kind.includes("clean")) setActiveNav("Cleaning Operations");
-              else if (kind.includes("message")) { setActiveNav("Communication"); setCommTab("messages"); }
-              else if (kind.includes("review")) { setActiveNav("Communication"); setCommTab("reviews"); }
-              else return;
+              const ref = bookingRefFrom(n);
+              if (kind.includes("payment") || kind.includes("booking")) {
+                setActiveNav("Bookings");
+                setBookingsTab("list");
+                const booking = ref ? allAdminBookings.find((b) => sameBookingRef(b.displayId, ref)) : undefined;
+                if (booking) setBookingModal(booking);
+                else if (ref) toast(`Booking ${ref} isn't in the list any more.`, { icon: "ℹ️" });
+              } else if (kind.includes("report") || kind.includes("issue")) {
+                setActiveNav("Cleaning Operations");
+                setCleaningFocus((f) => ({ tab: "reports", ref: null, nonce: f.nonce + 1 }));
+              } else if (kind.includes("clean")) {
+                setActiveNav("Cleaning Operations");
+                setCleaningFocus((f) => ({ tab: "tasks", ref, nonce: f.nonce + 1 }));
+              } else if (kind.includes("message")) {
+                setActiveNav("Communication"); setCommTab("messages");
+              } else if (kind.includes("review")) {
+                setActiveNav("Communication"); setCommTab("reviews");
+              } else return;
               setSidebarOpen(false);
             }} />
             <button
@@ -1420,7 +1477,7 @@ export default function OwnerDashboard() {
                                 <button
                                   type="button"
                                   onClick={() => handleApproveBooking(booking.id)}
-                                  disabled={bookingUpdating}
+                                  disabled={busyBookingId === booking.id}
                                   title="Approve booking"
                                   className="p-1.5 rounded-lg transition-colors disabled:opacity-50"
                                   style={{ color: "#6b7280" }}
@@ -1432,7 +1489,7 @@ export default function OwnerDashboard() {
                                 <button
                                   type="button"
                                   onClick={() => setRejectModal({ open: true, id: booking.id, reason: "" })}
-                                  disabled={bookingUpdating}
+                                  disabled={busyBookingId === booking.id}
                                   title="Reject booking"
                                   className="p-1.5 rounded-lg transition-colors disabled:opacity-50"
                                   style={{ color: "#6b7280" }}
@@ -1447,7 +1504,7 @@ export default function OwnerDashboard() {
                               <button
                                 type="button"
                                 onClick={() => handleConfirmPayment(booking.id)}
-                                disabled={bookingUpdating}
+                                disabled={busyBookingId === booking.id}
                                 title="Confirm down payment (mark paid → Confirmed)"
                                 className="p-1.5 rounded-lg transition-colors disabled:opacity-50"
                                 style={{ color: "#6b7280" }}
@@ -1460,9 +1517,13 @@ export default function OwnerDashboard() {
                             {(booking.status === "confirmed" || booking.status === "down-paid") && (
                               <button
                                 type="button"
-                                onClick={() => openCheckIn({ id: booking.id, displayId: booking.displayId, guest: booking.guest, remaining: booking.balance, checkInRaw: booking.checkInRaw, checkOutRaw: booking.checkOutRaw })}
-                                disabled={bookingUpdating}
-                                title="Check in (collect balance + deposit)"
+                                // Same as the Bookings tab: arrival only. This used
+                                // to open the Collect modal, which records the
+                                // money but never flips the booking to checked-in,
+                                // so a Confirmed booking stayed stuck on Confirmed.
+                                onClick={() => handleCheckInOnly(booking)}
+                                disabled={busyBookingId === booking.id}
+                                title="Check in (sends the check-in instructions)"
                                 className="p-1.5 rounded-lg transition-colors disabled:opacity-50"
                                 style={{ color: "#6b7280" }}
                                 onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "#d1fae5"; (e.currentTarget as HTMLElement).style.color = "#059669"; }}
@@ -1474,8 +1535,8 @@ export default function OwnerDashboard() {
                             {booking.status === "checked-in" && booking.balance > 0 && (
                               <button
                                 type="button"
-                                onClick={() => openCheckIn({ id: booking.id, displayId: booking.displayId, guest: booking.guest, remaining: booking.balance, checkInRaw: booking.checkInRaw, checkOutRaw: booking.checkOutRaw })}
-                                disabled={bookingUpdating}
+                                onClick={() => openCheckIn({ id: booking.id, displayId: booking.displayId, guest: booking.guest, remaining: booking.balance, deposit: booking.deposit, checkInRaw: booking.checkInRaw, checkOutRaw: booking.checkOutRaw })}
+                                disabled={busyBookingId === booking.id}
                                 title="Collect remaining balance + deposit (sends the house rules)"
                                 className="p-1.5 rounded-lg transition-colors disabled:opacity-50"
                                 style={{ color: "#6b7280" }}
@@ -1492,7 +1553,7 @@ export default function OwnerDashboard() {
                               <button
                                 type="button"
                                 onClick={() => handleCheckOut(booking.id)}
-                                disabled={bookingUpdating}
+                                disabled={busyBookingId === booking.id}
                                 title="Check out (complete booking)"
                                 className="p-1.5 rounded-lg transition-colors disabled:opacity-50"
                                 style={{ color: "#6b7280" }}
@@ -1774,7 +1835,7 @@ export default function OwnerDashboard() {
                 <thead>
                   <tr style={{ backgroundColor: "#faf7f1", borderBottom: "1px solid #ece5d4" }}>
                     {["Booking ID","Guest","Room","Check-in","Stay Type","Amount","Status","Actions"].map((h,i) => (
-                      <th key={h} className={`px-4 py-3 text-left text-[11px] uppercase tracking-[0.08em] ${i===2?"hidden sm:table-cell":i===3?"hidden lg:table-cell":i===4?"hidden md:table-cell":""}`} style={{ color: "#8B6344" }}>{h}</th>
+                      <th key={h} className={`px-3 sm:px-4 py-3 text-left text-[11px] uppercase tracking-[0.08em] ${i===0||i===2||i===5?"hidden sm:table-cell":i===3?"hidden lg:table-cell":i===4?"hidden md:table-cell":""}`} style={{ color: "#8B6344" }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -1785,45 +1846,50 @@ export default function OwnerDashboard() {
                       <tr key={booking.id} className="transition-colors" style={{ borderTop: idx > 0 ? "1px solid #F7F0E3" : "none" }}
                         onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
                         onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
-                        <td className="px-4 py-3.5"><span className="font-mono text-xs" style={{ color: "#8B6344" }}>{booking.displayId}</span></td>
-                        <td className="px-4 py-3.5">
+                        <td className="px-4 py-3.5 hidden sm:table-cell"><span className="font-mono text-xs" style={{ color: "#8B6344" }}>{booking.displayId}</span></td>
+                        <td className="px-3 sm:px-4 py-3.5">
                           <div className="flex items-center gap-2.5">
                             <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: "#f3eee2" }}>
                               <span style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 13, color: "#b8754a" }}>{booking.guest.split(" ").map((n)=>n[0]).join("")}</span>
                             </div>
-                            <div>
-                              <p className="font-medium text-sm" style={{ color: "#1a1a1a" }}>{booking.guest}</p>
+                            <div className="min-w-0">
+                              <p className="font-medium text-sm break-words" style={{ color: "#1a1a1a" }}>{booking.guest}</p>
                               <p className="text-xs hidden sm:block" style={{ color: "#8B6344" }}>{booking.email}</p>
+                              {/* Phones: the Booking ID and Amount columns are
+                                  hidden so the table fits without side-scrolling;
+                                  both ride under the name instead. */}
+                              <p className="sm:hidden font-mono break-all" style={{ fontSize: 10.5, color: "#8B6344", marginTop: 2 }}>{booking.displayId}</p>
+                              <p className="sm:hidden" style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 12, color: "#1f1b16", marginTop: 1 }}>₱{booking.amount.toLocaleString()}</p>
                             </div>
                           </div>
                         </td>
                         <td className="px-4 py-3.5 hidden sm:table-cell"><p className="text-sm" style={{ color: "#5a4a3a" }}>{booking.room}</p></td>
                         <td className="px-4 py-3.5 hidden lg:table-cell"><p className="text-sm" style={{ color: "#5a4a3a" }}>{booking.checkIn}</p></td>
                         <td className="px-4 py-3.5 hidden md:table-cell"><span style={{ fontSize: 12, color: "#8a8276" }}>{booking.stayType}</span></td>
-                        <td className="px-4 py-3.5"><span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 13, color: "#1f1b16" }}>₱{booking.amount.toLocaleString()}</span></td>
-                        <td className="px-4 py-3.5">
+                        <td className="px-4 py-3.5 hidden sm:table-cell"><span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 13, color: "#1f1b16" }}>₱{booking.amount.toLocaleString()}</span></td>
+                        <td className="px-3 sm:px-4 py-3.5">
                           <span className="inline-flex items-center" style={{ gap: 7, fontSize: 12, color: st.dot }}>
                             <span style={{ width: 6, height: 6, borderRadius: "50%", background: st.dot, flex: "none" }} />
                             {st.label}
                           </span>
                         </td>
-                        <td className="px-4 py-3.5">
-                          <div className="flex items-center gap-1">
+                        <td className="px-2 sm:px-4 py-3.5">
+                          <div className="flex items-center gap-0.5 sm:gap-1">
                             <button title="View booking"
                               onClick={() => setBookingModal(booking)}
                               className="p-1.5 rounded-lg transition-colors" style={{ color: "#8B6344" }}
                               onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#F7F0E3";}}
                               onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";}}><Eye className="w-3.5 h-3.5"/></button>
                             {booking.status === "pending" && (<>
-                              <button type="button" onClick={() => handleApproveBooking(booking.id)} disabled={bookingUpdating} title="Approve booking" className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#6b7280" }}
+                              <button type="button" onClick={() => handleApproveBooking(booking.id)} disabled={busyBookingId === booking.id} title="Approve booking" className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#6b7280" }}
                                 onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#d1fae5";(e.currentTarget as HTMLElement).style.color="#059669";}}
                                 onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><Check className="w-3.5 h-3.5"/></button>
-                              <button type="button" onClick={() => setRejectModal({ open: true, id: booking.id, reason: "" })} disabled={bookingUpdating} title="Reject booking" className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#6b7280" }}
+                              <button type="button" onClick={() => setRejectModal({ open: true, id: booking.id, reason: "" })} disabled={busyBookingId === booking.id} title="Reject booking" className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#6b7280" }}
                                 onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#fee2e2";(e.currentTarget as HTMLElement).style.color="#dc2626";}}
                                 onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><XCircle className="w-3.5 h-3.5"/></button>
                             </>)}
                             {booking.status === "awaiting-payment" && (
-                              <button type="button" onClick={() => handleConfirmPayment(booking.id)} disabled={bookingUpdating} title="Confirm down payment (mark paid → Confirmed)" className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#6b7280" }}
+                              <button type="button" onClick={() => handleConfirmPayment(booking.id)} disabled={busyBookingId === booking.id} title="Confirm down payment (mark paid → Confirmed)" className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#6b7280" }}
                                 onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#d1fae5";(e.currentTarget as HTMLElement).style.color="#059669";}}
                                 onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><CheckCircle2 className="w-3.5 h-3.5"/></button>
                             )}
@@ -1835,7 +1901,7 @@ export default function OwnerDashboard() {
                               const open = isCheckInOpen(booking.checkInRaw, booking.checkInTime);
                               const opensAt = checkInOpensLabel(booking.checkInRaw, booking.checkInTime);
                               return (
-                                <button type="button" onClick={() => handleCheckInOnly(booking)} disabled={bookingUpdating}
+                                <button type="button" onClick={() => handleCheckInOnly(booking)} disabled={busyBookingId === booking.id}
                                   title={open
                                     ? "Check in (sends the check-in instructions)"
                                     : `Check in early — instructions send ${opensAt}`}
@@ -1857,7 +1923,7 @@ export default function OwnerDashboard() {
                                 onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#b08968";}}><Send className="w-3.5 h-3.5"/></button>
                             )}
                             {booking.status === "checked-in" && booking.balance > 0 && (
-                              <button type="button" onClick={() => openCheckIn({ id: booking.id, displayId: booking.displayId, guest: booking.guest, remaining: booking.balance, checkInRaw: booking.checkInRaw, checkOutRaw: booking.checkOutRaw })} disabled={bookingUpdating}
+                              <button type="button" onClick={() => openCheckIn({ id: booking.id, displayId: booking.displayId, guest: booking.guest, remaining: booking.balance, deposit: booking.deposit, checkInRaw: booking.checkInRaw, checkOutRaw: booking.checkOutRaw })} disabled={busyBookingId === booking.id}
                                 title="Collect remaining balance + deposit (sends the house rules)"
                                 className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#6b7280" }}
                                 onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#fef3c7";(e.currentTarget as HTMLElement).style.color="#b45309";}}
@@ -1867,7 +1933,7 @@ export default function OwnerDashboard() {
                                 Collect has to happen first, so the two never
                                 show side by side. */}
                             {booking.status === "checked-in" && booking.balance <= 0 && (
-                              <button type="button" onClick={() => handleCheckOut(booking.id)} disabled={bookingUpdating} title="Check out (complete booking)" className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#6b7280" }}
+                              <button type="button" onClick={() => handleCheckOut(booking.id)} disabled={busyBookingId === booking.id} title="Check out (complete booking)" className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#6b7280" }}
                                 onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#f3f4f6";(e.currentTarget as HTMLElement).style.color="#374151";}}
                                 onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><LogOut className="w-3.5 h-3.5"/></button>
                             )}
@@ -2408,7 +2474,10 @@ export default function OwnerDashboard() {
             )}
           </>)}
 
-          {activeNav === "Cleaning Operations" && <CleaningOperationsSection />}
+          {activeNav === "Cleaning Operations" && (
+            <CleaningOperationsSection key={cleaningFocus.nonce}
+              initialTab={cleaningFocus.tab} focusBookingRef={cleaningFocus.ref} />
+          )}
 
         </main>
       </div>
@@ -2895,6 +2964,28 @@ export default function OwnerDashboard() {
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#4A3A2A", padding: "7px 0", borderTop: "1px solid #F4EBD9" }}>
                       <span>Add-ons</span><span style={{ color: "#8B7458" }}>{peso(bk.addOns)}</span>
                     </div>
+                    {/* What the guest actually picked, under the total — e.g.
+                        Swimming Pool × 2 and who it's for. Price is per unit
+                        (per person for amenities), so each line shows
+                        price × quantity. */}
+                    {bk.addOnItems.length > 0 && (
+                      <div style={{ padding: "0 0 7px 10px", marginTop: -3 }}>
+                        {bk.addOnItems.map((a, i) => (
+                          <div key={`${a.name}-${i}`} style={{ padding: "3px 0" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12.5, color: "#4A3A2A" }}>
+                              <span>
+                                {a.name}{a.quantity > 1 ? ` × ${a.quantity}` : ""}
+                                {a.status === "cancelled" || a.status === "refunded" ? ` · ${a.status}` : ""}
+                              </span>
+                              <span style={{ color: "#8B7458" }}>{peso(a.price * a.quantity)}</span>
+                            </div>
+                            {a.guests && (
+                              <div style={{ fontSize: 11.5, color: "#8B7458", marginTop: 1 }}>{a.guests}</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#4A3A2A", padding: "7px 0", borderTop: "1px solid #F4EBD9" }}>
                       <span>Security deposit</span>
                       <span style={{ color: "#8B7458" }}>{peso(bk.deposit)}{bk.depositStatus ? ` · ${dp.label.toLowerCase()}` : " · pending"}</span>

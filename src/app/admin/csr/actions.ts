@@ -427,13 +427,24 @@ export async function updateDepositStatusByBookingId(
     }
 
     if (dbStatus === 'held' || dbStatus === 'pending_verification') {
-      await client.query(
+      const depositUpdate = await client.query(
         `UPDATE booking_security_deposits
          SET deposit_status = $2, held_at = $3, processed_by = $4, notes = COALESCE($5, notes),
              amount = $6, payment_method = COALESCE($7, payment_method)
          WHERE booking_id = $1`,
         [bookingId, dbStatus, now, employeeId, notes, depositPortion, paymentMethod ?? null]
       );
+      // Bookings created before the deposit row was added at booking time (or
+      // imported ones) have no row, so the UPDATE above matched nothing and the
+      // collected deposit vanished. Record it instead.
+      if (depositUpdate.rowCount === 0) {
+        await client.query(
+          `INSERT INTO booking_security_deposits
+             (booking_id, amount, deposit_status, held_at, processed_by, notes, payment_method)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [bookingId, depositPortion, dbStatus, now, employeeId ?? null, notes ?? null, paymentMethod ?? null]
+        );
+      }
 
       // Settle the remaining balance on booking_payments. For CSR direct collection
       // ('held'), we mark it approved immediately. For cleaner submissions

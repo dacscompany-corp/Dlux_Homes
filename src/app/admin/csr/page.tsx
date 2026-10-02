@@ -144,6 +144,7 @@ export default function CSRDashboard() {
     stayType: b.check_in_time && b.check_out_time ? `${b.check_in_time}–${b.check_out_time}` : "Stay",
     amount: Number(b.total_amount ?? b.down_payment ?? 0),
     remaining: Number(b.remaining_balance ?? 0),
+    deposit: Number(b.security_deposit ?? 0),         // stored at booking time; the server splits on this
     paymentStatus: String(b.payment_status ?? ""),
     status: normalizeStatus(String(b.status ?? "pending"), String(b.payment_status ?? "")),
     email: String(b.guest_email ?? ""),
@@ -202,9 +203,10 @@ export default function CSRDashboard() {
     const ms = new Date(String(b)).getTime() - new Date(String(a)).getTime();
     return Number.isFinite(ms) ? Math.max(0, Math.round(ms / 86400000)) : 0;
   };
-  const openCheckIn = (b: { id: string; displayId: string; guest: string; remaining: number; rawCheckIn?: unknown; rawCheckOut?: unknown }) =>
-    setCheckIn({ open: true, id: b.id, displayId: b.displayId, guest: b.guest, remaining: Math.max(0, b.remaining), deposit: securityDepositFor(nightsBetween(b.rawCheckIn, b.rawCheckOut), undefined, depositRates), method: "Cash", busy: false });
+  const openCheckIn = (b: { id: string; displayId: string; guest: string; remaining: number; deposit: number; rawCheckIn?: unknown; rawCheckOut?: unknown }) =>
+    setCheckIn({ open: true, id: b.id, displayId: b.displayId, guest: b.guest, remaining: Math.max(0, b.remaining), deposit: b.deposit > 0 ? b.deposit : securityDepositFor(nightsBetween(b.rawCheckIn, b.rawCheckOut), undefined, depositRates), method: "Cash", busy: false });
   const confirmCheckIn = async () => {
+    if (checkIn.busy) return;
     setCheckIn((c) => ({ ...c, busy: true }));
     try {
       const collected = checkIn.remaining + checkIn.deposit;

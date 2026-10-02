@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
     if (type === 'ACCOUNT_LOCK') {
       try {
         const userResult = await pool.query(
-          "SELECT first_name, last_name FROM employees WHERE email = $1",
+          "SELECT first_name, last_name FROM employees WHERE LOWER(email) = LOWER(TRIM($1))",
           [email]
         );
         if (userResult.rows.length > 0) {
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
 
     // Mark previous OTPs as used
     await pool.query(
-      `UPDATE otp_verification SET is_used = true WHERE email = $1 AND otp_type = $2 AND is_used = false`,
+      `UPDATE otp_verification SET is_used = true WHERE LOWER(email) = LOWER(TRIM($1)) AND otp_type = $2 AND is_used = false`,
       [email, type]
     );
 

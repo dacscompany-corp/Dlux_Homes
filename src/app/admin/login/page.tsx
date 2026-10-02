@@ -35,11 +35,11 @@ const dbRoleToPath: Record<string, string> = {
   Cleaner: "/admin/cleaners",
 };
 
-const staticAccounts: Record<AdminRole, { email: string; password: string }> = {
-  owner:   { email: "owner@dluxhomes.com",   password: "Owner@123"  },
-  csr:     { email: "csr@dluxhomes.com",     password: "Csr@123"    },
-  cleaner: { email: "cleaner@dluxhomes.com", password: "Clean@123"  },
-};
+// A neutral hint for the email box. This used to hold the demo accounts' real
+// emails AND passwords, which shipped to every visitor's browser in the page
+// code — and suggested one fixed account per role when any number of staff
+// can now sign in.
+const EMAIL_PLACEHOLDER = "you@example.com";
 
 function RoleIcon({ role }: { role: AdminRole }) {
   if (role === "owner") {
@@ -391,7 +391,7 @@ export default function AdminLoginPage() {
                 <input
                   className="ad-input"
                   type="email"
-                  placeholder={staticAccounts[selectedRole].email}
+                  placeholder={EMAIL_PLACEHOLDER}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   autoComplete="email"
