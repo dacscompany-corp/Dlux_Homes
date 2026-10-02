@@ -2190,7 +2190,20 @@ export const getAllBookings = async (
           FROM booking_guests g
           WHERE g.booking_id = b.id
             AND g.id <> (SELECT id FROM booking_guests WHERE booking_id = b.id ORDER BY guest_index, id LIMIT 1)
-        ), '[]'::json) AS additional_guests
+        ), '[]'::json) AS additional_guests,
+        -- The add-ons the guest picked, so the admin booking board can list
+        -- them instead of showing only bp.add_ons_total.
+        COALESCE((
+          SELECT json_agg(json_build_object(
+            'name',     a.name,
+            'price',    a.price,
+            'quantity', a.quantity,
+            'status',   a.status,
+            'notes',    a.notes
+          ) ORDER BY a.name)
+          FROM booking_add_ons a
+          WHERE a.booking_id = b.id
+        ), '[]'::json) AS add_ons
       FROM booking b
       LEFT JOIN booking_guests bg ON b.id = bg.booking_id
       LEFT JOIN booking_payments bp ON b.id = bp.booking_id
