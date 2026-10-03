@@ -7,12 +7,11 @@ import ImageThumb from "@/components/ImageThumb";
 import { MonthNavigator, currentMonthKey } from "@/components/admin/owners/MonthNavigator";
 import { useGetOverheadDashboardQuery } from "@/redux/api/overheadApi";
 import { useSession } from "next-auth/react";
-import { BarChart3, Calendar, CalendarOff, Sparkles, CreditCard, Headphones, UsersRound, Handshake, Plus, Trash2, Power, Pencil, X, Moon, Sun } from "lucide-react";
+import { BarChart3, Calendar, CalendarOff, CreditCard, Headphones, UsersRound, Handshake, Plus, Trash2, Power, Pencil, X, Moon, Sun } from "lucide-react";
 import { useGetAnalyticsSummaryQuery, useGetMonthlyRevenueQuery, useGetRevenueByRoomQuery } from "@/redux/api/analyticsApi";
 import { useGetBookingsQuery } from "@/redux/api/bookingsApi";
 import { useGetBlockedDatesQuery, useCreateBlockedDateMutation, useDeleteBlockedDateMutation } from "@/redux/api/blockedDatesApi";
 import { useGetHavensQuery } from "@/redux/api/roomApi";
-import { useGetCleaningTasksQuery } from "@/redux/api/cleanersApi";
 import { useGetAdminUsersQuery } from "@/redux/api/adminUsersApi";
 import { useGetPartnersQuery } from "@/redux/api/partnersApi";
 import { COLOR, fmt12h, resolveDayCell, stayKind, type DayBooking, type DayCell } from "@/lib/ownerCalendarDay";
@@ -1073,31 +1072,6 @@ export function BlockedDatesSection() {
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </td>
-            </tr>
-          ))}
-        </Table>
-      )}
-    </div>
-  );
-}
-
-// ── 4. Cleaning Management ────────────────────────────────────────────────
-export function CleaningManagementSection() {
-  const { data: tasksData } = useGetCleaningTasksQuery();
-  const rows = dataOf(tasksData);
-  const tone = (s: string) => (s === "cleaned" || s === "inspected" ? "good" : s === "in-progress" ? "neutral" : "warn");
-  return (
-    <div>
-      <SectionHead title="Cleaning Management" icon={Sparkles} sub="Turnover tasks across all havens" />
-      {rows.length === 0 ? <Empty label="No cleaning tasks yet — they appear after bookings are made." /> : (
-        <Table headers={["Haven", "Guest", "Cleaner", "Window", "Status"]}>
-          {rows.map((t, i) => (
-            <tr key={String(t.cleaning_id ?? i)} style={{ borderTop: i > 0 ? "1px solid #F7F0E3" : "none" }}>
-              <td className="px-4 py-3.5 text-sm" style={{ color: "#1a1a1a" }}>{String(t.haven ?? "—")}</td>
-              <td className="px-4 py-3.5 text-sm" style={{ color: "#5a4a3a" }}>{`${t.guest_first_name ?? ""} ${t.guest_last_name ?? ""}`.trim() || "—"}</td>
-              <td className="px-4 py-3.5 text-sm" style={{ color: "#5a4a3a" }}>{`${t.cleaner_first_name ?? ""} ${t.cleaner_last_name ?? ""}`.trim() || "Unassigned"}</td>
-              <td className="px-4 py-3.5 text-sm" style={{ color: "#8B6344" }}>{t.check_in_time && t.check_out_time ? `${t.check_in_time}–${t.check_out_time}` : "—"}</td>
-              <td className="px-4 py-3.5"><Pill text={String(t.cleaning_status ?? "pending").replace("-", " ")} tone={tone(String(t.cleaning_status))} /></td>
             </tr>
           ))}
         </Table>
