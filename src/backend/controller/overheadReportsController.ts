@@ -127,15 +127,31 @@ export async function getDashboard(req: NextRequest): Promise<NextResponse> {
         [`${year}-01-01`, `${year}-12-01`],
       ),
       // Cash layer for the month: settled, still owed, and of that, overdue.
+      // Works from the payments actually recorded, not the period status: a
+      // part-paid bill stays 'scheduled' until payments cover it, so going by
+      // status counted its partial payment as ₱0 paid and the whole bill as
+      // owed/overdue. A 'paid' period counts in full even if its payments
+      // were recorded short (e.g. marked paid before the payment log existed),
+      // and an overpayment never counts beyond the amount due.
       pool.query<{ paid: string; unpaid: string; overdue: string }>(
-        `SELECT
-           COALESCE(SUM(CASE WHEN p.status = 'paid' THEN p.amount_due END), 0)::numeric AS paid,
-           COALESCE(SUM(CASE WHEN p.status = 'scheduled' THEN p.amount_due END), 0)::numeric AS unpaid,
-           COALESCE(SUM(CASE WHEN p.status = 'scheduled'
-                              AND p.due_date < ${TODAY_SQL}
-                         THEN p.amount_due END), 0)::numeric AS overdue
-         FROM overhead_expense_periods p
-        WHERE p.accrual_month = $1::date AND p.status <> 'cancelled'`,
+        `WITH per AS (
+           SELECT p.amount_due, p.due_date,
+                  CASE WHEN p.status = 'paid' THEN p.amount_due
+                       ELSE LEAST(p.amount_due, COALESCE(pay.total, 0)) END AS settled
+             FROM overhead_expense_periods p
+             LEFT JOIN (
+               SELECT period_id, SUM(amount) AS total
+                 FROM overhead_expense_payments
+                GROUP BY period_id
+             ) pay ON pay.period_id = p.id
+            WHERE p.accrual_month = $1::date AND p.status <> 'cancelled'
+         )
+         SELECT
+           COALESCE(SUM(settled), 0)::numeric AS paid,
+           COALESCE(SUM(amount_due - settled), 0)::numeric AS unpaid,
+           COALESCE(SUM(CASE WHEN due_date < ${TODAY_SQL}
+                             THEN amount_due - settled END), 0)::numeric AS overdue
+           FROM per`,
         [`${month}-01`],
       ),
       pool.query<{ name: string; amount: string }>(
