@@ -614,8 +614,15 @@ export const authOptions: NextAuthOptions = {
       }
     },
 
-    async jwt({ token, user, account }) {
+    async jwt({ token, user, account, trigger, session }) {
       try {
+        // A staff member renamed themselves from their profile page
+        // (useSession().update({ name })). Only the display name is taken from
+        // the client — id and role never change this way.
+        if (trigger === "update") {
+          const name = (session as { name?: unknown } | undefined)?.name;
+          if (typeof name === "string" && name.trim()) token.name = name.trim().slice(0, 200);
+        }
         if (user) {
           token.id = user.id;
           token.role = (user as { role?: string }).role;

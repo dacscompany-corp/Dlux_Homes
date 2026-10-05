@@ -38,9 +38,11 @@ import {
   LayoutDashboard, ClipboardList, MapPin, CheckSquare, AlertTriangle,
   Bell, Menu, X, LogOut, Clock, CheckCircle2, Circle,
   AlertCircle, Building2, MessageSquare, CalendarDays, BookOpen,
-  Camera, Phone, Mail, Shield, Star, ChevronDown, ChevronRight, LifeBuoy, Languages,
+  Camera, Mail, Shield, ChevronDown, ChevronRight, LifeBuoy, Languages,
 } from "lucide-react";
 import { useSignedInStaff } from "@/components/admin/useSignedInStaff";
+import StaffAccountPanel from "@/components/admin/cleaners/StaffAccountPanel";
+import CleanerMonthCalendar from "@/components/admin/cleaners/CleanerMonthCalendar";
 
 // Simplified sidebar (owner spec, 2026-09-22): five top-level items —
 // Dashboard, Tasks, Schedule, Messages, Support. "Tasks" and "Support" are
@@ -950,7 +952,7 @@ export default function CleanerDesktopPortal() {
 
           {/* ── Report an Issue ── */}
           {activeNav === "Report an Issue" && (
-            <div className="max-w-lg">
+            <div className="max-w-2xl">
               <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16", marginBottom: 24 }}>Report an Issue</h2>
               {issueSubmitted ? (
                 <div className="border p-8 text-center" style={{ backgroundColor: "#d1fae5", borderColor: "#6ee7b7" }}>
@@ -1062,45 +1064,62 @@ export default function CleanerDesktopPortal() {
 
           {/* ── My Schedule ── */}
           {activeNav === "My Schedule" && (
-            <div className="space-y-4">
-              <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16", marginBottom: 8 }}>My Schedule</h2>
+            <div className="space-y-6">
+              <div>
+                <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>My Schedule</h2>
+                <p className="text-sm mt-1" style={{ color: "#8B6344" }}>Your cleanings, placed on the day the guest checks out.</p>
+              </div>
               <CleanerCalendarCard size="desktop" />
-              <p className="text-sm" style={{ color: "#8B6344" }}>
-                Your upcoming and unfinished cleanings, by the day the guest checks out.
-              </p>
-              {tasksLoading ? (
-                <p className="text-sm border p-5" style={{ color: "#8B6344", borderColor: "#ece5d4" }}>Loading your schedule…</p>
-              ) : noData ? null : schedule.length === 0 ? (
-                <p className="text-sm border p-5" style={{ color: "#8B6344", borderColor: "#ece5d4" }}>
-                  Nothing scheduled. Rooms appear here as soon as a booking is confirmed and assigned to you.
-                </p>
-              ) : schedule.map((day) => (
-                <div key={day.day.getTime()} className="border overflow-hidden" style={{ borderColor: "#ece5d4" }}>
-                  <div className="px-5 py-3 border-b" style={{ backgroundColor: "#F7F0E3", borderColor: "#ece5d4" }}>
-                    <p className="font-bold text-sm" style={{ color: "#8a6a2f" }}>
-                      {day.day.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
-                      {day.isToday ? " (Today)" : day.isTomorrow ? " (Tomorrow)" : ""}
-                    </p>
-                  </div>
-                  <div className="divide-y" style={{ borderColor: "#F7F0E3" }}>
-                    {day.tasks.map((task) => {
-                      const st = statusConfig[task.status] || statusConfig.pending;
-                      return (
-                        <div key={task.id} className="flex items-center gap-3 px-5 py-3.5 transition-colors"
-                          onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
-                          onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
-                          <Clock className="w-4 h-4 flex-shrink-0" style={{ color: "#D4BFA0" }} />
-                          <span className="text-sm flex-1 min-w-0" style={{ color: "#5a4a3a" }}>
-                            {task.room} — {task.dueAt ? task.dueAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "—"}
-                            <span style={{ color: "#8B6344" }}> · {task.floor}</span>
-                          </span>
-                          <span className="text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0" style={{ backgroundColor: st.bg, color: st.color }}>{st.label}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
+
+              {/* Calendar beside the Upcoming list — the same two-column,
+                  serif-headed layout the Dashboard uses. */}
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+                <div className="space-y-4">
+                  <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>Calendar</h2>
+                  {tasksLoading ? (
+                    <p className="text-sm border p-5" style={{ color: "#8B6344", borderColor: "#ece5d4" }}>Loading your calendar…</p>
+                  ) : noData ? null : (
+                    <CleanerMonthCalendar tasks={assignments} statusConfig={statusConfig} />
+                  )}
                 </div>
-              ))}
+
+                <div className="space-y-4">
+                  <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>Upcoming</h2>
+                  {tasksLoading ? (
+                    <p className="text-sm border p-5" style={{ color: "#8B6344", borderColor: "#ece5d4" }}>Loading your schedule…</p>
+                  ) : noData ? null : schedule.length === 0 ? (
+                    <p className="text-sm border p-5" style={{ color: "#8B6344", borderColor: "#ece5d4" }}>
+                      Nothing scheduled. Rooms appear here as soon as a booking is confirmed and assigned to you.
+                    </p>
+                  ) : schedule.map((day) => (
+                    <div key={day.day.getTime()} className="border overflow-hidden" style={{ borderColor: "#ece5d4" }}>
+                      <div className="px-5 py-3 border-b" style={{ backgroundColor: "#F7F0E3", borderColor: "#ece5d4" }}>
+                        <p className="font-bold text-sm" style={{ color: "#8a6a2f" }}>
+                          {day.day.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+                          {day.isToday ? " (Today)" : day.isTomorrow ? " (Tomorrow)" : ""}
+                        </p>
+                      </div>
+                      <div className="divide-y" style={{ borderColor: "#F7F0E3" }}>
+                        {day.tasks.map((task) => {
+                          const st = statusConfig[task.status] || statusConfig.pending;
+                          return (
+                            <div key={task.id} className="flex items-center gap-3 px-5 py-3.5 transition-colors"
+                              onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
+                              onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
+                              <Clock className="w-4 h-4 flex-shrink-0" style={{ color: "#D4BFA0" }} />
+                              <span className="text-sm flex-1 min-w-0" style={{ color: "#5a4a3a" }}>
+                                {task.room} — {task.dueAt ? task.dueAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "—"}
+                                <span style={{ color: "#8B6344" }}> · {task.floor}</span>
+                              </span>
+                              <span className="text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0" style={{ backgroundColor: st.bg, color: st.color }}>{st.label}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
 
@@ -1165,7 +1184,7 @@ export default function CleanerDesktopPortal() {
 
           {/* ── Profile ── */}
           {activeNav === "Profile" && (
-            <div className="max-w-lg">
+            <div className="max-w-2xl">
               <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16", marginBottom: 24 }}>My Profile</h2>
               <div className="border p-6 mb-4" style={{ borderColor: "#ece5d4" }}>
                 <div className="flex items-center gap-4 mb-6">
@@ -1180,11 +1199,8 @@ export default function CleanerDesktopPortal() {
                 </div>
                 <div className="space-y-3">
                   {[
-                    { icon: Mail,     label: "Email",    value: me.email || "—" },
-                    { icon: Phone,    label: "Phone",    value: "+63 917 234 5678" },
-                    { icon: Building2,label: "Location", value: "Mother Ignacia Ave, Diliman, QC" },
-                    { icon: Shield,   label: "Role",     value: "Cleaner — Housekeeping Staff" },
-                    { icon: Star,     label: "Rating",   value: "4.9 / 5.0 (32 reviews)" },
+                    { icon: Mail,   label: "Email", value: me.email || "—" },
+                    { icon: Shield, label: "Role",  value: "Cleaner — Housekeeping Staff" },
                   ].map((row) => {
                     const Icon = row.icon;
                     return (
@@ -1197,13 +1213,9 @@ export default function CleanerDesktopPortal() {
                   })}
                 </div>
               </div>
-              <button className="w-full py-3 rounded-2xl text-sm font-semibold border cursor-pointer transition-colors"
-                style={{ color: "#8a6a2f", borderColor: "#D4BFA0", backgroundColor: "#F7F0E3" }}
-                onClick={() => toast("Your profile is managed by the Owner. Contact them to update your details.", { icon: "ℹ️" })}
-                onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#EDE0CE"}
-                onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}>
-                Edit Profile
-              </button>
+              {/* The account itself is created by the Owner/CSR; the cleaner
+                  edits their own contact details and password from here. */}
+              <StaffAccountPanel size="desktop" />
             </div>
           )}
 
