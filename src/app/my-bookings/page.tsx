@@ -120,15 +120,19 @@ export default function MyBookingsPage() {
   const { data: session, status } = useSession();
   const userId = session?.user?.id;
   const [bookings, setBookings] = useState<BookingRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Which session the current `bookings` were fetched for. Loading is derived
+  // (rather than set at the top of the effect) so a session change shows the
+  // skeleton again without a synchronous setState inside the effect.
+  const fetchKey = status === "loading" ? null : (userId ?? "guest");
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const loading = fetchKey === null || loadedKey !== fetchKey;
   const [tab, setTab] = useState<"upcoming" | "past">("upcoming");
 
   useEffect(() => {
     // Wait until NextAuth resolves the session, otherwise we'd fetch with an
     // unknown userId and briefly render the empty state before account data loads.
-    if (status === "loading") return;
+    if (fetchKey === null) return;
     let active = true;
-    setLoading(true);
     // Account bookings (works across devices) + legacy localStorage bookings.
     const ids = getMyBookingIds();
     const localFetches = ids.map((id) =>
@@ -144,10 +148,10 @@ export default function MyBookingsPage() {
       const byId = new Map<string, Record<string, unknown>>();
       rows.forEach((d) => { const id = String(d.booking_id ?? ""); if (id) byId.set(id, d); });
       setBookings(Array.from(byId.values()).map(mapBooking));
-      setLoading(false);
+      setLoadedKey(fetchKey);
     });
     return () => { active = false; };
-  }, [userId, status]);
+  }, [fetchKey, userId]);
 
   // A booking is "past" once it reaches a terminal status OR its stay has ended
   // (check-out date in the past) — an approved booking whose dates already

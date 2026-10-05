@@ -43,8 +43,9 @@ const summaryStatsQuery = (where: string) => `
     -- figure. Both share the same booking-status filter passed in via the
     -- where clause, so neither counts a rejected/cancelled booking.
     -- total_amount lives on booking_payments (one row per booking), not on
-    -- the booking row itself.
-    COALESCE(SUM(bp.total_amount), 0) as total_gross_revenue,
+    -- the booking row itself. Add-on charges (add_ons_total, already folded
+    -- into total_amount) are excluded so gross reflects accommodation only.
+    COALESCE(SUM(GREATEST(0, bp.total_amount - COALESCE(bp.add_ons_total, 0))), 0) as total_gross_revenue,
     COUNT(DISTINCT b.id) as total_bookings,
     COUNT(DISTINCT COALESCE(
       b.user_id::text,
@@ -156,7 +157,8 @@ export interface MonthlyRevenue {
   month: string;
   revenue: number;
   // Gross: full booked value of every booking that month, before any payment
-  // is collected. revenue (above) stays the collected-cash figure.
+  // is collected, excluding add-on charges. revenue (above) stays the
+  // collected-cash figure.
   gross_revenue: number;
 }
 
@@ -171,7 +173,7 @@ export async function fetchMonthlyRevenue(months: string = '6'): Promise<Monthly
         WHEN bp.payment_status = 'approved_full_payment' THEN bp.total_amount
         ELSE 0
       END), 0) as revenue,
-      COALESCE(SUM(bp.total_amount), 0) as gross_revenue
+      COALESCE(SUM(GREATEST(0, bp.total_amount - COALESCE(bp.add_ons_total, 0))), 0) as gross_revenue
     FROM ${BOOKING_TABLE} b
     LEFT JOIN booking_payments bp ON b.id = bp.booking_id
     WHERE b.check_in_date >= NOW() - INTERVAL '${months} months'
@@ -349,7 +351,7 @@ export const getMonthlyRevenue = async (req: NextRequest): Promise<NextResponse>
           WHEN bp.payment_status = 'approved_full_payment' THEN bp.total_amount
           ELSE 0
         END), 0) as revenue,
-        COALESCE(SUM(bp.total_amount), 0) as gross_revenue
+        COALESCE(SUM(GREATEST(0, bp.total_amount - COALESCE(bp.add_ons_total, 0))), 0) as gross_revenue
       FROM ${BOOKING_TABLE} b
       LEFT JOIN booking_payments bp ON b.id = bp.booking_id
       WHERE b.check_in_date >= NOW() - INTERVAL '${months} months'

@@ -7,12 +7,11 @@ import ImageThumb from "@/components/ImageThumb";
 import { MonthNavigator, currentMonthKey } from "@/components/admin/owners/MonthNavigator";
 import { useGetOverheadDashboardQuery } from "@/redux/api/overheadApi";
 import { useSession } from "next-auth/react";
-import { BarChart3, Calendar, CalendarOff, Sparkles, CreditCard, Headphones, UsersRound, Handshake, Plus, Trash2, Power, Pencil, X, Moon, Sun } from "lucide-react";
+import { BarChart3, Calendar, CalendarOff, CreditCard, Headphones, UsersRound, Handshake, Plus, Trash2, Power, Pencil, X, Moon, Sun } from "lucide-react";
 import { useGetAnalyticsSummaryQuery, useGetMonthlyRevenueQuery, useGetRevenueByRoomQuery } from "@/redux/api/analyticsApi";
 import { useGetBookingsQuery } from "@/redux/api/bookingsApi";
 import { useGetBlockedDatesQuery, useCreateBlockedDateMutation, useDeleteBlockedDateMutation } from "@/redux/api/blockedDatesApi";
 import { useGetHavensQuery } from "@/redux/api/roomApi";
-import { useGetCleaningTasksQuery } from "@/redux/api/cleanersApi";
 import { useGetAdminUsersQuery } from "@/redux/api/adminUsersApi";
 import { useGetPartnersQuery } from "@/redux/api/partnersApi";
 import { COLOR, fmt12h, resolveDayCell, stayKind, type DayBooking, type DayCell } from "@/lib/ownerCalendarDay";
@@ -410,6 +409,19 @@ export function BookingCalendarSection() {
     ];
     const party = counts.filter(([n]) => n > 0).map(([n, one, many]) => `${n} ${n === 1 ? one : many}`).join(" · ") || "—";
     const remaining = Number(b.remaining_balance ?? 0);
+    // Amenity passes the guest booked (Swimming Pool, Basketball Court). They
+    // are stored as add-ons, per person: quantity is how many guests use it and
+    // notes reads "Guests: A, B".
+    const addOns = (Array.isArray(b.add_ons) ? b.add_ons : [])
+      .map((a) => (a ?? {}) as Record<string, unknown>)
+      .filter((a) => a.status !== "cancelled" && a.status !== "refunded")
+      .map((a) => {
+        const qty = Number(a.quantity ?? 1) || 1;
+        return {
+          label: `${String(a.name ?? "Add-on")}${qty > 1 ? ` × ${qty}` : ""}`,
+          guests: String(a.notes ?? "").replace(/^Guests:\s*/i, ""),
+        };
+      });
 
     for (const d = new Date(start); d <= last; d.setDate(d.getDate() + 1)) {
       if (d.getFullYear() !== month.y || d.getMonth() !== month.m) continue;
@@ -423,6 +435,7 @@ export function BookingCalendarSection() {
         total: peso(Number(b.total_amount ?? b.down_payment ?? 0)),
         balance: remaining > 0 ? `${peso(remaining)} due on arrival` : "Fully paid",
         status: titleCase(String(b.status ?? "")),
+        addOns,
       });
     }
   });
@@ -844,7 +857,7 @@ export function BookingCalendarSection() {
 
                     {b.booking ? (
                       <div style={{ marginTop: 11, background: "#faf7f1", border: "1px solid #efe9dd" }}>
-                        <div className="flex items-center" style={{ gap: 12, padding: "12px 14px", borderBottom: "1px solid #efe9dd" }}>
+                        <div className="flex items-center" style={{ gap: 12, padding: "14px 16px", borderBottom: "1px solid #efe9dd" }}>
                           <span className="grid place-items-center" style={{ width: 34, height: 34, flex: "none", borderRadius: "50%", background: "#b8754a", color: "#faf7f1", fontSize: 12, fontWeight: 600 }}>{initialsOf(b.booking.name)}</span>
                           <span style={{ flex: 1, minWidth: 0, display: "block" }}>
                             <span style={{ display: "block", fontSize: 13.5, color: "#1f1b16" }}>{b.booking.name}</span>
@@ -861,13 +874,34 @@ export function BookingCalendarSection() {
                             <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 11, color: "#8a8276", whiteSpace: "nowrap" }}>{b.booking.id}</span>
                           </span>
                         </div>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", columnGap: 16, rowGap: 10, padding: "13px 14px" }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", columnGap: 20, rowGap: 16, padding: "16px 16px 18px" }}>
                           {([["Haven", b.booking.haven], ["Stay", b.booking.stay], ["Guests", b.booking.party], ["Contact", b.booking.phone], ["Total", b.booking.total], ["Balance", b.booking.balance]] as [string, string][]).map(([k, v]) => (
                             <div key={k} style={{ minWidth: 0 }}>
-                              <div style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "#a09789" }}>{k}</div>
-                              <div style={{ fontSize: 12.5, color: "#1f1b16", marginTop: 3 }}>{v}</div>
+                              <div style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "#a09789", lineHeight: 1.2 }}>{k}</div>
+                              <div style={{ fontSize: 12.5, color: "#1f1b16", marginTop: 5, lineHeight: 1.45, overflowWrap: "anywhere" }}>{v}</div>
                             </div>
                           ))}
+                          {/* Full width so a long list doesn't squeeze into one column. */}
+                          <div style={{ gridColumn: "1 / -1", minWidth: 0, paddingTop: 14, borderTop: "1px solid #efe9dd" }}>
+                            <div style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "#a09789", lineHeight: 1.2 }}>Amenities</div>
+                            {b.booking.addOns && b.booking.addOns.length > 0 ? (
+                              <div className="flex flex-col" style={{ gap: 8, marginTop: 7 }}>
+                                {b.booking.addOns.map((a, i) => (
+                                  <div key={`${a.label}-${i}`} style={{ minWidth: 0 }}>
+                                    <span className="inline-flex items-center" style={{ gap: 6, fontSize: 12, color: "#7a4e2e", background: "#f3e6d6", border: "1px solid #e6d2bb", borderRadius: 999, padding: "3px 10px", lineHeight: 1.4 }}>
+                                      <span aria-hidden>{/pool/i.test(a.label) ? "🏊" : /basketball/i.test(a.label) ? "🏀" : "＋"}</span>
+                                      {a.label}
+                                    </span>
+                                    {a.guests && (
+                                      <div style={{ fontSize: 11.5, color: "#8a8276", marginTop: 4, lineHeight: 1.4, overflowWrap: "anywhere" }}>{a.guests}</div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div style={{ fontSize: 12.5, color: "#a09789", marginTop: 5 }}>None</div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     ) : (
@@ -1038,31 +1072,6 @@ export function BlockedDatesSection() {
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </td>
-            </tr>
-          ))}
-        </Table>
-      )}
-    </div>
-  );
-}
-
-// ── 4. Cleaning Management ────────────────────────────────────────────────
-export function CleaningManagementSection() {
-  const { data: tasksData } = useGetCleaningTasksQuery();
-  const rows = dataOf(tasksData);
-  const tone = (s: string) => (s === "cleaned" || s === "inspected" ? "good" : s === "in-progress" ? "neutral" : "warn");
-  return (
-    <div>
-      <SectionHead title="Cleaning Management" icon={Sparkles} sub="Turnover tasks across all havens" />
-      {rows.length === 0 ? <Empty label="No cleaning tasks yet — they appear after bookings are made." /> : (
-        <Table headers={["Haven", "Guest", "Cleaner", "Window", "Status"]}>
-          {rows.map((t, i) => (
-            <tr key={String(t.cleaning_id ?? i)} style={{ borderTop: i > 0 ? "1px solid #F7F0E3" : "none" }}>
-              <td className="px-4 py-3.5 text-sm" style={{ color: "#1a1a1a" }}>{String(t.haven ?? "—")}</td>
-              <td className="px-4 py-3.5 text-sm" style={{ color: "#5a4a3a" }}>{`${t.guest_first_name ?? ""} ${t.guest_last_name ?? ""}`.trim() || "—"}</td>
-              <td className="px-4 py-3.5 text-sm" style={{ color: "#5a4a3a" }}>{`${t.cleaner_first_name ?? ""} ${t.cleaner_last_name ?? ""}`.trim() || "Unassigned"}</td>
-              <td className="px-4 py-3.5 text-sm" style={{ color: "#8B6344" }}>{t.check_in_time && t.check_out_time ? `${t.check_in_time}–${t.check_out_time}` : "—"}</td>
-              <td className="px-4 py-3.5"><Pill text={String(t.cleaning_status ?? "pending").replace("-", " ")} tone={tone(String(t.cleaning_status))} /></td>
             </tr>
           ))}
         </Table>

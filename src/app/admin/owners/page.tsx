@@ -27,7 +27,7 @@ import { BUNDLE_TIER1_LABEL, BUNDLE_TIER2_LABEL, BUNDLE_TIER3_LABEL, BUNDLE_TIER
 import PromotionModal, { type PromotionFormState } from "@/components/admin/PromotionModal";
 import { checkInOpensLabel, isCheckInOpen } from "@/lib/checkin-window";
 import {
-  AnalyticsSection, BookingCalendarSection, BlockedDatesSection, CleaningManagementSection,
+  AnalyticsSection, BookingCalendarSection, BlockedDatesSection,
   PaymentMethodsSection, GuestAssistanceSection, UserManagementSection, PartnerManagementSection,
   PricingCalendarSection, Empty,
 } from "@/components/admin/owners/OwnerModules";
@@ -110,7 +110,6 @@ const navItems = [
   { icon: MessageSquare, label: "Communication" },
   { icon: Users, label: "Team" },
   { icon: Settings, label: "System" },
-  { icon: Sparkles, label: "Cleaning Operations" },
 ];
 
 const statusConfig: Record<string, { label: string; color: string; bg: string; dot: string }> = {
@@ -1169,10 +1168,12 @@ export default function OwnerDashboard() {
                 if (booking) setBookingModal(booking);
                 else if (ref) toast(`Booking ${ref} isn't in the list any more.`, { icon: "ℹ️" });
               } else if (kind.includes("report") || kind.includes("issue")) {
-                setActiveNav("Cleaning Operations");
+                setActiveNav("Property");
+                setPropertyTab("cleaning");
                 setCleaningFocus((f) => ({ tab: "reports", ref: null, nonce: f.nonce + 1 }));
               } else if (kind.includes("clean")) {
-                setActiveNav("Cleaning Operations");
+                setActiveNav("Property");
+                setPropertyTab("cleaning");
                 setCleaningFocus((f) => ({ tab: "tasks", ref, nonce: f.nonce + 1 }));
               } else if (kind.includes("message")) {
                 setActiveNav("Communication"); setCommTab("messages");
@@ -2145,8 +2146,11 @@ export default function OwnerDashboard() {
 
           {/* ── Property ── */}
           {activeNav === "Property" && (<>
-            {tabBar([{ id: "havens", label: "Haven Management", icon: Building2 }, { id: "maintenance", label: "Maintenance", icon: Wrench }, { id: "cleaning", label: "Cleaning Management", icon: Sparkles }], propertyTab, (id) => setPropertyTab(id as "havens" | "maintenance" | "cleaning"))}
-            {propertyTab === "cleaning" && <CleaningManagementSection />}
+            {tabBar([{ id: "havens", label: "Haven Management", icon: Building2 }, { id: "maintenance", label: "Maintenance", icon: Wrench }, { id: "cleaning", label: "Cleaning Operations", icon: Sparkles }], propertyTab, (id) => setPropertyTab(id as "havens" | "maintenance" | "cleaning"))}
+            {propertyTab === "cleaning" && (
+              <CleaningOperationsSection key={cleaningFocus.nonce}
+                initialTab={cleaningFocus.tab} focusBookingRef={cleaningFocus.ref} />
+            )}
             {propertyTab === "havens" && (
               <div className="flex justify-end mb-4">
                 <button type="button" onClick={openHavenWizard} className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white cursor-pointer" style={{ backgroundColor: "#1f1b16" }}>
@@ -2473,11 +2477,6 @@ export default function OwnerDashboard() {
               </div>
             )}
           </>)}
-
-          {activeNav === "Cleaning Operations" && (
-            <CleaningOperationsSection key={cleaningFocus.nonce}
-              initialTab={cleaningFocus.tab} focusBookingRef={cleaningFocus.ref} />
-          )}
 
         </main>
       </div>

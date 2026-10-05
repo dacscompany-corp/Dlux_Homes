@@ -34,6 +34,9 @@ export type DayBooking = {
   name: string; id: string; kind: StayKind; checkInTime: string; checkOutTime: string;
   isCheckIn: boolean; isCheckOut: boolean; isMiddle: boolean;
   haven: string; party: string; phone: string; stay: string; total: string; balance: string; status: string;
+  // Amenity passes / add-ons the guest booked (e.g. Swimming Pool × 2 and who
+  // it's for), for the day-detail panel.
+  addOns?: { label: string; guests: string }[];
 };
 
 // Solid tan for Daycation, dark maroon-brown for Nightcation, slate for a full

@@ -120,10 +120,27 @@ export interface Checklist {
   categories: ChecklistCategory[];
 }
 
+// A cleaning job currently offered to the signed-in cleaner. Offers are
+// short-lived: once expires_at passes, the dispatch sweep moves the job on to
+// the next cleaner. null means the offer has no deadline.
+export interface AvailableJob extends Pick<
+  CleaningTask,
+  "cleaning_id" | "booking_id" | "haven" | "haven_id" | "check_out_date" | "check_out_time" | "scheduled_for" | "adults" | "children"
+> {
+  offered_at: string | null;
+  expires_at: string | null;
+}
+
+export interface AvailableJobsResponse {
+  jobs: AvailableJob[];
+  /** How long each offer stays open before it moves on, in minutes. */
+  offerPeriodMinutes: number;
+}
+
 export const cleanersApi = createApi({
   reducerPath: "cleanersApi",
   baseQuery: fetchBaseQuery({ baseUrl: "/api/admin/cleaners" }),
-  tagTypes: ["CleaningTask", "CleaningHistory", "Checklist", "CleanerCalendar"],
+  tagTypes: ["CleaningTask", "CleaningHistory", "Checklist", "CleanerCalendar", "AvailableJob"],
   endpoints: (builder) => ({
     // Get (or lazily create) the checklist for one assignment's (haven, booking).
     getChecklist: builder.query<Checklist, { havenId: string; bookingId: string }>({
@@ -360,6 +377,34 @@ export const cleanersApi = createApi({
       invalidatesTags: ["CleanerCalendar"],
     }),
 
+    // Jobs offered to the signed-in cleaner. The server runs its dispatch
+    // sweep on each call, so polling this is also what moves lapsed offers on.
+    getAvailableJobs: builder.query<AvailableJobsResponse, void>({
+      query() {
+        return { url: "/available-jobs" };
+      },
+      transformResponse: (response: { success: boolean; data: AvailableJobsResponse }) =>
+        response.data ?? { jobs: [], offerPeriodMinutes: 10 },
+      providesTags: ["AvailableJob"],
+    }),
+
+    // Claim an offered job. Fails with code "taken" or "expired" when another
+    // cleaner got there first or the offer lapsed.
+    acceptJob: builder.mutation<CleaningTask, string>({
+      query(taskId) {
+        return { url: `/tasks/${taskId}/accept`, method: "PUT" };
+      },
+      invalidatesTags: ["AvailableJob", "CleaningTask"],
+    }),
+
+    // Pass on an offered job so it goes to the next cleaner.
+    skipJob: builder.mutation<{ cleaning_id: string }, string>({
+      query(taskId) {
+        return { url: `/tasks/${taskId}/skip`, method: "PUT" };
+      },
+      invalidatesTags: ["AvailableJob"],
+    }),
+
     // Status history for one task's detail view.
     getCleaningHistory: builder.query<CleaningHistoryEntry[], string>({
       query(taskId) {
@@ -391,4 +436,7 @@ export const {
   useGetKnownCategoriesQuery,
   useGetMyCleaningCalendarQuery,
   useSetupMyCleaningCalendarMutation,
+  useGetAvailableJobsQuery,
+  useAcceptJobMutation,
+  useSkipJobMutation,
 } = cleanersApi;
