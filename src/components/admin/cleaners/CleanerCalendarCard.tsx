@@ -28,13 +28,31 @@ export default function CleanerCalendarCard({
   size?: "mobile" | "desktop";
 }) {
   const t = CLEANER_STRINGS[lang];
-  const { data, isLoading, isError } = useGetMyCleaningCalendarQuery();
+  const { data, isLoading, isError, isFetching, refetch } = useGetMyCleaningCalendarQuery();
   const [setup, { isLoading: working }] = useSetupMyCleaningCalendarMutation();
   const [resent, setResent] = useState(false);
   const big = size === "mobile";
 
   if (isLoading) return null;
-  if (isError || !data || !data.isCleaner) return null;
+  // A failed load used to hide the card outright, which looked like the
+  // feature didn't exist. Say so and offer a retry instead.
+  if (isError || !data) {
+    return (
+      <div style={{ background: "#fff", border: `1px solid ${LINE}`, borderRadius: big ? 16 : 0, padding: 18, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <CalendarDays style={{ width: big ? 22 : 18, height: big ? 22 : 18, color: GOLD_INK, flexShrink: 0 }} strokeWidth={2} />
+        <span style={{ flex: 1, minWidth: 160, fontSize: big ? 16 : 13, color: MUTED }}>{t.calLoadFailed}</span>
+        <button type="button" disabled={isFetching} onClick={() => refetch()} style={{
+          height: big ? 44 : 32, padding: "0 14px", borderRadius: big ? 12 : 6, border: `1px solid ${LINE}`,
+          background: "#fff", color: GOLD_INK, font: `600 ${big ? 15 : 13}px var(--font-geist-sans), system-ui, sans-serif`,
+          display: "inline-flex", alignItems: "center", gap: 6, cursor: isFetching ? "wait" : "pointer", opacity: isFetching ? 0.6 : 1,
+        }}>
+          <RefreshCw style={{ width: 14, height: 14 }} />{t.retry}
+        </button>
+      </div>
+    );
+  }
+  // Only cleaners have a cleaning calendar; this is not an error for anyone else.
+  if (!data.isCleaner) return null;
 
   const run = async (resend: boolean) => {
     try {

@@ -55,6 +55,7 @@ import {
 import { useAssignmentChecklist, gateErrorMessage } from "@/components/admin/cleaners/useAssignmentChecklist";
 import { bookingRefFrom, sameBookingRef } from "@/components/admin/NotificationBell";
 import CleanerCalendarCard from "@/components/admin/cleaners/CleanerCalendarCard";
+import StaffAccountPanel from "@/components/admin/cleaners/StaffAccountPanel";
 import { canStartCleaning, cleaningDueAt, stayKindFor, type StayKind } from "@/lib/cleaning-schedule";
 import { translateCategory, translateTask } from "@/lib/checklist-translations";
 import {
@@ -114,7 +115,7 @@ const LANG_KEY = "dlux-cleaner-lang";
 // the bottom — the Messages reply bar — sits above it instead of under it.
 const TAB_BAR_CLEARANCE = 108;
 
-type Screen = "home" | "room" | "done" | "problem" | "messages" | "notifications" | "help";
+type Screen = "home" | "room" | "done" | "problem" | "messages" | "notifications" | "help" | "account";
 type CleanStatus = "pending" | "in-progress" | "awaiting-inspection" | "ready";
 type ProblemType = "broken" | "dirty" | "missing" | "other";
 
@@ -1400,6 +1401,36 @@ export default function CleanerMobilePortal() {
               }}>
                 <LogOut className="w-4 h-4" />{t.signOut}
               </button>
+            </div>
+            <button type="button" onClick={() => setScreen("account")} style={{
+              marginTop: 10, width: "100%", minHeight: 56, padding: "0 16px", borderRadius: 16,
+              border: `1px solid ${C.creamLine}`, background: C.cream, color: C.goldInk,
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+              font: `600 17px ${SANS}`, cursor: "pointer", textAlign: "left",
+            }}>
+              {t.accEdit}<ChevronRight className="w-5 h-5 flex-shrink-0" strokeWidth={2} />
+            </button>
+          </div>
+        )}
+
+        {/* ═════════ MY ACCOUNT ═════════ */}
+        {screen === "account" && (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+            <div style={{
+              position: "sticky", top: 0, zIndex: 20, background: C.card, borderBottom: `1px solid ${C.line}`,
+              padding: `calc(env(safe-area-inset-top, 0px) + 10px) 12px 10px 6px`,
+              display: "flex", alignItems: "center", gap: 8,
+            }}>
+              <button type="button" onClick={() => setScreen("help")} aria-label={t.back} style={{
+                width: 44, height: 44, border: 0, borderRadius: "50%", background: "transparent",
+                color: C.ink, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0,
+              }}>
+                <ChevronLeft className="w-7 h-7" strokeWidth={2} />
+              </button>
+              <div style={{ flex: 1, minWidth: 0, fontSize: 20, fontWeight: 700 }}>{t.accTitle}</div>
+            </div>
+            <div style={{ padding: "16px 16px calc(env(safe-area-inset-bottom, 0px) + 32px)" }}>
+              <StaffAccountPanel lang={lang} size="mobile" />
             </div>
           </div>
         )}
