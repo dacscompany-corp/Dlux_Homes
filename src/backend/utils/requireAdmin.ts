@@ -85,6 +85,29 @@ async function requireRole(allowed: Set<string>): Promise<GuardResult> {
     };
   }
 
+  // A staff account deactivated in Team → Staff Management keeps its signed-in
+  // JWT until it expires, so the session alone isn't enough: look the account
+  // up and turn it away here, on every guarded route. Only an explicit
+  // 'inactive' blocks — a lookup error falls through rather than locking every
+  // employee out because of a transient DB hiccup.
+  const employeeId = (session.user as { id?: string }).id;
+  if (employeeId) {
+    try {
+      const r = await pool.query(`SELECT status FROM employees WHERE id::text = $1 LIMIT 1`, [String(employeeId)]);
+      if (r.rows[0]?.status === "inactive") {
+        return {
+          ok: false,
+          response: NextResponse.json(
+            { success: false, error: "This staff account has been deactivated.", code: "ACCOUNT_DEACTIVATED" },
+            { status: 403 },
+          ),
+        };
+      }
+    } catch (err) {
+      console.error("requireRole: staff status lookup failed:", err);
+    }
+  }
+
   return { ok: true, session: session as AuthedSession, role };
 }
 

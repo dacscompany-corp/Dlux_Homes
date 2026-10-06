@@ -61,3 +61,36 @@ export function checkRoleChange(callerRole: string | null | undefined, current: 
   }
   return { ok: true };
 }
+
+export const STAFF_STATUSES = ["active", "inactive"] as const;
+export type StaffStatus = (typeof STAFF_STATUSES)[number];
+
+/**
+ * Whether the signed-in admin may deactivate or reactivate an account.
+ * A deactivated account can't sign in and its open sessions stop working.
+ *
+ *   - nobody changes their own status (an Owner can't lock themselves out);
+ *   - only an Owner can deactivate or reactivate an Owner, same as the role rule;
+ *   - the last active Owner can't be deactivated — someone must still be able
+ *     to run the business and reactivate staff.
+ */
+export function checkStatusChange(
+  caller: { id: string | null | undefined; role: string | null | undefined },
+  target: { id: string; role: string; status: string },
+  next: unknown,
+  activeOwnerCount: number,
+): StaffCheck {
+  if (next !== "active" && next !== "inactive") {
+    return { ok: false, status: 400, error: "Status must be active or inactive." };
+  }
+  if (caller.id && String(caller.id) === String(target.id)) {
+    return { ok: false, status: 403, error: "You can't change the status of your own account." };
+  }
+  if (target.role === "Owner" && caller.role !== "Owner") {
+    return { ok: false, status: 403, error: "Only an Owner can deactivate or reactivate an Owner." };
+  }
+  if (next === "inactive" && target.role === "Owner" && target.status === "active" && activeOwnerCount <= 1) {
+    return { ok: false, status: 409, error: "This is the only active Owner — it can't be deactivated." };
+  }
+  return { ok: true };
+}

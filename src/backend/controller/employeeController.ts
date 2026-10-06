@@ -239,9 +239,12 @@ const SELF_EDITABLE_FIELDS = new Set([
   'emergency_contact_name', 'emergency_contact_phone', 'emergency_contact_relation',
 ]);
 // HR / privilege columns — only Owner/CSR may set these. This is what stops a
-// Cleaner from POSTing {"role":"Owner"} to self-escalate.
+// Cleaner from POSTing {"role":"Owner"} to self-escalate. `status` is NOT here:
+// deactivation goes only through /api/admin/employees/[id]/status, which
+// enforces its rules (not yourself, Owners only by an Owner, never the last
+// active Owner) — a generic edit would bypass them.
 const ADMIN_ONLY_FIELDS = new Set([
-  'role', 'status', 'department', 'monthly_salary', 'employment_id', 'hire_date',
+  'role', 'department', 'monthly_salary', 'employment_id', 'hire_date',
 ]);
 
 interface UpdateEmployeeAuth {

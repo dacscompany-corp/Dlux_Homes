@@ -94,13 +94,19 @@ export const authOptions: NextAuthOptions = {
           const employeeResult = await pool.query(
             // Case- and space-insensitive, like the customer login: an account
             // added as "Juan@Gmail.com" signs in as "juan@gmail.com" too.
-            "SELECT id, email, password, role, first_name, last_name, ip_address, user_agent, login_attempts FROM employees WHERE LOWER(email) = LOWER(TRIM($1)) LIMIT 1",
+            "SELECT id, email, password, role, status, first_name, last_name, ip_address, user_agent, login_attempts FROM employees WHERE LOWER(email) = LOWER(TRIM($1)) LIMIT 1",
             [credentials.email]
           );
 
           if (employeeResult.rows.length > 0) {
             const user = employeeResult.rows[0];
             console.log("✅ Employee found:", user.email, "- Role:", user.role, "- Current attempts:", user.login_attempts || 0);
+
+            // Deactivated from Team → Staff Management. Checked before the
+            // password so it applies to the OTP auto-login path too.
+            if (user.status === "inactive") {
+              throw new Error("This staff account has been deactivated. Contact the Owner if you think this is a mistake.");
+            }
 
             // 🔒 IMMEDIATE LOCK CHECK (REQUIRED)
           if ((user.login_attempts || 0) >= 3) {

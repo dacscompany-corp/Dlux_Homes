@@ -17,7 +17,7 @@ import {
 import ImageThumb from "@/components/ImageThumb";
 import { imageFileError } from "@/lib/validateImageFile";
 import { useGetHavensQuery, useCreateHavenMutation, useUpdateHavenMutation } from "@/redux/api/roomApi";
-import { useGetEmployeesQuery, useCreateEmployeeMutation } from "@/redux/api/employeeApi";
+import { useGetEmployeesQuery, useCreateEmployeeMutation, useSetEmployeeStatusMutation } from "@/redux/api/employeeApi";
 import { useGetReviewsQuery } from "@/redux/api/reviewsApi";
 import { useGetReportsQuery } from "@/redux/api/reportApi";
 import OfficeStaffInbox from "@/components/admin/messages/OfficeStaffInbox";
@@ -53,6 +53,7 @@ import {
   Star,
   BedDouble,
   UserCheck,
+  UserX,
   Menu,
   X,
   LogOut,
@@ -424,6 +425,20 @@ export default function OwnerDashboard() {
   const [havenModal, setHavenModal] = useState<AdminHaven | null>(null);
   // Generic detail modal, still used by the Staff (Team) view.
   const [detailModal, setDetailModal] = useState<{ title: string; subtitle?: string; rows: { label: string; value: string }[] } | null>(null);
+  // Team → Staff Management: the account awaiting deactivate/reactivate confirmation.
+  const [statusTarget, setStatusTarget] = useState<{ uuid: string; name: string; role: string; status: string } | null>(null);
+  const [setEmployeeStatus, { isLoading: statusSaving }] = useSetEmployeeStatusMutation();
+  const confirmStatusChange = async () => {
+    if (!statusTarget) return;
+    const next = statusTarget.status === "active" ? "inactive" : "active";
+    try {
+      await setEmployeeStatus({ id: statusTarget.uuid, status: next }).unwrap();
+      toast.success(`${statusTarget.name} ${next === "inactive" ? "deactivated" : "activated"}.`);
+      setStatusTarget(null);
+    } catch (err) {
+      toast.error((err as { data?: { error?: string } })?.data?.error || "Couldn't update this account. Try again.");
+    }
+  };
 
   // ── Command-palette search (⌘K / Ctrl+K) ──
   const [searchOpen, setSearchOpen] = useState(false);
@@ -904,6 +919,8 @@ export default function OwnerDashboard() {
   // Staff table (Team)
   const staffMembers = toRows(employeesRes).map((e) => ({
     id: String(e.employment_id || e.id || ""),
+    // The database id, for actions — `id` above is the display employment ID.
+    uuid: String(e.id ?? ""),
     name: `${e.first_name ?? ""} ${e.last_name ?? ""}`.trim() || "Staff",
     role: String(e.role ?? ""),
     email: String(e.email ?? ""),
@@ -2345,9 +2362,41 @@ export default function OwnerDashboard() {
                         </td>
                         <td className="px-4 py-3.5"><span className="text-sm" style={{ color: "#8B6344" }}>{staff.joined}</span></td>
                         <td className="px-4 py-3.5">
-                          <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={{ backgroundColor: staff.status === "active" ? "#d1fae5" : "#f3f4f6", color: staff.status === "active" ? "#065f46" : "#374151" }}>
-                            {staff.status === "active" ? "Active" : "Inactive"}
-                          </span>
+                          {staff.uuid && staff.uuid !== ownerId ? (
+                            // Two-way switch: the highlighted side is the current
+                            // status; picking the other side asks for confirmation
+                            // first, so an account can be deactivated and activated
+                            // again as often as needed.
+                            <div role="group" aria-label={`Account status for ${staff.name}`} className="inline-flex border" style={{ borderColor: "#D4BFA0" }}>
+                              {(["active", "inactive"] as const).map((opt) => {
+                                const current = staff.status === opt;
+                                const on = opt === "active"
+                                  ? { bg: "#d1fae5", fg: "#065f46" }
+                                  : { bg: "#fee2e2", fg: "#991b1b" };
+                                return (
+                                  <button key={opt} type="button" aria-pressed={current}
+                                    title={current ? `Currently ${opt}` : opt === "active" ? "Activate this account" : "Deactivate this account"}
+                                    onClick={() => { if (!current) setStatusTarget({ uuid: staff.uuid, name: staff.name, role: staff.role, status: staff.status }); }}
+                                    className="flex items-center gap-1 text-xs font-semibold px-2.5 py-1"
+                                    style={{
+                                      backgroundColor: current ? on.bg : "#fff",
+                                      color: current ? on.fg : "#a08a6c",
+                                      borderLeft: opt === "inactive" ? "1px solid #D4BFA0" : "none",
+                                      cursor: current ? "default" : "pointer",
+                                    }}>
+                                    {opt === "active" ? <UserCheck className="w-3 h-3" /> : <UserX className="w-3 h-3" />}
+                                    {opt === "active" ? "Active" : "Inactive"}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            // Your own account: shown, not switchable.
+                            <span className="text-xs font-semibold px-2.5 py-1 rounded-full" title="You can't change the status of your own account"
+                              style={{ backgroundColor: staff.status === "active" ? "#d1fae5" : "#f3f4f6", color: staff.status === "active" ? "#065f46" : "#374151" }}>
+                              {staff.status === "active" ? "Active" : "Inactive"}{staff.uuid === ownerId ? " (you)" : ""}
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-3.5">
                           <div className="flex items-center gap-1">
@@ -3223,6 +3272,48 @@ export default function OwnerDashboard() {
       })()}
 
       {/* Generic detail modal — Staff (Team) view */}
+      {statusTarget && (() => {
+        const deactivating = statusTarget.status === "active";
+        return (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+            onClick={() => { if (!statusSaving) setStatusTarget(null); }}>
+            <div role="dialog" aria-modal="true" aria-labelledby="staff-status-title" className="w-full max-w-md border p-6"
+              style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }} onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+                  style={{ backgroundColor: deactivating ? "#fee2e2" : "#d1fae5" }}>
+                  {deactivating
+                    ? <UserX className="w-5 h-5" style={{ color: "#b91c1c" }} />
+                    : <UserCheck className="w-5 h-5" style={{ color: "#059669" }} />}
+                </div>
+                <div>
+                  <h3 id="staff-status-title" className="font-bold text-lg" style={{ color: "#1a1a1a" }}>
+                    {deactivating ? "Deactivate" : "Activate"} {statusTarget.name}?
+                  </h3>
+                  <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{statusTarget.role}</p>
+                </div>
+              </div>
+              <p className="text-sm mb-6" style={{ color: "#5a4a3a", lineHeight: 1.55 }}>
+                {deactivating
+                  ? <>They&apos;ll lose access right away and won&apos;t be able to sign in{statusTarget.role === "Cleaner" ? ", and won't be given new cleaning assignments" : ""}. Their history, records and logs are kept, and you can activate the account again at any time.</>
+                  : <>They&apos;ll be able to sign in again with their existing password{statusTarget.role === "Cleaner" ? " and will be included in automatic cleaning assignment again" : ""}.</>}
+              </p>
+              <div className="flex justify-end gap-2">
+                <button type="button" disabled={statusSaving} onClick={() => setStatusTarget(null)}
+                  className="px-4 py-2 text-sm font-medium border cursor-pointer" style={{ borderColor: "#D4BFA0", color: "#8a6a2f", backgroundColor: "#fff" }}>
+                  Cancel
+                </button>
+                <button type="button" disabled={statusSaving} onClick={confirmStatusChange}
+                  className="px-4 py-2 text-sm font-medium text-white cursor-pointer"
+                  style={{ backgroundColor: deactivating ? "#b91c1c" : "#059669", opacity: statusSaving ? 0.6 : 1, cursor: statusSaving ? "wait" : "pointer" }}>
+                  {statusSaving ? "Saving…" : deactivating ? "Deactivate" : "Activate"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {detailModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setDetailModal(null)}>
           <div className="w-full max-w-md border p-6" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }} onClick={(e) => e.stopPropagation()}>

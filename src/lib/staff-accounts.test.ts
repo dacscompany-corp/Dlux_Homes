@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { checkNewStaff, checkRoleChange, isStaffRole, normalizeEmail } from "./staff-accounts";
+import { checkNewStaff, checkRoleChange, checkStatusChange, isStaffRole, normalizeEmail } from "./staff-accounts";
 
 const valid = { first_name: "Ana", last_name: "Cruz", email: "ana@example.com", password: "longenough", role: "Cleaner" };
 
@@ -70,5 +70,34 @@ describe("checkRoleChange", () => {
 
   it("refuses a role no portal accepts", () => {
     expect(checkRoleChange("Owner", "Cleaner", "Manager")).toMatchObject({ ok: false, status: 400 });
+  });
+});
+
+describe("checkStatusChange", () => {
+  const owner = { id: "o1", role: "Owner" };
+  const csr = { id: "c1", role: "CSR" };
+  const cleaner = { id: "k1", role: "Cleaner", status: "active" };
+
+  it("lets a CSR deactivate and reactivate a cleaner", () => {
+    expect(checkStatusChange(csr, cleaner, "inactive", 1)).toEqual({ ok: true });
+    expect(checkStatusChange(csr, { ...cleaner, status: "inactive" }, "active", 1)).toEqual({ ok: true });
+  });
+
+  it("rejects anything but active/inactive", () => {
+    expect(checkStatusChange(owner, cleaner, "suspended", 2)).toMatchObject({ ok: false, status: 400 });
+  });
+
+  it("never lets someone change their own status", () => {
+    expect(checkStatusChange(owner, { id: "o1", role: "Owner", status: "active" }, "inactive", 3)).toMatchObject({ ok: false, status: 403 });
+  });
+
+  it("keeps Owner accounts in an Owner's hands", () => {
+    const otherOwner = { id: "o2", role: "Owner", status: "active" };
+    expect(checkStatusChange(csr, otherOwner, "inactive", 2)).toMatchObject({ ok: false, status: 403 });
+    expect(checkStatusChange(owner, otherOwner, "inactive", 2)).toEqual({ ok: true });
+  });
+
+  it("refuses to deactivate the last active Owner", () => {
+    expect(checkStatusChange(owner, { id: "o2", role: "Owner", status: "active" }, "inactive", 1)).toMatchObject({ ok: false, status: 409 });
   });
 });
