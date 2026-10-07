@@ -82,6 +82,13 @@ export const employeeApi = createApi({
             invalidatesTags: ['Employee']
         }),
 
+        // Owner/CSR: deactivate or reactivate a staff account.
+        setEmployeeStatus: builder.mutation<{ id: string; status: string }, { id: string; status: "active" | "inactive" }>({
+            query: ({ id, status }) => ({ url: `/admin/employees/${id}/status`, method: "PATCH", body: { status } }),
+            transformResponse: (response: { success: boolean; data: { id: string; status: string } }) => response.data,
+            invalidatesTags: ['Employee']
+        }),
+
         // Self-service: any signed-in employee's own profile and password.
         getMyProfile: builder.query<MyProfile, void>({
             query: () => ({ url: "/admin/me" }),
@@ -118,6 +125,7 @@ export const {
     useUpdateEmployeeMutation,
     useDeleteEmployeeMutation,
     useLoginEmployeeMutation,
+    useSetEmployeeStatusMutation,
     useGetMyProfileQuery,
     useUpdateMyProfileMutation,
     useChangeMyPasswordMutation
