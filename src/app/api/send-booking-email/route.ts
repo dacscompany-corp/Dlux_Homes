@@ -60,6 +60,12 @@ export async function POST(request: NextRequest) {
     // stops appearing once the guest sets their own. Markup mirrors the block
     // in send-pending-email/route.ts — same inline-only styling rules, since
     // several clients strip <style> blocks entirely.
+    //
+    // A returning guest on a password they set themselves gets the same box
+    // with a reset link in place of the password — it is stored as a hash and
+    // cannot be shown (the caller sends accountEmail without newAccountPassword).
+    const loginEmail = bookingData.accountEmail || bookingData.email;
+    const resetUrl = `${siteUrl}/forgot-password`;
     const accountBlockHtml = bookingData.newAccountPassword ? `
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#faf5ec;border:1px dashed #d9c8a9;border-radius:12px;margin-bottom:20px;">
         <tr>
@@ -69,10 +75,25 @@ export async function POST(request: NextRequest) {
               Sign in any time to view this booking and your stay history:
             </div>
             <div style="font-size:13px;margin-top:8px;">
-              <span style="color:#9c8974;">Email:</span> <strong style="color:#2b1b12;">${bookingData.email}</strong><br/>
+              <span style="color:#9c8974;">Email:</span> <strong style="color:#2b1b12;">${loginEmail}</strong><br/>
               <span style="color:#9c8974;">Password:</span> <strong style="color:#2b1b12;">${bookingData.newAccountPassword}</strong>
             </div>
             <div style="font-size:12px;line-height:1.5;color:#9c8974;margin-top:8px;">We recommend changing it &mdash; sign in, then open <a href="${siteUrl}/my-bookings" style="color:#2b1b12;font-weight:600;text-decoration:underline;">My Bookings</a> and look for Account security.</div>
+          </td>
+        </tr>
+      </table>` : bookingData.accountEmail ? `
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#faf5ec;border:1px dashed #d9c8a9;border-radius:12px;margin-bottom:20px;">
+        <tr>
+          <td style="padding:16px 20px;">
+            <div style="font-size:13px;font-weight:600;color:#2b1b12;margin-bottom:6px;">Your account</div>
+            <div style="font-size:13px;line-height:1.5;color:#5c4a3c;">
+              Welcome back! This booking has been added to your account. Sign in any time to view it and your stay history:
+            </div>
+            <div style="font-size:13px;margin-top:8px;">
+              <span style="color:#9c8974;">Email:</span> <strong style="color:#2b1b12;">${loginEmail}</strong><br/>
+              <span style="color:#9c8974;">Password:</span> <strong style="color:#2b1b12;">the password you set</strong>
+            </div>
+            <div style="font-size:12px;line-height:1.5;color:#9c8974;margin-top:8px;">Forgot it? <a href="${resetUrl}" style="color:#2b1b12;font-weight:600;text-decoration:underline;">Reset your password</a> &mdash; we&rsquo;ll email you a link.</div>
           </td>
         </tr>
       </table>` : '';
@@ -307,10 +328,20 @@ export async function POST(request: NextRequest) {
         ? [
             `YOUR ACCOUNT`,
             `Sign in any time to view this booking and your stay history:`,
-            `Email     ${bookingData.email}`,
+            `Email     ${loginEmail}`,
             `Password  ${bookingData.newAccountPassword}`,
             `We recommend changing it: sign in, open My Bookings, and look for`,
             `Account security — ${siteUrl}/my-bookings`,
+            ``,
+          ]
+        : bookingData.accountEmail
+        ? [
+            `YOUR ACCOUNT`,
+            `Welcome back! This booking has been added to your account.`,
+            `Sign in any time to view it and your stay history:`,
+            `Email     ${loginEmail}`,
+            `Password  the password you set`,
+            `Forgot it? Reset your password — ${resetUrl}`,
             ``,
           ]
         : []),

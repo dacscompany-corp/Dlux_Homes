@@ -2623,6 +2623,10 @@ export const updateBookingStatus = async (
         // reachable by its emailed link. Never hold up a confirmation for it.
         // The plaintext password to show the guest, or null to omit the block.
         let signInPassword: string | null = null;
+        // The account this booking belongs to once the block below has run —
+        // either the one the guest was signed in to at checkout, or the one
+        // just created/reused for a signed-out checkout.
+        let linkedUserId: string | null = booking.user_id ?? null;
         if (!booking.user_id && booking.email) {
           const acctClient = await pool.connect();
           try {
@@ -2640,26 +2644,10 @@ export const updateBookingStatus = async (
             );
             await acctClient.query("COMMIT");
 
-            // Show the password we just set. For a REUSED account we have no
-            // plaintext — the stored value is a hash — so the only case we can
-            // still help with is an account sitting on the configured shared
-            // password, which we can test for. A reused account on its own
-            // password (or on a random one issued while the env var was unset)
-            // correctly gets no sign-in block: we cannot recover it, and
-            // guessing would be worse than staying quiet.
+            // Show the password we just set (null for a reused account — see
+            // the lookup below).
             signInPassword = account.password;
-            if (!account.created && GUEST_DEFAULT_PASSWORD) {
-              const acct = await pool.query(
-                `SELECT password FROM users WHERE user_id = $1 LIMIT 1`,
-                [account.userId],
-              );
-              if (
-                acct.rows[0]?.password &&
-                (await bcrypt.compare(GUEST_DEFAULT_PASSWORD, acct.rows[0].password))
-              ) {
-                signInPassword = GUEST_DEFAULT_PASSWORD;
-              }
-            }
+            linkedUserId = account.userId;
             console.log(
               `👤 [BOOKING] ${booking.booking_id}: guest account ${account.created ? "created" : "reused"} on confirmation`,
             );
@@ -2675,12 +2663,51 @@ export const updateBookingStatus = async (
           }
         }
 
+        // Returning guests get their account details repeated too. The login
+        // email is read from the account itself, not booking.email — a guest
+        // signed in at checkout may have typed a different contact address.
+        //
+        // The password can only be shown when it is the configured shared one,
+        // which we can test for. Any other password exists only as a bcrypt
+        // hash and cannot be recovered, so the email shows the address plus a
+        // reset link instead (accountEmail without newAccountPassword).
+        //
+        // Best-effort: a failure here only drops the account box.
+        let accountEmail: string | null = null;
+        if (linkedUserId) {
+          try {
+            const acct = await pool.query(
+              `SELECT email, password FROM users WHERE user_id = $1 LIMIT 1`,
+              [linkedUserId],
+            );
+            const row = acct.rows[0];
+            if (row) {
+              accountEmail = row.email;
+              if (
+                !signInPassword &&
+                GUEST_DEFAULT_PASSWORD &&
+                row.password &&
+                (await bcrypt.compare(GUEST_DEFAULT_PASSWORD, row.password))
+              ) {
+                signInPassword = GUEST_DEFAULT_PASSWORD;
+              }
+            }
+          } catch (lookupErr) {
+            console.error(
+              `⚠️ [BOOKING] ${booking.booking_id}: could not look up the guest's account for the confirmation email:`,
+              lookupErr,
+            );
+          }
+        }
+
         const emailData = {
           firstName: booking.first_name,
           lastName: booking.last_name,
           email: booking.email,
-          // Set when this confirmation just created the guest's account (or
-          // reused one still on the starting password).
+          // The address the guest signs in with, when the booking has an account.
+          accountEmail: accountEmail ?? undefined,
+          // Set when this confirmation just created the guest's account, or the
+          // account is still on the shared starting password.
           newAccountPassword: signInPassword ?? undefined,
           bookingId: booking.booking_id,
           roomName: booking.room_name,
