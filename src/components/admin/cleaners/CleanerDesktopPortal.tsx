@@ -27,6 +27,7 @@ import {
   useGetCleaningTasksQuery,
   useStartCleaningMutation,
   useCompleteCleaningMutation,
+  isAccountDeactivatedError,
 } from "@/redux/api/cleanersApi";
 import { useAssignmentChecklist, gateErrorMessage } from "@/components/admin/cleaners/useAssignmentChecklist";
 import { bookingRefFrom, sameBookingRef } from "@/components/admin/NotificationBell";
@@ -139,6 +140,7 @@ export default function CleanerDesktopPortal() {
     data: cleaningTasksData,
     isLoading: tasksLoading,
     isError: tasksFailed,
+    error: tasksError,
     refetch: refetchTasks,
   } = useGetCleaningTasksQuery(undefined, { pollingInterval: 30000, refetchOnMountOrArgChange: true });
   const [startCleaningM] = useStartCleaningMutation();
@@ -638,12 +640,19 @@ export default function CleanerDesktopPortal() {
             <div role="alert" className="flex items-center gap-3 border px-4 py-3 mb-5 text-sm"
               style={{ backgroundColor: "#fef3c7", borderColor: "#f5d9a8", color: "#92400e" }}>
               <AlertCircle className="w-4 h-4 flex-shrink-0" />
-              <span className="flex-1">
-                {noData ? "Couldn't load your assignments." : "Couldn't refresh your assignments — showing the last update."}
-              </span>
-              <button type="button" onClick={() => refetchTasks()} className="px-3 py-1.5 text-xs font-semibold text-white cursor-pointer" style={{ background: "#92400e" }}>
-                Try again
-              </button>
+              {isAccountDeactivatedError(tasksError) ? (<>
+                <span className="flex-1">This account has been deactivated. Please contact the office.</span>
+                <button type="button" onClick={() => signOut({ callbackUrl: "/admin/login" })} className="px-3 py-1.5 text-xs font-semibold text-white cursor-pointer" style={{ background: "#92400e" }}>
+                  Sign out
+                </button>
+              </>) : (<>
+                <span className="flex-1">
+                  {noData ? "Couldn't load your assignments." : "Couldn't refresh your assignments — showing the last update."}
+                </span>
+                <button type="button" onClick={() => refetchTasks()} className="px-3 py-1.5 text-xs font-semibold text-white cursor-pointer" style={{ background: "#92400e" }}>
+                  Try again
+                </button>
+              </>)}
             </div>
           )}
 

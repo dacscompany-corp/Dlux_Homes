@@ -416,6 +416,16 @@ export const cleanersApi = createApi({
   }),
 });
 
+/**
+ * True when a request was refused because the signed-in staff account was
+ * deactivated (see requireRole in backend/utils/requireAdmin.ts). The session
+ * outlives the deactivation, so the portal must say so instead of showing a
+ * generic "couldn't load" that "Try again" can never fix.
+ */
+export function isAccountDeactivatedError(error: unknown): boolean {
+  return (error as { data?: { code?: string } } | undefined)?.data?.code === "ACCOUNT_DEACTIVATED";
+}
+
 export const {
   useGetCleaningTasksQuery,
   useGetCleaningTaskByIdQuery,

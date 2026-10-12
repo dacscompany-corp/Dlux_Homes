@@ -51,6 +51,7 @@ import {
   useGetCleaningTasksQuery,
   useStartCleaningMutation,
   useCompleteCleaningMutation,
+  isAccountDeactivatedError,
 } from "@/redux/api/cleanersApi";
 import { useAssignmentChecklist, gateErrorMessage } from "@/components/admin/cleaners/useAssignmentChecklist";
 import { bookingRefFrom, sameBookingRef } from "@/components/admin/NotificationBell";
@@ -250,6 +251,7 @@ export default function CleanerMobilePortal() {
     data: tasksData,
     isLoading: tasksLoading,
     isError: tasksFailed,
+    error: tasksError,
     refetch: refetchTasks,
   } = useGetCleaningTasksQuery(undefined, {
     pollingInterval: 30000,
@@ -664,11 +666,19 @@ export default function CleanerMobilePortal() {
                 display: "flex", alignItems: "center", gap: 12, fontSize: 16, lineHeight: 1.35,
               }}>
                 <AlertTriangle className="w-6 h-6 flex-shrink-0" strokeWidth={2} />
-                <span style={{ flex: 1 }}>{t.loadFailed}</span>
-                <button type="button" onClick={() => refetchTasks()} style={{
-                  height: 44, padding: "0 14px", border: 0, borderRadius: 10, background: C.amberInk,
-                  color: "#fff", font: `600 15px ${SANS}`, cursor: "pointer", flexShrink: 0,
-                }}>{t.retry}</button>
+                {isAccountDeactivatedError(tasksError) ? (<>
+                  <span style={{ flex: 1 }}>{t.accountDeactivated}</span>
+                  <button type="button" onClick={() => signOut({ callbackUrl: "/admin/login" })} style={{
+                    height: 44, padding: "0 14px", border: 0, borderRadius: 10, background: C.amberInk,
+                    color: "#fff", font: `600 15px ${SANS}`, cursor: "pointer", flexShrink: 0,
+                  }}>{t.signOut}</button>
+                </>) : (<>
+                  <span style={{ flex: 1 }}>{t.loadFailed}</span>
+                  <button type="button" onClick={() => refetchTasks()} style={{
+                    height: 44, padding: "0 14px", border: 0, borderRadius: 10, background: C.amberInk,
+                    color: "#fff", font: `600 15px ${SANS}`, cursor: "pointer", flexShrink: 0,
+                  }}>{t.retry}</button>
+                </>)}
               </div>
             )}
 
