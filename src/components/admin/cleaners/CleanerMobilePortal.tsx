@@ -55,6 +55,7 @@ import {
 import { useAssignmentChecklist, gateErrorMessage } from "@/components/admin/cleaners/useAssignmentChecklist";
 import { bookingRefFrom, sameBookingRef } from "@/components/admin/NotificationBell";
 import CleanerCalendarCard from "@/components/admin/cleaners/CleanerCalendarCard";
+import GuideAssessment from "@/components/admin/cleaners/GuideAssessment";
 import StaffAccountPanel from "@/components/admin/cleaners/StaffAccountPanel";
 import { canStartCleaning, cleaningDueAt, stayKindFor, type StayKind } from "@/lib/cleaning-schedule";
 import { translateCategory, translateTask } from "@/lib/checklist-translations";
@@ -1368,6 +1369,12 @@ export default function CleanerMobilePortal() {
             <div style={{ marginTop: 30 }}>
               <CleanerCalendarCard lang={lang} size="mobile" />
             </div>
+
+            {me?.id && (
+              <div style={{ marginTop: 30, background: C.card }}>
+                <GuideAssessment key={me.id} cleanerId={me.id} lang={lang} onLangChange={pickLang} />
+              </div>
+            )}
 
             <div style={{ marginTop: 30 }}>{sectionLabel(t.how)}</div>
             <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16 }}>

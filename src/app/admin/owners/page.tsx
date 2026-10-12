@@ -19,7 +19,8 @@ import { imageFileError } from "@/lib/validateImageFile";
 import { useGetHavensQuery, useCreateHavenMutation, useUpdateHavenMutation } from "@/redux/api/roomApi";
 import { useGetEmployeesQuery, useCreateEmployeeMutation, useSetEmployeeStatusMutation } from "@/redux/api/employeeApi";
 import { useGetReviewsQuery } from "@/redux/api/reviewsApi";
-import { useGetReportsQuery } from "@/redux/api/reportApi";
+import { MIN_PASSWORD_LENGTH as MIN_STAFF_PASSWORD_LENGTH } from "@/lib/staff-accounts";
+import { useGetReportsQuery, useSubmitReportMutation, useUpdateReportAssignmentMutation, useUpdateReportStatusMutation } from "@/redux/api/reportApi";
 import OfficeStaffInbox from "@/components/admin/messages/OfficeStaffInbox";
 import NotificationBell, { bookingRefFrom, sameBookingRef } from "@/components/admin/NotificationBell";
 import { fmtWindow, fmtSpan } from "@/lib/stay-window";
@@ -350,6 +351,17 @@ export default function OwnerDashboard() {
   const [staffModalOpen, setStaffModalOpen] = useState(false);
   const [staffForm, setStaffForm] = useState(emptyStaff);
 
+  // Add Maintenance — logs a report_issue row on the owner's behalf.
+  const emptyMaintenance = { haven: "", type: "General", priority: "Medium", location: "", description: "", assignTo: "" };
+  const [maintenanceModalOpen, setMaintenanceModalOpen] = useState(false);
+  const [maintenanceForm, setMaintenanceForm] = useState(emptyMaintenance);
+  const [submitReport, { isLoading: submittingMaintenance }] = useSubmitReportMutation();
+  const [updateReportAssignment] = useUpdateReportAssignmentMutation();
+  const [updateReportStatus, { isLoading: updatingMaintenanceStatus }] = useUpdateReportStatusMutation();
+  // Report id of the issue whose details panel is open; the row itself is
+  // looked up from the live list so status/assignee edits show immediately.
+  const [maintenanceDetailId, setMaintenanceDetailId] = useState<string | null>(null);
+
   const [havenModalOpen, setHavenModalOpen] = useState(false);
   const [editHaven, setEditHaven] = useState<Record<string, unknown> | null>(null);
   const openHavenWizard = () => { setEditHaven(null); setHavenModalOpen(true); };
@@ -653,6 +665,10 @@ export default function OwnerDashboard() {
       toast.error("First name, last name, email and password are required");
       return;
     }
+    if (staffForm.password.length < MIN_STAFF_PASSWORD_LENGTH) {
+      toast.error(`The password must be at least ${MIN_STAFF_PASSWORD_LENGTH} characters.`);
+      return;
+    }
     try {
       await createEmployee({
         ...staffForm,
@@ -662,7 +678,43 @@ export default function OwnerDashboard() {
       toast.success("Staff account created");
       setStaffModalOpen(false);
       setStaffForm(emptyStaff);
-    } catch { toast.error("Could not create staff (email may already exist)"); }
+    } catch (err) {
+      // Show the server's reason (duplicate email, short password, bad role…)
+      // instead of guessing.
+      const data = (err as { data?: { error?: string; message?: string } })?.data;
+      toast.error(data?.error || data?.message || "Could not create staff. Please try again.");
+    }
+  };
+
+  const openMaintenanceModal = () => {
+    // Single-property site: pre-select the haven when there's only one.
+    const only = havensList.length === 1 ? String(havensList[0].uuid_id ?? havensList[0].id ?? "") : "";
+    setMaintenanceForm({ ...emptyMaintenance, haven: only });
+    setMaintenanceModalOpen(true);
+  };
+  const submitMaintenance = async () => {
+    const f = maintenanceForm;
+    if (!f.haven || !f.type || !f.priority || !f.location.trim() || !f.description.trim()) {
+      toast.error("Haven, type, priority, location and description are required");
+      return;
+    }
+    if (!ownerId) { toast.error("Session not ready — please re-login"); return; }
+    try {
+      const res = await submitReport({
+        haven_id: f.haven,
+        issue_type: f.type,
+        priority_level: f.priority,
+        specific_location: f.location.trim(),
+        issue_description: f.description.trim(),
+        user_id: ownerId,
+      }).unwrap();
+      if (f.assignTo && res.data?.report_id) {
+        await updateReportAssignment({ reportId: res.data.report_id, assignedTo: f.assignTo }).unwrap();
+      }
+      toast.success("Maintenance added");
+      setMaintenanceModalOpen(false);
+      setMaintenanceForm(emptyMaintenance);
+    } catch { toast.error("Could not add maintenance"); }
   };
 
   const peso = (n: number) => "₱" + Number(n || 0).toLocaleString();
@@ -1024,8 +1076,33 @@ export default function OwnerDashboard() {
     priority: String(r.priority_level || "low").toLowerCase(),
     issueStatus: String(r.status || "open").toLowerCase().replace(/\s+/g, "-"),
     reported: r.created_at ? new Date(String(r.created_at)).toLocaleDateString("en", { month: "short", day: "numeric" }) : "—",
-    assignedTo: String(r.assigned_to || "Unassigned"),
+    assignedTo: String(r.assigned_to_name || "Unassigned"),
+    // Details panel
+    statusLabel: String(r.status || "Open"),
+    assignedToId: String(r.assigned_to ?? ""),
+    location: String(r.specific_location || "—"),
+    description: String(r.issue_description || ""),
+    reporter: `${r.reporter_first_name ?? ""} ${r.reporter_last_name ?? ""}`.trim() || "—",
+    reportedAt: r.created_at ? new Date(String(r.created_at)).toLocaleString("en", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) : "—",
+    updatedAt: r.updated_at ? new Date(String(r.updated_at)).toLocaleString("en", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) : "—",
+    linkedBooking: r.linked_booking_id ? String(r.linked_booking_id) : "",
+    images: (Array.isArray(r.images) ? r.images : []) as { image_url: string }[],
   }));
+  const maintenanceDetail = maintenanceIssues.find((i) => i.id === maintenanceDetailId) ?? null;
+  const setMaintenanceStatus = async (status: string) => {
+    if (!maintenanceDetail) return;
+    try {
+      await updateReportStatus({ reportId: maintenanceDetail.id, status }).unwrap();
+      toast.success(status === "Resolved" ? "Marked as fixed" : `Status set to ${status}`);
+    } catch { toast.error("Could not update status"); }
+  };
+  const setMaintenanceAssignee = async (assignedTo: string) => {
+    if (!maintenanceDetail) return;
+    try {
+      await updateReportAssignment({ reportId: maintenanceDetail.id, assignedTo: assignedTo || null }).unwrap();
+      toast.success(assignedTo ? "Assignee updated" : "Unassigned");
+    } catch { toast.error("Could not update assignee"); }
+  };
 
   // Reusable minimalist sub-tab bar — icon + label, hairline borders
   const tabBar = (tabs: { id: string; label: string; icon?: React.ElementType }[], active: string, onPick: (id: string) => void) => (
@@ -2241,7 +2318,17 @@ export default function OwnerDashboard() {
               </div>
             )}
 
-            {propertyTab === "maintenance" && (
+            {propertyTab === "maintenance" && (<>
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h2 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>Maintenance</h2>
+                  <p className="text-sm" style={{ color: "#8B6344" }}>{maintenanceIssues.length} issue{maintenanceIssues.length === 1 ? "" : "s"}</p>
+                </div>
+                <button type="button" onClick={openMaintenanceModal} className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white cursor-pointer" style={{ backgroundColor: "#1f1b16" }}>
+                  <Plus className="w-4 h-4" /> Add Maintenance
+                </button>
+              </div>
+              {maintenanceIssues.length === 0 ? <Empty label="No maintenance issues yet." /> : (
               <div className="border overflow-hidden" style={{ borderColor: "#ece5d4" }}>
                 <div className="overflow-x-auto">
                   <table className="w-full">
@@ -2257,10 +2344,12 @@ export default function OwnerDashboard() {
                         const sColor = issue.issueStatus === "open" ? "#991b1b" : issue.issueStatus === "in-progress" ? "#B07848" : issue.issueStatus === "resolved" ? "#065f46" : "#374151";
                         const sBg   = issue.issueStatus === "open" ? "#fee2e2" : issue.issueStatus === "in-progress" ? "#F7F0E3" : issue.issueStatus === "resolved" ? "#d1fae5" : "#f3f4f6";
                         return (
-                          <tr key={issue.id} className="transition-colors" style={{ borderTop: idx > 0 ? "1px solid #F7F0E3" : "none" }}
+                          <tr key={issue.id} className="transition-colors cursor-pointer" style={{ borderTop: idx > 0 ? "1px solid #F7F0E3" : "none" }}
+                            onClick={() => setMaintenanceDetailId(issue.id)}
+                            title="View details"
                             onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
                             onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
-                            <td className="px-4 py-3.5"><span className="font-mono text-xs" style={{ color: "#8B6344" }}>{issue.id}</span></td>
+                            <td className="px-4 py-3.5"><span className="font-mono text-xs" style={{ color: "#8B6344" }} title={issue.id}>#{issue.id.slice(0, 8).toUpperCase()}</span></td>
                             <td className="px-4 py-3.5"><span className="text-sm" style={{ color: "#1a1a1a" }}>{issue.haven}</span></td>
                             <td className="px-4 py-3.5">
                               <div className="flex items-center gap-1.5"><Wrench className="w-3.5 h-3.5" style={{ color: "#D4BFA0" }} /><span className="text-sm" style={{ color: "#5a4a3a" }}>{issue.type}</span></div>
@@ -2276,7 +2365,8 @@ export default function OwnerDashboard() {
                   </table>
                 </div>
               </div>
-            )}
+              )}
+            </>)}
           </>)}
 
           {/* ── Communication ── */}
@@ -2683,7 +2773,7 @@ export default function OwnerDashboard() {
                 <input placeholder="Last name" value={staffForm.last_name} onChange={(e) => setStaffForm({ ...staffForm, last_name: e.target.value })} className="rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
               </div>
               <input type="email" placeholder="Email" value={staffForm.email} onChange={(e) => setStaffForm({ ...staffForm, email: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
-              <input type="password" placeholder="Temporary password" value={staffForm.password} onChange={(e) => setStaffForm({ ...staffForm, password: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+              <input type="password" placeholder={`Temporary password (min. ${MIN_STAFF_PASSWORD_LENGTH} characters)`} minLength={MIN_STAFF_PASSWORD_LENGTH} value={staffForm.password} onChange={(e) => setStaffForm({ ...staffForm, password: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
               <input placeholder="Phone (optional)" value={staffForm.phone} onChange={(e) => setStaffForm({ ...staffForm, phone: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
               <select aria-label="Staff role" value={staffForm.role} onChange={(e) => setStaffForm({ ...staffForm, role: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
                 <option value="CSR">CSR</option>
@@ -2694,6 +2784,132 @@ export default function OwnerDashboard() {
             <div className="flex justify-end gap-2 mt-5">
               <button type="button" onClick={() => setStaffModalOpen(false)} className="px-4 py-2 rounded-xl text-sm font-semibold border cursor-pointer" style={{ color: "#8B6344", borderColor: "#ece5d4", backgroundColor: "#ffffff" }}>Cancel</button>
               <button type="button" onClick={submitStaff} disabled={creatingStaff} className="px-4 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#1f1b16" }}>{creatingStaff ? "Creating…" : "Create Staff"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Maintenance details modal ── */}
+      {maintenanceDetail && (() => {
+        const d = maintenanceDetail;
+        const isDone = d.issueStatus === "resolved" || d.issueStatus === "closed";
+        const label = (t: string) => <div className="text-[11px] uppercase tracking-[0.08em] mb-1" style={{ color: "#8B6344" }}>{t}</div>;
+        return (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setMaintenanceDetailId(null)}>
+            <div className="w-full max-w-lg border p-6 max-h-[90vh] overflow-y-auto" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }} onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-bold text-lg flex items-center gap-2" style={{ color: "#1a1a1a" }}><Wrench className="w-4 h-4" style={{ color: "#B07848" }} />{d.type}</h3>
+                  <p className="font-mono text-xs mt-1" style={{ color: "#8B6344" }}>#{d.id.slice(0, 8).toUpperCase()}</p>
+                </div>
+                <button type="button" aria-label="Close" onClick={() => setMaintenanceDetailId(null)} className="cursor-pointer p-1" style={{ color: "#8B6344" }}><X className="w-5 h-5" /></button>
+              </div>
+
+              {isDone && (
+                <div className="mt-4 flex items-center gap-2 px-3 py-2 text-sm" style={{ backgroundColor: "#d1fae5", color: "#065f46" }}>
+                  <Check className="w-4 h-4" /> Fixed — marked {d.statusLabel.toLowerCase()} on {d.updatedAt}
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4 mt-5">
+                <div>{label("Haven")}<div className="text-sm" style={{ color: "#1a1a1a" }}>{d.haven}</div></div>
+                <div>{label("Location")}<div className="text-sm" style={{ color: "#1a1a1a" }}>{d.location}</div></div>
+                <div>{label("Priority")}<div className="text-sm capitalize" style={{ color: "#1a1a1a" }}>{d.priority}</div></div>
+                <div>{label("Status")}<div className="text-sm" style={{ color: "#1a1a1a" }}>{d.statusLabel}</div></div>
+                <div>{label("Reported by")}<div className="text-sm" style={{ color: "#1a1a1a" }}>{d.reporter}</div></div>
+                <div>{label("Reported")}<div className="text-sm" style={{ color: "#1a1a1a" }}>{d.reportedAt}</div></div>
+                {d.linkedBooking && <div className="col-span-2">{label("Linked booking")}<div className="text-sm font-mono" style={{ color: "#1a1a1a" }}>{d.linkedBooking}</div></div>}
+              </div>
+
+              <div className="mt-4">
+                {label("Description")}
+                <p className="text-sm whitespace-pre-wrap" style={{ color: "#4a4034", lineHeight: 1.6 }}>{d.description || "No description."}</p>
+              </div>
+
+              {d.images.length > 0 && (
+                <div className="mt-4">
+                  {label(`Photos (${d.images.length})`)}
+                  <div className="flex flex-wrap gap-2">
+                    {d.images.map((img, i) => <ImageThumb key={i} src={img.image_url} alt={`Issue photo ${i + 1}`} size={72} />)}
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-5">
+                {label("Assigned to")}
+                <select aria-label="Assigned to" value={d.assignedToId} onChange={(e) => setMaintenanceAssignee(e.target.value)} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
+                  <option value="">Unassigned</option>
+                  {staffMembers.filter((m) => m.uuid && (m.status === "active" || m.uuid === d.assignedToId)).map((m) => (
+                    <option key={m.uuid} value={m.uuid}>{m.name}{m.role ? ` (${m.role})` : ""}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="mt-4">
+                {label("Update status")}
+                <div className="flex flex-wrap gap-1.5">
+                  {["Open", "In Progress", "Resolved", "Closed"].map((st) => {
+                    const on = d.statusLabel === st;
+                    return (
+                      <button key={st} type="button" disabled={on || updatingMaintenanceStatus} onClick={() => setMaintenanceStatus(st)}
+                        className="px-3 py-1.5 text-sm cursor-pointer disabled:cursor-default"
+                        style={{ backgroundColor: on ? "#1f1b16" : "transparent", color: on ? "#faf7f1" : "#6b6358", border: `1px solid ${on ? "#1f1b16" : "#d9d1c2"}` }}>
+                        {st}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 mt-6">
+                <button type="button" onClick={() => setMaintenanceDetailId(null)} className="px-4 py-2 rounded-xl text-sm font-semibold border cursor-pointer" style={{ color: "#8B6344", borderColor: "#ece5d4", backgroundColor: "#ffffff" }}>Close</button>
+                {isDone ? (
+                  <button type="button" onClick={() => setMaintenanceStatus("Open")} disabled={updatingMaintenanceStatus} className="px-4 py-2 text-sm font-medium border cursor-pointer disabled:opacity-60" style={{ color: "#991b1b", borderColor: "#fecaca", backgroundColor: "#ffffff" }}>Reopen</button>
+                ) : (
+                  <button type="button" onClick={() => setMaintenanceStatus("Resolved")} disabled={updatingMaintenanceStatus} className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#065f46" }}>
+                    <Check className="w-4 h-4" /> {updatingMaintenanceStatus ? "Saving…" : "Mark as Fixed"}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Add Maintenance modal ── */}
+      {maintenanceModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setMaintenanceModalOpen(false)}>
+          <div className="w-full max-w-md border p-6 max-h-[90vh] overflow-y-auto" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>Add Maintenance</h3>
+            <p className="text-sm mt-1 mb-4" style={{ color: "#8B6344" }}>Log a repair or upkeep task for a haven.</p>
+            <div className="space-y-3">
+              <select aria-label="Haven" value={maintenanceForm.haven} onChange={(e) => setMaintenanceForm({ ...maintenanceForm, haven: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
+                <option value="">Select haven</option>
+                {havensList.map((h) => {
+                  const id = String(h.uuid_id ?? h.id ?? "");
+                  return <option key={id} value={id}>{String(h.haven_name || h.name || "Haven")}</option>;
+                })}
+              </select>
+              <div className="grid grid-cols-2 gap-3">
+                <select aria-label="Issue type" value={maintenanceForm.type} onChange={(e) => setMaintenanceForm({ ...maintenanceForm, type: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
+                  {["Plumbing", "Electrical", "HVAC", "Furniture", "Appliance", "Pest", "General"].map((o) => <option key={o} value={o}>{o}</option>)}
+                </select>
+                <select aria-label="Priority" value={maintenanceForm.priority} onChange={(e) => setMaintenanceForm({ ...maintenanceForm, priority: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
+                  {["Low", "Medium", "High", "Urgent"].map((o) => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </div>
+              <input placeholder="Specific location (e.g. Master bathroom)" value={maintenanceForm.location} onChange={(e) => setMaintenanceForm({ ...maintenanceForm, location: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+              <textarea placeholder="Describe the issue or work needed" rows={4} value={maintenanceForm.description} onChange={(e) => setMaintenanceForm({ ...maintenanceForm, description: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }} />
+              <select aria-label="Assign to" value={maintenanceForm.assignTo} onChange={(e) => setMaintenanceForm({ ...maintenanceForm, assignTo: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={{ borderColor: "#ece5d4", backgroundColor: "#FAFAFA", color: "#1a1a1a" }}>
+                <option value="">Unassigned</option>
+                {staffMembers.filter((m) => m.uuid && m.status === "active").map((m) => (
+                  <option key={m.uuid} value={m.uuid}>{m.name}{m.role ? ` (${m.role})` : ""}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button type="button" onClick={() => setMaintenanceModalOpen(false)} className="px-4 py-2 rounded-xl text-sm font-semibold border cursor-pointer" style={{ color: "#8B6344", borderColor: "#ece5d4", backgroundColor: "#ffffff" }}>Cancel</button>
+              <button type="button" onClick={submitMaintenance} disabled={submittingMaintenance} className="px-4 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#1f1b16" }}>{submittingMaintenance ? "Saving…" : "Add Maintenance"}</button>
             </div>
           </div>
         </div>
