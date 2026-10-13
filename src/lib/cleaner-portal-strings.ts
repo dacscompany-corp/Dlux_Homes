@@ -32,6 +32,7 @@ const en = {
   loading: "Loading your rooms…",
   loadFailed: "Couldn't load your rooms. Check your connection.",
   retry: "Try again",
+  accountDeactivated: "This account has been deactivated. Please contact the office.",
 
   // Status chips
   sPending: "To clean",
@@ -186,6 +187,7 @@ const tl: CleanerStrings = {
   loading: "Kinukuha ang mga kwarto mo…",
   loadFailed: "Hindi makuha ang mga kwarto mo. Tingnan ang koneksyon.",
   retry: "Subukan ulit",
+  accountDeactivated: "Na-deactivate na ang account na ito. Makipag-ugnayan sa office.",
 
   sPending: "Lilinisin",
   sProgress: "Nililinis",

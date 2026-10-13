@@ -51,10 +51,12 @@ import {
   useGetCleaningTasksQuery,
   useStartCleaningMutation,
   useCompleteCleaningMutation,
+  isAccountDeactivatedError,
 } from "@/redux/api/cleanersApi";
 import { useAssignmentChecklist, gateErrorMessage } from "@/components/admin/cleaners/useAssignmentChecklist";
 import { bookingRefFrom, sameBookingRef } from "@/components/admin/NotificationBell";
 import CleanerCalendarCard from "@/components/admin/cleaners/CleanerCalendarCard";
+import GuideAssessment from "@/components/admin/cleaners/GuideAssessment";
 import StaffAccountPanel from "@/components/admin/cleaners/StaffAccountPanel";
 import { canStartCleaning, cleaningDueAt, stayKindFor, type StayKind } from "@/lib/cleaning-schedule";
 import { translateCategory, translateTask } from "@/lib/checklist-translations";
@@ -249,6 +251,7 @@ export default function CleanerMobilePortal() {
     data: tasksData,
     isLoading: tasksLoading,
     isError: tasksFailed,
+    error: tasksError,
     refetch: refetchTasks,
   } = useGetCleaningTasksQuery(undefined, {
     pollingInterval: 30000,
@@ -663,11 +666,19 @@ export default function CleanerMobilePortal() {
                 display: "flex", alignItems: "center", gap: 12, fontSize: 16, lineHeight: 1.35,
               }}>
                 <AlertTriangle className="w-6 h-6 flex-shrink-0" strokeWidth={2} />
-                <span style={{ flex: 1 }}>{t.loadFailed}</span>
-                <button type="button" onClick={() => refetchTasks()} style={{
-                  height: 44, padding: "0 14px", border: 0, borderRadius: 10, background: C.amberInk,
-                  color: "#fff", font: `600 15px ${SANS}`, cursor: "pointer", flexShrink: 0,
-                }}>{t.retry}</button>
+                {isAccountDeactivatedError(tasksError) ? (<>
+                  <span style={{ flex: 1 }}>{t.accountDeactivated}</span>
+                  <button type="button" onClick={() => signOut({ callbackUrl: "/admin/login" })} style={{
+                    height: 44, padding: "0 14px", border: 0, borderRadius: 10, background: C.amberInk,
+                    color: "#fff", font: `600 15px ${SANS}`, cursor: "pointer", flexShrink: 0,
+                  }}>{t.signOut}</button>
+                </>) : (<>
+                  <span style={{ flex: 1 }}>{t.loadFailed}</span>
+                  <button type="button" onClick={() => refetchTasks()} style={{
+                    height: 44, padding: "0 14px", border: 0, borderRadius: 10, background: C.amberInk,
+                    color: "#fff", font: `600 15px ${SANS}`, cursor: "pointer", flexShrink: 0,
+                  }}>{t.retry}</button>
+                </>)}
               </div>
             )}
 
@@ -1368,6 +1379,12 @@ export default function CleanerMobilePortal() {
             <div style={{ marginTop: 30 }}>
               <CleanerCalendarCard lang={lang} size="mobile" />
             </div>
+
+            {me?.id && (
+              <div style={{ marginTop: 30, background: C.card }}>
+                <GuideAssessment key={me.id} cleanerId={me.id} lang={lang} onLangChange={pickLang} />
+              </div>
+            )}
 
             <div style={{ marginTop: 30 }}>{sectionLabel(t.how)}</div>
             <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16 }}>

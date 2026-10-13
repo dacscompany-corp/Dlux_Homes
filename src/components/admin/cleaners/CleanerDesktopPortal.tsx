@@ -27,6 +27,7 @@ import {
   useGetCleaningTasksQuery,
   useStartCleaningMutation,
   useCompleteCleaningMutation,
+  isAccountDeactivatedError,
 } from "@/redux/api/cleanersApi";
 import { useAssignmentChecklist, gateErrorMessage } from "@/components/admin/cleaners/useAssignmentChecklist";
 import { bookingRefFrom, sameBookingRef } from "@/components/admin/NotificationBell";
@@ -38,11 +39,12 @@ import {
   LayoutDashboard, ClipboardList, MapPin, CheckSquare, AlertTriangle,
   Bell, Menu, X, LogOut, Clock, CheckCircle2, Circle,
   AlertCircle, Building2, MessageSquare, CalendarDays, BookOpen,
-  Camera, Mail, Shield, ChevronDown, ChevronRight, LifeBuoy, Languages,
+  Camera, Mail, Shield, ChevronDown, ChevronRight, LifeBuoy, Languages, Users,
 } from "lucide-react";
 import { useSignedInStaff } from "@/components/admin/useSignedInStaff";
 import StaffAccountPanel from "@/components/admin/cleaners/StaffAccountPanel";
 import CleanerMonthCalendar from "@/components/admin/cleaners/CleanerMonthCalendar";
+import GuideAssessment from "@/components/admin/cleaners/GuideAssessment";
 
 // Simplified sidebar (owner spec, 2026-09-22): five top-level items —
 // Dashboard, Tasks, Schedule, Messages, Support. "Tasks" and "Support" are
@@ -106,6 +108,10 @@ const guideTopics: { title: string; desc: string; icon: React.ElementType; goTo:
   { title: "Schedule & Time Management",  desc: "Understanding your daily schedule and time slots.",                  icon: CalendarDays,   goTo: "My Schedule" },
 ];
 
+// "2 adults, 1 child" — expected guests for the booking the cleaning follows.
+const guestCountText = (adults: number, children: number) =>
+  `${adults} ${adults === 1 ? "adult" : "adults"}${children > 0 ? `, ${children} ${children === 1 ? "child" : "children"}` : ""}`;
+
 // Normalize an RTK/fetch result to an array of rows, whether it arrives as a
 // bare array, a { data: [...] } envelope, or undefined/error object.
 function toRows(v: unknown): Record<string, unknown>[] {
@@ -134,6 +140,7 @@ export default function CleanerDesktopPortal() {
     data: cleaningTasksData,
     isLoading: tasksLoading,
     isError: tasksFailed,
+    error: tasksError,
     refetch: refetchTasks,
   } = useGetCleaningTasksQuery(undefined, { pollingInterval: 30000, refetchOnMountOrArgChange: true });
   const [startCleaningM] = useStartCleaningMutation();
@@ -178,6 +185,9 @@ export default function CleanerDesktopPortal() {
           timeSlot: dueAt ? `Cleaning from ${formatDue(dueAt)} (guest checkout)` : "—",
           status: normCleanStatus(String(t.cleaning_status ?? "pending")),
           priority: "normal",
+          // Party size so the cleaner knows how many to set the room up for
+          // (towels, linens) — same wording as the phone view.
+          guestCount: t.adults == null ? "" : guestCountText(Number(t.adults), Number(t.children ?? 0)),
           notes: `Guest: ${`${t.guest_first_name ?? ""} ${t.guest_last_name ?? ""}`.trim() || "—"}`,
           inspectionNote: t.inspection_note ? String(t.inspection_note) : "",
           openIssues: Number(t.open_issue_count ?? 0),
@@ -630,12 +640,19 @@ export default function CleanerDesktopPortal() {
             <div role="alert" className="flex items-center gap-3 border px-4 py-3 mb-5 text-sm"
               style={{ backgroundColor: "#fef3c7", borderColor: "#f5d9a8", color: "#92400e" }}>
               <AlertCircle className="w-4 h-4 flex-shrink-0" />
-              <span className="flex-1">
-                {noData ? "Couldn't load your assignments." : "Couldn't refresh your assignments — showing the last update."}
-              </span>
-              <button type="button" onClick={() => refetchTasks()} className="px-3 py-1.5 text-xs font-semibold text-white cursor-pointer" style={{ background: "#92400e" }}>
-                Try again
-              </button>
+              {isAccountDeactivatedError(tasksError) ? (<>
+                <span className="flex-1">This account has been deactivated. Please contact the office.</span>
+                <button type="button" onClick={() => signOut({ callbackUrl: "/admin/login" })} className="px-3 py-1.5 text-xs font-semibold text-white cursor-pointer" style={{ background: "#92400e" }}>
+                  Sign out
+                </button>
+              </>) : (<>
+                <span className="flex-1">
+                  {noData ? "Couldn't load your assignments." : "Couldn't refresh your assignments — showing the last update."}
+                </span>
+                <button type="button" onClick={() => refetchTasks()} className="px-3 py-1.5 text-xs font-semibold text-white cursor-pointer" style={{ background: "#92400e" }}>
+                  Try again
+                </button>
+              </>)}
             </div>
           )}
 
@@ -693,6 +710,11 @@ export default function CleanerDesktopPortal() {
                       <div className="flex items-center gap-1.5 text-xs mb-1" style={{ color: "#8B6344" }}>
                         <Clock className="w-3.5 h-3.5" style={{ color: "#8a6a2f" }} />{a.timeSlot}
                       </div>
+                      {a.guestCount && (
+                        <div className="flex items-center gap-1.5 text-xs mb-1" style={{ color: "#8B6344" }}>
+                          <Users className="w-3.5 h-3.5" style={{ color: "#8a6a2f" }} />Expected guests: {a.guestCount}
+                        </div>
+                      )}
                       {/* Property location, inline per task (owner spec, 2026-09-22) —
                           replaces the old standalone Property Location page. */}
                       <div className="flex items-center gap-1.5 text-xs mb-3" style={{ color: "#8B6344" }}>
@@ -779,6 +801,11 @@ export default function CleanerDesktopPortal() {
                     <div className="flex items-center gap-2 text-sm mb-2" style={{ color: "#5a4a3a" }}>
                       <Clock className="w-4 h-4" style={{ color: "#8a6a2f" }} />{a.timeSlot}
                     </div>
+                    {a.guestCount && (
+                      <div className="flex items-center gap-2 text-sm mb-2" style={{ color: "#5a4a3a" }}>
+                        <Users className="w-4 h-4" style={{ color: "#8a6a2f" }} />Expected guests: {a.guestCount}
+                      </div>
+                    )}
                     {/* Property location, inline per task (owner spec, 2026-09-22) —
                         replaces the old standalone Property Location page. */}
                     <div className="flex items-center justify-between gap-3 text-sm mb-3">
@@ -1109,7 +1136,7 @@ export default function CleanerDesktopPortal() {
                               <Clock className="w-4 h-4 flex-shrink-0" style={{ color: "#D4BFA0" }} />
                               <span className="text-sm flex-1 min-w-0" style={{ color: "#5a4a3a" }}>
                                 {task.room} — {task.dueAt ? task.dueAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "—"}
-                                <span style={{ color: "#8B6344" }}> · {task.floor}</span>
+                                <span style={{ color: "#8B6344" }}> · {task.floor}{task.guestCount ? ` · ${task.guestCount}` : ""}</span>
                               </span>
                               <span className="text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0" style={{ backgroundColor: st.bg, color: st.color }}>{st.label}</span>
                             </div>
@@ -1130,6 +1157,8 @@ export default function CleanerDesktopPortal() {
                 <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>User Guide</h2>
                 <p className="text-sm mt-0.5" style={{ color: "#8B6344" }}>Everything you need to know about the cleaner portal</p>
               </div>
+              {cleanerId && <GuideAssessment key={cleanerId} cleanerId={cleanerId} lang={checklistLang} onLangChange={setChecklistLang} />}
+              <p className="text-xs font-semibold uppercase tracking-wider pt-2" style={{ color: "#8a6a2f" }}>Portal help</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {guideTopics.map((topic) => {
                   const Icon = topic.icon;
