@@ -9,7 +9,8 @@ import Image from "next/image";
 import DluxMark from "@/components/brand/DluxMark";
 import SiteHeader from "@/components/SiteHeader";
 import { useRouter } from "next/navigation";
-import { useSession, signOut } from "next-auth/react";
+import { useSession } from "next-auth/react";
+import { confirmSignOut } from "@/components/SignOutConfirm";
 import { getMyBookingIds } from "@/lib/booking-store";
 import { mockRooms, mockReviews } from "@/lib/mock-data";
 import { useGetHavensQuery } from "@/redux/api/roomApi";
@@ -1091,7 +1092,7 @@ export default function BrowsePage() {
                   Message us · homesdlux@gmail.com
                 </a>
                 {signedIn && (
-                  <button onClick={() => { setMenuOpen(false); signOut({ callbackUrl: "/rooms" }); }} style={{ display: "block", background: "transparent", border: "none", padding: "4px 0 14px", cursor: "pointer", color: "#A8492F", fontSize: 14, fontFamily: "inherit" }}>Sign out</button>
+                  <button onClick={() => { setMenuOpen(false); confirmSignOut("/rooms"); }} style={{ display: "block", background: "transparent", border: "none", padding: "4px 0 14px", cursor: "pointer", color: "#A8492F", fontSize: 14, fontFamily: "inherit" }}>Sign out</button>
                 )}
                 <button onClick={() => { setMenuOpen(false); router.push(`/rooms/${room.id}`); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, background: "#B8754A", color: "#FAF7F1", border: 0, padding: 16, borderRadius: 14, font: "inherit", fontSize: 16, fontWeight: 600, cursor: "pointer" }}>
                   Book now

@@ -9,7 +9,8 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import DluxMark from "@/components/brand/DluxMark";
-import { useSession, signOut } from "next-auth/react";
+import { useSession } from "next-auth/react";
+import { confirmSignOut } from "@/components/SignOutConfirm";
 import { getMyBookingIds } from "@/lib/booking-store";
 
 const INK = "#1f1b16";
@@ -279,7 +280,7 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
                   <button key={label} onClick={() => router.push("/my-bookings")} onMouseEnter={() => setHoverMenu(i)} onMouseLeave={() => setHoverMenu(-1)}
                     style={{ display: "block", width: "100%", textAlign: "left", padding: "11px 18px", paddingLeft: hoverMenu === i ? 24 : 18, background: hoverMenu === i ? "#f3eee2" : "transparent", border: "none", borderBottom: "1px solid #ece5d4", cursor: "pointer", fontSize: 13.5, color: "#544a3a", transition: "background .18s ease, padding-left .2s ease" }}>{label}</button>
                 ))}
-                <button onClick={() => signOut({ callbackUrl: "/rooms" })} onMouseEnter={() => setSignHover(true)} onMouseLeave={() => setSignHover(false)}
+                <button onClick={() => confirmSignOut("/rooms")} onMouseEnter={() => setSignHover(true)} onMouseLeave={() => setSignHover(false)}
                   style={{ display: "block", width: "100%", textAlign: "left", padding: "13px 18px", background: signHover ? "rgba(168,70,55,.08)" : "transparent", border: "none", cursor: "pointer", fontSize: 13.5, fontWeight: 500, letterSpacing: ".3px", color: "#a8492f", transition: "background .18s ease" }}>Sign out</button>
               </div>
             </div>
@@ -338,7 +339,7 @@ export default function SiteHeader({ bookHref, bookLabel = "Book now", backHref,
                 Message us · homesdlux@gmail.com
               </a>
               {signedIn && (
-                <button onClick={() => { setMenuOpen(false); signOut({ callbackUrl: "/rooms" }); }} style={{ display: "block", background: "transparent", border: "none", padding: "4px 0 14px", cursor: "pointer", color: "#A8492F", fontSize: 14, fontFamily: "inherit" }}>Sign out</button>
+                <button onClick={() => { setMenuOpen(false); confirmSignOut("/rooms"); }} style={{ display: "block", background: "transparent", border: "none", padding: "4px 0 14px", cursor: "pointer", color: "#A8492F", fontSize: 14, fontFamily: "inherit" }}>Sign out</button>
               )}
               <button onClick={() => { setMenuOpen(false); goBook(); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, background: CLAY, color: "#FAF7F1", border: 0, padding: 16, borderRadius: 14, font: "inherit", fontSize: 16, fontWeight: 600, cursor: "pointer" }}>
                 {bookLabel}

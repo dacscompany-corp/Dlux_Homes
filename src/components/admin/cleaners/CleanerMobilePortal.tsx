@@ -27,6 +27,7 @@
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import { signOut, useSession } from "next-auth/react";
+import { confirmSignOut } from "@/components/SignOutConfirm";
 import toast from "react-hot-toast";
 import {
   Check, ChevronLeft, ChevronRight, Clock, MapPin, AlertTriangle, Camera,
@@ -1411,7 +1412,7 @@ export default function CleanerMobilePortal() {
                 <div style={{ fontSize: 17, fontWeight: 600 }}>{me?.name || "Cleaner"}</div>
                 <div style={{ fontSize: 14, color: C.muted, overflow: "hidden", textOverflow: "ellipsis" }}>{me?.email || ""}</div>
               </div>
-              <button type="button" onClick={() => signOut({ callbackUrl: "/admin/login" })} style={{
+              <button type="button" onClick={() => confirmSignOut("/admin/login")} style={{
                 height: 44, padding: "0 14px", border: `1px solid ${C.line}`, background: C.bg,
                 borderRadius: 12, font: `500 15px ${SANS}`, color: C.ink, cursor: "pointer",
                 display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
