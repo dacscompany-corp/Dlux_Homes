@@ -14,6 +14,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { signOut, useSession } from "next-auth/react";
+import { confirmSignOut } from "@/components/SignOutConfirm";
 import Link from "next/link";
 import DluxMark from "@/components/brand/DluxMark";
 import toast from "react-hot-toast";
@@ -562,8 +563,8 @@ export default function CleanerDesktopPortal() {
               <p className="text-xs truncate" style={{ color: "#6b5040" }}>{me.email}</p>
             </div>
             <span role="button" tabIndex={0} aria-label="Sign out"
-              onClick={(e) => { e.stopPropagation(); signOut({ callbackUrl: "/admin/login" }); }}
-              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); signOut({ callbackUrl: "/admin/login" }); } }}
+              onClick={(e) => { e.stopPropagation(); confirmSignOut("/admin/login"); }}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); confirmSignOut("/admin/login"); } }}
               className="cursor-pointer p-1 -m-1 flex-shrink-0">
               <LogOut className="w-4 h-4 flex-shrink-0" style={{ color: "#6b5040" }} />
             </span>

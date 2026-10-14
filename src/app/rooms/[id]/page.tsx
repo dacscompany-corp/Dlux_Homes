@@ -5,7 +5,8 @@ import Link from "next/link";
 import Image from "next/image";
 import DluxMark from "@/components/brand/DluxMark";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useSession, signOut } from "next-auth/react";
+import { useSession } from "next-auth/react";
+import { confirmSignOut } from "@/components/SignOutConfirm";
 import SiteHeader from "@/components/SiteHeader";
 import { getMyBookingIds } from "@/lib/booking-store";
 import { mockRooms } from "@/lib/mock-data";
@@ -1252,7 +1253,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                   Message us · homesdlux@gmail.com
                 </a>
                 {signedIn && (
-                  <button onClick={() => { setMenuOpen(false); signOut({ callbackUrl: "/rooms" }); }} style={{ display: "block", background: "transparent", border: "none", padding: "4px 0 14px", cursor: "pointer", color: "#A8492F", fontSize: 14, fontFamily: "inherit" }}>Sign out</button>
+                  <button onClick={() => { setMenuOpen(false); confirmSignOut("/rooms"); }} style={{ display: "block", background: "transparent", border: "none", padding: "4px 0 14px", cursor: "pointer", color: "#A8492F", fontSize: 14, fontFamily: "inherit" }}>Sign out</button>
                 )}
                 <button onClick={() => { setMenuOpen(false); document.getElementById("mbook")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, background: "#B8754A", color: "#FAF7F1", border: 0, padding: 16, borderRadius: 14, font: "inherit", fontSize: 16, fontWeight: 600, cursor: "pointer" }}>
                   Book now

@@ -18,6 +18,7 @@ import { PersistGate } from 'redux-persist/integration/react';
 import { SessionProvider } from 'next-auth/react';
 import { ThemeProvider as NextThemesProvider } from 'next-themes';
 import { Toaster } from 'react-hot-toast';
+import { SignOutConfirmHost } from '@/components/SignOutConfirm';
 
 // App-wide providers: NextAuth session, Redux store (+ persisted booking slice),
 // and theme. Wraps the whole tree in src/app/layout.tsx.
@@ -33,6 +34,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
             disableTransitionOnChange
           >
             {children}
+            <SignOutConfirmHost />
             <Toaster
               position="top-center"
               containerStyle={{ zIndex: 999999 }}

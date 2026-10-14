@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
-import { signOut, useSession } from "next-auth/react";
+import { useSession } from "next-auth/react";
+import { confirmSignOut } from "@/components/SignOutConfirm";
 import Link from "next/link";
 import DluxMark from "@/components/brand/DluxMark";
 import toast from "react-hot-toast";
@@ -1206,7 +1207,7 @@ export default function OwnerDashboard() {
               <p className="text-white text-sm font-medium truncate">{me.name}</p>
               <p className="text-xs truncate" style={{ color: "#6b5040" }}>{me.email}</p>
             </div>
-            <button type="button" onClick={() => signOut({ callbackUrl: "/admin/login" })} aria-label="Sign out" className="cursor-pointer">
+            <button type="button" onClick={() => confirmSignOut("/admin/login")} aria-label="Sign out" className="cursor-pointer">
               <LogOut className="w-4 h-4 flex-shrink-0 transition-colors" style={{ color: "#6b5040" }} />
             </button>
           </div>
