@@ -91,21 +91,21 @@ function groupTasksByCategory(rows: TaskRow[]) {
     string,
     {
       category: string;
-      tasks: { id: string; task: string; completed: boolean; photo_url: string | null }[];
+      /** One photo of the finished area, for the whole category. */
+      photo_url: string | null;
+      tasks: { id: string; task: string; completed: boolean }[];
     }
   > = {};
 
   rows.forEach((row: TaskRow) => {
     if (!categoriesMap[row.category]) {
-      categoriesMap[row.category] = { category: row.category, tasks: [] };
+      // Every row of a category carries the same category photo.
+      categoriesMap[row.category] = { category: row.category, photo_url: row.photo_url ? String(row.photo_url) : null, tasks: [] };
     }
     categoriesMap[row.category].tasks.push({
       id: String(row.id),
       task: String(row.task_description),
       completed: !!row.completed,
-      // The proof photo for this exact task, so the portals can show what's
-      // attached and gate submission without a second round trip.
-      photo_url: row.photo_url ? String(row.photo_url) : null,
     });
   });
 
@@ -113,16 +113,17 @@ function groupTasksByCategory(rows: TaskRow[]) {
   return Object.values(categoriesMap);
 }
 
-// One query for a checklist's tasks, photo proof included. Photos are joined on
-// task_id (2026-09-28 migration) — before that they were matched by storing the
-// task's text in a column called `category`, which broke whenever admin edited
-// the wording.
+// One query for a checklist's tasks, with the category's photo on every row.
+// Since 2026-10-18 there is one photo per CATEGORY (the finished area), stored
+// with task_id NULL and the category name in `category` — the table's original
+// (checklist_id, category) key. Older per-task photos (task_id set) are kept in
+// the table but no longer count as proof.
 const CHECKLIST_TASKS_QUERY = `
   SELECT t.id, t.checklist_id, t.category, t.task_description, t.completed, t.display_order,
          p.image_url AS photo_url
   FROM cleaning_tasks t
   LEFT JOIN cleaning_checklist_photos p
-    ON p.task_id = t.id AND p.checklist_id = t.checklist_id
+    ON p.checklist_id = t.checklist_id AND p.task_id IS NULL AND p.category = t.category
   WHERE t.checklist_id = $1
   ORDER BY t.display_order ASC, t.created_at ASC
 `;
@@ -135,19 +136,20 @@ async function fetchChecklistTasks(db: Queryable, checklistId: string): Promise<
 }
 
 /**
- * Turns a checklist's rows into the shape the shared gate reasons about.
- * Exported so the complete-cleaning route and the submit endpoint apply exactly
- * the same rule, rather than each re-implementing "is this checklist finished".
+ * Runs the shared gate over one checklist as stored. Exported so the
+ * complete-cleaning route and the submit endpoint apply exactly the same rule,
+ * rather than each re-implementing "is this checklist finished".
  */
-export async function loadChecklistGateTasks(checklistId: string): Promise<GateTask[]> {
+export async function loadChecklistGate(checklistId: string): Promise<GateResult> {
   const rows = await fetchChecklistTasks(pool, checklistId);
-  return rows.map((row) => ({
+  const tasks: GateTask[] = rows.map((row) => ({
     id: String(row.id),
     category: String(row.category ?? ""),
     task: String(row.task_description ?? ""),
     completed: !!row.completed,
-    hasPhoto: !!row.photo_url,
   }));
+  const photoCategories = [...new Set(rows.filter((r) => !!r.photo_url).map((r) => String(r.category ?? "")))];
+  return evaluateChecklistGate(tasks, { photoCategories });
 }
 
 /**
@@ -194,8 +196,7 @@ export async function verifyAssignmentChecklist(
   if (!checklist) {
     return { checklistId: null, gate: evaluateChecklistGate([]) };
   }
-  const tasks = await loadChecklistGateTasks(checklist.id);
-  return { checklistId: checklist.id, gate: evaluateChecklistGate(tasks) };
+  return { checklistId: checklist.id, gate: await loadChecklistGate(checklist.id) };
 }
 
 /* ---------------------------
@@ -1061,7 +1062,7 @@ export const submitChecklist = async (
 
     const isPrivilegedRole = role === "Owner" || role === "CSR" || role === "csr" || role === "admin";
 
-    const gate = evaluateChecklistGate(await loadChecklistGateTasks(checklist_id));
+    const gate = await loadChecklistGate(checklist_id);
 
     if (!gate.ok && !isPrivilegedRole) {
       return NextResponse.json(
@@ -1072,7 +1073,7 @@ export const submitChecklist = async (
           incompleteCount: gate.incomplete.length,
           missingPhotoCount: gate.missingPhotos.length,
           incompleteTasks: gate.incomplete.map((t) => ({ id: t.id, category: t.category, task: t.task })),
-          missingPhotoTasks: gate.missingPhotos.map((t) => ({ id: t.id, category: t.category, task: t.task })),
+          missingPhotoCategories: gate.missingPhotos,
         },
         { status: 400 },
       );

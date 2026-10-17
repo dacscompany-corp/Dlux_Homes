@@ -1123,16 +1123,19 @@ function ChecklistSection({ havenId, bookingUuid }: { havenId: string; bookingUu
         {checklist.categories.length === 0 && (
           <p className="px-3 py-4 text-xs" style={{ color: "#8B6344" }}>No categories yet — add one above (e.g. Bedroom, Bathroom, Kitchen).</p>
         )}
-        {checklist.categories.map((cat, ci) => (
+        {checklist.categories.map((cat, ci) => {
+          // One photo per category — the finished area — from the checklist
+          // itself, falling back to the photos endpoint (keyed by category).
+          const photo = cat.photo_url || photos?.[cat.category]?.url || null;
+          return (
           <div key={cat.category} style={{ borderTop: ci > 0 ? "1px solid #ece5d4" : "none" }}>
-            <div className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider" style={{ backgroundColor: "#FAF7F1", color: "#8a6a2f" }}>
-              {cat.category}
+            <div className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider" style={{ backgroundColor: "#FAF7F1", color: "#8a6a2f" }}>
+              <span className="flex-1 min-w-0">{cat.category}</span>
+              {photo
+                ? <ImageThumb src={photo} alt={cat.category} size={28} />
+                : <span className="text-[10px] font-semibold normal-case tracking-normal px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ backgroundColor: "#fef3c7", color: "#92400e" }}>No photo</span>}
             </div>
-            {cat.tasks.map((item) => {
-              // Keyed by the task's id (photos are linked to the exact task they
-              // prove), falling back to the url the checklist itself carries.
-              const photo = item.photo_url || photos?.[item.id]?.url || null;
-              return (
+            {cat.tasks.map((item) => (
                 <div key={item.id} className="flex items-center gap-2 px-3 py-2 text-sm" style={{ borderTop: "1px solid #F7F0E3" }}>
                   {item.completed
                     ? <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#059669" }} />
@@ -1146,9 +1149,6 @@ function ChecklistSection({ havenId, bookingUuid }: { havenId: string; bookingUu
                       {item.task}
                     </span>
                   )}
-                  {photo
-                    ? <ImageThumb src={photo} alt={item.task} size={28} />
-                    : <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ backgroundColor: "#fef3c7", color: "#92400e" }}>No photo</span>}
                   {editingId === item.id ? (
                     <button onClick={() => submitEdit(item.id)} className="text-xs font-medium cursor-pointer flex-shrink-0" style={{ color: "#059669" }}>Save</button>
                   ) : (
@@ -1164,8 +1164,7 @@ function ChecklistSection({ havenId, bookingUuid }: { havenId: string; bookingUu
                     </>
                   )}
                 </div>
-              );
-            })}
+            ))}
             {addingFor === cat.category ? (
               <div className="flex items-center gap-2 px-3 py-2" style={{ borderTop: "1px solid #F7F0E3" }}>
                 <input autoFocus placeholder="New task…" value={newTaskText} onChange={(e) => setNewTaskText(e.target.value)}
@@ -1181,7 +1180,8 @@ function ChecklistSection({ havenId, bookingUuid }: { havenId: string; bookingUu
               </button>
             )}
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

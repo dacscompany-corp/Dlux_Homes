@@ -1,15 +1,17 @@
 // The one gate a cleaning assignment has to pass before it may leave
 // In Progress for Awaiting Inspection.
 //
-// Both sides run it. The server runs it over `cleaning_tasks` joined to
-// `cleaning_checklist_photos` (the authoritative check — it also rejects a
-// direct API call that skips the UI); the portals run it over the checklist
-// they already have loaded so the Done button can say exactly what's missing
-// instead of failing with a generic error.
+// Both sides run it. The server runs it over `cleaning_tasks` plus the
+// category photos in `cleaning_checklist_photos` (the authoritative check — it
+// also rejects a direct API call that skips the UI); the portals run it over
+// the checklist they already have loaded so the Done button can say exactly
+// what's missing instead of failing with a generic error.
 //
-// Nothing here completes anything on the cleaner's behalf. A task is done when
-// the cleaner ticked it and a photo of it uploaded successfully — never because
-// submission was attempted.
+// The rule (owner request, 2026-10-18): the checklist is a plain checklist —
+// every task ticked — plus ONE photo per category showing the finished result
+// of that area. Tasks no longer carry their own photos.
+//
+// Nothing here completes anything on the cleaner's behalf.
 
 export type GateTask = {
   /** cleaning_tasks.id */
@@ -17,37 +19,35 @@ export type GateTask = {
   category: string;
   task: string;
   completed: boolean;
-  /** A cleaning_checklist_photos row exists for this task on this checklist. */
-  hasPhoto: boolean;
 };
 
 export type GateResult = {
   ok: boolean;
   totalTasks: number;
-  /** Ticked-off count (a photo ticks its task on upload). */
+  /** Ticked-off count. */
   completedTasks: number;
-  /**
-   * Tasks that are fully done — ticked AND photographed. This is what the
-   * portals' "X of N done" shows, so the header and the "photos still needed"
-   * bar can never disagree.
-   */
+  /** Same as completedTasks — kept as the "X of N done" figure the portals show. */
   doneTasks: number;
   /** Tasks the cleaner hasn't ticked yet. */
   incomplete: GateTask[];
-  /** Tasks with no successfully uploaded photo. */
-  missingPhotos: GateTask[];
-  /** Task ids whose upload is still in flight (client-side only). */
+  /** Every category on the checklist, in checklist order. */
+  categories: string[];
+  /** Categories with no successfully uploaded photo. */
+  missingPhotos: string[];
+  /** Categories whose upload is still in flight (client-side only). */
   pendingUploads: string[];
-  /** Task ids whose upload failed and hasn't been retried (client-side only). */
+  /** Categories whose upload failed and hasn't been retried (client-side only). */
   failedUploads: string[];
   /** One sentence naming what's blocking, or null when the gate passes. */
   error: string | null;
 };
 
 export type GateOptions = {
-  /** Task ids currently uploading — submission waits for them. */
+  /** Categories that have a photo on this checklist. */
+  photoCategories?: string[];
+  /** Categories currently uploading — submission waits for them. */
   pendingUploads?: string[];
-  /** Task ids whose last upload attempt failed. */
+  /** Categories whose last upload attempt failed. */
   failedUploads?: string[];
 };
 
@@ -57,11 +57,13 @@ function label(t: GateTask): string {
 }
 
 /** Up to three names, then "+N more", so the message stays readable on a phone. */
-function nameList(tasks: GateTask[]): string {
-  const shown = tasks.slice(0, 3).map(label);
-  const rest = tasks.length - shown.length;
+function nameList(names: string[]): string {
+  const shown = names.slice(0, 3);
+  const rest = names.length - shown.length;
   return rest > 0 ? `${shown.join(", ")} +${rest} more` : shown.join(", ");
 }
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /**
  * Evaluates one assignment's checklist. A checklist with no tasks at all is NOT
@@ -70,23 +72,21 @@ function nameList(tasks: GateTask[]): string {
  * nothing recorded.
  */
 export function evaluateChecklistGate(tasks: GateTask[], options: GateOptions = {}): GateResult {
-  const pendingUploads = (options.pendingUploads ?? []).filter((id) =>
-    tasks.some((t) => t.id === id),
-  );
-  const failedUploads = (options.failedUploads ?? []).filter((id) =>
-    tasks.some((t) => t.id === id),
-  );
+  const categories = [...new Set(tasks.map((t) => t.category))];
+  const photographed = new Set(options.photoCategories ?? []);
+  const pendingUploads = (options.pendingUploads ?? []).filter((c) => categories.includes(c));
+  const failedUploads = (options.failedUploads ?? []).filter((c) => categories.includes(c));
 
   const incomplete = tasks.filter((t) => !t.completed);
-  const missingPhotos = tasks.filter((t) => !t.hasPhoto);
+  const missingPhotos = categories.filter((c) => !photographed.has(c));
   const completedTasks = tasks.length - incomplete.length;
-  const doneTasks = tasks.filter((t) => t.completed && t.hasPhoto).length;
 
   const base: Omit<GateResult, "ok" | "error"> = {
     totalTasks: tasks.length,
     completedTasks,
-    doneTasks,
+    doneTasks: completedTasks,
     incomplete,
+    categories,
     missingPhotos,
     pendingUploads,
     failedUploads,
@@ -105,29 +105,15 @@ export function evaluateChecklistGate(tasks: GateTask[], options: GateOptions = 
     return {
       ...base,
       ok: false,
-      error: `Still uploading ${pendingUploads.length} photo${pendingUploads.length === 1 ? "" : "s"} — wait for ${pendingUploads.length === 1 ? "it" : "them"} to finish.`,
+      error: `Still uploading ${plural(pendingUploads.length, "photo")} — wait for ${pendingUploads.length === 1 ? "it" : "them"} to finish.`,
     };
   }
 
   if (failedUploads.length > 0) {
-    const failed = tasks.filter((t) => failedUploads.includes(t.id));
     return {
       ...base,
       ok: false,
-      error: `${failed.length} photo upload${failed.length === 1 ? "" : "s"} failed — try again: ${nameList(failed)}`,
-    };
-  }
-
-  // A photo ticks its task on upload, so an unticked task that also has no
-  // photo is ONE outstanding step. Only when some unticked task already HAS a
-  // photo (the cleaner unticked it) is ticking a separate thing to report.
-  const photoIds = new Set(missingPhotos.map((t) => t.id));
-  const tickOnly = incomplete.filter((t) => !photoIds.has(t.id));
-  if (missingPhotos.length > 0 && tickOnly.length === 0) {
-    return {
-      ...base,
-      ok: false,
-      error: `${missingPhotos.length} task${missingPhotos.length === 1 ? "" : "s"} still need a photo: ${nameList(missingPhotos)}`,
+      error: `${plural(failedUploads.length, "photo upload")} failed — try again: ${nameList(failedUploads)}`,
     };
   }
 
@@ -135,7 +121,7 @@ export function evaluateChecklistGate(tasks: GateTask[], options: GateOptions = 
     return {
       ...base,
       ok: false,
-      error: `${incomplete.length} task${incomplete.length === 1 ? "" : "s"} not ticked and ${missingPhotos.length} still need a photo: ${nameList(incomplete.length >= missingPhotos.length ? incomplete : missingPhotos)}`,
+      error: `${plural(incomplete.length, "task")} not ticked and ${plural(missingPhotos.length, "area")} still need a photo: ${nameList(missingPhotos)}`,
     };
   }
 
@@ -143,7 +129,7 @@ export function evaluateChecklistGate(tasks: GateTask[], options: GateOptions = 
     return {
       ...base,
       ok: false,
-      error: `${incomplete.length} task${incomplete.length === 1 ? "" : "s"} still to tick off: ${nameList(incomplete)}`,
+      error: `${plural(incomplete.length, "task")} still to tick off: ${nameList(incomplete.map(label))}`,
     };
   }
 
@@ -151,7 +137,7 @@ export function evaluateChecklistGate(tasks: GateTask[], options: GateOptions = 
     return {
       ...base,
       ok: false,
-      error: `${missingPhotos.length} task${missingPhotos.length === 1 ? "" : "s"} still need a photo: ${nameList(missingPhotos)}`,
+      error: `${plural(missingPhotos.length, "area")} still need a photo of the finished result: ${nameList(missingPhotos)}`,
     };
   }
 

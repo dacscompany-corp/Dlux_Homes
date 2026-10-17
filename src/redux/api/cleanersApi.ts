@@ -93,22 +93,23 @@ export interface ChecklistTaskItem {
   id: string;
   task: string;
   completed: boolean;
-  /** The uploaded proof photo for this exact task, if any. */
-  photo_url?: string | null;
 }
 
-/** Proof photo per checklist task, keyed by cleaning_tasks.id. */
+/** Photo of the finished area, one per checklist category, keyed by category name. */
 export type ChecklistPhotos = Record<string, { url: string; uploaded_at: string | null }>;
 
 /** Error body the complete/submit endpoints return when the gate fails. */
 export interface ChecklistGateError {
   error?: string;
   incompleteTasks?: { id: string; category: string; task: string }[];
-  missingPhotoTasks?: { id: string; category: string; task: string }[];
+  /** Categories still missing their photo of the finished area. */
+  missingPhotoCategories?: string[];
 }
 
 export interface ChecklistCategory {
   category: string;
+  /** One photo of the finished area for the whole category. */
+  photo_url?: string | null;
   tasks: ChecklistTaskItem[];
 }
 
@@ -222,7 +223,7 @@ export const cleanersApi = createApi({
       providesTags: ["Checklist"],
     }),
 
-    // Proof photo per checklist task, keyed by cleaning_tasks.id — the same
+    // Photo per checklist category, keyed by category name — the same
     // store the cleaner portal writes via /api/admin/cleaners/checklist-photos.
     getChecklistPhotos: builder.query<ChecklistPhotos, string>({
       query(checklistId) {

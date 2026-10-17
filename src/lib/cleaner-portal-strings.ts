@@ -43,7 +43,7 @@ const en = {
   // Room / checklist
   back: "Back",
   problem: "Problem?",
-  tapHint: "Take a photo of each task — that ticks it off.",
+  tapHint: "Tick each task when it's done, then take one photo of each finished area.",
   finish: "I'm done — send for checking",
   sending: "Sending…",
   sentBack: "The office asked you to fix:",
@@ -53,6 +53,7 @@ const en = {
   replacePhoto: "Replace photo",
   uploadingPhoto: "Uploading…",
   photoFailed: "Upload failed — tap to retry",
+  areaPhoto: "Photo of the finished area",
   needsPhoto: "Photo needed",
   checklistFailed: "Couldn't load the checklist.",
   notStarted: "Tap Start cleaning to open the checklist.",
@@ -196,7 +197,7 @@ const tl: CleanerStrings = {
 
   back: "Bumalik",
   problem: "May problema?",
-  tapHint: "Kunan ng litrato ang bawat gawain — matsetsek na ito.",
+  tapHint: "I-tsek ang bawat gawain kapag tapos na, tapos kunan ng isang litrato ang bawat natapos na bahagi.",
   finish: "Tapos na — ipasuri na",
   sending: "Ipinapadala…",
   sentBack: "Pinapaayos ng opisina:",
@@ -206,6 +207,7 @@ const tl: CleanerStrings = {
   replacePhoto: "Palitan ang litrato",
   uploadingPhoto: "Ina-upload…",
   photoFailed: "Hindi na-upload — pindutin para ulitin",
+  areaPhoto: "Litrato ng natapos na bahagi",
   needsPhoto: "Kailangan ng litrato",
   checklistFailed: "Hindi makuha ang checklist.",
   notStarted: "Pindutin ang Simulan para buksan ang checklist.",
