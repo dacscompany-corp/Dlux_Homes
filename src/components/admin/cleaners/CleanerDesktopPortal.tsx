@@ -442,7 +442,8 @@ export default function CleanerDesktopPortal() {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (!file) return;
       const res = await ck.uploadPhoto(taskId, file);
-      if (res.ok) toast.success("Photo attached");
+      if (res.ok && res.autoCompleted) toast.success("All tasks done — room completed and sent for checking");
+      else if (res.ok) toast.success("Photo attached");
       else toast.error(res.error || "Could not upload photo");
     };
     f.click();

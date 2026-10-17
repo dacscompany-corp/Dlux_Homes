@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
 import { upload_image_from_form } from "@/backend/utils/fileUpload";
 import { requireChecklistAccess } from "@/backend/utils/requireAdmin";
+import { autoCompleteIfChecklistDone } from "@/backend/controller/cleanersController";
 
 // Photo proof for checklist tasks — one photo per task, required for every task
 // before the room can be sent for inspection.
@@ -153,7 +154,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "The photo could not be saved" }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, url: savedUrl, task_id: taskId });
+    // The last photo can be what finishes the checklist — hand the room in.
+    const autoCompleted = await autoCompleteIfChecklistDone(checklistId, guard.actorId);
+
+    return NextResponse.json({ success: true, url: savedUrl, task_id: taskId, autoCompleted });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("POST /api/admin/cleaners/checklist-photos error:", message);

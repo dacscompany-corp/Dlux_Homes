@@ -43,8 +43,9 @@ export type AssignmentChecklist = {
   uploadStateFor: (taskId: string) => UploadState | null;
   /** Last upload error per task, for inline display. */
   uploadErrorFor: (taskId: string) => string | null;
-  toggleTask: (taskId: string, currentlyCompleted: boolean) => Promise<{ ok: boolean; error?: string }>;
-  uploadPhoto: (taskId: string, file: File) => Promise<{ ok: boolean; error?: string }>;
+  /** autoCompleted: that save finished the checklist and the room was handed in. */
+  toggleTask: (taskId: string, currentlyCompleted: boolean) => Promise<{ ok: boolean; error?: string; autoCompleted?: boolean }>;
+  uploadPhoto: (taskId: string, file: File) => Promise<{ ok: boolean; error?: string; autoCompleted?: boolean }>;
 };
 
 type Target = { havenId: string; bookingUuid: string } | null;
@@ -108,13 +109,14 @@ export function useAssignmentChecklist(target: Target): AssignmentChecklist {
     async (taskId: string, currentlyCompleted: boolean) => {
       if (skip) return { ok: false, error: "No checklist loaded" };
       try {
-        await toggleM({ taskId, completed: !currentlyCompleted, checklist: args }).unwrap();
-        return { ok: true };
+        const res = await toggleM({ taskId, completed: !currentlyCompleted, checklist: args }).unwrap();
+        if (res.autoCompleted) dispatch(cleanersApi.util.invalidateTags(["CleaningTask"]));
+        return { ok: true, autoCompleted: !!res.autoCompleted };
       } catch (err) {
         return { ok: false, error: errorMessage(err, "Could not save that task") };
       }
     },
-    [toggleM, args, skip],
+    [toggleM, args, skip, dispatch],
   );
 
   const uploadPhoto = useCallback(
@@ -170,7 +172,8 @@ export function useAssignmentChecklist(target: Target): AssignmentChecklist {
           return next;
         });
         refetch();
-        return { ok: true };
+        if (body.autoCompleted) dispatch(cleanersApi.util.invalidateTags(["CleaningTask"]));
+        return { ok: true, autoCompleted: !!body.autoCompleted };
       } catch {
         const msg = "Photo upload failed — check your connection and try again";
         setUploads((u) => ({ ...u, [taskId]: "failed" }));

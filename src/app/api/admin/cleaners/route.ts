@@ -9,6 +9,18 @@ import {
   removeChecklistTask,
 } from "@/backend/controller/cleaningChecklistController";
 import { requireAdmin, requireChecklistAccess } from "@/backend/utils/requireAdmin";
+import { autoCompleteIfChecklistDone } from "@/backend/controller/cleanersController";
+import pool from "@/backend/config/db";
+
+// After a successful tick/save, the checklist may now be fully ticked and
+// photographed — if so the room is handed in automatically, and the response
+// says so (autoCompleted) so the portal can move to its "done" screen.
+async function withAutoComplete(res: NextResponse, checklistId: string | null, actorId: string | null): Promise<NextResponse> {
+  if (!res.ok || !checklistId) return res;
+  if (!(await autoCompleteIfChecklistDone(checklistId, actorId))) return res;
+  const body = await res.clone().json().catch(() => ({}));
+  return NextResponse.json({ ...body, autoCompleted: true }, { status: res.status });
+}
 
 // Checklist endpoints. Every one of them now resolves the checklist to its
 // cleaning assignment first: Owner/CSR may act on any, a Cleaner only on the
@@ -65,7 +77,7 @@ export async function POST(req: NextRequest) {
 
         if (action === "save") {
           // Expect body: { checklist_id, tasks: [{ id, completed }, ...] }
-          return saveChecklistProgress(reqWithParsedBody);
+          return withAutoComplete(await saveChecklistProgress(reqWithParsedBody), String(body.checklist_id), guard.actorId);
         }
         // The role comes from the session, never the body — a cleaner can't
         // claim to be admin to skip the gate.
@@ -128,9 +140,12 @@ export async function PATCH(req: NextRequest) {
     // body when .json() is called.
     const reqWithParsedBody = { ...req, json: async () => body } as NextRequest;
 
-    return controllerUpdateTask(reqWithParsedBody, {
+    const res = await controllerUpdateTask(reqWithParsedBody, {
       params: Promise.resolve({ taskId }),
     });
+    if (!res.ok || body?.completed !== true) return res;
+    const owner = await pool.query(`SELECT checklist_id::text AS id FROM cleaning_tasks WHERE id = $1::uuid`, [String(taskId)]);
+    return withAutoComplete(res, owner.rows[0]?.id ?? null, guard.actorId);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("PATCH /api/admin/cleaners error:", message);

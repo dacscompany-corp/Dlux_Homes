@@ -155,13 +155,16 @@ export const cleanersApi = createApi({
     // the checklist was loaded with) to tick it on screen immediately; if the
     // server refuses, the tick is rolled back so a failed save never looks saved.
     toggleChecklistTask: builder.mutation<
-      { task: ChecklistTaskItem; incompleteCount: number },
+      { task: ChecklistTaskItem; incompleteCount: number; autoCompleted?: boolean },
       { taskId: string; completed: boolean; checklist?: { havenId: string; bookingId: string } }
     >({
       query({ taskId, completed }) {
         return { url: "", method: "PATCH", body: { task_id: taskId, completed } };
       },
-      transformResponse: (response: { success: boolean; data: { task: ChecklistTaskItem; incompleteCount: number } }) => response.data,
+      // autoCompleted: this tick finished the checklist and the server handed the
+      // room in (In Progress → Awaiting Inspection) on the cleaner's behalf.
+      transformResponse: (response: { success: boolean; data: { task: ChecklistTaskItem; incompleteCount: number }; autoCompleted?: boolean }) =>
+        ({ ...response.data, autoCompleted: !!response.autoCompleted }),
       async onQueryStarted({ taskId, completed, checklist }, { dispatch, queryFulfilled }) {
         if (!checklist) return;
         const patch = dispatch(
@@ -348,6 +351,15 @@ export const cleanersApi = createApi({
       invalidatesTags: ["CleaningTask", "CleaningHistory"],
     }),
 
+    // Admin override: close a task straight to Ready from any earlier status,
+    // skipping the cleaner hand-in and inspection. Logged as an override.
+    adminCompleteCleaning: builder.mutation<CleaningTask, string>({
+      query(taskId) {
+        return { url: `/tasks/${taskId}/admin-complete`, method: "PUT" };
+      },
+      invalidatesTags: ["CleaningTask", "CleaningHistory"],
+    }),
+
     // Admin fails an inspection: awaiting-inspection -> in-progress, with a
     // required note the cleaner is notified about.
     rejectInspection: builder.mutation<CleaningTask, { taskId: string; note: string }>({
@@ -436,6 +448,7 @@ export const {
   useCompleteCleaningMutation,
   useApproveInspectionMutation,
   useRejectInspectionMutation,
+  useAdminCompleteCleaningMutation,
   useGetCleaningHistoryQuery,
   useGetChecklistQuery,
   useToggleChecklistTaskMutation,

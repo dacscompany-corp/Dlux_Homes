@@ -345,6 +345,11 @@ export default function CleanerMobilePortal() {
       if (!file) return;
       const res = await ck.uploadPhoto(taskId, file);
       if (!res.ok) toast.error(res.error || "Could not upload photo");
+      // That was the last item — the server handed the room in, same as Done.
+      else if (res.autoCompleted && active) {
+        setFinishedName(active.name);
+        setScreen("done");
+      }
     };
     input.click();
   };
