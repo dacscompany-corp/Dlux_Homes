@@ -357,7 +357,7 @@ export default function CleanerDesktopPortal() {
   // falls back to whatever it was typed in, since it has no dictionary entry.
   const [checklistLang, setChecklistLang] = useState<ChecklistLanguage>("en");
   const checklistCategories = ck.checklist?.categories ?? [];
-  // Done = ticked AND photographed (a photo ticks its task on upload).
+  // Done = ticked. Photos are separate: one per category (the finished area).
   const completedCount = ck.gate.doneTasks;
   const checklistTotal = ck.gate.totalTasks;
   const progressPercent = checklistTotal ? Math.round((completedCount / checklistTotal) * 100) : 0;
@@ -365,7 +365,7 @@ export default function CleanerDesktopPortal() {
 
   // Completing only moves the task to Awaiting Inspection — it does NOT make
   // the room bookable again. The server re-verifies every task is ticked and
-  // photographed; the client gate is only there to say what's missing before
+  // every area photographed; the client gate is only there to say what's missing before
   // the request is even sent.
   const markComplete = async (id: string) => {
     if (checklistOpenFor !== id) {
@@ -430,7 +430,18 @@ export default function CleanerDesktopPortal() {
     setActiveNav("Report an Issue");
   };
 
-  const pickChecklistPhoto = (taskId: string) => {
+  const toggleChecklistItem = async (taskId: string, completed: boolean) => {
+    if (!checklistEditable) {
+      toast.error("Start cleaning this room first — tasks are ticked while it's In Progress.");
+      return;
+    }
+    const res = await ck.toggleTask(taskId, completed);
+    if (!res.ok) toast.error(res.error || "Could not save that task");
+    else if (res.autoCompleted) toast.success("All tasks done — room completed and sent for checking");
+  };
+
+  // One photo per category: the finished area.
+  const pickChecklistPhoto = (category: string) => {
     if (!checklistEditable) {
       toast.error("Start cleaning this room first — photos are added while it's In Progress.");
       return;
@@ -441,8 +452,9 @@ export default function CleanerDesktopPortal() {
     f.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (!file) return;
-      const res = await ck.uploadPhoto(taskId, file);
-      if (res.ok) toast.success("Photo attached");
+      const res = await ck.uploadPhoto(category, file);
+      if (res.ok && res.autoCompleted) toast.success("All tasks done — room completed and sent for checking");
+      else if (res.ok) toast.success("Photo attached");
       else toast.error(res.error || "Could not upload photo");
     };
     f.click();
@@ -742,7 +754,7 @@ export default function CleanerDesktopPortal() {
                   </div>
                 ) : (
                   <p className="text-sm" style={{ color: "#8B6344" }}>
-                    Each assignment has its own checklist. Attach a photo of each task — the photo ticks it off. A room can&apos;t be sent for inspection until every task has one.
+                    Each assignment has its own checklist. Tick each task as you finish it, then add one photo of each finished area. A room can&apos;t be sent for inspection until every task is ticked and every area has its photo.
                   </p>
                 )}
               </div>
@@ -893,58 +905,63 @@ export default function CleanerDesktopPortal() {
                                 {ck.isLoading || ck.isFetching ? "Loading checklist…" : "This room has no checklist yet — ask the office to set one up."}
                               </p>
                             )
-                          ) : checklistCategories.map((cat) => (
+                          ) : checklistCategories.map((cat) => {
+                            const photo = ck.photoFor(cat.category);
+                            const upload = ck.uploadStateFor(cat.category);
+                            const uploadError = ck.uploadErrorFor(cat.category);
+                            return (
                             <div key={cat.category}>
                               <div className="px-3 sm:px-5 py-2 text-xs font-semibold uppercase tracking-wider" style={{ backgroundColor: "#FAF7F1", color: "#8a6a2f" }}>{translateCategory(cat.category, checklistLang)}</div>
                               {cat.tasks.map((item, idx) => {
-                                const photo = ck.photoFor(item.id);
-                                const upload = ck.uploadStateFor(item.id);
-                                const uploadError = ck.uploadErrorFor(item.id);
                                 const done = ck.isDone(item.id);
                                 return (
-                                <div key={item.id} style={{ borderTop: idx > 0 ? "1px solid #F7F0E3" : "none" }}>
-                                {/* One action per task: clicking the row attaches
-                                    its photo, and the photo ticks it — no separate
-                                    checkbox step. */}
-                                <div role="button" tabIndex={checklistEditable ? 0 : -1}
-                                  onClick={() => { if (upload !== "uploading") pickChecklistPhoto(item.id); }}
-                                  onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && upload !== "uploading") { e.preventDefault(); pickChecklistPhoto(item.id); } }}
+                                <div key={item.id} role="checkbox" aria-checked={done} tabIndex={checklistEditable ? 0 : -1}
+                                  onClick={() => toggleChecklistItem(item.id, item.completed)}
+                                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleChecklistItem(item.id, item.completed); } }}
                                   className="flex items-center gap-2 sm:gap-4 px-3 sm:px-5 py-3.5 transition-colors"
-                                  style={{ cursor: checklistEditable ? "pointer" : "default" }}
+                                  style={{ borderTop: idx > 0 ? "1px solid #F7F0E3" : "none", cursor: checklistEditable ? "pointer" : "default" }}
                                   onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
                                   onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
-                                  <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all"
+                                  <div className="w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all"
                                     aria-hidden="true"
                                     style={{ borderColor: done ? "#B07848" : "#D4BFA0", backgroundColor: done ? "#B07848" : "transparent", opacity: checklistEditable || done ? 1 : 0.5 }}>
                                     {done && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
                                   </div>
                                   <span className="text-sm flex-1 min-w-0" style={{ color: done ? "#A89080" : "#5a4a3a", textDecoration: done ? "line-through" : "none" }}>{translateTask(item.task, checklistLang)}</span>
-                                  {photo ? <ImageThumb src={photo} alt={item.task} size={32} /> : null}
-                                  <button type="button"
-                                    title={upload === "uploading" ? "Uploading…" : photo ? "Replace photo" : "Attach photo"}
-                                    disabled={!checklistEditable || upload === "uploading"}
-                                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); pickChecklistPhoto(item.id); }}
-                                    className="flex-shrink-0 p-1.5 rounded-lg cursor-pointer disabled:opacity-50"
-                                    style={{
-                                      color: upload === "failed" ? "#92400e" : "#8a6a2f",
-                                      border: `1px solid ${upload === "failed" ? "#f5d9a8" : "#E0CEB8"}`,
-                                      backgroundColor: upload === "failed" ? "#fef3c7" : "#FAF7F1",
-                                    }}>
-                                    {upload === "failed" ? <AlertTriangle className="w-3.5 h-3.5" /> : <Camera className="w-3.5 h-3.5" />}
-                                  </button>
                                   {done && <span className="hidden sm:inline text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0" style={{ backgroundColor: "#d1fae5", color: "#065f46" }}>Done</span>}
-                                  {!photo && upload !== "uploading" && <span className="hidden sm:inline text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0" style={{ backgroundColor: "#fef3c7", color: "#92400e" }}>Photo needed</span>}
-                                </div>
-                                {upload && (
-                                  <p className="px-3 sm:px-5 pb-2 -mt-1 text-xs" style={{ color: upload === "failed" ? "#92400e" : "#8B6344", paddingLeft: 52 }}>
-                                    {upload === "uploading" ? "Uploading photo…" : `${uploadError || "Upload failed"} — click the camera to retry.`}
-                                  </p>
-                                )}
                                 </div>
                                 );
                               })}
+                              {/* One photo for the whole area, once it's finished. */}
+                              <div className="flex items-center gap-2 sm:gap-4 px-3 sm:px-5 py-3" style={{ borderTop: "1px solid #ece5d4", backgroundColor: "#FDFBF7" }}>
+                                <Camera className="w-4 h-4 flex-shrink-0" style={{ color: "#8a6a2f" }} />
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium" style={{ color: "#5a4a3a" }}>Photo of the finished area</p>
+                                  {upload && (
+                                    <p className="text-xs" style={{ color: upload === "failed" ? "#92400e" : "#8B6344" }}>
+                                      {upload === "uploading" ? "Uploading photo…" : `${uploadError || "Upload failed"} — click to retry.`}
+                                    </p>
+                                  )}
+                                </div>
+                                {photo ? <ImageThumb src={photo} alt={cat.category} size={36} /> : (
+                                  upload !== "uploading" && <span className="hidden sm:inline text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0" style={{ backgroundColor: "#fef3c7", color: "#92400e" }}>Photo needed</span>
+                                )}
+                                <button type="button"
+                                  disabled={!checklistEditable || upload === "uploading"}
+                                  onClick={() => pickChecklistPhoto(cat.category)}
+                                  className="flex-shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                  style={{
+                                    color: upload === "failed" ? "#92400e" : "#8a6a2f",
+                                    border: `1px solid ${upload === "failed" ? "#f5d9a8" : "#E0CEB8"}`,
+                                    backgroundColor: upload === "failed" ? "#fef3c7" : "#FAF7F1",
+                                  }}>
+                                  {upload === "failed" ? <AlertTriangle className="w-3.5 h-3.5" /> : <Camera className="w-3.5 h-3.5" />}
+                                  {upload === "uploading" ? "Uploading…" : photo ? "Replace photo" : "Add photo"}
+                                </button>
+                              </div>
                             </div>
-                          ))}
+                            );
+                          })}
                         </div>
                         {/* Sticky finish bar — always in view while working
                             down a long checklist, so there's no scrolling back

@@ -14,7 +14,7 @@ import { actorForRole, checkTransition } from "@/lib/cleaning-workflow";
 //   1. the task must be assigned to the caller;
 //   2. it must be In Progress (the sequence can't be skipped);
 //   3. its checklist must exist, every task on it must be ticked, and every
-//      task must have a successfully uploaded photo linked to THIS checklist.
+//      category must have a photo of the finished area on THIS checklist.
 //
 // Nothing here ticks anything on the cleaner's behalf. The old flow
 // force-completed unticked tasks at submission and let a missing checklist
@@ -47,7 +47,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           incompleteCount: gate.incomplete.length,
           missingPhotoCount: gate.missingPhotos.length,
           incompleteTasks: gate.incomplete.map((t) => ({ id: t.id, category: t.category, task: t.task })),
-          missingPhotoTasks: gate.missingPhotos.map((t) => ({ id: t.id, category: t.category, task: t.task })),
+          missingPhotoCategories: gate.missingPhotos,
         },
         { status: 400 }
       );

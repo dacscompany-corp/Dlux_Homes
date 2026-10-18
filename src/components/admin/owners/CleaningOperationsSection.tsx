@@ -8,6 +8,7 @@ import {
   useGetCleaningHistoryQuery,
   useApproveInspectionMutation,
   useRejectInspectionMutation,
+  useAdminCompleteCleaningMutation,
   useAssignCleanerMutation,
   useGetChecklistQuery,
   useGetChecklistPhotosQuery,
@@ -32,7 +33,8 @@ import {
 // Shared body for the Cleaning Operations view — Owner/CSR monitoring over
 // the same booking_cleaning data the cleaner portal reads and writes.
 // Read-only except for inspection approve/reject (the only actions that can
-// move a task to Ready or send it back) and manual cleaner assignment.
+// move a task to Ready or send it back), the admin "Mark Complete" override,
+// and manual cleaner assignment.
 //
 // Rendered from two places: as the standalone /admin/cleaning-operations
 // page (its own sidebar/header wrap this), and inline as the Owner portal's
@@ -45,7 +47,7 @@ const STATUS_LABELS: Record<string, { label: string; color: string; bg: string; 
   pending:               { label: "Needs Cleaning",      color: "#92400e", bg: "#fef3c7", dot: "#f59e0b" },
   assigned:              { label: "Assigned",            color: "#1e40af", bg: "#dbeafe", dot: "#3b82f6" },
   "in-progress":         { label: "In Progress",         color: "#8a6a2f", bg: "#F7F0E3", dot: "#B07848" },
-  "awaiting-inspection": { label: "Awaiting Inspection", color: "#5b21b6", bg: "#ede9fe", dot: "#8b5cf6" },
+  "awaiting-inspection": { label: "Completed",           color: "#5b21b6", bg: "#ede9fe", dot: "#8b5cf6" },
   ready:                 { label: "Ready",               color: "#065f46", bg: "#d1fae5", dot: "#10b981" },
   cleaned:               { label: "Ready",               color: "#065f46", bg: "#d1fae5", dot: "#10b981" },
   inspected:             { label: "Ready",               color: "#065f46", bg: "#d1fae5", dot: "#10b981" },
@@ -55,6 +57,21 @@ const STATUS_LABELS: Record<string, { label: string; color: string; bg: string; 
 // cleaner portals use, so "overdue" here and "can start" there always agree.
 function checkoutMoment(task: CleaningTask): Date | null {
   return cleaningDueAt(task);
+}
+
+// Table order: today's and upcoming cleanings first, soonest on top; then past
+// ones, most recent first. Undated tasks go last.
+function byNearestCleaning(a: CleaningTask, b: CleaningTask): number {
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const rank = (t: CleaningTask) => {
+    const due = checkoutMoment(t)?.getTime();
+    if (due === undefined || Number.isNaN(due)) return [2, 0];
+    return due >= startOfToday.getTime() ? [0, due] : [1, -due];
+  };
+  const [ga, va] = rank(a);
+  const [gb, vb] = rank(b);
+  return ga - gb || va - vb;
 }
 
 // ── Status / assignment filters ──────────────────────────────────────────────
@@ -416,7 +433,7 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
     }, {});
   const statusCounts = countBy(baseTasks.filter(assignOk), (t) => statusGroup(t.cleaning_status));
   const assignCounts = countBy(baseTasks.filter(statusOk), assignmentKind);
-  const visibleTasks = baseTasks.filter((t) => statusOk(t) && assignOk(t));
+  const visibleTasks = baseTasks.filter((t) => statusOk(t) && assignOk(t)).sort(byNearestCleaning);
 
   // Every active filter as a removable chip.
   const activeChips = [
@@ -475,7 +492,7 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
           { label: "Needs Assignment",    value: unassignedCount, icon: UserPlus,   iconBg: "#fef3c7", iconColor: "#d97706", onClick: () => setFilter("attention") },
           { label: "Overdue",             value: overdueCount, icon: AlertTriangle, iconBg: "#fee2e2", iconColor: "#dc2626", onClick: () => setFilter("attention") },
           { label: "Open Issues",         value: issueCount,   icon: AlertTriangle, iconBg: "#ffedd5", iconColor: "#ea580c", onClick: () => setFilter("attention") },
-          { label: "Awaiting Inspection", value: awaitingCount,icon: ClipboardList, iconBg: "#ede9fe", iconColor: "#7c3aed", onClick: () => setFilter("awaiting-inspection") },
+          { label: "Completed (to check)", value: awaitingCount,icon: ClipboardList, iconBg: "#ede9fe", iconColor: "#7c3aed", onClick: () => setFilter("awaiting-inspection") },
         ].map((card) => {
           const Icon = card.icon;
           return (
@@ -495,7 +512,7 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
         {([
           { id: "all", label: "All Tasks" },
           { id: "attention", label: "Needs Attention" },
-          { id: "awaiting-inspection", label: "Awaiting Inspection" },
+          { id: "awaiting-inspection", label: "Completed" },
         ] as const).map((f) => (
           <button key={f.id} onClick={() => setFilter(f.id)}
             className="px-3 py-1.5 text-xs font-medium border cursor-pointer transition-colors"
@@ -658,13 +675,20 @@ function TaskDetailDrawer({ task, cleaners, cleanersLoadFailed, onClose }: { tas
   const { data: history } = useGetCleaningHistoryQuery(task.cleaning_id);
   const [approve, { isLoading: approving }] = useApproveInspectionMutation();
   const [reject, { isLoading: rejecting }] = useRejectInspectionMutation();
+  const [adminComplete, { isLoading: completing }] = useAdminCompleteCleaningMutation();
   const [note, setNote] = useState("");
+  const [confirmComplete, setConfirmComplete] = useState(false);
   const st = STATUS_LABELS[task.cleaning_status] || STATUS_LABELS.pending;
+  const canMarkComplete = !["ready", "awaiting-inspection", "cleaned", "inspected"].includes(task.cleaning_status);
   const cleanerName = task.cleaner_first_name ? `${task.cleaner_first_name} ${task.cleaner_last_name ?? ""}`.trim() : "Unassigned";
 
   const handleApprove = async () => {
     try { await approve(task.cleaning_id).unwrap(); toast.success("Inspection approved — room is Ready"); onClose(); }
     catch (err) { toast.error((err as { data?: { error?: string } })?.data?.error || "Could not approve inspection"); }
+  };
+  const handleMarkComplete = async () => {
+    try { await adminComplete(task.cleaning_id).unwrap(); toast.success("Cleaning marked complete — room is Ready"); onClose(); }
+    catch (err) { toast.error((err as { data?: { error?: string } })?.data?.error || "Could not mark complete"); }
   };
   const handleReject = async () => {
     if (!note.trim()) { toast.error("Add a note explaining what needs to be fixed"); return; }
@@ -749,6 +773,38 @@ function TaskDetailDrawer({ task, cleaners, cleanersLoadFailed, onClose }: { tas
           </div>
         )}
 
+        {/* Admin override — Awaiting Inspection already has Approve above, so
+            this covers the earlier statuses (e.g. old tasks stuck at Assigned). */}
+        {canMarkComplete && (
+          <div className="border p-4 mb-6" style={{ borderColor: "#ece5d4" }}>
+            {!confirmComplete ? (
+              <button onClick={() => setConfirmComplete(true)}
+                className="w-full py-2.5 text-sm font-semibold text-white cursor-pointer"
+                style={{ backgroundColor: "#059669" }}>
+                <CheckCircle2 className="w-4 h-4 inline mr-1.5" />Mark Complete
+              </button>
+            ) : (
+              <>
+                <p className="text-xs mb-3" style={{ color: "#5a4a3a" }}>
+                  Mark this room cleaned and Ready? This skips the cleaner&apos;s checklist and inspection, and is recorded in the history.
+                </p>
+                <div className="flex gap-2">
+                  <button onClick={() => setConfirmComplete(false)} disabled={completing}
+                    className="flex-1 py-2.5 text-sm font-semibold border cursor-pointer disabled:opacity-60"
+                    style={{ color: "#5a4a3a", borderColor: "#ece5d4" }}>
+                    Cancel
+                  </button>
+                  <button onClick={handleMarkComplete} disabled={completing}
+                    className="flex-1 py-2.5 text-sm font-semibold text-white cursor-pointer disabled:opacity-60"
+                    style={{ backgroundColor: "#059669" }}>
+                    {completing ? "Saving…" : "Yes, mark Ready"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         {task.haven_id && task.booking_uuid && (
           <ChecklistSection havenId={task.haven_id} bookingUuid={task.booking_uuid} />
         )}
@@ -803,6 +859,10 @@ function MethodBadge({ task }: { task: CleaningTask }) {
 function AssignCleanerControl({ task, cleaners, loadFailed }: { task: CleaningTask; cleaners: Cleaner[]; loadFailed: boolean }) {
   const [assign, { isLoading }] = useAssignCleanerMutation();
   const currentId = task.assigned_cleaner_id ?? "";
+  // The list holds active accounts only, so a task still held by a since-
+  // deactivated cleaner would otherwise match no option and read "Unassigned".
+  const currentMissing = !!currentId && !cleaners.some((c) => c.id === currentId);
+  const currentName = `${task.cleaner_first_name ?? "Former cleaner"} ${task.cleaner_last_name ?? ""}`.trim();
 
   const handleChange = async (cleanerId: string) => {
     if (!cleanerId || cleanerId === currentId) return;
@@ -817,7 +877,7 @@ function AssignCleanerControl({ task, cleaners, loadFailed }: { task: CleaningTa
   if (loadFailed) {
     return <span className="text-xs" style={{ color: "#dc2626" }}>Could not load cleaner list</span>;
   }
-  if (cleaners.length === 0) {
+  if (cleaners.length === 0 && !currentId) {
     return <span className="text-xs" style={{ color: "#8B6344" }}>No Cleaner accounts found</span>;
   }
 
@@ -833,7 +893,8 @@ function AssignCleanerControl({ task, cleaners, loadFailed }: { task: CleaningTa
         className="text-sm outline-none cursor-pointer disabled:opacity-50"
         style={{ color: "#5a4a3a", background: "transparent", border: "1px solid #ece5d4", borderRadius: 6, padding: "3px 6px" }}
       >
-        <option value="">Unassigned</option>
+        {!currentId && <option value="">Unassigned</option>}
+        {currentMissing && <option value={currentId}>{currentName} (inactive)</option>}
         {cleaners.map((c) => (
           <option key={c.id} value={c.id}>{c.first_name} {c.last_name}</option>
         ))}
@@ -1062,16 +1123,19 @@ function ChecklistSection({ havenId, bookingUuid }: { havenId: string; bookingUu
         {checklist.categories.length === 0 && (
           <p className="px-3 py-4 text-xs" style={{ color: "#8B6344" }}>No categories yet — add one above (e.g. Bedroom, Bathroom, Kitchen).</p>
         )}
-        {checklist.categories.map((cat, ci) => (
+        {checklist.categories.map((cat, ci) => {
+          // One photo per category — the finished area — from the checklist
+          // itself, falling back to the photos endpoint (keyed by category).
+          const photo = cat.photo_url || photos?.[cat.category]?.url || null;
+          return (
           <div key={cat.category} style={{ borderTop: ci > 0 ? "1px solid #ece5d4" : "none" }}>
-            <div className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider" style={{ backgroundColor: "#FAF7F1", color: "#8a6a2f" }}>
-              {cat.category}
+            <div className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider" style={{ backgroundColor: "#FAF7F1", color: "#8a6a2f" }}>
+              <span className="flex-1 min-w-0">{cat.category}</span>
+              {photo
+                ? <ImageThumb src={photo} alt={cat.category} size={28} />
+                : <span className="text-[10px] font-semibold normal-case tracking-normal px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ backgroundColor: "#fef3c7", color: "#92400e" }}>No photo</span>}
             </div>
-            {cat.tasks.map((item) => {
-              // Keyed by the task's id (photos are linked to the exact task they
-              // prove), falling back to the url the checklist itself carries.
-              const photo = item.photo_url || photos?.[item.id]?.url || null;
-              return (
+            {cat.tasks.map((item) => (
                 <div key={item.id} className="flex items-center gap-2 px-3 py-2 text-sm" style={{ borderTop: "1px solid #F7F0E3" }}>
                   {item.completed
                     ? <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#059669" }} />
@@ -1085,9 +1149,6 @@ function ChecklistSection({ havenId, bookingUuid }: { havenId: string; bookingUu
                       {item.task}
                     </span>
                   )}
-                  {photo
-                    ? <ImageThumb src={photo} alt={item.task} size={28} />
-                    : <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ backgroundColor: "#fef3c7", color: "#92400e" }}>No photo</span>}
                   {editingId === item.id ? (
                     <button onClick={() => submitEdit(item.id)} className="text-xs font-medium cursor-pointer flex-shrink-0" style={{ color: "#059669" }}>Save</button>
                   ) : (
@@ -1103,8 +1164,7 @@ function ChecklistSection({ havenId, bookingUuid }: { havenId: string; bookingUu
                     </>
                   )}
                 </div>
-              );
-            })}
+            ))}
             {addingFor === cat.category ? (
               <div className="flex items-center gap-2 px-3 py-2" style={{ borderTop: "1px solid #F7F0E3" }}>
                 <input autoFocus placeholder="New task…" value={newTaskText} onChange={(e) => setNewTaskText(e.target.value)}
@@ -1120,7 +1180,8 @@ function ChecklistSection({ havenId, bookingUuid }: { havenId: string; bookingUu
               </button>
             )}
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

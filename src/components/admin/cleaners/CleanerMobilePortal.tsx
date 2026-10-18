@@ -325,8 +325,8 @@ export default function CleanerMobilePortal() {
       : null
   );
   const categories = ck.checklist?.categories ?? [];
-  // Done = ticked AND photographed, so this line and the "photos still
-  // needed" bar at the bottom always agree.
+  // Done = ticked. Photos are one per category (the finished area) and are
+  // counted separately in the bar at the bottom.
   const doneCount = ck.gate.doneTasks;
   const totalCount = ck.gate.totalTasks;
   const pct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
@@ -334,7 +334,23 @@ export default function CleanerMobilePortal() {
   // the server enforces the same; this just stops the phone offering it.
   const canEditChecklist = active?.status === "in-progress";
 
-  const pickTaskPhoto = (taskId: string) => {
+  // Every save can be the one that finishes the checklist — the server then
+  // hands the room in, same as Done, and the phone moves to the done screen.
+  const afterSave = (res: { ok: boolean; error?: string; autoCompleted?: boolean }, fallback: string) => {
+    if (!res.ok) toast.error(res.error || fallback);
+    else if (res.autoCompleted && active) {
+      setFinishedName(active.name);
+      setScreen("done");
+    }
+  };
+
+  const toggleItem = async (taskId: string, completed: boolean) => {
+    if (!canEditChecklist) return;
+    afterSave(await ck.toggleTask(taskId, completed), "Could not save that task");
+  };
+
+  // One photo per category: the finished area.
+  const pickAreaPhoto = (category: string) => {
     if (!canEditChecklist) return;
     const input = document.createElement("input");
     input.type = "file";
@@ -343,8 +359,7 @@ export default function CleanerMobilePortal() {
     input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (!file) return;
-      const res = await ck.uploadPhoto(taskId, file);
-      if (!res.ok) toast.error(res.error || "Could not upload photo");
+      afterSave(await ck.uploadPhoto(category, file), "Could not upload photo");
     };
     input.click();
   };
@@ -368,7 +383,7 @@ export default function CleanerMobilePortal() {
   // the Done screen still needs the name it just sent for checking.
   const [finishedName, setFinishedName] = useState("");
   // One call: the complete route verifies the checklist (every task ticked,
-  // every task photographed) and records it as submitted in the same step. If
+  // every area photographed) and records it as submitted in the same step. If
   // it refuses, nothing is lost — ticks and photos were saved as they were
   // made — and the reason names the tasks still outstanding.
   const finishRoom = async () => {
@@ -885,6 +900,9 @@ export default function CleanerMobilePortal() {
                 )
               ) : categories.map((cat) => {
                 const catDone = cat.tasks.filter((x) => ck.isDone(x.id)).length;
+                const photo = ck.photoFor(cat.category);
+                const upload = ck.uploadStateFor(cat.category);
+                const uploadError = ck.uploadErrorFor(cat.category);
                 return (
                   <div key={cat.category} style={{ marginTop: 22 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "0 4px 8px" }}>
@@ -895,71 +913,68 @@ export default function CleanerMobilePortal() {
                     </div>
                     <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, overflow: "hidden" }}>
                       {cat.tasks.map((item, i) => {
-                        const photo = ck.photoFor(item.id);
-                        const upload = ck.uploadStateFor(item.id);
-                        const uploadError = ck.uploadErrorFor(item.id);
-                        // One action per task: the photo. Tapping anywhere on
-                        // the row opens the camera, and the photo ticks the task
-                        // on the server — no separate checkbox step.
+                        // A plain checklist: tap the row to tick or untick it.
                         const done = ck.isDone(item.id);
                         return (
-                          <div key={item.id} style={{
-                            borderTop: i ? `1px solid ${C.hair}` : 0,
-                            background: done ? "#FBFAF6" : C.card,
-                          }}>
-                            <div style={{ display: "flex", alignItems: "center" }}>
-                              <button type="button" onClick={() => pickTaskPhoto(item.id)}
-                                disabled={!canEditChecklist || upload === "uploading"}
-                                aria-label={`${translateTask(item.task, lang)} — ${photo ? t.replacePhoto : t.addPhoto}`}
-                                style={{
-                                  flex: 1, minWidth: 0, minHeight: 64, padding: "12px 8px 12px 14px", border: 0,
-                                  background: "transparent", display: "flex", alignItems: "center", gap: 14,
-                                  textAlign: "left", cursor: canEditChecklist ? "pointer" : "default", fontFamily: SANS,
-                                }}>
-                                <span style={{
-                                  width: 32, height: 32, borderRadius: "50%",
-                                  border: `2px solid ${done ? C.green : C.creamLine}`,
-                                  background: done ? C.green : C.card,
-                                  display: "grid", placeItems: "center", flexShrink: 0,
-                                  opacity: canEditChecklist || done ? 1 : 0.5,
-                                }}>
-                                  {done && <Check className="w-[18px] h-[18px]" strokeWidth={3} style={{ color: "#fff" }} />}
-                                </span>
-                                <span style={{ fontSize: 17, lineHeight: 1.35, color: done ? C.faint : C.ink }}>
-                                  {translateTask(item.task, lang)}
-                                </span>
-                              </button>
-                              {photo && <ImageThumb src={photo} alt={item.task} size={36} rounded={10} />}
-                              <button type="button" disabled={!canEditChecklist || upload === "uploading"}
-                                onClick={() => pickTaskPhoto(item.id)}
-                                title={upload === "uploading" ? t.uploadingPhoto : photo ? t.replacePhoto : t.addPhoto}
-                                aria-label={upload === "uploading" ? t.uploadingPhoto : photo ? t.replacePhoto : t.addPhoto}
-                                style={{
-                                  width: 52, height: 52, margin: "0 6px", border: 0, borderRadius: 12,
-                                  background: upload === "failed" ? C.amberBg : photo ? C.gold : C.bg,
-                                  color: upload === "failed" ? C.amberInk : photo ? C.ink : C.goldInk,
-                                  display: "grid", placeItems: "center", flexShrink: 0,
-                                  cursor: canEditChecklist ? "pointer" : "default",
-                                  opacity: upload === "uploading" || !canEditChecklist ? 0.5 : 1,
-                                }}>
-                                {upload === "failed"
-                                  ? <AlertTriangle className="w-[22px] h-[22px]" strokeWidth={2} />
-                                  : photo
-                                    ? <ImageIcon className="w-[22px] h-[22px]" strokeWidth={2.2} />
-                                    : <Camera className="w-[22px] h-[22px]" strokeWidth={1.8} />}
-                              </button>
-                            </div>
-                            {upload && (
-                              <div style={{
-                                padding: "0 14px 10px 60px", fontSize: 14, lineHeight: 1.35,
-                                color: upload === "failed" ? C.amberInk : upload === "uploading" ? C.muted : C.goldInk,
-                              }}>
-                                {upload === "uploading" ? t.uploadingPhoto : (uploadError || t.photoFailed)}
-                              </div>
-                            )}
-                          </div>
+                          <button key={item.id} type="button" onClick={() => toggleItem(item.id, item.completed)}
+                            disabled={!canEditChecklist}
+                            aria-pressed={done}
+                            style={{
+                              width: "100%", minHeight: 64, padding: "12px 14px", border: 0,
+                              borderTop: i ? `1px solid ${C.hair}` : 0,
+                              background: done ? "#FBFAF6" : C.card, display: "flex", alignItems: "center", gap: 14,
+                              textAlign: "left", cursor: canEditChecklist ? "pointer" : "default", fontFamily: SANS,
+                            }}>
+                            <span style={{
+                              width: 32, height: 32, borderRadius: 8,
+                              border: `2px solid ${done ? C.green : C.creamLine}`,
+                              background: done ? C.green : C.card,
+                              display: "grid", placeItems: "center", flexShrink: 0,
+                              opacity: canEditChecklist || done ? 1 : 0.5,
+                            }}>
+                              {done && <Check className="w-[18px] h-[18px]" strokeWidth={3} style={{ color: "#fff" }} />}
+                            </span>
+                            <span style={{ fontSize: 17, lineHeight: 1.35, color: done ? C.faint : C.ink, textDecoration: done ? "line-through" : "none" }}>
+                              {translateTask(item.task, lang)}
+                            </span>
+                          </button>
                         );
                       })}
+                      {/* One photo for the whole area, once it's finished. */}
+                      <div style={{ borderTop: `1px solid ${C.line}`, background: C.bg }}>
+                        <button type="button" disabled={!canEditChecklist || upload === "uploading"}
+                          onClick={() => pickAreaPhoto(cat.category)}
+                          aria-label={`${translateCategory(cat.category, lang)} — ${photo ? t.replacePhoto : t.areaPhoto}`}
+                          style={{
+                            width: "100%", minHeight: 64, padding: "10px 14px", border: 0, background: "transparent",
+                            display: "flex", alignItems: "center", gap: 12, textAlign: "left", fontFamily: SANS,
+                            cursor: canEditChecklist ? "pointer" : "default", opacity: upload === "uploading" || !canEditChecklist ? 0.6 : 1,
+                          }}>
+                          <span style={{
+                            width: 44, height: 44, borderRadius: 12, flexShrink: 0, display: "grid", placeItems: "center",
+                            background: upload === "failed" ? C.amberBg : photo ? C.gold : C.card,
+                            color: upload === "failed" ? C.amberInk : photo ? C.ink : C.goldInk,
+                            border: `1px solid ${C.line}`,
+                          }}>
+                            {upload === "failed"
+                              ? <AlertTriangle className="w-[22px] h-[22px]" strokeWidth={2} />
+                              : photo
+                                ? <ImageIcon className="w-[22px] h-[22px]" strokeWidth={2.2} />
+                                : <Camera className="w-[22px] h-[22px]" strokeWidth={1.8} />}
+                          </span>
+                          <span style={{ flex: 1, minWidth: 0 }}>
+                            <span style={{ display: "block", fontSize: 16, fontWeight: 600, color: C.ink }}>
+                              {photo ? t.replacePhoto : t.areaPhoto}
+                            </span>
+                            {upload && (
+                              <span style={{ display: "block", fontSize: 14, lineHeight: 1.35, marginTop: 2, color: upload === "failed" ? C.amberInk : C.muted }}>
+                                {upload === "uploading" ? t.uploadingPhoto : (uploadError || t.photoFailed)}
+                              </span>
+                            )}
+                          </span>
+                          {photo && <ImageThumb src={photo} alt={cat.category} size={44} rounded={10} />}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
@@ -993,20 +1008,10 @@ export default function CleanerMobilePortal() {
                   ) : (
                     <>
                       <span>
-                        {(() => {
-                          // A photo ticks its task, so an unticked task that
-                          // also lacks a photo is ONE thing left, not two.
-                          // Only a task ticked by hand without a photo, or
-                          // unticked after its photo, is counted separately.
-                          const photoIds = new Set(ck.gate.missingPhotos.map((x) => x.id));
-                          const tickOnly = ck.gate.incomplete.filter((x) => !photoIds.has(x.id)).length;
-                          const photos = ck.gate.missingPhotos.length;
-                          const parts = [
-                            photos > 0 ? t.photosLeft(photos) : null,
-                            tickOnly > 0 ? t.left(tickOnly) : null,
-                          ].filter(Boolean);
-                          return parts.join(" · ");
-                        })()}
+                        {[
+                          ck.gate.incomplete.length > 0 ? t.left(ck.gate.incomplete.length) : null,
+                          ck.gate.missingPhotos.length > 0 ? t.photosLeft(ck.gate.missingPhotos.length) : null,
+                        ].filter(Boolean).join(" · ")}
                         {ck.gate.incomplete.length === 0 && ck.gate.missingPhotos.length === 0 && ck.gate.error}
                       </span>
                     </>

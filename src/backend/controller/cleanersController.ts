@@ -15,6 +15,7 @@ import {
   UNASSIGNED_REASON,
   type RotationCandidate,
 } from "@/lib/cleaning-rotation";
+import { verifyAssignmentChecklist } from "@/backend/controller/cleaningChecklistController";
 
 export interface CleaningTask {
   cleaning_id: string;
@@ -1158,3 +1159,57 @@ export async function onBookingStatusChanged(bookingId: string, status: string |
 // Exported for the "why is this unassigned" copy on the admin task list, so the
 // UI and the stored reason can't drift apart.
 export { UNASSIGNED_REASON };
+
+/**
+ * Auto-complete: once the cleaner has ticked AND photographed every item on an
+ * In Progress assignment's checklist, hand it in for them — the same move the
+ * Done button makes (In Progress → Awaiting Inspection, shown to admin as
+ * "Completed"), so they don't need a separate tap. Called after every tick and
+ * every photo upload; a no-op until the checklist genuinely passes the gate.
+ * Never throws — a failed attempt just leaves the manual Done button in play.
+ */
+export async function autoCompleteIfChecklistDone(
+  checklistId: string,
+  actorId: string | null,
+): Promise<boolean> {
+  try {
+    const res = await pool.query(
+      `SELECT bc.id::text AS cleaning_id
+       FROM cleaning_checklists cc
+       JOIN booking_cleaning bc ON bc.booking_id = cc.booking_id
+       WHERE cc.id = $1::uuid AND bc.cleaning_status = 'in-progress'
+       LIMIT 1`,
+      [checklistId],
+    );
+    const cleaningId: string | undefined = res.rows[0]?.cleaning_id;
+    if (!cleaningId) return false;
+
+    const { checklistId: activeChecklistId, gate } = await verifyAssignmentChecklist(cleaningId);
+    if (!gate.ok || activeChecklistId !== checklistId) return false;
+
+    // Guarded on the status so a concurrent Done tap can't hand it in twice.
+    const moved = await pool.query(
+      `UPDATE booking_cleaning
+       SET cleaning_status = 'awaiting-inspection',
+           cleaning_time_out = NOW(), cleaned_at = NOW(), inspection_note = NULL
+       WHERE id = $1::uuid AND cleaning_status = 'in-progress'
+       RETURNING id`,
+      [cleaningId],
+    );
+    if (moved.rowCount === 0) return false;
+
+    await pool.query(
+      `UPDATE cleaning_checklists
+       SET status = 'completed', completed_at = timezone('Asia/Manila', NOW()), updated_at = timezone('Asia/Manila', NOW())
+       WHERE id = $1::uuid AND status <> 'completed'`,
+      [checklistId],
+    );
+    await recordCleaningPerformed(cleaningId);
+    await logCleaningHistory(cleaningId, "in-progress", "awaiting-inspection", actorId, "Completed automatically — every checklist item ticked and photographed");
+    scheduleCleaningCalendarSync(cleaningId);
+    return true;
+  } catch (err) {
+    console.error("⚠️ Auto-complete check failed:", err);
+    return false;
+  }
+}

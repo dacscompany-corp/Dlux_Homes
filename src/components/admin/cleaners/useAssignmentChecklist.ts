@@ -4,9 +4,12 @@
 // mobile and desktop cleaner portals so the two can't disagree about what's
 // done, what's missing, or whether a room may be sent for inspection.
 //
+// The checklist is a plain checklist (tick every task) plus ONE photo per
+// category showing the finished area.
+//
 // What it guarantees:
 //   - a tick shows instantly but is rolled back if the server refuses it;
-//   - each photo upload is tracked per task as uploading / failed, so a failed
+//   - each photo upload is tracked per category as uploading / failed, so a failed
 //     upload stays visible (with a retry) instead of vanishing, and submission
 //     waits for in-flight uploads rather than racing them;
 //   - `gate` is the same evaluateChecklistGate the server runs, so the Done
@@ -36,15 +39,16 @@ export type AssignmentChecklist = {
   loadError: boolean;
   refetch: () => void;
   gate: GateResult;
-  /** URL of the proof photo for a task, including one just uploaded. */
-  photoFor: (taskId: string) => string | null;
-  /** Ticked AND photographed — the only state the portals show as done. */
+  /** URL of a category's finished-area photo, including one just uploaded. */
+  photoFor: (category: string) => string | null;
+  /** The task is ticked. */
   isDone: (taskId: string) => boolean;
-  uploadStateFor: (taskId: string) => UploadState | null;
-  /** Last upload error per task, for inline display. */
-  uploadErrorFor: (taskId: string) => string | null;
-  toggleTask: (taskId: string, currentlyCompleted: boolean) => Promise<{ ok: boolean; error?: string }>;
-  uploadPhoto: (taskId: string, file: File) => Promise<{ ok: boolean; error?: string }>;
+  uploadStateFor: (category: string) => UploadState | null;
+  /** Last upload error per category, for inline display. */
+  uploadErrorFor: (category: string) => string | null;
+  /** autoCompleted: that save finished the checklist and the room was handed in. */
+  toggleTask: (taskId: string, currentlyCompleted: boolean) => Promise<{ ok: boolean; error?: string; autoCompleted?: boolean }>;
+  uploadPhoto: (category: string, file: File) => Promise<{ ok: boolean; error?: string; autoCompleted?: boolean }>;
 };
 
 type Target = { havenId: string; bookingUuid: string } | null;
@@ -65,7 +69,7 @@ export function useAssignmentChecklist(target: Target): AssignmentChecklist {
   const [toggleM] = useToggleChecklistTaskMutation();
   const dispatch = useAppDispatch();
 
-  // Photos uploaded this session, shown before the checklist refetch lands.
+  // Photos uploaded this session (by category), shown before the refetch lands.
   const [freshPhotos, setFreshPhotos] = useState<Record<string, string>>({});
   const [uploads, setUploads] = useState<Record<string, UploadState>>({});
   const [uploadErrors, setUploadErrors] = useState<Record<string, string>>({});
@@ -79,11 +83,11 @@ export function useAssignmentChecklist(target: Target): AssignmentChecklist {
   );
 
   const photoFor = useCallback(
-    (taskId: string) => {
-      const fromServer = tasks.find((t) => t.id === taskId)?.photo_url ?? null;
-      return fromServer || freshPhotos[taskId] || null;
+    (category: string) => {
+      const fromServer = checklist?.categories.find((c) => c.category === category)?.photo_url ?? null;
+      return fromServer || freshPhotos[category] || null;
     },
-    [tasks, freshPhotos],
+    [checklist, freshPhotos],
   );
 
   const gate = useMemo(
@@ -94,44 +98,47 @@ export function useAssignmentChecklist(target: Target): AssignmentChecklist {
           category: t.category,
           task: t.task,
           completed: t.completed,
-          hasPhoto: !!(t.photo_url || freshPhotos[t.id]),
         })),
         {
+          photoCategories: (checklist?.categories ?? [])
+            .filter((c) => !!(c.photo_url || freshPhotos[c.category]))
+            .map((c) => c.category),
           pendingUploads: Object.keys(uploads).filter((id) => uploads[id] === "uploading"),
           failedUploads: Object.keys(uploads).filter((id) => uploads[id] === "failed"),
         },
       ),
-    [tasks, freshPhotos, uploads],
+    [tasks, checklist, freshPhotos, uploads],
   );
 
   const toggleTask = useCallback(
     async (taskId: string, currentlyCompleted: boolean) => {
       if (skip) return { ok: false, error: "No checklist loaded" };
       try {
-        await toggleM({ taskId, completed: !currentlyCompleted, checklist: args }).unwrap();
-        return { ok: true };
+        const res = await toggleM({ taskId, completed: !currentlyCompleted, checklist: args }).unwrap();
+        if (res.autoCompleted) dispatch(cleanersApi.util.invalidateTags(["CleaningTask"]));
+        return { ok: true, autoCompleted: !!res.autoCompleted };
       } catch (err) {
         return { ok: false, error: errorMessage(err, "Could not save that task") };
       }
     },
-    [toggleM, args, skip],
+    [toggleM, args, skip, dispatch],
   );
 
   const uploadPhoto = useCallback(
-    async (taskId: string, file: File) => {
+    async (category: string, file: File) => {
       const invalid = imageFileError(file);
       if (invalid) {
-        setUploads((u) => ({ ...u, [taskId]: "failed" }));
-        setUploadErrors((e) => ({ ...e, [taskId]: invalid }));
+        setUploads((u) => ({ ...u, [category]: "failed" }));
+        setUploadErrors((e) => ({ ...e, [category]: invalid }));
         return { ok: false, error: invalid };
       }
       const checklistId = checklist?.id;
       if (!checklistId) return { ok: false, error: "No checklist to attach this photo to" };
 
-      setUploads((u) => ({ ...u, [taskId]: "uploading" }));
+      setUploads((u) => ({ ...u, [category]: "uploading" }));
       setUploadErrors((e) => {
         const next = { ...e };
-        delete next[taskId];
+        delete next[category];
         return next;
       });
 
@@ -139,46 +146,34 @@ export function useAssignmentChecklist(target: Target): AssignmentChecklist {
         const fd = new FormData();
         fd.append("file", file);
         fd.append("checklist_id", checklistId);
-        fd.append("task_id", taskId);
+        fd.append("category", category);
         const res = await fetch("/api/admin/cleaners/checklist-photos", { method: "POST", body: fd });
         const body = await res.json().catch(() => ({}));
-        // Success means the server confirmed the row that proves this task
+        // Success means the server confirmed the row that proves this area
         // exists — anything short of that is a failure the cleaner must see.
         if (!res.ok || !body?.url) {
           const msg = typeof body?.error === "string" && body.error ? body.error : "Photo upload failed";
-          setUploads((u) => ({ ...u, [taskId]: "failed" }));
-          setUploadErrors((e) => ({ ...e, [taskId]: msg }));
+          setUploads((u) => ({ ...u, [category]: "failed" }));
+          setUploadErrors((e) => ({ ...e, [category]: msg }));
           return { ok: false, error: msg };
         }
-        setFreshPhotos((p) => ({ ...p, [taskId]: String(body.url) }));
-        // The server ticks the task in the same step as saving its photo, so
-        // show it ticked now rather than after the refetch lands.
-        dispatch(
-          cleanersApi.util.updateQueryData("getChecklist", args, (draft) => {
-            for (const category of draft.categories) {
-              const item = category.tasks.find((t) => t.id === taskId);
-              if (item) {
-                item.completed = true;
-                item.photo_url = String(body.url);
-              }
-            }
-          })
-        );
+        setFreshPhotos((p) => ({ ...p, [category]: String(body.url) }));
         setUploads((u) => {
           const next = { ...u };
-          delete next[taskId];
+          delete next[category];
           return next;
         });
         refetch();
-        return { ok: true };
+        if (body.autoCompleted) dispatch(cleanersApi.util.invalidateTags(["CleaningTask"]));
+        return { ok: true, autoCompleted: !!body.autoCompleted };
       } catch {
         const msg = "Photo upload failed — check your connection and try again";
-        setUploads((u) => ({ ...u, [taskId]: "failed" }));
-        setUploadErrors((e) => ({ ...e, [taskId]: msg }));
+        setUploads((u) => ({ ...u, [category]: "failed" }));
+        setUploadErrors((e) => ({ ...e, [category]: msg }));
         return { ok: false, error: msg };
       }
     },
-    [checklist?.id, refetch, dispatch, args],
+    [checklist?.id, refetch, dispatch],
   );
 
   return {
@@ -193,10 +188,10 @@ export function useAssignmentChecklist(target: Target): AssignmentChecklist {
     photoFor,
     isDone: (taskId) => {
       const t = tasks.find((x) => x.id === taskId);
-      return !!t && t.completed && !!(t.photo_url || freshPhotos[taskId]);
+      return !!t && t.completed;
     },
-    uploadStateFor: (taskId) => uploads[taskId] ?? null,
-    uploadErrorFor: (taskId) => uploadErrors[taskId] ?? null,
+    uploadStateFor: (category) => uploads[category] ?? null,
+    uploadErrorFor: (category) => uploadErrors[category] ?? null,
     toggleTask,
     uploadPhoto,
   };

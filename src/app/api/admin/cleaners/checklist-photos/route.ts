@@ -2,19 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
 import { upload_image_from_form } from "@/backend/utils/fileUpload";
 import { requireChecklistAccess } from "@/backend/utils/requireAdmin";
+import { autoCompleteIfChecklistDone } from "@/backend/controller/cleanersController";
 
-// Photo proof for checklist tasks — one photo per task, required for every task
-// before the room can be sent for inspection.
+// Photo proof for a checklist — ONE photo per category, showing the finished
+// result of that area (owner request, 2026-10-18). Tasks themselves are plain
+// tick-boxes. Every category needs its photo before the room can be sent for
+// inspection.
 //
-// Photos are now linked to the cleaning_tasks row they prove (task_id), and the
-// upload is refused unless that task belongs to the checklist named in the same
-// request. Before, the client sent the task's TEXT as `category`, which
-// silently detached photos when admin edited a task's wording and let a photo
-// be filed against any checklist id at all.
+// Stored with task_id NULL and the category name in `category`, on the
+// table's original (checklist_id, category) key, so an upload replaces that
+// category's photo. The category must exist on the checklist named in the same
+// request. Older per-task photos (task_id set) are left alone and ignored.
 
 type ChecklistPhoto = { url: string; uploaded_at: string | null };
 
-// GET → { data: { [taskId]: { url, uploaded_at } } }
+// GET → { data: { [category]: { url, uploaded_at } } }
 export async function GET(req: NextRequest) {
   const checklistId = req.nextUrl.searchParams.get("checklist_id");
   if (!checklistId) {
@@ -26,16 +28,15 @@ export async function GET(req: NextRequest) {
 
   try {
     const result = await pool.query(
-      `SELECT p.task_id::text AS task_id, p.image_url, p.uploaded_at
+      `SELECT p.category, p.image_url, p.uploaded_at
          FROM cleaning_checklist_photos p
-         JOIN cleaning_tasks t ON t.id = p.task_id AND t.checklist_id = p.checklist_id
-        WHERE p.checklist_id = $1::uuid`,
+        WHERE p.checklist_id = $1::uuid AND p.task_id IS NULL`,
       [checklistId],
     );
 
     const data: Record<string, ChecklistPhoto> = {};
     for (const row of result.rows) {
-      data[row.task_id] = { url: row.image_url, uploaded_at: row.uploaded_at ?? null };
+      data[row.category] = { url: row.image_url, uploaded_at: row.uploaded_at ?? null };
     }
 
     return NextResponse.json({ success: true, data });
@@ -45,7 +46,6 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST multipart { file, checklist_id, task_id } → { url, task_id }
 export async function POST(req: NextRequest) {
   let formData: FormData;
   try {
@@ -56,11 +56,11 @@ export async function POST(req: NextRequest) {
 
   const file = formData.get("file") as File | null;
   const checklistId = formData.get("checklist_id") as string | null;
-  const taskId = formData.get("task_id") as string | null;
+  const category = (formData.get("category") as string | null)?.trim() || null;
 
-  if (!file || !checklistId || !taskId) {
+  if (!file || !checklistId || !category) {
     return NextResponse.json(
-      { success: false, error: "file, checklist_id, and task_id are required" },
+      { success: false, error: "file, checklist_id, and category are required" },
       { status: 400 },
     );
   }
@@ -71,15 +71,14 @@ export async function POST(req: NextRequest) {
   if (!guard.ok) return guard.response;
 
   try {
-    // The task must be on THIS checklist — the photo proves one specific task on
-    // one specific assignment, never a stray id from somewhere else.
-    const taskRes = await pool.query(
-      `SELECT task_description FROM cleaning_tasks WHERE id = $1::uuid AND checklist_id = $2::uuid`,
-      [taskId, checklistId],
+    // The category must be on THIS checklist.
+    const catRes = await pool.query(
+      `SELECT 1 FROM cleaning_tasks WHERE checklist_id = $1::uuid AND category = $2 LIMIT 1`,
+      [checklistId, category],
     );
-    if (taskRes.rows.length === 0) {
+    if (catRes.rows.length === 0) {
       return NextResponse.json(
-        { success: false, error: "That task is not on this checklist." },
+        { success: false, error: "That area is not on this checklist." },
         { status: 400 },
       );
     }
@@ -95,65 +94,36 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // `category` is NOT NULL and part of the legacy unique key, so it carries the
-    // task id too — unique per task, where the task text was not.
-    const client = await pool.connect();
-    let savedUrl: string | null = null;
-    try {
-      await client.query("BEGIN");
-      // Drop a legacy text-keyed row for this task first. It was backfilled with
-      // this task_id, so leaving it would collide with the new row on the
-      // per-task unique index — and it's being replaced anyway.
-      await client.query(
-        `DELETE FROM cleaning_checklist_photos
-          WHERE checklist_id = $1::uuid AND task_id = $2::uuid AND category <> $2::text`,
-        [checklistId, taskId],
-      );
-      const saved = await client.query(
-        `INSERT INTO cleaning_checklist_photos (checklist_id, task_id, category, image_url, cloudinary_public_id, uploaded_at)
-         VALUES ($1::uuid, $2::uuid, $2::text, $3, $4, timezone('Asia/Manila', NOW()))
-         ON CONFLICT (checklist_id, category)
-         DO UPDATE SET
-           task_id = EXCLUDED.task_id,
-           image_url = EXCLUDED.image_url,
-           cloudinary_public_id = EXCLUDED.cloudinary_public_id,
-           uploaded_at = timezone('Asia/Manila', NOW())
-         RETURNING image_url`,
-        [checklistId, taskId, uploadResult.url, uploadResult.public_id],
-      );
-      // The photo IS the proof the task was done, so recording it ticks the
-      // task in the same step — one action for the cleaner instead of a photo
-      // plus a separate checkbox (owner request, 2026-09-28). Same transaction,
-      // so a tick never exists without the photo that justifies it. The
-      // cleaner can still untick; submission still requires both.
-      await client.query(
-        `UPDATE cleaning_tasks
-         SET completed = true, updated_at = timezone('Asia/Manila', NOW())
-         WHERE id = $1::uuid AND checklist_id = $2::uuid AND completed = false`,
-        [taskId, checklistId],
-      );
-      await client.query(
-        `UPDATE cleaning_checklists
-         SET status = 'in_progress', updated_at = timezone('Asia/Manila', NOW())
-         WHERE id = $1::uuid AND status = 'pending'`,
-        [checklistId],
-      );
-      await client.query("COMMIT");
-      savedUrl = saved.rows[0]?.image_url ?? null;
-    } catch (err) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw err;
-    } finally {
-      client.release();
-    }
+    const saved = await pool.query(
+      `INSERT INTO cleaning_checklist_photos (checklist_id, task_id, category, image_url, cloudinary_public_id, uploaded_at)
+       VALUES ($1::uuid, NULL, $2, $3, $4, timezone('Asia/Manila', NOW()))
+       ON CONFLICT (checklist_id, category)
+       DO UPDATE SET
+         task_id = NULL,
+         image_url = EXCLUDED.image_url,
+         cloudinary_public_id = EXCLUDED.cloudinary_public_id,
+         uploaded_at = timezone('Asia/Manila', NOW())
+       RETURNING image_url`,
+      [checklistId, category, uploadResult.url, uploadResult.public_id],
+    );
+    await pool.query(
+      `UPDATE cleaning_checklists
+       SET status = 'in_progress', updated_at = timezone('Asia/Manila', NOW())
+       WHERE id = $1::uuid AND status = 'pending'`,
+      [checklistId],
+    );
 
-    // Only report success once the row that proves the task is really there —
+    // Only report success once the row that proves the area is really there —
     // the portal treats this response as "photo proof recorded".
+    const savedUrl: string | null = saved.rows[0]?.image_url ?? null;
     if (!savedUrl) {
       return NextResponse.json({ success: false, error: "The photo could not be saved" }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, url: savedUrl, task_id: taskId });
+    // The last photo can be what finishes the checklist — hand the room in.
+    const autoCompleted = await autoCompleteIfChecklistDone(checklistId, guard.actorId);
+
+    return NextResponse.json({ success: true, url: savedUrl, category, autoCompleted });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("POST /api/admin/cleaners/checklist-photos error:", message);

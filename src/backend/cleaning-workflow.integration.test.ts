@@ -750,7 +750,7 @@ describe("access control and the inspection sequence", () => {
 // ═════════════════════════════════════════════════════════════════════════════
 
 describe("confirmation → assignment → checkout → cleaning → inspection", () => {
-  it("runs the whole sequence, blocking submission until every task is ticked and photographed", async () => {
+  it("runs the whole sequence, blocking submission until every task is ticked and every area photographed", async () => {
     const b = await addBooking();
     await confirm(b.id);
     const [t] = await taskFor(b.id);
@@ -772,8 +772,10 @@ describe("confirmation → assignment → checkout → cleaning → inspection",
     let body = await res.json();
     expect(body.incompleteCount).toBeGreaterThan(0);
 
-    // Tick everything — still refused: no photos.
+    // Tick everything — still refused: no photos. One photo per CATEGORY
+    // (the finished area), not per task.
     const all = ck0.data.checklist.categories.flatMap((c: { tasks: { id: string }[] }) => c.tasks);
+    const cats: string[] = ck0.data.checklist.categories.map((c: { category: string }) => c.category);
     for (const task of all) {
       expect((await tickTask(req(`/x`, { method: "PATCH", body: { task_id: task.id, completed: true } }))).status).toBe(200);
     }
@@ -781,68 +783,58 @@ describe("confirmation → assignment → checkout → cleaning → inspection",
     expect(res.status).toBe(400);
     body = await res.json();
     expect(body.incompleteCount).toBe(0);
-    expect(body.missingPhotoCount).toBe(all.length);
+    expect(body.missingPhotoCount).toBe(cats.length);
     expect(body.error).toMatch(/need a photo/);
 
     // The old "submit" action no longer force-completes anything.
     const submit = await checklistAction(req(`/x`, { method: "POST", body: { action: "submit", checklist_id: ck0.data.checklist.id } }));
     expect(submit.status).toBe(400);
 
-    // A photo addressed to a task on a different checklist is refused.
-    const other = await addBooking();
-    await h.db.query(`INSERT INTO booking_cleaning (booking_id, cleaning_status, assigned_to) VALUES ($1::uuid, 'in-progress', $2::uuid)`, [other.id, C1]);
-    const otherCk = await (await getChecklist(req(`/api/admin/cleaners?haven_id=${havenId}&booking_id=${other.id}`))).json();
-    const stray = new FormData();
-    stray.append("file", new File([new Uint8Array([1])], "stray.jpg", { type: "image/jpeg" }));
-    stray.append("checklist_id", ck0.data.checklist.id);
-    stray.append("task_id", otherCk.data.checklist.categories[0].tasks[0].id);
-    expect((await uploadPhoto(new NextRequest("http://localhost/x", { method: "POST", body: stray }))).status).toBe(400);
-
-    // Uploading a photo ticks its task in the same step.
-    await tickTask(req(`/x`, { method: "PATCH", body: { task_id: all[0].id, completed: false } }));
-    {
-      const fd0 = new FormData();
-      fd0.append("file", new File([new Uint8Array([1])], "first.jpg", { type: "image/jpeg" }));
-      fd0.append("checklist_id", ck0.data.checklist.id);
-      fd0.append("task_id", all[0].id);
-      expect((await uploadPhoto(new NextRequest("http://localhost/x", { method: "POST", body: fd0 }))).status).toBe(200);
-      const ticked = await h.db.query<{ completed: boolean }>(`SELECT completed FROM cleaning_tasks WHERE id = $1::uuid`, [all[0].id]);
-      expect(ticked.rows[0].completed).toBe(true);
-    }
-
-    // Photograph every task but one → still refused, and that one is named.
-    for (const task of all.slice(0, -1)) {
+    const photoFor = (category: string, name = "area.jpg") => {
       const fd = new FormData();
-      fd.append("file", new File([new Uint8Array([1])], `${task.id}.jpg`, { type: "image/jpeg" }));
+      fd.append("file", new File([new Uint8Array([1])], name, { type: "image/jpeg" }));
       fd.append("checklist_id", ck0.data.checklist.id);
-      fd.append("task_id", task.id);
-      const up = await uploadPhoto(new NextRequest("http://localhost/x", { method: "POST", body: fd }));
-      expect(up.status).toBe(200);
+      fd.append("category", category);
+      return uploadPhoto(new NextRequest("http://localhost/x", { method: "POST", body: fd }));
+    };
+
+    // A photo for an area that isn't on this checklist is refused.
+    expect((await photoFor("Not An Area")).status).toBe(400);
+
+    // A photo does NOT tick anything — the checklist is ticked by hand.
+    await tickTask(req(`/x`, { method: "PATCH", body: { task_id: all[0].id, completed: false } }));
+    expect((await photoFor(cats[0])).status).toBe(200);
+    {
+      const ticked = await h.db.query<{ completed: boolean }>(`SELECT completed FROM cleaning_tasks WHERE id = $1::uuid`, [all[0].id]);
+      expect(ticked.rows[0].completed).toBe(false);
+    }
+    await tickTask(req(`/x`, { method: "PATCH", body: { task_id: all[0].id, completed: true } }));
+
+    // Photograph every area but one → still refused, and that one is named.
+    for (const cat of cats.slice(1, -1)) {
+      expect((await photoFor(cat)).status).toBe(200);
     }
     res = await completeTask(req(`/x`, { method: "PUT" }), ctx(t.id));
     expect(res.status).toBe(400);
     body = await res.json();
-    expect(body.missingPhotoTasks).toHaveLength(1);
-    expect(body.missingPhotoTasks[0].id).toBe(all[all.length - 1].id);
+    expect(body.missingPhotoCategories).toEqual([cats[cats.length - 1]]);
 
-    // Last photo → accepted; moves to Awaiting Inspection, not Ready.
-    const fd = new FormData();
-    fd.append("file", new File([new Uint8Array([1])], "last.jpg", { type: "image/jpeg" }));
-    fd.append("checklist_id", ck0.data.checklist.id);
-    fd.append("task_id", all[all.length - 1].id);
-    expect((await uploadPhoto(new NextRequest("http://localhost/x", { method: "POST", body: fd }))).status).toBe(200);
+    // Last area photo → the checklist is finished, so the room is handed in
+    // automatically: Awaiting Inspection, not Ready. Done afterwards is a no-op.
+    const last = await photoFor(cats[cats.length - 1], "last.jpg");
+    expect(last.status).toBe(200);
+    expect((await last.json()).autoCompleted).toBe(true);
+    expect((await taskFor(b.id))[0].cleaning_status).toBe("awaiting-inspection");
     res = await completeTask(req(`/x`, { method: "PUT" }), ctx(t.id));
     expect(res.status).toBe(200);
-    expect((await taskFor(b.id))[0].cleaning_status).toBe("awaiting-inspection");
 
     // Locked once handed in.
     expect((await tickTask(req(`/x`, { method: "PATCH", body: { task_id: firstTask.id, completed: false } }))).status).toBe(409);
 
-    // Owner/CSR can review the proof: every task carries its photo.
+    // Owner/CSR can review the proof: every area carries its photo.
     as({ id: OWNER, role: "Owner" });
     const review = await (await getChecklist(req(`/api/admin/cleaners?haven_id=${havenId}&booking_id=${b.id}`))).json();
-    const reviewed = review.data.checklist.categories.flatMap((c: { tasks: { photo_url: string | null }[] }) => c.tasks);
-    expect(reviewed.every((x: { photo_url: string | null }) => !!x.photo_url)).toBe(true);
+    expect(review.data.checklist.categories.every((c: { photo_url: string | null }) => !!c.photo_url)).toBe(true);
 
     // Approve → Ready, attributed to Cleaner 1 permanently.
     expect((await approveTask(req(`/x`, { method: "PUT" }), ctx(t.id))).status).toBe(200);
