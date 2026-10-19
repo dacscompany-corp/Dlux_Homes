@@ -12,7 +12,7 @@
 //   - loading, empty and failed requests shown as three different things, and
 //     a failed Start / Complete rolled back on screen instead of looking done.
 
-import { useState, useEffect, useMemo } from "react";
+import { Fragment, useState, useEffect, useMemo } from "react";
 import { signOut, useSession } from "next-auth/react";
 import { confirmSignOut } from "@/components/SignOutConfirm";
 import Link from "next/link";
@@ -79,11 +79,20 @@ const navItems: Array<
 // here means the cleaner-visible normalized bucket (see normCleanStatus), not
 // a raw DB cleaning_status.
 const statusConfig: Record<string, { label: string; color: string; bg: string; dot: string }> = {
-  ready:                { label: "Ready",               color: "#065f46", bg: "#d1fae5", dot: "#10b981" },
+  ready:                { label: "Done",                color: "#065f46", bg: "#d1fae5", dot: "#10b981" },
   "awaiting-inspection": { label: "Awaiting Inspection", color: "#5b21b6", bg: "#ede9fe", dot: "#8b5cf6" },
   "in-progress":        { label: "In Progress",         color: "#8a6a2f", bg: "#F7F0E3", dot: "#B07848" },
   pending:              { label: "Needs Cleaning",      color: "#92400e", bg: "#fef3c7", dot: "#f59e0b" },
 };
+
+// The Assignments page is split into these sections, in this order — the same
+// order the list is sorted in. Anything finished (Ready, or a legacy done
+// status) falls into the last one.
+type AssignmentGroup = "in-progress" | "pending" | "awaiting-inspection" | "ready";
+const ASSIGNMENT_GROUPS: AssignmentGroup[] = ["in-progress", "pending", "awaiting-inspection", "ready"];
+function assignmentGroup(status: string): AssignmentGroup {
+  return status === "in-progress" || status === "pending" || status === "awaiting-inspection" ? status : "ready";
+}
 
 // Same pin/coords as the guest-facing /location page, so the "Get Directions"
 // link on each task card points at the exact property, not an approximation.
@@ -302,7 +311,7 @@ export default function CleanerDesktopPortal() {
     }
     // Starting a room opens its checklist straight away — one click from
     // "Start" to ticking tasks, no separate checklist button.
-    setChecklistOpenFor(id);
+    showChecklist(id);
     try { await startCleaningM(id).unwrap(); toast.success("Cleaning started"); }
     catch (err) { toast.error(gateErrorMessage(err, "Could not start cleaning")); }
   };
@@ -326,7 +335,8 @@ export default function CleanerDesktopPortal() {
     const target = ref ? assignments.find((a) => sameBookingRef(a.floor, ref)) : undefined;
     if (target) {
       setActiveNav("Assignments");
-      setChecklistOpenFor(target.id);
+      setAssignmentFilter("all"); // a status tab must not hide the room it jumps to
+      showChecklist(target.id);
       setFlashAssignmentId(target.id);
       window.setTimeout(() => {
         document.getElementById(`assignment-${target.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -356,6 +366,26 @@ export default function CleanerDesktopPortal() {
   // src/lib/checklist-translations.ts) — a custom task admin adds later just
   // falls back to whatever it was typed in, since it has no dictionary entry.
   const [checklistLang, setChecklistLang] = useState<ChecklistLanguage>("en");
+  // Checklists start HIDDEN — the full list is long — and show only once the
+  // cleaner opens one (Show tasks, Start, Continue, a notification). Separate
+  // from checklistOpenFor, which picks the room in progress by itself; this
+  // only controls what's on screen and changes nothing saved.
+  const [shownChecklists, setShownChecklists] = useState<Set<string>>(() => new Set());
+  const showChecklist = (id: string) => {
+    setChecklistOpenFor(id);
+    setShownChecklists((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  };
+  const toggleChecklist = (id: string) => {
+    if (checklistOpenFor === id && shownChecklists.has(id)) {
+      setShownChecklists((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    } else {
+      showChecklist(id);
+    }
+  };
   const checklistCategories = ck.checklist?.categories ?? [];
   // Done = ticked. Photos are separate: one per category (the finished area).
   const completedCount = ck.gate.doneTasks;
@@ -371,8 +401,8 @@ export default function CleanerDesktopPortal() {
     if (checklistOpenFor !== id) {
       // The gate needs this assignment's checklist loaded — open it, and let
       // the cleaner see what's outstanding before sending anything.
-      setChecklistOpenFor(id);
-      toast("Review the checklist — every task needs a tick and a photo.", { icon: "📋" });
+      showChecklist(id);
+      toast("Review the checklist — tick every task and add a photo of each area.", { icon: "📋" });
       return;
     }
     if (!ck.gate.ok) {
@@ -397,6 +427,16 @@ export default function CleanerDesktopPortal() {
   //   with the office     → status only
   // `fromDashboard` jumps to Assignments so the checklist is where they land.
   type CardAssignment = (typeof assignments)[number];
+  // Status tabs on the Assignments page.
+  const [assignmentFilter, setAssignmentFilter] = useState<"all" | AssignmentGroup>("all");
+  const groupCounts = useMemo(() => {
+    const counts: Record<AssignmentGroup, number> = { "in-progress": 0, pending: 0, "awaiting-inspection": 0, ready: 0 };
+    for (const a of assignments) counts[assignmentGroup(a.status)] += 1;
+    return counts;
+  }, [assignments]);
+  const shownAssignments = assignmentFilter === "all"
+    ? assignments
+    : assignments.filter((a) => assignmentGroup(a.status) === assignmentFilter);
   const renderMainAction = (a: CardAssignment, fromDashboard = false) => {
     const cs = a.status;
     const base = "inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white cursor-pointer";
@@ -410,10 +450,11 @@ export default function CleanerDesktopPortal() {
       );
     }
     if (cs === "in-progress") {
+      // On the Assignments page the Show/Hide tasks button opens this room's checklist.
       if (!fromDashboard && checklistOpenFor === a.id) return null;
       return (
         <button type="button" className={base} style={{ background: "#B07848" }}
-          onClick={() => { if (fromDashboard) setActiveNav("Assignments"); setChecklistOpenFor(a.id); }}>
+          onClick={() => { if (fromDashboard) setActiveNav("Assignments"); showChecklist(a.id); }}>
           <CheckSquare className="w-4 h-4" />{a.inspectionNote ? "Fix & continue" : "Continue checklist"}
         </button>
       );
@@ -746,7 +787,7 @@ export default function CleanerDesktopPortal() {
               <div>
                 <div className="flex items-center justify-between mb-4">
                   <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>Cleaning Checklist</h2>
-                  <button onClick={() => { setActiveNav("Assignments"); setChecklistOpenFor(assignments[0]?.id ?? null); }} className="text-sm font-medium cursor-pointer" style={{ color: "#8a6a2f" }}>View →</button>
+                  <button onClick={() => { setActiveNav("Assignments"); if (assignments[0]) showChecklist(assignments[0].id); }} className="text-sm font-medium cursor-pointer" style={{ color: "#8a6a2f" }}>View →</button>
                 </div>
                 {assignments.length === 0 ? (
                   <div className="border p-5 text-center" style={{ borderColor: "#ece5d4" }}>
@@ -781,12 +822,54 @@ export default function CleanerDesktopPortal() {
                   No rooms assigned to you yet. New assignments appear here as soon as a booking is confirmed.
                 </p>
               ) : null}
-              {assignments.map((a) => {
+              {assignments.length > 0 && (
+                <div role="tablist" aria-label="Filter by status" className="flex flex-wrap gap-2">
+                  {(["all", ...ASSIGNMENT_GROUPS] as const).map((key) => {
+                    const active = assignmentFilter === key;
+                    const cfg = key === "all" ? null : statusConfig[key];
+                    const count = key === "all" ? assignments.length : groupCounts[key];
+                    return (
+                      <button key={key} type="button" role="tab" aria-selected={active}
+                        onClick={() => setAssignmentFilter(key)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full border cursor-pointer"
+                        style={{
+                          backgroundColor: active ? (cfg ? cfg.bg : "#1f1b16") : "#ffffff",
+                          color: active ? (cfg ? cfg.color : "#ffffff") : "#5a4a3a",
+                          borderColor: active ? (cfg ? cfg.dot : "#1f1b16") : "#E0CEB8",
+                        }}>
+                        {cfg && <span className="w-2 h-2 rounded-full" style={{ backgroundColor: cfg.dot }} />}
+                        {cfg ? cfg.label : "All"}
+                        <span style={{ opacity: 0.75 }}>{count}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {assignments.length > 0 && shownAssignments.length === 0 && (
+                <p className="text-sm border p-5" style={{ color: "#8B6344", borderColor: "#ece5d4" }}>
+                  Nothing here right now.
+                </p>
+              )}
+              {shownAssignments.map((a, i) => {
                 const cs = a.status;
                 const st = statusConfig[cs] || statusConfig.pending;
                 const opensLater = cs === "pending" && !canStartCleaning(a);
+                const group = assignmentGroup(cs);
+                // A labelled divider wherever the status changes, so each
+                // status reads as its own section.
+                const startsGroup = i === 0 || assignmentGroup(shownAssignments[i - 1].status) !== group;
+                const groupCfg = statusConfig[group];
                 return (
-                  <div key={a.id} id={`assignment-${a.id}`} className="border p-5 transition-shadow hover:shadow-md"
+                  <Fragment key={a.id}>
+                  {startsGroup && (
+                    <div className="flex items-center gap-2 pt-2">
+                      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: groupCfg.dot }} />
+                      <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: groupCfg.color }}>{groupCfg.label}</span>
+                      <span className="text-xs" style={{ color: "#8B6344" }}>· {groupCounts[group]}</span>
+                      <span className="flex-1 h-px" style={{ backgroundColor: "#ece5d4" }} />
+                    </div>
+                  )}
+                  <div id={`assignment-${a.id}`} className="border p-5 transition-shadow hover:shadow-md"
                     style={{
                       borderColor: cs === "in-progress" ? "#D4BFA0" : "#E0CEB8", borderLeftWidth: "4px", borderLeftColor: st.dot,
                       scrollMarginTop: 90,
@@ -850,7 +933,22 @@ export default function CleanerDesktopPortal() {
                       </div>
                     )}
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex flex-wrap items-center gap-2">{renderMainAction(a)}</div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {renderMainAction(a)}
+                        {(() => {
+                          const visible = checklistOpenFor === a.id && shownChecklists.has(a.id);
+                          return (
+                            <button type="button" onClick={() => toggleChecklist(a.id)}
+                              aria-expanded={visible}
+                              className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold cursor-pointer border"
+                              style={{ color: "#8a6a2f", borderColor: "#D4BFA0", backgroundColor: "#FAF7F1" }}>
+                              {visible
+                                ? <><ChevronDown className="w-4 h-4" />Hide tasks</>
+                                : <><ChevronRight className="w-4 h-4" />Show tasks{checklistOpenFor === a.id && checklistTotal > 0 ? ` (${completedCount}/${checklistTotal})` : ""}</>}
+                            </button>
+                          );
+                        })()}
+                      </div>
                       {/* A quiet link, not a button — problems can come up at
                           any step, but they're not the next thing to do. */}
                       <button type="button" onClick={() => reportIssueFor(a)}
@@ -863,7 +961,7 @@ export default function CleanerDesktopPortal() {
                     {/* Cleaning Checklist — inline, scoped to this assignment.
                         Opens on Start, on "Continue checklist", or by itself
                         for the room being cleaned. */}
-                    {checklistOpenFor === a.id && (
+                    {checklistOpenFor === a.id && shownChecklists.has(a.id) && (
                       <div className="mt-4 pt-4 border-t" style={{ borderColor: "#F7F0E3" }}>
                         <div className="border p-5 mb-4" style={{ borderColor: "#ece5d4" }}>
                           <div className="flex items-center justify-between mb-2 gap-2">
@@ -883,7 +981,7 @@ export default function CleanerDesktopPortal() {
                             <div className="h-3 rounded-full transition-all duration-500" style={{ width: `${progressPercent}%`, background: "#d4a96a" }} />
                           </div>
                           <p className="text-xs mt-2" style={{ color: "#8B6344" }}>
-                            {completedCount} of {checklistTotal} done · click a task to add its photo
+                            {completedCount} of {checklistTotal} done · click a task to tick it
                           </p>
                           {!checklistEditable && (
                             <p className="text-xs mt-2" style={{ color: "#92400e" }}>
@@ -990,6 +1088,7 @@ export default function CleanerDesktopPortal() {
                       </div>
                     )}
                   </div>
+                  </Fragment>
                 );
               })}
             </div>
@@ -1183,7 +1282,7 @@ export default function CleanerDesktopPortal() {
                   return (
                     <button key={topic.title} type="button"
                       onClick={() => {
-                        if (topic.openChecklist) setChecklistOpenFor(assignments[0]?.id ?? null);
+                        if (topic.openChecklist && assignments[0]) showChecklist(assignments[0].id);
                         setActiveNav(topic.goTo);
                         setSidebarOpen(false);
                       }}
