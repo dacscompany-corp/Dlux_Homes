@@ -359,7 +359,7 @@ function fmtDateTime(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return d.toLocaleString("en-US", { timeZone: "Asia/Manila", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 // True if `query` (already trimmed/lowercased by the caller) appears in any
@@ -727,7 +727,7 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
                   <td className="px-3 py-3 hidden sm:table-cell" style={{ color: "#5a4a3a" }}>
                     {(() => {
                       const due = checkoutMoment(t);
-                      return due ? due.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—";
+                      return due ? due.toLocaleString("en-US", { timeZone: "Asia/Manila", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—";
                     })()}
                   </td>
                   <td className="px-3 py-3 hidden xl:table-cell" style={{ color: "#5a4a3a" }}>{fmtDateTime(t.cleaning_time_in)}</td>

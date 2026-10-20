@@ -59,7 +59,7 @@ import { bookingRefFrom, sameBookingRef } from "@/components/admin/NotificationB
 import CleanerCalendarCard from "@/components/admin/cleaners/CleanerCalendarCard";
 import GuideAssessment from "@/components/admin/cleaners/GuideAssessment";
 import StaffAccountPanel from "@/components/admin/cleaners/StaffAccountPanel";
-import { canStartCleaning, cleaningDueAt, stayKindFor, type StayKind } from "@/lib/cleaning-schedule";
+import { canStartCleaning, cleaningDueAt, stayKindFor, startOfManilaDay, type StayKind } from "@/lib/cleaning-schedule";
 import { translateCategory, translateTask } from "@/lib/checklist-translations";
 import {
   CLEANER_STRINGS,
@@ -213,8 +213,9 @@ function roomSchedule(r: Room) {
 /** "Sep 29, 12:00 PM" — when a not-yet-startable room opens up. */
 function formatDue(d: Date | null, lang: CleanerLanguage): string {
   if (!d) return "";
+  // Philippine time, like the booking's own checkout time — not the phone's zone.
   return d.toLocaleString(lang === "tl" ? "en-PH" : "en-US", {
-    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+    timeZone: "Asia/Manila", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
   });
 }
 
@@ -266,7 +267,7 @@ export default function CleanerMobilePortal() {
 
   const { today, upcoming } = useMemo(() => {
     const now = new Date();
-    const todayStart = startOfDay(now);
+    const todayStart = startOfManilaDay(now).getTime();
     const rows = (tasksData ?? [])
       // The server already returns only this cleaner's own assignments; the
       // filter is belt-and-braces so a stale or admin-shaped response can never
@@ -284,7 +285,8 @@ export default function CleanerMobilePortal() {
           bookingUuid: r.booking_uuid ? String(r.booking_uuid) : "",
           status: normStatus(String(r.cleaning_status ?? "pending")),
           checkoutTime: formatTime(r.check_out_time),
-          date: dueAt ? new Date(dueAt.getFullYear(), dueAt.getMonth(), dueAt.getDate()) : toLocalDate(r.check_out_date),
+          // The Philippine day, same as admin's Cleaning Operations.
+          date: dueAt ? startOfManilaDay(dueAt) : toLocalDate(r.check_out_date),
           dueAt,
           bookingStatus: r.booking_status ? String(r.booking_status) : null,
           guestName: String(r.guest_first_name ?? "").trim(),
@@ -371,11 +373,14 @@ export default function CleanerMobilePortal() {
   // Opening a room starts it only once the guest has checked out. Before that
   // the room opens read-only with the time it becomes available — the server
   // would refuse the start anyway, and a failed start rolls back on screen.
+  // Same rule as desktop: the task list shows once the room is started (or
+  // being continued); a room that hasn't started has no list.
   const openRoom = async (room: Room) => {
     setActiveId(room.id);
     setScreen("room");
+    if (room.status === "in-progress") setTasksShownFor(room.id);
     if (room.status === "pending" && canStartCleaning(roomSchedule(room))) {
-      try { await startCleaningM(room.id).unwrap(); }
+      try { await startCleaningM(room.id).unwrap(); setTasksShownFor(room.id); }
       catch (err) { toast.error(gateErrorMessage(err, lang === "tl" ? "Hindi nasimulan" : "Could not start this room")); }
     }
   };
@@ -921,7 +926,7 @@ export default function CleanerMobilePortal() {
                     </div>
                   );
                 })()}
-                {(() => {
+                {active?.status !== "pending" && (() => {
                   const shown = !!active && tasksShownFor === active.id;
                   return (
                     <button type="button" aria-expanded={shown}
@@ -939,7 +944,7 @@ export default function CleanerMobilePortal() {
                 })()}
               </div>
 
-              {!(active && tasksShownFor === active.id) ? null : categories.length === 0 ? (
+              {!(active && active.status !== "pending" && tasksShownFor === active.id) ? null : categories.length === 0 ? (
                 ck.loadError ? (
                   <div role="alert" style={{ marginTop: 22, display: "flex", alignItems: "center", gap: 12, fontSize: 16, color: C.amberInk }}>
                     <span style={{ flex: 1 }}>{t.checklistFailed}</span>

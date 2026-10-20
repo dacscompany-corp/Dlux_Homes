@@ -767,20 +767,20 @@ export default function OwnerDashboard() {
   // which lands as one clean row of six.
   const kpis = [
     revenueBasis === "gross"
-      ? { label: "Gross Revenue", value: peso(s?.total_gross_revenue ?? 0), change: pct(s?.gross_revenue_change ?? 0), icon: PhilippinePeso, iconBg: "#d1fae5", iconColor: "#059669" }
-      : { label: "Total Revenue", value: peso(s?.total_revenue ?? 0), change: pct(s?.revenue_change ?? 0), icon: PhilippinePeso, iconBg: "#d1fae5", iconColor: "#059669" },
+      ? { label: "Gross Revenue", hint: "Full value of bookings, paid or not", value: peso(s?.total_gross_revenue ?? 0), change: pct(s?.gross_revenue_change ?? 0), icon: PhilippinePeso, iconBg: "#d1fae5", iconColor: "#059669" }
+      : { label: "Total Revenue", hint: "Money actually received from guests", value: peso(s?.total_revenue ?? 0), change: pct(s?.revenue_change ?? 0), icon: PhilippinePeso, iconBg: "#d1fae5", iconColor: "#059669" },
     // No change percentage on these two: a real profit-versus-last-month figure
     // needs last month's revenue as an absolute, which the summary endpoint does
     // not return. An em dash beats an invented number.
     ...(isOwner ? [
-      { label: overheadCardLabel, value: overheadReady ? peso(overheadFigure) : "—", change: "—", icon: Receipt, iconBg: "#F7F0E3", iconColor: "#B07848" },
-      { label: "Profit", value: overheadReady ? signedPeso(profit) : "—", change: "—", icon: Wallet, iconBg: "#e0f2fe", iconColor: "#0369a1" },
+      { label: overheadCardLabel, hint: revenueBasis === "gross" ? "All running costs due" : "Running costs already paid", value: overheadReady ? peso(overheadFigure) : "—", change: "—", icon: Receipt, iconBg: "#F7F0E3", iconColor: "#B07848" },
+      { label: "Profit", hint: "Revenue minus running costs", value: overheadReady ? signedPeso(profit) : "—", change: "—", icon: Wallet, iconBg: "#e0f2fe", iconColor: "#0369a1" },
     ] : []),
-    { label: "Occupancy Rate", value: `${Math.round(s?.occupancy_rate ?? 0)}%`, change: pct(s?.occupancy_change ?? 0), icon: TrendingUp, iconBg: "#ede9fe", iconColor: "#7c3aed" },
-    { label: "Total Bookings", value: String(s?.total_bookings ?? 0), change: pct(s?.bookings_change ?? 0), icon: CalendarDays, iconBg: "#F7F0E3", iconColor: "#B07848" },
-    { label: "Total Guests",   value: String(s?.new_guests ?? 0), change: pct(s?.guests_change ?? 0), icon: UserCheck, iconBg: "#ffedd5", iconColor: "#ea580c" },
-    { label: "Reviews",        value: String(reviewsList.length), change: "—", icon: Star,      iconBg: "#fef9c3", iconColor: "#ca8a04" },
-    { label: "Active Rooms",   value: String(havensList.length),  change: "—", icon: BedDouble, iconBg: "#ccfbf1", iconColor: "#0d9488" },
+    { label: "Occupancy Rate", hint: "How many nights were booked", value: `${Math.round(s?.occupancy_rate ?? 0)}%`, change: pct(s?.occupancy_change ?? 0), icon: TrendingUp, iconBg: "#ede9fe", iconColor: "#7c3aed" },
+    { label: "Total Bookings", hint: "Stays checking in this period", value: String(s?.total_bookings ?? 0), change: pct(s?.bookings_change ?? 0), icon: CalendarDays, iconBg: "#F7F0E3", iconColor: "#B07848" },
+    { label: "Total Guests",   hint: "Different guests who booked", value: String(s?.new_guests ?? 0), change: pct(s?.guests_change ?? 0), icon: UserCheck, iconBg: "#ffedd5", iconColor: "#ea580c" },
+    { label: "Reviews",        hint: "Guest reviews received", value: String(reviewsList.length), change: "—", icon: Star,      iconBg: "#fef9c3", iconColor: "#ca8a04" },
+    { label: "Active Rooms",   hint: "Units open for booking", value: String(havensList.length),  change: "—", icon: BedDouble, iconBg: "#ccfbf1", iconColor: "#0d9488" },
   ];
   const maxRev = Math.max(1, ...monthly.map((m) => Number(m.revenue) || 0));
   // Overview chart only: reads gross_revenue and its own max when the
@@ -1062,11 +1062,11 @@ export default function OwnerDashboard() {
   const occupiedRooms = new Set(rawBookings.filter((b) => String(b.status) === "checked-in").map((b) => b.room_name)).size;
   const availableRooms = Math.max(0, havensList.length - occupiedRooms);
   const snapshot = [
-    { label: "Check-ins Today",  value: String(checkInsToday),   dot: "#10b981" },
-    { label: "Check-outs Today", value: String(checkOutsToday),  dot: "#B07848" },
-    { label: "Pending Approval", value: String(pendingApproval), dot: "#f59e0b" },
-    { label: "Active Guests",    value: String(activeGuests),    dot: "#7c3aed" },
-    { label: "Available Rooms",  value: String(availableRooms),  dot: "#0d9488" },
+    { label: "Guests arriving today",     value: String(checkInsToday),   dot: "#10b981" },
+    { label: "Guests leaving today",      value: String(checkOutsToday),  dot: "#B07848" },
+    { label: "Bookings to approve",       value: String(pendingApproval), dot: "#f59e0b" },
+    { label: "Guests staying now",        value: String(activeGuests),    dot: "#7c3aed" },
+    { label: "Rooms free right now",      value: String(availableRooms),  dot: "#0d9488" },
   ];
 
   // Maintenance (Property) — from the report-issue feed
@@ -1364,13 +1364,20 @@ export default function OwnerDashboard() {
               const dc = down ? "#9a4a3a" : up ? "#5a7a4a" : "#8a8276";
               return (
                 <div key={kpi.label} style={{ background: "#fff", padding: "18px 20px" }}>
-                  <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
-                    <Icon className="w-[18px] h-[18px]" strokeWidth={1.6} style={{ color: "#8a8276" }} />
-                    <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 11, color: dc }}>{kpi.change}</span>
+                  <div className="flex items-center" style={{ gap: 8, marginBottom: 12 }}>
+                    <span style={{ width: 30, height: 30, borderRadius: 8, background: kpi.iconBg, display: "grid", placeItems: "center", flex: "none" }}>
+                      <Icon className="w-4 h-4" strokeWidth={1.8} style={{ color: kpi.iconColor }} />
+                    </span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "#1f1b16" }}>{kpi.label}</span>
                   </div>
                   <div style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 24, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1,
                     color: kpi.label === "Profit" && overheadReady && profit < 0 ? "#9a4a3a" : "#1f1b16" }}>{kpi.value}</div>
-                  <div style={{ fontSize: 12, color: "#8a8276", marginTop: 6 }}>{kpi.label}</div>
+                  <div style={{ fontSize: 12, color: "#8a8276", marginTop: 6 }}>{kpi.hint}</div>
+                  {(up || down) && (
+                    <div style={{ fontSize: 11.5, color: dc, marginTop: 4 }}>
+                      {up ? "▲" : "▼"} {kpi.change.replace(/^[+-]/, "")} vs last {selectedMonth ? "month" : "period"}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -1401,8 +1408,13 @@ export default function OwnerDashboard() {
               <div style={{ padding: "18px 24px 24px" }}>
                 <div className="flex items-end gap-3" style={{ height: 160 }}>
                   {overviewRevenueData.map((item) => (
-                    <div key={item.month} className="flex-1 flex flex-col items-center" style={{ gap: 8 }}>
-                      <div className="w-full flex items-end justify-center" style={{ height: 120 }}>
+                    <div key={item.month} className="flex-1 flex flex-col items-center" style={{ gap: 8 }} title={`${item.month}: ${peso(item.amount)}`}>
+                      <div className="w-full flex flex-col items-center justify-end" style={{ height: 120 }}>
+                        {item.amount > 0 && (
+                          <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 10, color: "#6b6358", marginBottom: 3, whiteSpace: "nowrap" }}>
+                            {item.amount >= 1000 ? `₱${Math.round(item.amount / 1000)}k` : peso(item.amount)}
+                          </span>
+                        )}
                         <div style={{ width: "100%", height: `${item.value}%`, background: "#b8754a" }} />
                       </div>
                       <span style={{ fontSize: 11, color: "#8a8276" }}>{item.month}</span>
@@ -1415,7 +1427,7 @@ export default function OwnerDashboard() {
             {/* Snapshot */}
             <div style={{ background: "#fff", border: "1px solid #ece5d4", padding: "22px 24px" }}>
               <h3 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, margin: "0 0 4px", lineHeight: 1, color: "#1f1b16" }}>Today&apos;s snapshot</h3>
-              <p style={{ fontSize: 12, color: "#8a8276", margin: "0 0 12px" }}>Live counts</p>
+              <p style={{ fontSize: 12, color: "#8a8276", margin: "0 0 12px" }}>What&apos;s happening right now</p>
               <div className="flex flex-col">
                 {snapshot.map((item) => (
                   <div key={item.label} className="flex items-center justify-between" style={{ padding: "13px 0", borderBottom: "1px solid #f3eee2" }}>

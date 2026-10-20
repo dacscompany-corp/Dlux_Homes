@@ -93,10 +93,10 @@ describe("stayKindFor", () => {
 });
 
 describe("groupByDueDay", () => {
-  // Groups are by the viewing device's local day, so these build both the
-  // inputs and "now" from local-time constructors — valid in any timezone.
-  const at = (y: number, mo: number, d: number, h: number) => new Date(y, mo, d, h).toISOString();
-  const now = new Date(2026, 9, 5, 9, 0);
+  // Groups are by the Philippine day (UTC+8, no DST), so inputs and "now" are
+  // built as Manila wall-clock times — valid on a device in any timezone.
+  const at = (y: number, mo: number, d: number, h: number) => new Date(Date.UTC(y, mo, d, h - 8)).toISOString();
+  const now = new Date(Date.UTC(2026, 9, 5, 9 - 8, 0));
 
   it("groups by due day, earliest first, rooms in due-time order", () => {
     const days = groupByDueDay(

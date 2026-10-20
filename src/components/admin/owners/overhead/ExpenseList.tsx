@@ -7,7 +7,6 @@ import {
   useDeleteOverheadSpendMutation,
 } from "@/redux/api/overheadApi";
 import { Empty } from "@/components/admin/owners/OwnerModules";
-import { MonthNavigator } from "@/components/admin/owners/MonthNavigator";
 
 const peso = (n: number | string) =>
   "₱" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2 });
@@ -18,13 +17,14 @@ const FREQUENCY_LABEL: Record<string, string> = {
   custom: "Custom",
 };
 
-const day = (v: string | null) => (v ? String(v).slice(0, 10) : null);
+// "Oct 25, 2026" — easier to read than 2026-10-25.
+const day = (v: string | null) =>
+  v ? new Date(String(v).slice(0, 10) + "T00:00:00").toLocaleDateString("en", { month: "short", day: "numeric", year: "numeric" }) : null;
 
 export function ExpenseList({
-  month, onMonthChange, onEdit, onCreate,
+  month, onEdit, onCreate,
 }: {
   month: string | null;
-  onMonthChange: (m: string | null) => void;
   onEdit: (id: string) => void;
   onCreate: () => void;
 }) {
@@ -55,13 +55,11 @@ export function ExpenseList({
           }}>
             Expenses
           </h3>
-          {/* No dots: this list has no per-month figures to advertise — the
-              navigator here is a filter, not a data browser. */}
-          <MonthNavigator
-            value={month}
-            onChange={onMonthChange}
-            monthsWithData={[]}
-          />
+          {rows.length > 0 && (
+            <span style={{ fontSize: 12.5, color: "#8a8276" }}>
+              {rows.filter((e) => e.frequency !== "one-time").length} regular bills · {rows.filter((e) => e.frequency === "one-time").length} one-off
+            </span>
+          )}
         </div>
         <button type="button" onClick={onCreate}
           className="inline-flex items-center cursor-pointer"
@@ -92,7 +90,7 @@ export function ExpenseList({
             <table className="w-full">
               <thead>
                 <tr style={{ backgroundColor: "#faf7f1", borderBottom: "1px solid #ece5d4" }}>
-                  {["Expense", "Category", "Amount", "When", ""].map((h) => (
+                  {["Expense", "Category", "Amount", "How often", ""].map((h) => (
                     <th key={h} className="px-6 py-3 text-left uppercase"
                       style={{ color: "#8a8276", fontSize: 11, letterSpacing: "0.08em", fontWeight: 400 }}>
                       {h}
@@ -123,11 +121,17 @@ export function ExpenseList({
                         {peso(e.amount)}
                       </td>
                       <td className="px-6 py-3.5" style={{ fontSize: 12.5, color: "#6b6358" }}>
-                        {oneOff
-                          ? `One-off · paid ${day(e.start_date)}`
-                          : `${FREQUENCY_LABEL[e.frequency] ?? e.frequency}${
-                              e.next_due_date ? ` · next due ${day(e.next_due_date)}` : ""
-                            }`}
+                        <span style={{
+                          display: "inline-block", padding: "2px 9px", borderRadius: 999, fontSize: 11.5, fontWeight: 500,
+                          background: oneOff ? "#f5f2ec" : "#f7f0e3", color: oneOff ? "#6b6358" : "#8a6a2f",
+                        }}>
+                          {oneOff ? "One-off" : FREQUENCY_LABEL[e.frequency] ?? e.frequency}
+                        </span>
+                        <span style={{ display: "block", marginTop: 3, fontSize: 11.5, color: "#8a8276" }}>
+                          {oneOff
+                            ? `Paid ${day(e.start_date)}`
+                            : paused ? "Paused — not being charged" : e.next_due_date ? `Next bill ${day(e.next_due_date)}` : ""}
+                        </span>
                       </td>
                       <td className="px-6 py-3.5 text-right">
                         {oneOff ? (

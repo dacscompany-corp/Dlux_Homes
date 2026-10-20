@@ -145,9 +145,9 @@ const en = {
   tabHelp: "Help",
 
   steps: [
-    "Tap Start cleaning on your room.",
-    "Take a photo of each task — that ticks it off.",
-    "Tap I'm done. The office will check.",
+    "Tap Start cleaning on your room once the guest has left.",
+    "Tap Show tasks, then tick each task as you finish it.",
+    "Take 1 photo of each finished area. The room is then sent to the office by itself.",
   ],
   quick: ["I'm on my way", "I'm done", "I need supplies", "Running late"],
 
@@ -300,9 +300,9 @@ const tl: CleanerStrings = {
   tabHelp: "Tulong",
 
   steps: [
-    "Pindutin ang Simulan sa iyong kwarto.",
-    "Kunan ng litrato ang bawat gawain — matsetsek na ito.",
-    "Pindutin ang Tapos na. Susuriin ng opisina.",
+    "Pindutin ang Simulan sa iyong kwarto kapag nakaalis na ang bisita.",
+    "Pindutin ang Ipakita ang mga gawain, tapos i-tsek ang bawat gawaing natapos.",
+    "Kunan ng 1 litrato ang bawat natapos na bahagi. Kusang ipapadala ang kwarto sa opisina.",
   ],
   quick: ["Papunta na ako", "Tapos na ako", "Kailangan ko ng supplies", "Male-late ako"],
 

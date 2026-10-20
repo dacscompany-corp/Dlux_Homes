@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from "react";
 import toast from "react-hot-toast";
 import {
-  ArrowLeft, ArrowRight, BedDouble, CalendarClock, CalendarRange, Check, Church, CircleCheck, Copy, Gift, Info, Moon,
+  ArrowLeft, ArrowRight, BedDouble, CalendarClock, CalendarRange, Check, Church, CircleCheck, Copy, Gift, Info,
   PartyPopper, Pencil, Plus, Power, PowerOff, Repeat, ShieldCheck, SunMoon, Ticket, TicketX, Trash2, TriangleAlert, X,
   type LucideIcon,
 } from "lucide-react";
@@ -351,23 +351,6 @@ export function SeasonalRatesSection({ usualRates }: { usualRates: UsualRates })
   const confirmSeason = confirm ? seasons.find((s) => s.id === confirm.id) : undefined;
   const clashOther = confirm?.kind === "clash" ? seasons.find((s) => s.id === confirm.otherId) : undefined;
 
-  const th = { padding: "12px 14px 10px", textAlign: "left", fontSize: 11, textTransform: "uppercase", letterSpacing: ".08em", color: MUTED, fontWeight: 400, verticalAlign: "bottom", borderBottom: `1px solid ${LINE}` } as const;
-  const subTh = { padding: "0 14px 10px", textAlign: "left", fontSize: 12.5, color: INK, fontWeight: 600, whiteSpace: "nowrap" } as const;
-  const td = { padding: "18px 14px", verticalAlign: "top" } as const;
-
-  const priceLines = (lines: { when: string; amount: number; usual: number }[]) => lines.map((l) => {
-    const d = delta(l.amount, l.usual, true);
-    return (
-      <div key={l.when} style={{ marginBottom: 10 }}>
-        <div style={{ fontSize: 12, color: MUTED, whiteSpace: "nowrap" }}>{l.when}</div>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 7, marginTop: 1, whiteSpace: "nowrap" }}>
-          <span style={{ fontSize: 15, fontWeight: 500, color: INK, fontVariantNumeric: "tabular-nums" }}>{peso(l.amount)}</span>
-          <span style={{ fontSize: 11.5, fontWeight: 600, color: d.color }}>{d.text}</span>
-        </div>
-      </div>
-    );
-  });
-
   const moneyInput = (key: RateKey | TierKey, label: string, placeholder?: string) => (
     <div style={{ display: "flex", alignItems: "center", marginTop: 8, borderRadius: 10, border: "1px solid #e7dcc5", background: CREAM, overflow: "hidden" }}>
       <span style={{ padding: "0 4px 0 13px", fontSize: 14, color: MUTED }}>₱</span>
@@ -451,10 +434,23 @@ export function SeasonalRatesSection({ usualRates }: { usualRates: UsualRates })
             Charge different prices for a stretch of dates &mdash; Christmas, Holy Week, a long weekend. Turn a season <strong style={{ fontWeight: 600, color: INK }}>ON</strong> and guests booking those dates pay the season price instead of your usual price. Turn it <strong style={{ fontWeight: 600, color: INK }}>OFF</strong> and nothing changes.
           </p>
         </div>
-        <button type="button" onClick={() => openWizard(EMPTY_FORM)} className="cursor-pointer"
-          style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 18px", fontSize: 14, fontWeight: 500, color: "#fff", background: INK, border: "none", flex: "none" }}>
-          <Plus className="w-4 h-4" /> New Season
-        </button>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, flex: "none" }}>
+          <button type="button" onClick={() => openWizard(EMPTY_FORM)} className="cursor-pointer"
+            style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 18px", fontSize: 14, fontWeight: 500, color: "#fff", background: INK, border: "none" }}>
+            <Plus className="w-4 h-4" /> New Season
+          </button>
+          {seasons.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <span style={{ fontSize: 12, color: MUTED }}>Quick start:</span>
+              {([["christmas", Gift, "Christmas"], ["holy", Church, "Holy Week"], ["newyear", PartyPopper, "New Year"]] as const).map(([key, Icon, label]) => (
+                <button key={key} type="button" onClick={() => openPreset(key)} className="cursor-pointer"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", fontSize: 12, color: INK, background: "#fff", border: "1px solid #d9d1c2", borderRadius: 999 }}>
+                  <Icon style={{ width: 12, height: 12, color: "#b8754a" }} />{label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px", background: CREAM, border: `1px solid ${LINE}`, marginBottom: 22, maxWidth: 900 }}>
@@ -490,101 +486,137 @@ export function SeasonalRatesSection({ usualRates }: { usualRates: UsualRates })
         </div>
       ) : (
         <>
-          <div style={{ background: "#fff", border: `1px solid ${LINE}` }}>
-            <div className="overflow-x-auto">
-              <table style={{ width: "100%", minWidth: 980, borderCollapse: "collapse" }}>
-                <thead>
-                  <tr style={{ background: CREAM }}>
-                    <th rowSpan={2} style={{ ...th, width: 190 }}>Season &amp; dates</th>
-                    <th colSpan={3} style={{ padding: "10px 14px 6px", textAlign: "left", fontSize: 11, textTransform: "uppercase", letterSpacing: ".08em", color: "#b8754a", fontWeight: 600, borderLeft: `1px solid ${LINE}` }}>What guests pay on those dates</th>
-                    <th rowSpan={2} style={{ ...th, borderLeft: `1px solid ${LINE}`, width: 120 }}>Promo codes</th>
-                    <th rowSpan={2} style={{ ...th, borderLeft: `1px solid ${LINE}`, width: 180 }}>Affecting prices?</th>
-                    <th rowSpan={2} style={{ ...th, textAlign: "right", width: 104 }}>Manage</th>
-                  </tr>
-                  <tr style={{ background: CREAM, borderBottom: `1px solid ${LINE}` }}>
-                    <th style={{ ...subTh, borderLeft: `1px solid ${LINE}` }}>Overnight<span style={{ display: "block", fontSize: 11.5, fontWeight: 400, color: MUTED, marginTop: 2 }}>Sleepover, per night</span></th>
-                    <th style={subTh}>Daycation &amp; Nightcation<span style={{ display: "block", fontSize: 11.5, fontWeight: 400, color: MUTED, marginTop: 2 }}>A few hours, no sleepover</span></th>
-                    <th style={subTh}>Long stays<span style={{ display: "block", fontSize: 11.5, fontWeight: 400, color: MUTED, marginTop: 2 }}>Per night, by length</span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {seasons.map((s) => {
-                    const status = statusOf(s);
-                    const tiers = LONGTERM_TIERS.filter((t) => s[t.key] != null);
-                    const days = daysCovered(s.startDate, s.endDate);
-                    return (
-                      <tr key={s.id} style={{ borderBottom: "1px solid #f3eee2" }}>
-                        <td style={td}>
-                          <div style={{ fontWeight: 600, fontSize: 15, color: INK }}>{s.name}</div>
-                          <div style={{ fontSize: 13, color: "#4a4034", marginTop: 5, lineHeight: 1.5 }}>{longDate(s.startDate)} → {longDate(s.endDate)}</div>
-                          <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, padding: "3px 9px", borderRadius: 999, background: "#f3eee2", color: "#6b5a44", fontSize: 11.5, fontWeight: 500, whiteSpace: "nowrap" }}>
-                            <Moon style={{ width: 12, height: 12 }} />{days} {days === 1 ? "date" : "dates"} covered
-                          </div>
-                        </td>
-                        <td style={{ ...td, borderLeft: "1px solid #f3eee2" }}>
-                          {priceLines([
-                            { when: weekdayLabel, amount: s.overnightWeekday, usual: usualRates.overnightWeekday },
-                            { when: weekendLabel, amount: s.overnightWeekend, usual: usualRates.overnightWeekend },
-                          ])}
-                        </td>
-                        <td style={td}>
-                          {priceLines([
-                            { when: weekdayLabel, amount: s.daynightWeekday, usual: usualRates.daynightWeekday },
-                            { when: weekendLabel, amount: s.daynightWeekend, usual: usualRates.daynightWeekend },
-                          ])}
-                        </td>
-                        <td style={td}>
-                          {tiers.length > 0 ? tiers.map((t) => (
-                            <div key={t.key} style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, marginBottom: 7, whiteSpace: "nowrap" }}>
-                              <span style={{ fontSize: 12, color: MUTED }}>{t.label}</span>
-                              <span style={{ fontSize: 13.5, fontWeight: 500, color: INK, fontVariantNumeric: "tabular-nums" }}>{peso(s[t.key] as number)}</span>
-                            </div>
-                          )) : (
-                            <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.5 }}>No special long-stay price.<br />Every night uses the prices on the left.</div>
-                          )}
-                        </td>
-                        <td style={td}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", color: s.allowPromos ? GREEN : "#8a4a3c" }}>
-                            {s.allowPromos ? <Ticket style={{ width: 15, height: 15 }} /> : <TicketX style={{ width: 15, height: 15 }} />}
-                            {s.allowPromos ? "Allowed" : "Not allowed"}
-                          </div>
-                          <div style={{ fontSize: 11.5, color: MUTED, marginTop: 5, lineHeight: 1.5 }}>
-                            {s.allowPromos ? "Promo codes still work on these dates." : "Promo codes won’t apply on these dates."}
-                          </div>
-                        </td>
-                        <td style={td}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                            <Switch on={s.active} label={`Turn ${s.name} ${s.active ? "off" : "on"}`} disabled={busy} onChange={() => onToggle(s)} />
-                            <span style={{ fontSize: 13, fontWeight: 600, color: s.active ? GREEN : MUTED }}>{s.active ? "ON" : "OFF"}</span>
-                          </div>
-                          <div style={{ display: "inline-flex", alignItems: "center", marginTop: 9, padding: "4px 10px", borderRadius: 999, background: status.bg, color: status.fg, fontSize: 11.5, fontWeight: 600 }}>{status.label}</div>
-                          <div style={{ fontSize: 11.5, color: MUTED, marginTop: 6, lineHeight: 1.5 }}>{status.note}</div>
-                        </td>
-                        <td style={td}>
-                          <div style={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 4 }}>
-                            <button type="button" onClick={() => openWizard(formFrom(s), s.id)} className="cursor-pointer"
-                              style={{ display: "inline-flex", alignItems: "center", gap: 7, justifyContent: "flex-start", whiteSpace: "nowrap", padding: "6px 10px", fontSize: 13, fontWeight: 500, color: INK, background: "#fff", border: "1px solid #d9d1c2" }}>
-                              <Pencil style={{ width: 13, height: 13 }} />Edit
-                            </button>
-                            <button type="button" onClick={() => openWizard({ ...formFrom(s), name: `${s.name} (copy)`, active: false })} className="cursor-pointer"
-                              style={{ display: "inline-flex", alignItems: "center", gap: 7, justifyContent: "flex-start", whiteSpace: "nowrap", padding: "6px 10px", fontSize: 13, color: BODY, background: "transparent", border: "none" }}>
-                              <Copy style={{ width: 13, height: 13 }} />Duplicate
-                            </button>
-                            <button type="button" onClick={() => setConfirm({ kind: "delete", id: s.id })} className="cursor-pointer"
-                              style={{ display: "inline-flex", alignItems: "center", gap: 7, justifyContent: "flex-start", whiteSpace: "nowrap", padding: "6px 10px", fontSize: 13, color: "#991b1b", background: "transparent", border: "none" }}>
-                              <Trash2 style={{ width: 13, height: 13 }} />Delete
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+          {/* Right now — the one question an owner has: what are guests paying today? */}
+          {(() => {
+            const running = seasons.find((x) => seasonStatus(x, today) === "active");
+            const nextUp = [...seasons]
+              .filter((x) => seasonStatus(x, today) === "upcoming")
+              .sort((a, b) => a.startDate.localeCompare(b.startDate))[0];
+            const inDays = nextUp ? daysCovered(today, nextUp.startDate) - 1 : 0;
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-2" style={{ gap: 12, marginBottom: 20 }}>
+                <div style={{ padding: "14px 16px", border: `1px solid ${running ? "#bfe3cd" : LINE}`, background: running ? "#f6fbf7" : "#fff" }}>
+                  <div style={{ fontSize: 12, color: MUTED }}>Right now (today)</div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: running ? GREEN : INK, marginTop: 4 }}>
+                    {running ? <>Guests pay the &ldquo;{running.name}&rdquo; prices</> : "Guests pay your usual prices"}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: BODY, marginTop: 3 }}>
+                    {running ? `Until ${longDate(running.endDate)}, then usual prices come back.` : "No season is running today."}
+                  </div>
+                </div>
+                <div style={{ padding: "14px 16px", border: `1px solid ${nextUp ? "#c9d9f2" : LINE}`, background: nextUp ? "#f5f8fe" : "#fff" }}>
+                  <div style={{ fontSize: 12, color: MUTED }}>Next change</div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: nextUp ? "#1e40af" : INK, marginTop: 4 }}>
+                    {nextUp ? <>&ldquo;{nextUp.name}&rdquo; starts {inDays === 0 ? "today" : inDays === 1 ? "tomorrow" : `in ${inDays} days`}</> : "Nothing scheduled"}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: BODY, marginTop: 3 }}>
+                    {nextUp ? `${longDate(nextUp.startDate)} → ${longDate(nextUp.endDate)}. Prices switch by themselves.` : "Turn a season ON to change prices for its dates."}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* One card per season — running first, then upcoming (soonest),
+              then switched-off ones, then finished. */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {[...seasons].sort((a, b) => {
+              const order = { active: 0, upcoming: 1, off: 2, ended: 3 } as Record<string, number>;
+              return (order[seasonStatus(a, today)] ?? 9) - (order[seasonStatus(b, today)] ?? 9) || a.startDate.localeCompare(b.startDate);
+            }).map((s) => {
+              const status = statusOf(s);
+              const tiers = LONGTERM_TIERS.filter((t) => s[t.key] != null);
+              const days = daysCovered(s.startDate, s.endDate);
+              const priceRow = (label: string, when: string, amount: number, usual: number) => {
+                const d = delta(amount, usual, true);
+                return (
+                  <div key={label + when} style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, padding: "7px 0", borderBottom: "1px dashed #f0e8d8" }}>
+                    <span style={{ fontSize: 12.5, color: BODY }}>{when}</span>
+                    <span style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+                      {usual > 0 && <span style={{ fontSize: 12, color: MUTED, textDecoration: "line-through", marginRight: 6 }}>{peso(usual)}</span>}
+                      <span style={{ fontSize: 15, fontWeight: 600, color: INK }}>{peso(amount)}</span>
+                      {d.text && <span style={{ fontSize: 11.5, fontWeight: 600, color: d.color, marginLeft: 6 }}>{d.text}</span>}
+                    </span>
+                  </div>
+                );
+              };
+              return (
+                <div key={s.id} style={{ background: "#fff", border: `1px solid ${LINE}`, borderLeft: `4px solid ${status.fg}`, opacity: seasonStatus(s, today) === "ended" ? 0.75 : 1 }}>
+                  {/* Header: name, dates, status and the ON/OFF switch */}
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 14, padding: "16px 18px", borderBottom: `1px solid ${LINE}` }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <span style={{ fontWeight: 600, fontSize: 16, color: INK }}>{s.name}</span>
+                        <span style={{ padding: "3px 10px", borderRadius: 999, background: status.bg, color: status.fg, fontSize: 11.5, fontWeight: 600 }}>{status.label}</span>
+                      </div>
+                      <div style={{ fontSize: 13, color: "#4a4034", marginTop: 5 }}>
+                        {longDate(s.startDate)} → {longDate(s.endDate)}
+                        <span style={{ color: MUTED }}> · {days} {days === 1 ? "day" : "days"}</span>
+                      </div>
+                      <div style={{ fontSize: 12, color: MUTED, marginTop: 4 }}>{status.note}</div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: s.active ? GREEN : MUTED }}>{s.active ? "ON" : "OFF"}</span>
+                      <Switch on={s.active} label={`Turn ${s.name} ${s.active ? "off" : "on"}`} disabled={busy} onChange={() => onToggle(s)} />
+                    </div>
+                  </div>
+
+                  {/* Prices: usual (crossed out) → season price, per kind of stay */}
+                  <div className="grid grid-cols-1 md:grid-cols-3" style={{ gap: 0 }}>
+                    <div style={{ padding: "12px 18px" }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: INK }}>Overnight</div>
+                      <div style={{ fontSize: 11.5, color: MUTED, marginBottom: 4 }}>Sleepover, per night</div>
+                      {priceRow("on", weekdayLabel, s.overnightWeekday, usualRates.overnightWeekday)}
+                      {priceRow("on", weekendLabel, s.overnightWeekend, usualRates.overnightWeekend)}
+                    </div>
+                    <div style={{ padding: "12px 18px", borderLeft: "1px solid #f3eee2" }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: INK }}>Daycation &amp; Nightcation</div>
+                      <div style={{ fontSize: 11.5, color: MUTED, marginBottom: 4 }}>A few hours, no sleepover</div>
+                      {priceRow("dn", weekdayLabel, s.daynightWeekday, usualRates.daynightWeekday)}
+                      {priceRow("dn", weekendLabel, s.daynightWeekend, usualRates.daynightWeekend)}
+                    </div>
+                    <div style={{ padding: "12px 18px", borderLeft: "1px solid #f3eee2" }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: INK }}>Long stays</div>
+                      <div style={{ fontSize: 11.5, color: MUTED, marginBottom: 4 }}>Per night, by length of stay</div>
+                      {tiers.length > 0 ? tiers.map((t) => (
+                        <div key={t.key} style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, padding: "7px 0", borderBottom: "1px dashed #f0e8d8" }}>
+                          <span style={{ fontSize: 12.5, color: BODY }}>{t.label}</span>
+                          <span style={{ fontSize: 15, fontWeight: 600, color: INK, fontVariantNumeric: "tabular-nums" }}>{peso(s[t.key] as number)}</span>
+                        </div>
+                      )) : (
+                        <div style={{ fontSize: 12.5, color: MUTED, lineHeight: 1.5, paddingTop: 7 }}>No special price — each night uses the Overnight price.</div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Footer: promo rule + actions */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, padding: "10px 18px", background: CREAM, borderTop: `1px solid ${LINE}` }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: s.allowPromos ? GREEN : "#8a4a3c" }}>
+                      {s.allowPromos ? <Ticket style={{ width: 14, height: 14 }} /> : <TicketX style={{ width: 14, height: 14 }} />}
+                      {s.allowPromos ? "Promo codes still work on these dates" : "Promo codes don’t work on these dates"}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <button type="button" onClick={() => openWizard(formFrom(s), s.id)} className="cursor-pointer"
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", fontSize: 13, fontWeight: 500, color: INK, background: "#fff", border: "1px solid #d9d1c2" }}>
+                        <Pencil style={{ width: 13, height: 13 }} />Edit
+                      </button>
+                      <button type="button" onClick={() => openWizard({ ...formFrom(s), name: `${s.name} (copy)`, active: false })} className="cursor-pointer"
+                        title="Make a copy — handy for next year's dates"
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 10px", fontSize: 13, color: BODY, background: "transparent", border: "none" }}>
+                        <Copy style={{ width: 13, height: 13 }} />Copy
+                      </button>
+                      <button type="button" onClick={() => setConfirm({ kind: "delete", id: s.id })} className="cursor-pointer"
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 10px", fontSize: 13, color: "#991b1b", background: "transparent", border: "none" }}>
+                        <Trash2 style={{ width: 13, height: 13 }} />Delete
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
           <p style={{ fontSize: 12.5, color: MUTED, margin: "12px 0 0", lineHeight: 1.6 }}>
-            Percentages compare each season price with your usual price for the same kind of stay. Dates outside every season keep the usual prices.
+            Crossed-out prices are your usual prices; the percentage shows how much higher or lower the season price is. Dates outside every season keep the usual prices.
           </p>
         </>
       )}

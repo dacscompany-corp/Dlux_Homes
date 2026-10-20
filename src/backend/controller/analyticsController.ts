@@ -81,6 +81,17 @@ const previousWindow = (period: string) => `
 const safeMonth = (raw: string | null): string | null =>
   raw && /^\d{4}-(0[1-9]|1[0-2])$/.test(raw) ? raw : null;
 
+// ?month=all — every stay from the first booking up to the end of the current
+// month (Manila), the same span as /api/admin/overhead/all-time, so revenue and
+// overhead can be subtracted. There is no "previous" window to compare with.
+const END_OF_THIS_MONTH = `(date_trunc('month', NOW() AT TIME ZONE 'Asia/Manila') + INTERVAL '1 month')::date`;
+const allTimeWindow = `
+  WHERE b.check_in_date::date < ${END_OF_THIS_MONTH}
+    AND b.status IN ('approved', 'confirmed', 'checked-in', 'completed')
+`;
+const NO_WINDOW = `WHERE FALSE`;
+const isAllTime = (raw: string | null) => raw === "all";
+
 const monthWindow = (month: string) => `
   WHERE b.check_in_date >= '${month}-01'::date
     AND b.check_in_date < ('${month}-01'::date + INTERVAL '1 month')
@@ -97,7 +108,15 @@ const previousMonthWindow = (month: string) => `
  * `offset` steps whole windows backwards (1 = the preceding month/period) for
  * the period-on-period comparison.
  */
-const occupancyRange = (month: string | null, period: string, offset = 0) => {
+const occupancyRange = (month: string | null, period: string, offset = 0, allTime = false) => {
+  if (allTime) {
+    // First booked stay → end of this month. The "previous" window is empty.
+    const first = `COALESCE((SELECT MIN(check_in_date::date) FROM ${BOOKING_TABLE}
+      WHERE status IN ('approved', 'confirmed', 'checked-in', 'completed')), CURRENT_DATE)`;
+    return offset === 0
+      ? { start: first, end: END_OF_THIS_MONTH }
+      : { start: END_OF_THIS_MONTH, end: END_OF_THIS_MONTH };
+  }
   if (month) {
     const anchor = `('${month}-01'::date - INTERVAL '${offset} month')`;
     return { start: `${anchor}::date`, end: `(${anchor} + INTERVAL '1 month')::date` };
@@ -200,14 +219,15 @@ export const getAnalyticsSummary = async (req: NextRequest): Promise<NextRespons
     // ?month=YYYY-MM pins every figure to that calendar month instead of the
     // rolling `period` window. Anything malformed falls back to the window.
     const month = safeMonth(searchParams.get('month'));
+    const allTime = isAllTime(searchParams.get('month'));
 
     const currentStatsQuery = summaryStatsQuery(
-      month ? monthWindow(month) : currentWindow(period));
+      allTime ? allTimeWindow : month ? monthWindow(month) : currentWindow(period));
     const previousStatsQuery = summaryStatsQuery(
-      month ? previousMonthWindow(month) : previousWindow(period));
+      allTime ? NO_WINDOW : month ? previousMonthWindow(month) : previousWindow(period));
 
-    const cur = occupancyRange(month, period, 0);
-    const prev = occupancyRange(month, period, 1);
+    const cur = occupancyRange(month, period, 0, allTime);
+    const prev = occupancyRange(month, period, 1, allTime);
 
     const [currentStats, previousStats, occupancyStats, previousOccupancy, roomStats] =
       await Promise.all([
@@ -291,10 +311,11 @@ export const getRevenueByRoom = async (req: NextRequest): Promise<NextResponse> 
     const { searchParams } = new URL(req.url);
     const period = safeIntStr(searchParams.get('period'), 30); // days
     const month = safeMonth(searchParams.get('month'));
+    const allTime = isAllTime(searchParams.get('month'));
 
     // Shares the summary's window helpers so both cards and this table always
     // describe the same span.
-    const where = month ? monthWindow(month) : currentWindow(period);
+    const where = allTime ? allTimeWindow : month ? monthWindow(month) : currentWindow(period);
 
     const query = `
       SELECT

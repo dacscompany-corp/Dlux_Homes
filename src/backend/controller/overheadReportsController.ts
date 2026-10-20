@@ -216,3 +216,79 @@ export async function getDashboard(req: NextRequest): Promise<NextResponse> {
     );
   }
 }
+
+/**
+ * GET /api/admin/overhead/all-time — lifetime figures for Finance →
+ * Profitability's "All time" view, up to the end of the current month (Manila).
+ *
+ * Revenue uses the same rules as the analytics summary (stay-based on
+ * check-in, same booking statuses; collected = approved down/full payments,
+ * gross = booked value less add-ons). Overhead uses the same rules as the
+ * monthly dashboard (accrued = amount due, paid = settled incl. part-payments),
+ * so "All time" is the sum of the months, not a different definition.
+ */
+export async function getAllTimeTotals(): Promise<NextResponse> {
+  try {
+    await ensureMaterialized();
+    const endMonth = `${currentMonthKey()}-01`;
+    const bookingTable = (() => {
+      const raw = (process.env.BOOKING_TABLE_NAME || "booking").trim();
+      return /^[A-Za-z_][A-Za-z0-9_]*$/.test(raw) ? raw : "booking";
+    })();
+
+    const [revenue, overhead] = await Promise.all([
+      pool.query<{ revenue: string; gross: string; first: string | null }>(
+        `SELECT
+           COALESCE(SUM(CASE
+             WHEN bp.payment_status = 'approved_down_payment' THEN bp.down_payment
+             WHEN bp.payment_status = 'approved_full_payment' THEN bp.total_amount
+             ELSE 0 END), 0)::numeric AS revenue,
+           COALESCE(SUM(GREATEST(0, bp.total_amount - COALESCE(bp.add_ons_total, 0))), 0)::numeric AS gross,
+           to_char(MIN(b.check_in_date::date), 'YYYY-MM') AS first
+         FROM ${bookingTable} b
+         LEFT JOIN booking_payments bp ON b.id = bp.booking_id
+         WHERE b.check_in_date < ($1::date + INTERVAL '1 month')
+           AND b.status IN ('approved', 'confirmed', 'checked-in', 'completed')`,
+        [endMonth],
+      ),
+      pool.query<{ accrued: string; paid: string; first: string | null }>(
+        `WITH per AS (
+           SELECT p.amount_due, p.accrual_month,
+                  CASE WHEN p.status = 'paid' THEN p.amount_due
+                       ELSE LEAST(p.amount_due, COALESCE(pay.total, 0)) END AS settled
+             FROM overhead_expense_periods p
+             LEFT JOIN (
+               SELECT period_id, SUM(amount) AS total
+                 FROM overhead_expense_payments
+                GROUP BY period_id
+             ) pay ON pay.period_id = p.id
+            WHERE p.accrual_month <= $1::date AND p.status <> 'cancelled'
+         )
+         SELECT COALESCE(SUM(amount_due), 0)::numeric AS accrued,
+                COALESCE(SUM(settled), 0)::numeric AS paid,
+                to_char(MIN(accrual_month), 'YYYY-MM') AS first
+           FROM per`,
+        [endMonth],
+      ),
+    ]);
+
+    const firsts = [revenue.rows[0]?.first, overhead.rows[0]?.first].filter((m): m is string => !!m).sort();
+    return NextResponse.json({
+      success: true,
+      data: {
+        revenue: Number(revenue.rows[0]?.revenue ?? 0),
+        gross_revenue: Number(revenue.rows[0]?.gross ?? 0),
+        overhead_accrued: Number(overhead.rows[0]?.accrued ?? 0),
+        overhead_paid: Number(overhead.rows[0]?.paid ?? 0),
+        since: firsts[0] ?? null,
+        through: currentMonthKey(),
+      },
+    });
+  } catch (error) {
+    console.error("Error getting all-time totals:", error);
+    return NextResponse.json(
+      { success: false, message: error instanceof Error ? error.message : "Failed to load all-time totals" },
+      { status: 500 },
+    );
+  }
+}
