@@ -273,6 +273,7 @@ function MultiFilterButton<K extends string>({ label, title, groups, value, onCh
 const TASK_COLUMNS: { h: string; cls: string }[] = [
   { h: "Room", cls: "" },
   { h: "Status", cls: "" },
+  { h: "Next step", cls: "hidden md:table-cell" },
   { h: "Cleaner", cls: "" },
   { h: "Checkout", cls: "hidden sm:table-cell" },
   { h: "Started", cls: "hidden xl:table-cell" },
@@ -304,6 +305,39 @@ function needsAssignment(task: CleaningTask): boolean {
 }
 
 // Overdue: checkout has passed and cleaning hasn't even started yet.
+/**
+ * What should happen next with this room, in plain words — the one thing an
+ * admin needs from a row at a glance. `act` marks rows waiting on Owner/CSR.
+ */
+function nextStep(task: CleaningTask): { text: string; color: string; act: boolean } {
+  switch (statusGroup(task.cleaning_status)) {
+    case "ready":
+      return { text: "Done — room is ready for guests", color: "#065f46", act: false };
+    case "awaiting-inspection":
+      return { text: "Check the photos and approve", color: "#5b21b6", act: true };
+    case "in-progress":
+      return { text: "Cleaner is working on it", color: "#8a6a2f", act: false };
+    case "assigned":
+      return isOverdue(task)
+        ? { text: "Late — cleaner hasn't started yet", color: "#dc2626", act: true }
+        : { text: "Waiting for the cleaner to start", color: "#1e40af", act: false };
+    default:
+      return task.booking_status === "pending"
+        ? { text: "Waiting for booking confirmation", color: "#8B6344", act: false }
+        : { text: "Pick a cleaner", color: "#b45309", act: true };
+  }
+}
+
+// The cleaning journey, left to right, as shown in the guide strip above the
+// table. Each step filters the table to that status.
+const WORKFLOW_STEPS: { key: CleaningStatusKey; hint: string }[] = [
+  { key: "pending", hint: "No cleaner yet" },
+  { key: "assigned", hint: "Cleaner picked" },
+  { key: "in-progress", hint: "Being cleaned" },
+  { key: "awaiting-inspection", hint: "You check & approve" },
+  { key: "ready", hint: "Guests can book" },
+];
+
 function isOverdue(task: CleaningTask): boolean {
   if (!["pending", "assigned"].includes(task.cleaning_status)) return false;
   const co = checkoutMoment(task);
@@ -407,6 +441,8 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
   const issueCount = monthTasks.filter((t) => (t.open_issue_count ?? 0) > 0).length;
   const awaitingCount = monthTasks.filter((t) => t.cleaning_status === "awaiting-inspection").length;
   const unassignedCount = monthTasks.filter(needsAssignment).length;
+  const attentionCount = monthTasks.filter((t) =>
+    isOverdue(t) || needsAssignment(t) || (t.open_issue_count ?? 0) > 0 || t.cleaning_status === "awaiting-inspection").length;
 
   // Status and Assignment filters — the same multi-select panel as the
   // Bookings table, each remembered between visits. Empty = no filter.
@@ -453,7 +489,7 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
   return (
     <div>
       {/* Top-level tabs */}
-      <div className="flex items-center gap-2 mb-6">
+      <div className="flex flex-wrap items-center gap-2 mb-2">
         {([
           { id: "tasks", label: "Tasks" },
           { id: "checklist", label: "Cleaning Checklist" },
@@ -471,6 +507,12 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
           </button>
         ))}
       </div>
+      <p className="text-sm mb-6" style={{ color: "#8B6344" }}>
+        {topTab === "tasks" && "Every room that needs cleaning after a guest checks out. Click a row to see details, assign a cleaner, or approve the work."}
+        {topTab === "checklist" && "Pick a room to see or change the list of jobs the cleaner must tick off there."}
+        {topTab === "reports" && "Problems cleaners reported in rooms — damage, missing items, repairs."}
+        {topTab === "workload" && "How many cleanings each cleaner has, so work is shared fairly."}
+      </p>
 
       {topTab === "checklist" ? (
         <>
@@ -486,22 +528,62 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
           month={month} onMonthChange={setMonth} monthsWithTasks={monthsWithTasks} />
       ) : (
       <>
-      {/* KPI row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+      {/* How cleaning works — the five steps in order, with how many rooms
+          are at each one. Clicking a step shows just those rooms. */}
+      <div className="border p-3 sm:p-4 mb-5" style={{ borderColor: "#ece5d4", backgroundColor: "#FDFBF7" }}>
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#8a6a2f" }}>How cleaning works</p>
+          {statusFilters.length > 0 && (
+            <button type="button" onClick={() => applyStatusFilters([])} className="text-xs underline cursor-pointer" style={{ color: "#B07848" }}>Show all steps</button>
+          )}
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+          {WORKFLOW_STEPS.map((step, i) => {
+            const cfg = STATUS_LABELS[step.key];
+            const count = monthTasks.filter((t) => statusGroup(t.cleaning_status) === step.key).length;
+            const selected = statusFilters.length === 1 && statusFilters[0] === step.key;
+            return (
+              <button key={step.key} type="button" aria-pressed={selected}
+                onClick={() => applyStatusFilters(selected ? [] : [step.key])}
+                title={`Show only "${cfg.label}"`}
+                className="relative text-left border px-3 py-2.5 cursor-pointer transition-colors"
+                style={{ backgroundColor: selected ? cfg.bg : "#ffffff", borderColor: selected ? cfg.dot : "#ece5d4" }}>
+                <div className="flex items-center gap-1.5">
+                  <span className="w-5 h-5 rounded-full text-[11px] font-bold flex items-center justify-center flex-shrink-0" style={{ backgroundColor: cfg.dot, color: "#ffffff" }}>{i + 1}</span>
+                  <span className="text-xs font-semibold truncate" style={{ color: cfg.color }}>{cfg.label}</span>
+                </div>
+                <div className="flex items-baseline justify-between gap-2 mt-1.5">
+                  <span className="text-[11px]" style={{ color: "#8B6344" }}>{step.hint}</span>
+                  <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 18, fontWeight: 500, color: "#1f1b16" }}>{count}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* What needs you — each card says what it means, and turns from a
+          quiet "all clear" into a highlighted card when there's something to do. */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
         {[
-          { label: "Needs Assignment",    value: unassignedCount, icon: UserPlus,   iconBg: "#fef3c7", iconColor: "#d97706", onClick: () => setFilter("attention") },
-          { label: "Overdue",             value: overdueCount, icon: AlertTriangle, iconBg: "#fee2e2", iconColor: "#dc2626", onClick: () => setFilter("attention") },
-          { label: "Open Issues",         value: issueCount,   icon: AlertTriangle, iconBg: "#ffedd5", iconColor: "#ea580c", onClick: () => setFilter("attention") },
-          { label: "Completed (to check)", value: awaitingCount,icon: ClipboardList, iconBg: "#ede9fe", iconColor: "#7c3aed", onClick: () => setFilter("awaiting-inspection") },
+          { label: "Need a cleaner",   hint: "Confirmed bookings nobody is cleaning yet", value: unassignedCount, icon: UserPlus,      color: "#d97706", bg: "#fef3c7", onClick: () => setFilter("attention") },
+          { label: "Running late",     hint: "Guest left, cleaning not started",          value: overdueCount,    icon: Clock,         color: "#dc2626", bg: "#fee2e2", onClick: () => setFilter("attention") },
+          { label: "Problems reported", hint: "Cleaner flagged damage or missing items",  value: issueCount,      icon: AlertTriangle, color: "#ea580c", bg: "#ffedd5", onClick: () => setFilter("attention") },
+          { label: "Ready to approve", hint: "Cleaner finished — check photos",           value: awaitingCount,   icon: ClipboardList, color: "#7c3aed", bg: "#ede9fe", onClick: () => setFilter("awaiting-inspection") },
         ].map((card) => {
           const Icon = card.icon;
+          const needsYou = card.value > 0;
           return (
-            <button key={card.label} onClick={card.onClick} className="border p-4 text-center cursor-pointer transition-colors" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }}>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-2" style={{ backgroundColor: card.iconBg }}>
-                <Icon className="w-5 h-5" strokeWidth={1.75} style={{ color: card.iconColor }} />
+            <button key={card.label} onClick={card.onClick} className="border p-3 sm:p-4 text-left cursor-pointer transition-colors"
+              style={{ backgroundColor: needsYou ? card.bg : "#ffffff", borderColor: needsYou ? card.color : "#ece5d4" }}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: needsYou ? "#ffffff" : card.bg }}>
+                  <Icon className="w-[18px] h-[18px]" strokeWidth={1.9} style={{ color: card.color }} />
+                </div>
+                <p style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 26, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1, color: needsYou ? card.color : "#1f1b16" }}>{card.value}</p>
               </div>
-              <p style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 24, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1, color: "#1f1b16" }}>{card.value}</p>
-              <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{card.label}</p>
+              <p className="text-sm font-semibold mt-2" style={{ color: "#1f1b16" }}>{card.label}</p>
+              <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{needsYou ? card.hint : "All clear"}</p>
             </button>
           );
         })}
@@ -510,9 +592,9 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
       {/* Filter bar */}
       <div className="flex items-center gap-2 mb-4">
         {([
-          { id: "all", label: "All Tasks" },
-          { id: "attention", label: "Needs Attention" },
-          { id: "awaiting-inspection", label: "Completed" },
+          { id: "all", label: "All rooms" },
+          { id: "attention", label: `Needs you (${attentionCount})` },
+          { id: "awaiting-inspection", label: `Ready to approve (${awaitingCount})` },
         ] as const).map((f) => (
           <button key={f.id} onClick={() => setFilter(f.id)}
             className="px-3 py-1.5 text-xs font-medium border cursor-pointer transition-colors"
@@ -578,17 +660,17 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
           </thead>
           <tbody>
             {tasksLoading ? (
-              <tr><td colSpan={8} className="px-4 py-8 text-center text-sm" style={{ color: "#8B6344" }}>Loading cleaning tasks…</td></tr>
+              <tr><td colSpan={9} className="px-4 py-8 text-center text-sm" style={{ color: "#8B6344" }}>Loading cleaning tasks…</td></tr>
             ) : tasksFailed && !tasksData ? (
-              <tr><td colSpan={8} className="px-4 py-8 text-center text-sm" style={{ color: "#dc2626" }}>
+              <tr><td colSpan={9} className="px-4 py-8 text-center text-sm" style={{ color: "#dc2626" }}>
                 Couldn&apos;t load cleaning tasks.{" "}
                 <button type="button" onClick={() => refetchTasks()} className="underline cursor-pointer">Try again</button>
               </td></tr>
             ) : !isFetching && visibleTasks.length === 0 ? (
-              <tr><td colSpan={8} className="px-4 py-8 text-center text-sm" style={{ color: "#8B6344" }}>No cleaning tasks match this filter.</td></tr>
+              <tr><td colSpan={9} className="px-4 py-8 text-center text-sm" style={{ color: "#8B6344" }}>No cleaning tasks match this filter.</td></tr>
             ) : null}
             {tasksFailed && tasksData && (
-              <tr><td colSpan={8} className="px-4 py-2 text-xs" style={{ color: "#92400e", backgroundColor: "#fef3c7" }}>
+              <tr><td colSpan={9} className="px-4 py-2 text-xs" style={{ color: "#92400e", backgroundColor: "#fef3c7" }}>
                 Couldn&apos;t refresh — showing the last update.{" "}
                 <button type="button" onClick={() => refetchTasks()} className="underline cursor-pointer">Try again</button>
               </td></tr>
@@ -597,8 +679,10 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
               const st = STATUS_LABELS[t.cleaning_status] || STATUS_LABELS.pending;
               const overdue = isOverdue(t);
               const cleanerName = t.cleaner_first_name ? `${t.cleaner_first_name} ${t.cleaner_last_name ?? ""}`.trim() : "Unassigned";
+              const step = nextStep(t);
               return (
-                <tr key={t.cleaning_id} className="cursor-pointer transition-colors" style={{ borderBottom: "1px solid #F7F0E3" }}
+                <tr key={t.cleaning_id} className="cursor-pointer transition-colors"
+                  style={{ borderBottom: "1px solid #F7F0E3", boxShadow: step.act ? `inset 3px 0 0 ${step.color}` : undefined }}
                   onClick={() => setSelectedId(t.cleaning_id)}
                   onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#FAF7F1"}
                   onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
@@ -619,6 +703,11 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
                         </span>
                       )}
                     </div>
+                  </td>
+                  <td className="px-3 py-3 hidden md:table-cell">
+                    <span className="text-sm" style={{ color: step.color, fontWeight: step.act ? 600 : 400 }}>
+                      {step.text}{step.act ? " →" : ""}
+                    </span>
                   </td>
                   <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                     {t.cleaning_status === "ready" ? (
@@ -908,7 +997,7 @@ function AssignCleanerControl({ task, cleaners, loadFailed }: { task: CleaningTa
 // uses), without opening the drawer. Tasks that are Ready have nothing left
 // to check off, so they're left out of the picker.
 function ChecklistTab({ tasks, isFetching }: { tasks: CleaningTask[]; isFetching: boolean }) {
-  const relevant = tasks.filter((t) => t.cleaning_status !== "ready");
+  const relevant = tasks.filter((t) => t.cleaning_status !== "ready").sort(byNearestCleaning);
   const [query, setQuery] = useState("");
   const normQuery = query.trim().toLowerCase();
   const filtered = relevant.filter((t) =>
@@ -1349,9 +1438,9 @@ function CleanerWorkloadTab({ tasks, cleaners, isLoading, month, onMonthChange, 
           </thead>
           <tbody>
             {isLoading ? (
-              <tr><td colSpan={8} className="px-4 py-8 text-center text-sm" style={{ color: "#8B6344" }}>Loading…</td></tr>
+              <tr><td colSpan={9} className="px-4 py-8 text-center text-sm" style={{ color: "#8B6344" }}>Loading…</td></tr>
             ) : ranked.length === 0 ? (
-              <tr><td colSpan={8} className="px-4 py-8 text-center text-sm" style={{ color: "#8B6344" }}>No cleaner accounts yet.</td></tr>
+              <tr><td colSpan={9} className="px-4 py-8 text-center text-sm" style={{ color: "#8B6344" }}>No cleaner accounts yet.</td></tr>
             ) : ranked.map((r, i) => {
               const share = assignedTotal ? Math.round((r.total / assignedTotal) * 100) : 0;
               const leader = i === 0 && r.total > 0;
@@ -1436,7 +1525,7 @@ function CleanerWorkloadDrawer({ name, inactive, periodLabel, tasks, onClose }: 
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const sorted = [...tasks].sort((a, b) => (checkoutMoment(a)?.getTime() ?? 0) - (checkoutMoment(b)?.getTime() ?? 0));
+  const sorted = [...tasks].sort(byNearestCleaning);
   const groups = { done: 0, active: 0, toDo: 0 };
   for (const t of tasks) {
     const s = statusGroup(t.cleaning_status);

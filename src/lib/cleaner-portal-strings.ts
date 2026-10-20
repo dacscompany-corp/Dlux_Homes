@@ -37,8 +37,8 @@ const en = {
   // Status chips
   sPending: "To clean",
   sProgress: "Cleaning now",
-  sWaiting: "Done · office is checking",
-  sReady: "Approved",
+  sWaiting: "Sent · office is checking",
+  sReady: "Done",
 
   // Room / checklist
   back: "Back",
@@ -153,6 +153,14 @@ const en = {
 
   // Templated copy
   progress: (done: number, total: number) => `${done} of ${total} done`,
+  todaySummary: (total: number, done: number) => `Today: ${total} ${total === 1 ? "room" : "rooms"} · ${done} done`,
+  stepsTitle: "3 easy steps",
+  stepTick: "Tick every task",
+  stepPhoto: "Take 1 photo of each area",
+  stepSend: "Sent to the office for checking",
+  stepSendHint: "Happens by itself when steps 1 and 2 are done",
+  showTasks: "Show tasks",
+  hideTasks: "Hide tasks",
   left: (n: number) => `${n} ${n === 1 ? "task" : "tasks"} left`,
   doneBody: (room: string) => `The office will check ${room}. We'll message you if anything needs fixing.`,
   forRoom: (room: string) => `For ${room}`,
@@ -192,8 +200,8 @@ const tl: CleanerStrings = {
 
   sPending: "Lilinisin",
   sProgress: "Nililinis",
-  sWaiting: "Tapos · sinusuri ng opisina",
-  sReady: "Aprubado",
+  sWaiting: "Naipadala · sinusuri ng opisina",
+  sReady: "Tapos na",
 
   back: "Bumalik",
   problem: "May problema?",
@@ -299,6 +307,14 @@ const tl: CleanerStrings = {
   quick: ["Papunta na ako", "Tapos na ako", "Kailangan ko ng supplies", "Male-late ako"],
 
   progress: (done, total) => `${done} sa ${total} tapos`,
+  todaySummary: (total, done) => `Ngayon: ${total} kwarto · ${done} tapos`,
+  stepsTitle: "3 madaling hakbang",
+  stepTick: "I-tsek ang lahat ng gawain",
+  stepPhoto: "Kunan ng 1 litrato ang bawat bahagi",
+  stepSend: "Ipapadala sa opisina para suriin",
+  stepSendHint: "Kusang mangyayari kapag tapos ang hakbang 1 at 2",
+  showTasks: "Ipakita ang mga gawain",
+  hideTasks: "Itago ang mga gawain",
   left: (n) => `${n} pang gawain`,
   doneBody: (room) => `Susuriin ng opisina ang ${room}. Magme-message kami kung may kailangang ayusin.`,
   forRoom: (room) => `Para sa ${room}`,

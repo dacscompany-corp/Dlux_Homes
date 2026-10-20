@@ -30,7 +30,7 @@ import { signOut, useSession } from "next-auth/react";
 import { confirmSignOut } from "@/components/SignOutConfirm";
 import toast from "react-hot-toast";
 import {
-  Check, ChevronLeft, ChevronRight, Clock, MapPin, AlertTriangle, Camera,
+  Check, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Clock, MapPin, AlertTriangle, Camera, Play,
   Image as ImageIcon, Phone, Home as HomeIcon, MessageSquare, LifeBuoy,
   Wrench, Droplet, Package, HelpCircle, LogOut, CheckCircle2, Users, Send, Bell,
 } from "lucide-react";
@@ -124,11 +124,11 @@ type ProblemType = "broken" | "dirty" | "missing" | "other";
 
 // Cleaner-facing status chips. "ready" only ever arrives from an admin's
 // inspection approval; the cleaner can't set it.
-const CHIPS: Record<CleanStatus, { bg: string; fg: string; label: keyof typeof CLEANER_STRINGS.en }> = {
-  pending:                { bg: C.amberBg,  fg: C.amberInk,  label: "sPending" },
-  "in-progress":          { bg: C.cream,    fg: C.goldInk,   label: "sProgress" },
-  "awaiting-inspection":  { bg: C.violetBg, fg: C.violetInk, label: "sWaiting" },
-  ready:                  { bg: C.greenBg,  fg: C.greenInk,  label: "sReady" },
+const CHIPS: Record<CleanStatus, { bg: string; fg: string; label: keyof typeof CLEANER_STRINGS.en; Icon: typeof Check }> = {
+  pending:                { bg: C.amberBg,  fg: C.amberInk,  label: "sPending",  Icon: Clock },
+  "in-progress":          { bg: C.cream,    fg: C.goldInk,   label: "sProgress", Icon: Play },
+  "awaiting-inspection":  { bg: C.violetBg, fg: C.violetInk, label: "sWaiting",  Icon: Send },
+  ready:                  { bg: C.greenBg,  fg: C.greenInk,  label: "sReady",    Icon: Check },
 };
 
 // The four problem tiles, mapped onto what report_issue actually stores.
@@ -241,6 +241,9 @@ export default function CleanerMobilePortal() {
 
   const [screen, setScreen] = useState<Screen>("home");
   const [activeId, setActiveId] = useState<string | null>(null);
+  // The room's task list is long, so it starts hidden each time a room is
+  // opened — the cleaner taps Show tasks. Holds the room whose list is showing.
+  const [tasksShownFor, setTasksShownFor] = useState<string | null>(null);
   // Which screen the problem flow was opened from, so Back returns there.
   const [problemFrom, setProblemFrom] = useState<Screen>("home");
 
@@ -640,6 +643,11 @@ export default function CleanerMobilePortal() {
                 <div style={{ fontSize: 16, color: C.muted }}>{t.hello}</div>
                 <div style={{ fontFamily: SERIF, fontSize: 40, lineHeight: 1.05, letterSpacing: "-0.01em" }}>{firstName}</div>
                 <div style={{ fontSize: 15, color: C.muted, marginTop: 6 }}>{formatDateLine(new Date(), lang)}</div>
+                {today.length > 0 && (
+                  <div style={{ display: "inline-block", marginTop: 8, padding: "4px 12px", borderRadius: 999, background: C.card, border: `1px solid ${C.line}`, fontSize: 15, fontWeight: 600 }}>
+                    {t.todaySummary(today.length, today.filter((r) => r.status === "awaiting-inspection" || r.status === "ready").length)}
+                  </div>
+                )}
               </div>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10, flexShrink: 0, marginTop: 4 }}>
                 <div style={{ display: "flex", background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: 3 }}>
@@ -796,7 +804,7 @@ export default function CleanerMobilePortal() {
                           font: `400 16px ${SANS}`, color: C.ink, cursor: isOpenRoom ? "pointer" : "default",
                         }}>
                         <span style={{ width: 44, height: 44, borderRadius: "50%", background: chip.bg, display: "grid", placeItems: "center", flexShrink: 0 }}>
-                          <Check className="w-6 h-6" strokeWidth={2.5} style={{ color: chip.fg }} />
+                          <chip.Icon className="w-6 h-6" strokeWidth={2.5} style={{ color: chip.fg }} />
                         </span>
                         <span style={{ flex: 1, minWidth: 0 }}>
                           <span style={{ display: "block", fontSize: 18, fontWeight: 600 }}>{r.name}</span>
@@ -875,16 +883,63 @@ export default function CleanerMobilePortal() {
 
               <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: 16, marginTop: 16 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                  <span style={{ fontSize: 20, fontWeight: 700 }}>{t.progress(doneCount, totalCount)}</span>
+                  <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.goldInk }}>{t.stepsTitle}</span>
                   <span style={{ fontSize: 16, color: C.goldInk, fontWeight: 600 }}>{pct}%</span>
                 </div>
                 <div style={{ height: 10, background: C.line, borderRadius: 99, overflow: "hidden", marginTop: 10 }}>
                   <div style={{ height: "100%", width: `${pct}%`, background: C.gold, borderRadius: 99, transition: "width .3s" }} />
                 </div>
-                <div style={{ fontSize: 15, color: C.muted, marginTop: 10 }}>{t.tapHint}</div>
+                {/* The whole job in three steps, each with its own live count, so
+                    the cleaner always knows what's left and what happens next. */}
+                {(() => {
+                  const areas = ck.gate.categories.length;
+                  const photographed = areas - ck.gate.missingPhotos.length;
+                  const sent = active?.status === "awaiting-inspection" || active?.status === "ready";
+                  const steps = [
+                    { label: t.stepTick, count: `${doneCount}/${totalCount}`, done: totalCount > 0 && doneCount === totalCount, hint: null as string | null },
+                    { label: t.stepPhoto, count: `${photographed}/${areas}`, done: areas > 0 && photographed === areas, hint: null },
+                    { label: t.stepSend, count: "", done: sent, hint: sent ? null : t.stepSendHint },
+                  ];
+                  return (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 14 }}>
+                      {steps.map((st, i) => (
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                          <span style={{
+                            width: 34, height: 34, borderRadius: "50%", flexShrink: 0, display: "grid", placeItems: "center",
+                            background: st.done ? C.green : C.bg, border: `2px solid ${st.done ? C.green : C.creamLine}`,
+                            color: st.done ? "#fff" : C.goldInk, font: `700 16px ${SANS}`,
+                          }}>
+                            {st.done ? <Check className="w-[18px] h-[18px]" strokeWidth={3} /> : i + 1}
+                          </span>
+                          <span style={{ flex: 1, minWidth: 0 }}>
+                            <span style={{ display: "block", fontSize: 17, fontWeight: 600, color: st.done ? C.faint : C.ink, textDecoration: st.done ? "line-through" : "none" }}>{st.label}</span>
+                            {st.hint && <span style={{ display: "block", fontSize: 14, color: C.muted, marginTop: 1 }}>{st.hint}</span>}
+                          </span>
+                          {st.count && <span style={{ fontSize: 17, fontWeight: 700, color: st.done ? C.green : C.ink, flexShrink: 0 }}>{st.count}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+                {(() => {
+                  const shown = !!active && tasksShownFor === active.id;
+                  return (
+                    <button type="button" aria-expanded={shown}
+                      onClick={() => setTasksShownFor(shown ? null : active?.id ?? null)}
+                      style={{
+                        marginTop: 14, width: "100%", height: 56, borderRadius: 14,
+                        border: `1px solid ${C.creamLine}`, background: shown ? C.card : C.bg, color: C.ink,
+                        font: `700 17px ${SANS}`, cursor: "pointer", display: "flex",
+                        alignItems: "center", justifyContent: "center", gap: 8,
+                      }}>
+                      {shown ? <ChevronUp className="w-5 h-5" strokeWidth={2.5} /> : <ChevronDown className="w-5 h-5" strokeWidth={2.5} />}
+                      {shown ? t.hideTasks : t.showTasks}
+                    </button>
+                  );
+                })()}
               </div>
 
-              {categories.length === 0 ? (
+              {!(active && tasksShownFor === active.id) ? null : categories.length === 0 ? (
                 ck.loadError ? (
                   <div role="alert" style={{ marginTop: 22, display: "flex", alignItems: "center", gap: 12, fontSize: 16, color: C.amberInk }}>
                     <span style={{ flex: 1 }}>{t.checklistFailed}</span>
