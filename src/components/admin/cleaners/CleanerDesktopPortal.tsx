@@ -33,7 +33,7 @@ import {
 import { useAssignmentChecklist, gateErrorMessage } from "@/components/admin/cleaners/useAssignmentChecklist";
 import { bookingRefFrom, sameBookingRef } from "@/components/admin/NotificationBell";
 import CleanerCalendarCard from "@/components/admin/cleaners/CleanerCalendarCard";
-import { canStartCleaning, cleaningDueAt, groupByDueDay, startOfManilaDay } from "@/lib/cleaning-schedule";
+import { canStartCleaning, cleaningDueAt, groupByDueDay, isCurrentCleaning, startOfManilaDay } from "@/lib/cleaning-schedule";
 import { translateCategory, translateTask, type ChecklistLanguage } from "@/lib/checklist-translations";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -222,6 +222,8 @@ export default function CleanerDesktopPortal() {
     const rank = (s: string) => (s === "in-progress" ? 0 : s === "pending" ? 1 : s === "awaiting-inspection" ? 2 : 3);
     return (cleaningTasksData ?? [])
       .filter((t) => !!cleanerId && String(t.assigned_cleaner_id ?? "") === cleanerId)
+      // Today and upcoming only — older rooms are admin's to close out.
+      .filter((t) => isCurrentCleaning(t))
       .map((t) => {
         const dueAt = cleaningDueAt(t);
         return {
@@ -262,15 +264,11 @@ export default function CleanerDesktopPortal() {
   }, [assignments]);
   const todaysDone = todays.filter((a) => isDoneStatus(a.status)).length;
   const openIssueCount = assignments.reduce((n, a) => n + a.openIssues, 0);
-  // My Schedule, in admin's order: today and later first, soonest on top;
-  // unfinished rooms from earlier days in their own list, most recent first.
-  const { upcomingDays, overdueDays } = useMemo(() => {
-    const days = groupByDueDay(assignments.filter((a) => !isDoneStatus(a.status)));
+  // My Schedule, in admin's order: today and later only, soonest on top.
+  const upcomingDays = useMemo(() => {
     const todayKey = startOfManilaDay(new Date()).getTime();
-    return {
-      upcomingDays: days.filter((d) => d.day.getTime() >= todayKey),
-      overdueDays: days.filter((d) => d.day.getTime() < todayKey).reverse(),
-    };
+    return groupByDueDay(assignments.filter((a) => !isDoneStatus(a.status)))
+      .filter((d) => d.day.getTime() >= todayKey);
   }, [assignments]);
   const noData = tasksFailed && !cleaningTasksData;
 
@@ -492,7 +490,17 @@ export default function CleanerDesktopPortal() {
     const cs = a.status;
     const base = "inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white cursor-pointer";
     if (cs === "pending") {
-      if (!canStartCleaning(a)) return null;
+      // Before checkout the button is shown greyed out with when it opens,
+      // so cleaners can always see where Start cleaning is.
+      if (!canStartCleaning(a)) {
+        return (
+          <button type="button" disabled title="Opens once the guest has checked out"
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold cursor-not-allowed"
+            style={{ background: "#ece5d4", color: "#8B6344" }}>
+            <Clock className="w-4 h-4" />Start cleaning · from {formatDue(a.dueAt)}
+          </button>
+        );
+      }
       return (
         <button type="button" className={base} style={{ background: "#1f1b16" }}
           onClick={() => { if (fromDashboard) setActiveNav("Assignments"); startCleaning(a.id); }}>
@@ -762,96 +770,111 @@ export default function CleanerDesktopPortal() {
           )}
 
           {/* ── Dashboard ── */}
-          {activeNav === "Dashboard" && (<>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+          {/* Every room assigned to this cleaner (today and upcoming), grouped by
+              day, each with what to do next — no separate checklist panel; the
+              checklist opens from the room itself once cleaning starts. */}
+          {activeNav === "Dashboard" && (() => {
+            const toClean = assignments.filter((x) => !isDoneStatus(x.status));
+            const dueToday = todays.filter((x) => !isDoneStatus(x.status));
+            const finished = assignments.filter((x) => isDoneStatus(x.status));
+            const days = groupByDueDay(assignments);
+            const dash = (n: number) => (tasksLoading || noData ? "—" : n);
+            const nextStepFor = (x: CardAssignment) => {
+              const locked = x.status === "pending" && !canStartCleaning(x);
+              if (x.status === "ready") return { text: "Approved — nothing more to do", color: "#065f46" };
+              if (x.status === "awaiting-inspection") return { text: "Sent — the office is checking", color: "#5b21b6" };
+              if (x.status === "in-progress") return { text: x.inspectionNote ? "Office asked for a fix — open the room" : "In progress — tick tasks and add area photos", color: "#8a6a2f" };
+              if (locked) return { text: `Guest still in — you can start from ${formatDue(x.dueAt)}`, color: "#92400e" };
+              return { text: "Guest has left — ready to start", color: "#b45309" };
+            };
+            return (<>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
               {[
-                { label: "Today's Assignments", value: tasksLoading || noData ? "—" : todays.length,     icon: ClipboardList, iconBg: "#F7F0E3", iconColor: "#B07848" },
-                { label: "Completed Today",      value: tasksLoading || noData ? "—" : todaysDone,        icon: CheckCircle2,  iconBg: "#d1fae5", iconColor: "#059669" },
-                // Open issue reports raised on this cleaner's own assignments —
-                // was a hard-coded 1.
-                { label: "Open Issues",          value: tasksLoading || noData ? "—" : openIssueCount,    icon: AlertCircle,   iconBg: "#fef3c7", iconColor: "#d97706" },
+                { label: "Rooms to clean", hint: "Assigned to you, not finished", value: dash(toClean.length), icon: ClipboardList, iconBg: "#F7F0E3", iconColor: "#B07848" },
+                { label: "Due today",      hint: "Guest checks out today",        value: dash(dueToday.length), icon: Clock,        iconBg: "#fef3c7", iconColor: "#d97706" },
+                { label: "Sent or done",   hint: "Finished by you",               value: dash(finished.length), icon: CheckCircle2, iconBg: "#d1fae5", iconColor: "#059669" },
+                { label: "Open issues",    hint: "Problems you reported",         value: dash(openIssueCount),  icon: AlertCircle,  iconBg: "#ffedd5", iconColor: "#ea580c" },
               ].map((card) => {
                 const Icon = card.icon;
                 return (
-                  <div key={card.label} className="border p-4 text-center" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }}>
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-2" style={{ backgroundColor: card.iconBg }}>
-                      <Icon className="w-5 h-5" strokeWidth={1.75} style={{ color: card.iconColor }} />
+                  <div key={card.label} className="border p-4" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ backgroundColor: card.iconBg }}>
+                        <Icon className="w-[18px] h-[18px]" strokeWidth={1.75} style={{ color: card.iconColor }} />
+                      </div>
+                      <p style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 26, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1, color: "#1f1b16" }}>{card.value}</p>
                     </div>
-                    <p style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 24, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1, color: "#1f1b16" }}>{card.value}</p>
-                    <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{card.label}</p>
+                    <p className="text-sm font-semibold mt-2" style={{ color: "#1f1b16" }}>{card.label}</p>
+                    <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{card.hint}</p>
                   </div>
                 );
               })}
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Today's assignments preview */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>Today&apos;s Assignments</h2>
-                  <button onClick={() => setActiveNav("Assignments")} className="text-sm font-medium cursor-pointer" style={{ color: "#8a6a2f" }}>View All →</button>
-                </div>
-                {tasksLoading ? (
-                  <p className="text-sm border p-4" style={{ color: "#8B6344", borderColor: "#ece5d4" }}>Loading your assignments…</p>
-                ) : noData ? null : todays.length === 0 ? (
-                  <p className="text-sm border p-4" style={{ color: "#8B6344", borderColor: "#ece5d4" }}>
-                    {assignments.length ? "Nothing due today — see My Schedule for what's coming up." : "No rooms assigned to you yet."}
-                  </p>
-                ) : todays.map((a) => {
-                  const cs = a.status;
-                  const st = statusConfig[cs] || statusConfig.pending;
-                  const opensLater = cs === "pending" && !canStartCleaning(a);
-                  return (
-                    <div key={a.id} className="border p-4" style={{ borderColor: cs === "in-progress" ? "#D4BFA0" : "#E0CEB8" }}>
-                      <div className="flex items-start justify-between gap-3 mb-2">
-                        <div>
-                          <p className="font-bold text-sm" style={{ color: "#1a1a1a" }}>{a.room}</p>
-                          <div className="flex items-center gap-1.5 text-xs mt-0.5" style={{ color: "#8B6344" }}>
-                            <Building2 className="w-3 h-3" />{a.floor}
-                          </div>
-                        </div>
-                        <span className="text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0" style={{ backgroundColor: st.bg, color: st.color }}>{st.label}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-xs mb-1" style={{ color: "#8B6344" }}>
-                        <Clock className="w-3.5 h-3.5" style={{ color: "#8a6a2f" }} />{a.timeSlot}
-                      </div>
-                      {a.guestCount && (
-                        <div className="flex items-center gap-1.5 text-xs mb-1" style={{ color: "#8B6344" }}>
-                          <Users className="w-3.5 h-3.5" style={{ color: "#8a6a2f" }} />Expected guests: {a.guestCount}
-                        </div>
-                      )}
-                      {/* Property location, inline per task (owner spec, 2026-09-22) —
-                          replaces the old standalone Property Location page. */}
-                      <div className="flex items-center gap-1.5 text-xs mb-3" style={{ color: "#8B6344" }}>
-                        <MapPin className="w-3.5 h-3.5" style={{ color: "#8a6a2f" }} />{PROPERTY_ADDRESS}
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        {renderMainAction(a, true)}
-                        {opensLater && <span className="text-xs" style={{ color: "#92400e" }}>Guest still checked in · opens {formatDue(a.dueAt)}</span>}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Checklist preview */}
-              <div>
-                <div className="flex items-center justify-between mb-4">
-                  <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>Cleaning Checklist</h2>
-                  <button onClick={() => { setActiveNav("Assignments"); if (assignments[0]) showChecklist(assignments[0].id); }} className="text-sm font-medium cursor-pointer" style={{ color: "#8a6a2f" }}>View →</button>
-                </div>
-                {assignments.length === 0 ? (
-                  <div className="border p-5 text-center" style={{ borderColor: "#ece5d4" }}>
-                    <p className="text-sm" style={{ color: "#8B6344" }}>No assignments yet — checklists open from My Assignments.</p>
-                  </div>
-                ) : (
-                  <p className="text-sm" style={{ color: "#8B6344" }}>
-                    Each assignment has its own checklist. Tick each task as you finish it, then add one photo of each finished area. A room can&apos;t be sent for inspection until every task is ticked and every area has its photo.
-                  </p>
-                )}
-              </div>
+            <div className="flex items-center justify-between mb-3">
+              <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>Your cleanings</h2>
+              <button onClick={() => setActiveNav("Assignments")} className="text-sm font-medium cursor-pointer" style={{ color: "#8a6a2f" }}>Open Assignments →</button>
             </div>
-          </>)}
+
+            {tasksLoading ? (
+              <p className="text-sm border p-5" style={{ color: "#8B6344", borderColor: "#ece5d4" }}>Loading your cleanings…</p>
+            ) : noData ? null : days.length === 0 ? (
+              <div className="border p-8 text-center" style={{ borderColor: "#ece5d4" }}>
+                <CheckCircle2 className="w-8 h-8 mx-auto mb-2" style={{ color: "#059669" }} />
+                <p className="text-sm font-semibold" style={{ color: "#1f1b16" }}>No rooms assigned right now</p>
+                <p className="text-xs mt-1" style={{ color: "#8B6344" }}>New rooms appear here as soon as the office assigns them to you.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {days.map((day) => (
+                  <div key={day.day.getTime()} className="border overflow-hidden" style={{ borderColor: day.isToday ? "#D4BFA0" : "#ece5d4" }}>
+                    <div className="flex items-center justify-between px-5 py-2.5 border-b" style={{ backgroundColor: day.isToday ? "#F7F0E3" : "#FAF7F1", borderColor: "#ece5d4" }}>
+                      <p className="font-bold text-sm" style={{ color: "#8a6a2f" }}>
+                        {day.isToday ? "Today · " : day.isTomorrow ? "Tomorrow · " : ""}
+                        {day.day.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}
+                      </p>
+                      <span className="text-xs" style={{ color: "#8B6344" }}>{day.tasks.length} {day.tasks.length === 1 ? "room" : "rooms"}</span>
+                    </div>
+                    <div>
+                      {day.tasks.map((x, i) => {
+                        const st = statusConfig[x.status] || statusConfig.pending;
+                        const next = nextStepFor(x);
+                        return (
+                          <div key={x.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-4"
+                            style={{ borderTop: i ? "1px solid #F7F0E3" : "none", boxShadow: `inset 3px 0 0 ${st.dot}` }}>
+                            <div className="flex-1 min-w-[16rem]">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-semibold text-sm" style={{ color: "#1a1a1a" }}>{x.room}</span>
+                                <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-0.5 rounded-full" style={{ backgroundColor: st.bg, color: st.color }}>
+                                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: st.dot }} />{st.label}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs mt-1" style={{ color: "#8B6344" }}>
+                                <span className="inline-flex items-center gap-1"><Clock className="w-3.5 h-3.5" />
+                                  {x.dueAt ? x.dueAt.toLocaleTimeString("en-US", { timeZone: "Asia/Manila", hour: "numeric", minute: "2-digit" }) : "—"} checkout
+                                </span>
+                                {x.guestCount && <span className="inline-flex items-center gap-1"><Users className="w-3.5 h-3.5" />{x.guestCount}</span>}
+                                <span>{x.floor}</span>
+                              </div>
+                              <p className="text-sm font-medium mt-1.5" style={{ color: next.color }}>{next.text}</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {renderMainAction(x, true)}
+                              <button type="button" onClick={() => setActiveNav("Assignments")}
+                                className="text-xs font-medium cursor-pointer underline underline-offset-2" style={{ color: "#8B6344" }}>
+                                Details
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>);
+          })()}
 
           {/* ── Assignments (renamed from "My Assignment"; property location is
               now inline per task below instead of its own page) ── */}
@@ -1351,38 +1374,6 @@ export default function CleanerDesktopPortal() {
                       </div>
                     </div>
                     ))}
-                    {overdueDays.length > 0 && (<>
-                      <h3 className="text-xs font-semibold uppercase tracking-wider pt-2" style={{ color: "#b45309" }}>
-                        Not finished from earlier days · {overdueDays.reduce((n, d) => n + d.tasks.length, 0)}
-                      </h3>
-                      {overdueDays.map((day) => (
-                    <div key={day.day.getTime()} className="border overflow-hidden" style={{ borderColor: "#ece5d4" }}>
-                      <div className="px-5 py-3 border-b" style={{ backgroundColor: "#F7F0E3", borderColor: "#ece5d4" }}>
-                        <p className="font-bold text-sm" style={{ color: "#8a6a2f" }}>
-                          {day.day.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
-                          {day.isToday ? " (Today)" : day.isTomorrow ? " (Tomorrow)" : ""}
-                        </p>
-                      </div>
-                      <div className="divide-y" style={{ borderColor: "#F7F0E3" }}>
-                        {day.tasks.map((task) => {
-                          const st = statusConfig[task.status] || statusConfig.pending;
-                          return (
-                            <div key={task.id} className="flex items-center gap-3 px-5 py-3.5 transition-colors"
-                              onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
-                              onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
-                              <Clock className="w-4 h-4 flex-shrink-0" style={{ color: "#D4BFA0" }} />
-                              <span className="text-sm flex-1 min-w-0" style={{ color: "#5a4a3a" }}>
-                                {task.room} — {task.dueAt ? task.dueAt.toLocaleTimeString("en-US", { timeZone: "Asia/Manila", hour: "numeric", minute: "2-digit" }) : "—"}
-                                <span style={{ color: "#8B6344" }}> · {task.floor}{task.guestCount ? ` · ${task.guestCount}` : ""}</span>
-                              </span>
-                              <span className="text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0" style={{ backgroundColor: st.bg, color: st.color }}>{st.label}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                      ))}
-                    </>)}
                   </>)}
                 </div>
               </div>

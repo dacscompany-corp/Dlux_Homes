@@ -141,6 +141,19 @@ const en = {
 
   // Nav
   tabToday: "Today",
+  tabTasks: "Tasks",
+  labelsTitle: "What the labels mean",
+  labelHints: {
+    pending: "The room is yours, but not started yet.",
+    "in-progress": "You pressed Start cleaning and are working on it.",
+    "awaiting-inspection": "You finished — the office is checking your photos.",
+    ready: "The office approved it. Nothing more to do.",
+  } as Record<"pending" | "in-progress" | "awaiting-inspection" | "ready", string>,
+  myTasks: "My tasks",
+  filterAll: "All",
+  nothingHere: "No rooms here right now.",
+  viewRoom: "View room",
+  startFrom: (when: string) => `Start cleaning · from ${when}`,
   tabMsg: "Messages",
   tabHelp: "Help",
 
@@ -296,6 +309,19 @@ const tl: CleanerStrings = {
   calResent: "Naipadala na — tingnan ang email mo.",
 
   tabToday: "Ngayon",
+  tabTasks: "Gawain",
+  labelsTitle: "Ibig sabihin ng mga label",
+  labelHints: {
+    pending: "Sa iyo ang kwarto, pero hindi pa nasisimulan.",
+    "in-progress": "Pinindot mo na ang Simulan at nililinis mo na.",
+    "awaiting-inspection": "Tapos ka na — sinusuri ng opisina ang mga litrato mo.",
+    ready: "Inaprubahan na ng opisina. Wala ka nang gagawin.",
+  },
+  myTasks: "Mga gawain ko",
+  filterAll: "Lahat",
+  nothingHere: "Walang kwarto rito ngayon.",
+  viewRoom: "Tingnan ang kwarto",
+  startFrom: (when) => `Simulan · mula ${when}`,
   tabMsg: "Mensahe",
   tabHelp: "Tulong",
 

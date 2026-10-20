@@ -31,7 +31,7 @@ import { confirmSignOut } from "@/components/SignOutConfirm";
 import toast from "react-hot-toast";
 import {
   Check, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Clock, MapPin, AlertTriangle, Camera, Play,
-  Image as ImageIcon, Phone, Home as HomeIcon, MessageSquare, LifeBuoy,
+  Image as ImageIcon, Phone, ClipboardList, MessageSquare, LifeBuoy,
   Wrench, Droplet, Package, HelpCircle, LogOut, CheckCircle2, Users, Send, Bell,
 } from "lucide-react";
 import ImageThumb from "@/components/ImageThumb";
@@ -59,7 +59,7 @@ import { bookingRefFrom, sameBookingRef } from "@/components/admin/NotificationB
 import CleanerCalendarCard from "@/components/admin/cleaners/CleanerCalendarCard";
 import GuideAssessment from "@/components/admin/cleaners/GuideAssessment";
 import StaffAccountPanel from "@/components/admin/cleaners/StaffAccountPanel";
-import { canStartCleaning, cleaningDueAt, stayKindFor, startOfManilaDay, type StayKind } from "@/lib/cleaning-schedule";
+import { canStartCleaning, cleaningDueAt, isCurrentCleaning, stayKindFor, startOfManilaDay, type StayKind } from "@/lib/cleaning-schedule";
 import { translateCategory, translateTask } from "@/lib/checklist-translations";
 import {
   CLEANER_STRINGS,
@@ -245,6 +245,8 @@ export default function CleanerMobilePortal() {
   // The room's task list is long, so it starts hidden each time a room is
   // opened — the cleaner taps Show tasks. Holds the room whose list is showing.
   const [tasksShownFor, setTasksShownFor] = useState<string | null>(null);
+  // Status filter on the Tasks page.
+  const [taskFilter, setTaskFilter] = useState<"all" | CleanStatus>("all");
   // Which screen the problem flow was opened from, so Back returns there.
   const [problemFrom, setProblemFrom] = useState<Screen>("home");
 
@@ -275,6 +277,8 @@ export default function CleanerMobilePortal() {
       // to place (they're notified), not whoever opens the portal first — the
       // desktop view applies exactly the same rule.
       .filter((r) => !!myId && String(r.assigned_cleaner_id ?? "") === myId)
+      // Today and upcoming only, same rule as desktop.
+      .filter((r) => isCurrentCleaning(r))
       .map<Room>((r) => {
         const dueAt = cleaningDueAt(r);
         return {
@@ -317,8 +321,8 @@ export default function CleanerMobilePortal() {
   }, [tasksData, myId]);
 
   const next = today.find((r) => r.status === "pending" || r.status === "in-progress") ?? null;
-  const others = today.filter((r) => r !== next);
-  const active = today.find((r) => r.id === activeId) ?? null;
+  // Today's rooms and upcoming ones can both be opened (Coming up is tappable).
+  const active = today.find((r) => r.id === activeId) ?? upcoming.find((r) => r.id === activeId) ?? null;
 
   // ── Active room's checklist ────────────────────────────────────────────────
   // Shared with the desktop portal: ticks, per-task photo proof, upload state
@@ -711,143 +715,131 @@ export default function CleanerMobilePortal() {
               </div>
             )}
 
-            {/* Next room */}
-            {next ? (
-              <div style={{ background: C.ink, color: C.onDark, borderRadius: 20, padding: "22px 20px 20px", marginBottom: 28 }}>
-                <div style={{ fontSize: 13, letterSpacing: "0.08em", textTransform: "uppercase", color: C.gold, fontWeight: 600 }}>{t.nextUp}</div>
-                <div style={{ fontFamily: SERIF, fontSize: 38, lineHeight: 1.05, marginTop: 8 }}>{next.name}</div>
-                <div style={{ fontSize: 15, color: C.onDarkSoft, marginTop: 8 }}>
-                  {next.bookingRef} · <strong style={{ color: C.gold, fontWeight: 600 }}>{stayText(next)}</strong>
+            {/* ── Tasks: every room assigned to you, grouped by day ── */}
+            {(() => {
+              const all = [...today, ...upcoming];
+              const counts = all.reduce<Record<string, number>>((m, r) => { m[r.status] = (m[r.status] ?? 0) + 1; return m; }, {});
+              const shown = taskFilter === "all" ? all : all.filter((r) => r.status === taskFilter);
+              const todayKey = startOfManilaDay(new Date()).getTime();
+              const groups: { label: string; rooms: Room[] }[] = [];
+              for (const r of shown) {
+                const isToday = !r.date || startOfManilaDay(r.date as Date).getTime() <= todayKey;
+                const label = isToday ? t.tabToday : formatDayLabel(r.date as Date, startOfManilaDay(new Date()), lang);
+                const last = groups[groups.length - 1];
+                if (last && last.label === label) last.rooms.push(r);
+                else groups.push({ label, rooms: [r] });
+              }
+              const chipsOrder: CleanStatus[] = ["in-progress", "pending", "awaiting-inspection", "ready"];
+              return (<>
+                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 12 }}>
+                  <div style={{ fontFamily: SERIF, fontSize: 30, lineHeight: 1 }}>{t.myTasks}</div>
+                  <div style={{ fontSize: 15, color: C.muted }}>{all.length}</div>
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16, fontSize: 17 }}>
-                  {next.dueAt && (
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <Clock className="w-[22px] h-[22px] flex-shrink-0" strokeWidth={2} style={{ color: C.gold }} />
-                      <span>{outText(next)}</span>
-                    </div>
-                  )}
-                  {guestText(next) && (
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <Users className="w-[22px] h-[22px] flex-shrink-0" strokeWidth={2} style={{ color: C.gold }} />
-                      <span>{guestText(next)}</span>
-                    </div>
-                  )}
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, color: C.onDarkSoft }}>
-                    <MapPin className="w-[22px] h-[22px] flex-shrink-0" strokeWidth={2} style={{ color: C.gold }} />
-                    <span style={{ flex: 1, minWidth: 0 }}>{PROPERTY_LABEL}</span>
-                    <a href={DIRECTIONS_URL} target="_blank" rel="noopener noreferrer" style={{
-                      color: C.gold, fontSize: 15, fontWeight: 600, textDecoration: "underline",
-                      textUnderlineOffset: 3, padding: "8px 0", flexShrink: 0,
-                    }}>{t.directions}</a>
-                  </div>
-                </div>
-                {next.status === "pending" && next.dueAt && !canStartCleaning(roomSchedule(next)) && (
-                  <div style={{ marginTop: 16, background: "rgba(250,247,241,0.08)", color: C.onDarkSoft, borderRadius: 12, padding: "12px 14px", fontSize: 16, lineHeight: 1.4 }}>
-                    {t.opensAt(formatDue(next.dueAt, lang))}
-                  </div>
-                )}
-                {next.note && next.status === "in-progress" && (
-                  <div style={{ marginTop: 16, background: C.violetBg, color: C.violetInk, borderRadius: 12, padding: "12px 14px", fontSize: 16, lineHeight: 1.4 }}>
-                    <div style={{ fontWeight: 700 }}>{t.sentBack}</div>
-                    <div>{next.note}</div>
-                  </div>
-                )}
-                {(() => {
-                  // One button, three looks (same rule as desktop): a real Start
-                  // once the room is open, Continue / Fix & continue while
-                  // cleaning, and only a quiet Preview while the guest is in.
-                  const locked = next.status === "pending" && !canStartCleaning(roomSchedule(next));
-                  const label = locked
-                    ? t.preview
-                    : next.status === "in-progress"
-                      ? (next.note ? t.fixCont : t.cont)
-                      : t.start;
-                  return (
-                    <button type="button" onClick={() => openRoom(next)} style={{
-                      marginTop: 20, width: "100%", height: locked ? 52 : 64, borderRadius: 14,
-                      border: locked ? `1px solid ${C.onDarkFaint}` : 0,
-                      background: locked ? "transparent" : C.gold,
-                      color: locked ? C.onDarkSoft : C.ink,
-                      font: `${locked ? 600 : 700} ${locked ? 17 : 20}px ${SANS}`, cursor: "pointer", display: "flex",
-                      alignItems: "center", justifyContent: "center", gap: 10,
-                    }}>
-                      {label}
-                      <ChevronRight className="w-[22px] h-[22px]" strokeWidth={2.5} />
-                    </button>
-                  );
-                })()}
-              </div>
-            ) : tasksLoading ? (
-              <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 20, padding: "26px 20px", marginBottom: 28, fontSize: 17, color: C.muted }}>
-                {t.loading}
-              </div>
-            ) : tasksFailed && !tasksData ? null : (
-              <div style={{
-                background: C.greenBg, color: C.greenInk, borderRadius: 20, padding: "26px 20px",
-                marginBottom: 28, display: "flex", alignItems: "center", gap: 14,
-              }}>
-                <CheckCircle2 className="w-10 h-10 flex-shrink-0" strokeWidth={2} style={{ color: C.green }} />
-                <div style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.3 }}>
-                  {today.length ? t.allDoneToday : t.noRoomsToday}
-                </div>
-              </div>
-            )}
 
-            {/* Also today */}
-            {others.length > 0 && (
-              <>
-                {sectionLabel(t.alsoToday)}
-                <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 28 }}>
-                  {others.map((r) => {
-                    const chip = CHIPS[r.status];
-                    const isOpenRoom = r.status === "pending" || r.status === "in-progress";
-                    return (
-                      <button key={r.id} type="button" onClick={() => (isOpenRoom ? openRoom(r) : undefined)}
-                        style={{
-                          background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: 16,
-                          display: "flex", alignItems: "center", gap: 14, textAlign: "left", width: "100%",
-                          font: `400 16px ${SANS}`, color: C.ink, cursor: isOpenRoom ? "pointer" : "default",
+                {/* Status filter */}
+                {all.length > 0 && (
+                  <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, marginBottom: 16 }}>
+                    {(["all", ...chipsOrder] as const).filter((k) => k === "all" || counts[k]).map((k) => {
+                      const on = taskFilter === k;
+                      const chip = k === "all" ? null : CHIPS[k];
+                      return (
+                        <button key={k} type="button" onClick={() => setTaskFilter(k)} style={{
+                          flex: "none", height: 40, padding: "0 14px", borderRadius: 999, cursor: "pointer",
+                          border: `1px solid ${on ? C.ink : C.line}`, background: on ? C.ink : C.card,
+                          color: on ? C.onDark : chip ? chip.fg : C.ink, font: `600 15px ${SANS}`,
+                          display: "inline-flex", alignItems: "center", gap: 6,
                         }}>
-                        <span style={{ width: 44, height: 44, borderRadius: "50%", background: chip.bg, display: "grid", placeItems: "center", flexShrink: 0 }}>
-                          <chip.Icon className="w-6 h-6" strokeWidth={2.5} style={{ color: chip.fg }} />
-                        </span>
-                        <span style={{ flex: 1, minWidth: 0 }}>
-                          <span style={{ display: "block", fontSize: 18, fontWeight: 600 }}>{r.name}</span>
-                          <span style={{ display: "block", fontSize: 14, color: C.muted, marginTop: 2 }}>
-                            {r.bookingRef} · {stayText(r)}
-                          </span>
-                          <span style={{ display: "block", fontSize: 14, color: C.muted }}>{outText(r)}</span>
-                          <span style={{ display: "block", fontSize: 15, color: chip.fg, marginTop: 2 }}>{t[chip.label] as string}</span>
-                        </span>
-                        {isOpenRoom && <ChevronRight className="w-5 h-5 flex-shrink-0" style={{ color: C.creamLine }} />}
-                      </button>
-                    );
-                  })}
-                </div>
-              </>
-            )}
+                          {k === "all" ? t.filterAll : (t[chip!.label] as string)}
+                          <span style={{ opacity: 0.7 }}>{k === "all" ? all.length : counts[k]}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
 
-            {/* Coming up */}
-            {sectionLabel(t.comingUp)}
-            <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16 }}>
-              {upcoming.length === 0 ? (
-                <div style={{ padding: "16px", fontSize: 16, color: C.muted }}>{t.nothingUpcoming}</div>
-              ) : upcoming.map((r, i) => (
-                <div key={r.id} style={{
-                  padding: "14px 16px", borderTop: i ? `1px solid ${C.hair}` : 0,
-                  display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline",
-                }}>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 14, color: C.muted }}>{formatDayLabel(r.date as Date, new Date(), lang)}</div>
-                    <div style={{ fontSize: 17, fontWeight: 600, marginTop: 2 }}>{r.name}</div>
-                    <div style={{ fontSize: 14, color: C.muted, marginTop: 2 }}>
-                      {r.bookingRef} · {stayText(r)}{guestText(r) ? ` · ${guestText(r)}` : ""}
+                {tasksLoading ? (
+                  <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: "22px 18px", fontSize: 17, color: C.muted }}>{t.loading}</div>
+                ) : tasksFailed && !tasksData ? null : all.length === 0 ? (
+                  <div style={{ background: C.greenBg, color: C.greenInk, borderRadius: 20, padding: "26px 20px", display: "flex", alignItems: "center", gap: 14 }}>
+                    <CheckCircle2 className="w-10 h-10 flex-shrink-0" strokeWidth={2} style={{ color: C.green }} />
+                    <div style={{ fontSize: 19, fontWeight: 600, lineHeight: 1.3 }}>{t.noRoomsToday}</div>
+                  </div>
+                ) : shown.length === 0 ? (
+                  <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: "18px", fontSize: 16, color: C.muted }}>{t.nothingHere}</div>
+                ) : groups.map((g) => (
+                  <div key={g.label} style={{ marginBottom: 22 }}>
+                    {sectionLabel(g.label)}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                      {g.rooms.map((r) => {
+                        const chip = CHIPS[r.status];
+                        const locked = r.status === "pending" && !canStartCleaning(roomSchedule(r));
+                        const action = r.status === "in-progress"
+                          ? { label: r.note ? t.fixCont : t.cont, primary: true }
+                          : r.status === "pending"
+                            ? (locked ? { label: r.dueAt ? t.startFrom(formatDue(r.dueAt, lang)) : t.preview, primary: false } : { label: t.start, primary: true })
+                            : { label: t.viewRoom, primary: false };
+                        return (
+                          <div key={r.id} style={{
+                            background: C.card, border: `1px solid ${C.line}`, borderLeft: `5px solid ${chip.fg}`,
+                            borderRadius: 16, padding: 16,
+                          }}>
+                            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ fontSize: 19, fontWeight: 700, lineHeight: 1.25 }}>{r.name}</div>
+                                <div style={{ fontSize: 14, color: C.muted, marginTop: 3 }}>{r.bookingRef} · {stayText(r)}</div>
+                              </div>
+                              <span style={{ flex: "none", padding: "4px 10px", borderRadius: 999, fontSize: 13, fontWeight: 700, background: chip.bg, color: chip.fg, display: "inline-flex", alignItems: "center", gap: 5 }}>
+                                <chip.Icon className="w-3.5 h-3.5" strokeWidth={2.5} />{t[chip.label] as string}
+                              </span>
+                            </div>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 12, fontSize: 16, color: C.ink }}>
+                              {r.dueAt && (
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  <Clock className="w-5 h-5 flex-shrink-0" strokeWidth={2} style={{ color: C.goldInk }} />
+                                  <span>{outText(r)}</span>
+                                </div>
+                              )}
+                              {guestText(r) && (
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  <Users className="w-5 h-5 flex-shrink-0" strokeWidth={2} style={{ color: C.goldInk }} />
+                                  <span>{guestText(r)}</span>
+                                </div>
+                              )}
+                            </div>
+                            {r.note && r.status === "in-progress" && (
+                              <div style={{ marginTop: 12, background: C.violetBg, color: C.violetInk, borderRadius: 12, padding: "10px 12px", fontSize: 15, lineHeight: 1.4 }}>
+                                <div style={{ fontWeight: 700 }}>{t.sentBack}</div>
+                                <div>{r.note}</div>
+                              </div>
+                            )}
+                            <button type="button" onClick={() => openRoom(r)} style={{
+                              marginTop: 14, width: "100%", height: action.primary ? 56 : 48, borderRadius: 14,
+                              border: action.primary ? 0 : `1px solid ${C.creamLine}`,
+                              background: action.primary ? C.ink : C.bg, color: action.primary ? C.onDark : C.goldInk,
+                              font: `700 ${action.primary ? 18 : 16}px ${SANS}`, cursor: "pointer",
+                              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                            }}>
+                              {locked && <Clock className="w-5 h-5" strokeWidth={2} />}
+                              {action.label}
+                              {!locked && <ChevronRight className="w-5 h-5" strokeWidth={2.5} />}
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
-                  <div style={{ fontSize: 15, color: C.muted, flexShrink: 0 }}>{r.checkoutTime}</div>
-                </div>
-              ))}
-            </div>
+                ))}
+
+                {/* Property location, once for the whole list. */}
+                {all.length > 0 && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 15, color: C.muted, marginTop: 4 }}>
+                    <MapPin className="w-5 h-5 flex-shrink-0" strokeWidth={2} style={{ color: C.goldInk }} />
+                    <span style={{ flex: 1, minWidth: 0 }}>{PROPERTY_LABEL}</span>
+                    <a href={DIRECTIONS_URL} target="_blank" rel="noopener noreferrer" style={{ color: C.goldInk, fontWeight: 600, textDecoration: "underline", textUnderlineOffset: 3 }}>{t.directions}</a>
+                  </div>
+                )}
+              </>);
+            })()}
           </div>
         )}
 
@@ -873,13 +865,30 @@ export default function CleanerMobilePortal() {
                 </div>
               )}
 
-              {active?.status === "pending" && (
-                <div style={{ marginTop: 14, background: C.amberBg, color: C.amberInk, borderRadius: 12, padding: "12px 14px", fontSize: 16, lineHeight: 1.4 }}>
-                  {active.dueAt && !canStartCleaning(roomSchedule(active))
-                    ? t.opensAt(formatDue(active.dueAt, lang))
-                    : t.notStarted}
-                </div>
-              )}
+              {active?.status === "pending" && (() => {
+                const canStart = canStartCleaning(roomSchedule(active));
+                return (
+                  <div style={{ marginTop: 14, background: C.amberBg, color: C.amberInk, borderRadius: 12, padding: "12px 14px", fontSize: 16, lineHeight: 1.4 }}>
+                    {active.dueAt && !canStart ? t.opensAt(formatDue(active.dueAt, lang)) : t.notStarted}
+                    {/* Start right here once the room is open — no need to go
+                        back and reopen it. */}
+                    {canStart && (
+                      <button type="button"
+                        onClick={async () => {
+                          try { await startCleaningM(active.id).unwrap(); setTasksShownFor(active.id); }
+                          catch (err) { toast.error(gateErrorMessage(err, lang === "tl" ? "Hindi nasimulan" : "Could not start this room")); }
+                        }}
+                        style={{
+                          marginTop: 12, width: "100%", height: 56, border: 0, borderRadius: 14, background: C.ink,
+                          color: C.onDark, font: `700 18px ${SANS}`, cursor: "pointer",
+                          display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                        }}>
+                        {t.start}<ChevronRight className="w-5 h-5" strokeWidth={2.5} />
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
               {active?.status === "awaiting-inspection" && (
                 <div style={{ marginTop: 14, background: C.violetBg, color: C.violetInk, borderRadius: 12, padding: "12px 14px", fontSize: 16, lineHeight: 1.4 }}>
                   {t.lockedWaiting}
@@ -1442,16 +1451,6 @@ export default function CleanerMobilePortal() {
               </button>
             </div>
 
-            <div style={{ marginTop: 30 }}>
-              <CleanerCalendarCard lang={lang} size="mobile" />
-            </div>
-
-            {me?.id && (
-              <div style={{ marginTop: 30, background: C.card }}>
-                <GuideAssessment key={me.id} cleanerId={me.id} lang={lang} onLangChange={pickLang} />
-              </div>
-            )}
-
             <div style={{ marginTop: 30 }}>{sectionLabel(t.how)}</div>
             <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16 }}>
               {t.steps.map((step, i) => (
@@ -1464,6 +1463,33 @@ export default function CleanerMobilePortal() {
                 </div>
               ))}
             </div>
+
+            {/* The four labels a room can have, in plain words. */}
+            <div style={{ marginTop: 30 }}>{sectionLabel(t.labelsTitle)}</div>
+            <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16 }}>
+              {(["pending", "in-progress", "awaiting-inspection", "ready"] as CleanStatus[]).map((k, i) => {
+                const chip = CHIPS[k];
+                return (
+                  <div key={k} style={{ display: "flex", gap: 12, alignItems: "center", padding: 14, borderTop: i ? `1px solid ${C.hair}` : 0 }}>
+                    <span style={{ flex: "none", minWidth: 120, padding: "5px 10px", borderRadius: 999, fontSize: 14, fontWeight: 700, background: chip.bg, color: chip.fg, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <chip.Icon className="w-4 h-4" strokeWidth={2.5} />{t[chip.label] as string}
+                    </span>
+                    <span style={{ fontSize: 16, lineHeight: 1.4 }}>{t.labelHints[k]}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ marginTop: 30 }}>
+              <CleanerCalendarCard lang={lang} size="mobile" />
+            </div>
+
+            {me?.id && (
+              <div style={{ marginTop: 30, background: C.card }}>
+                <GuideAssessment key={me.id} cleanerId={me.id} lang={lang} onLangChange={pickLang} />
+              </div>
+            )}
+
 
             <div style={{
               marginTop: 30, display: "flex", alignItems: "center", gap: 12, padding: "14px 16px",
@@ -1530,7 +1556,7 @@ export default function CleanerMobilePortal() {
               boxShadow: "0 16px 40px rgba(31,27,22,0.35)", pointerEvents: "auto",
             }}>
               {([
-                { id: "home" as Screen, label: t.tabToday, Icon: HomeIcon, onClick: () => setScreen("home"), badge: false },
+                { id: "home" as Screen, label: t.tabTasks, Icon: ClipboardList, onClick: () => setScreen("home"), badge: false },
                 // Notifications have their own tab now, so each dot means one thing:
                 // Messages = unread office messages, Notifications = unread notifications.
                 { id: "messages" as Screen, label: t.tabMsg, Icon: MessageSquare, onClick: openMessages, badge: unreadMsgs > 0 },

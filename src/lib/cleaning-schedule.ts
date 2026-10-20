@@ -110,6 +110,27 @@ export function startOfManilaDay(d: Date): Date {
   return new Date(y, m - 1, day);
 }
 
+/**
+ * Whether the cleaner portal should still show this task: cleanings due today
+ * or later (Philippine day), plus a room the cleaner started in the last 24
+ * hours even if its checkout was yesterday. Older rooms stay in admin's
+ * Cleaning Operations but drop off the cleaner's lists (owner, 2026-10-20:
+ * "focus on the upcoming cleaning").
+ */
+export function isCurrentCleaning(
+  task: SchedulableTask & { cleaning_status?: string | null; cleaning_time_in?: string | null },
+  now: Date = new Date(),
+): boolean {
+  const due = cleaningDueAt(task);
+  if (!due) return true;
+  if (startOfManilaDay(due).getTime() >= startOfManilaDay(now).getTime()) return true;
+  if (task.cleaning_status === "in-progress" && task.cleaning_time_in) {
+    const started = new Date(task.cleaning_time_in).getTime();
+    return Number.isFinite(started) && now.getTime() - started < 24 * 60 * 60 * 1000;
+  }
+  return false;
+}
+
 export type ScheduleDay<T> = {
   /** The Philippine calendar day, as a local-midnight Date. */
   day: Date;
