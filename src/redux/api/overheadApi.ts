@@ -65,6 +65,17 @@ export interface OverheadDashboard {
   trend: { month: string; accrued: number; normalized: number }[];
 }
 
+/** Lifetime figures for Profitability's "All time" view (through `through`). */
+export interface OverheadAllTime {
+  revenue: number;
+  gross_revenue: number;
+  overhead_accrued: number;
+  overhead_paid: number;
+  /** First month with any booking or bill, YYYY-MM; null when there's none. */
+  since: string | null;
+  through: string;
+}
+
 export interface OverheadExpenseDetail {
   expense: OverheadExpense;
   periods: OverheadPeriod[];
@@ -180,6 +191,11 @@ export const overheadApi = createApi({
       query: (params) => ({ url: "/dashboard", params: params || undefined }),
       providesTags: ["OverheadDashboard"],
     }),
+
+    getOverheadAllTime: builder.query<Ok<OverheadAllTime>, void>({
+      query: () => ({ url: "/all-time" }),
+      providesTags: ["OverheadDashboard"],
+    }),
   }),
 });
 
@@ -201,4 +217,5 @@ export const {
   useGetOverheadPaymentsQuery,
   useRecordOverheadPaymentMutation,
   useGetOverheadDashboardQuery,
+  useGetOverheadAllTimeQuery,
 } = overheadApi;

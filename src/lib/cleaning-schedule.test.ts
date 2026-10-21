@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { canStartCleaning, cleaningDueAt, groupByDueDay, stayKindFor } from "./cleaning-schedule";
+import { canStartCleaning, cleaningDueAt, groupByDueDay, isCurrentCleaning, stayKindFor } from "./cleaning-schedule";
 
 // Booking times are Manila wall-clock (+08:00). Assertions use exact instants
 // so they hold on any machine, whatever its local timezone.
@@ -93,10 +93,10 @@ describe("stayKindFor", () => {
 });
 
 describe("groupByDueDay", () => {
-  // Groups are by the viewing device's local day, so these build both the
-  // inputs and "now" from local-time constructors — valid in any timezone.
-  const at = (y: number, mo: number, d: number, h: number) => new Date(y, mo, d, h).toISOString();
-  const now = new Date(2026, 9, 5, 9, 0);
+  // Groups are by the Philippine day (UTC+8, no DST), so inputs and "now" are
+  // built as Manila wall-clock times — valid on a device in any timezone.
+  const at = (y: number, mo: number, d: number, h: number) => new Date(Date.UTC(y, mo, d, h - 8)).toISOString();
+  const now = new Date(Date.UTC(2026, 9, 5, 9 - 8, 0));
 
   it("groups by due day, earliest first, rooms in due-time order", () => {
     const days = groupByDueDay(
@@ -130,5 +130,26 @@ describe("groupByDueDay", () => {
 
   it("drops rows with no usable date", () => {
     expect(groupByDueDay([{}], now)).toEqual([]);
+  });
+});
+
+describe("isCurrentCleaning", () => {
+  // Manila wall-clock times (UTC+8).
+  const manila = (y: number, mo: number, d: number, h: number) => new Date(Date.UTC(y, mo, d, h - 8));
+  const now = manila(2026, 9, 20, 10);
+
+  it("keeps cleanings due today or later", () => {
+    expect(isCurrentCleaning({ scheduled_for: manila(2026, 9, 20, 5).toISOString() }, now)).toBe(true);
+    expect(isCurrentCleaning({ scheduled_for: manila(2026, 9, 25, 17).toISOString() }, now)).toBe(true);
+  });
+
+  it("drops cleanings from earlier days", () => {
+    expect(isCurrentCleaning({ scheduled_for: manila(2026, 8, 28, 5).toISOString(), cleaning_status: "assigned" }, now)).toBe(false);
+  });
+
+  it("keeps a room started in the last 24 hours even if checkout was yesterday", () => {
+    const t = { scheduled_for: manila(2026, 9, 19, 17).toISOString(), cleaning_status: "in-progress", cleaning_time_in: manila(2026, 9, 19, 18).toISOString() };
+    expect(isCurrentCleaning(t, now)).toBe(true);
+    expect(isCurrentCleaning({ ...t, cleaning_time_in: manila(2026, 8, 28, 18).toISOString() }, now)).toBe(false);
   });
 });

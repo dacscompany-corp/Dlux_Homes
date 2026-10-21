@@ -141,13 +141,26 @@ const en = {
 
   // Nav
   tabToday: "Today",
+  tabTasks: "Tasks",
+  labelsTitle: "What the labels mean",
+  labelHints: {
+    pending: "The room is yours, but not started yet.",
+    "in-progress": "You pressed Start cleaning and are working on it.",
+    "awaiting-inspection": "You finished — the office is checking your photos.",
+    ready: "The office approved it. Nothing more to do.",
+  } as Record<"pending" | "in-progress" | "awaiting-inspection" | "ready", string>,
+  myTasks: "My tasks",
+  filterAll: "All",
+  nothingHere: "No rooms here right now.",
+  viewRoom: "View room",
+  startFrom: (when: string) => `Start cleaning · from ${when}`,
   tabMsg: "Messages",
   tabHelp: "Help",
 
   steps: [
-    "Tap Start cleaning on your room.",
-    "Take a photo of each task — that ticks it off.",
-    "Tap I'm done. The office will check.",
+    "Tap Start cleaning on your room once the guest has left.",
+    "Tap Show tasks, then tick each task as you finish it.",
+    "Take 1 photo of each finished area. The room is then sent to the office by itself.",
   ],
   quick: ["I'm on my way", "I'm done", "I need supplies", "Running late"],
 
@@ -296,13 +309,26 @@ const tl: CleanerStrings = {
   calResent: "Naipadala na — tingnan ang email mo.",
 
   tabToday: "Ngayon",
+  tabTasks: "Gawain",
+  labelsTitle: "Ibig sabihin ng mga label",
+  labelHints: {
+    pending: "Sa iyo ang kwarto, pero hindi pa nasisimulan.",
+    "in-progress": "Pinindot mo na ang Simulan at nililinis mo na.",
+    "awaiting-inspection": "Tapos ka na — sinusuri ng opisina ang mga litrato mo.",
+    ready: "Inaprubahan na ng opisina. Wala ka nang gagawin.",
+  },
+  myTasks: "Mga gawain ko",
+  filterAll: "Lahat",
+  nothingHere: "Walang kwarto rito ngayon.",
+  viewRoom: "Tingnan ang kwarto",
+  startFrom: (when) => `Simulan · mula ${when}`,
   tabMsg: "Mensahe",
   tabHelp: "Tulong",
 
   steps: [
-    "Pindutin ang Simulan sa iyong kwarto.",
-    "Kunan ng litrato ang bawat gawain — matsetsek na ito.",
-    "Pindutin ang Tapos na. Susuriin ng opisina.",
+    "Pindutin ang Simulan sa iyong kwarto kapag nakaalis na ang bisita.",
+    "Pindutin ang Ipakita ang mga gawain, tapos i-tsek ang bawat gawaing natapos.",
+    "Kunan ng 1 litrato ang bawat natapos na bahagi. Kusang ipapadala ang kwarto sa opisina.",
   ],
   quick: ["Papunta na ako", "Tapos na ako", "Kailangan ko ng supplies", "Male-late ako"],
 

@@ -7,7 +7,7 @@
 
 import { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Clock } from "lucide-react";
-import { startOfLocalDay } from "@/lib/cleaning-schedule";
+import { startOfManilaDay } from "@/lib/cleaning-schedule";
 
 export type CalendarTask = {
   id: string;
@@ -24,7 +24,8 @@ const LINE = "#ece5d4";
 const MUTED = "#8B6344";
 const GOLD_INK = "#8a6a2f";
 
-const dayKey = (d: Date) => startOfLocalDay(d).getTime();
+// Philippine day, like admin's Cleaning Operations — not the device's zone.
+const dayKey = (d: Date) => startOfManilaDay(d).getTime();
 
 export default function CleanerMonthCalendar({
   tasks,
@@ -181,7 +182,7 @@ export default function CleanerMonthCalendar({
                 <div key={t.id} className="flex items-center gap-3 px-5 py-3.5 transition-colors hover:bg-[#F7F0E3]">
                   <Clock className="w-4 h-4 flex-shrink-0" style={{ color: "#D4BFA0" }} />
                   <span className="text-sm flex-1 min-w-0" style={{ color: "#5a4a3a" }}>
-                    {t.room} — {t.dueAt ? t.dueAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "—"}
+                    {t.room} — {t.dueAt ? t.dueAt.toLocaleTimeString("en-US", { timeZone: "Asia/Manila", hour: "numeric", minute: "2-digit" }) : "—"}
                     <span style={{ color: MUTED }}> · {t.floor}</span>
                   </span>
                   <span className="text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0" style={{ backgroundColor: st.bg, color: st.color }}>{st.label}</span>

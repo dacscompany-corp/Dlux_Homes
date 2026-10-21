@@ -95,8 +95,44 @@ export function startOfLocalDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
+const MANILA_DAY = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit",
+});
+
+/**
+ * The Philippine calendar day `d` falls on, as a local-midnight Date (so it can
+ * be compared with and displayed like any other local date). Cleaning days are
+ * Manila days everywhere — the same days admin's Cleaning Operations shows —
+ * whatever time zone the cleaner's device is set to.
+ */
+export function startOfManilaDay(d: Date): Date {
+  const [y, m, day] = MANILA_DAY.format(d).split("-").map(Number);
+  return new Date(y, m - 1, day);
+}
+
+/**
+ * Whether the cleaner portal should still show this task: cleanings due today
+ * or later (Philippine day), plus a room the cleaner started in the last 24
+ * hours even if its checkout was yesterday. Older rooms stay in admin's
+ * Cleaning Operations but drop off the cleaner's lists (owner, 2026-10-20:
+ * "focus on the upcoming cleaning").
+ */
+export function isCurrentCleaning(
+  task: SchedulableTask & { cleaning_status?: string | null; cleaning_time_in?: string | null },
+  now: Date = new Date(),
+): boolean {
+  const due = cleaningDueAt(task);
+  if (!due) return true;
+  if (startOfManilaDay(due).getTime() >= startOfManilaDay(now).getTime()) return true;
+  if (task.cleaning_status === "in-progress" && task.cleaning_time_in) {
+    const started = new Date(task.cleaning_time_in).getTime();
+    return Number.isFinite(started) && now.getTime() - started < 24 * 60 * 60 * 1000;
+  }
+  return false;
+}
+
 export type ScheduleDay<T> = {
-  /** Local midnight of the day. */
+  /** The Philippine calendar day, as a local-midnight Date. */
   day: Date;
   isToday: boolean;
   isTomorrow: boolean;
@@ -104,7 +140,7 @@ export type ScheduleDay<T> = {
 };
 
 /**
- * Groups assignments by the local day their cleaning is due, earliest first,
+ * Groups assignments by the Philippine day their cleaning is due, earliest first,
  * each day's rooms in due-time order. Tasks with no date go last under a null
  * day would be meaningless, so they are dropped — every real assignment has a
  * checkout.
@@ -113,7 +149,7 @@ export function groupByDueDay<T extends SchedulableTask>(
   tasks: T[],
   now: Date = new Date(),
 ): ScheduleDay<T>[] {
-  const today = startOfLocalDay(now).getTime();
+  const today = startOfManilaDay(now).getTime();
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
@@ -121,7 +157,7 @@ export function groupByDueDay<T extends SchedulableTask>(
   for (const task of tasks) {
     const due = cleaningDueAt(task);
     if (!due) continue;
-    const day = startOfLocalDay(due);
+    const day = startOfManilaDay(due);
     const key = day.getTime();
     const bucket = byDay.get(key) ?? { day, items: [] };
     bucket.items.push({ due, task });

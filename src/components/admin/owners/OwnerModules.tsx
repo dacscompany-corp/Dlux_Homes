@@ -5,7 +5,7 @@ import toast from "react-hot-toast";
 import { imageFileError } from "@/lib/validateImageFile";
 import ImageThumb from "@/components/ImageThumb";
 import { MonthNavigator, currentMonthKey } from "@/components/admin/owners/MonthNavigator";
-import { useGetOverheadDashboardQuery } from "@/redux/api/overheadApi";
+import { useGetOverheadDashboardQuery, useGetOverheadAllTimeQuery } from "@/redux/api/overheadApi";
 import { useSession } from "next-auth/react";
 import { BarChart3, Calendar, CalendarOff, CreditCard, Headphones, UsersRound, Handshake, Plus, Trash2, Power, Pencil, X, Moon, Sun } from "lucide-react";
 import { useGetAnalyticsSummaryQuery, useGetMonthlyRevenueQuery, useGetRevenueByRoomQuery } from "@/redux/api/analyticsApi";
@@ -132,9 +132,12 @@ export function AnalyticsSection() {
   // reachable via "All time" in the picker; a 'YYYY-MM' key pins every figure
   // on this screen — cards, haven table and chart — to that calendar month.
   const [selectedMonth, setSelectedMonth] = useState<string | null>(() => currentMonthKey());
-  const { data: summaryRes } = useGetAnalyticsSummaryQuery({ period: "30", month: selectedMonth });
+  // "All time" (null) asks the server for every stay so far (month=all) — not
+  // the rolling 30 days it used to fall back to.
+  const allTime = selectedMonth === null;
+  const { data: summaryRes } = useGetAnalyticsSummaryQuery({ period: "30", month: selectedMonth ?? "all" });
   const { data: monthlyRes } = useGetMonthlyRevenueQuery({ months: "6" });
-  const { data: roomRes } = useGetRevenueByRoomQuery({ period: "30", month: selectedMonth });
+  const { data: roomRes } = useGetRevenueByRoomQuery({ period: "30", month: selectedMonth ?? "all" });
   const s = (summaryRes as unknown as { data?: Row })?.data || {};
   const monthly = dataOf(monthlyRes) as { month: string; revenue: number; gross_revenue: number }[];
   const rooms = dataOf(roomRes) as { room_name: string; revenue: number; bookings: number }[];
@@ -151,7 +154,7 @@ export function AnalyticsSection() {
   const maxRev = Math.max(1, ...monthly.map(revenueNow));
   // Cards name the span they cover, so the figures can never be read against
   // the wrong window.
-  const span = selectedMonth ? monthLabel : "30d";
+  const span = selectedMonth ? monthLabel : "all time";
   // Overhead and profit. Owner-only: the overhead endpoint 403s for a CSR, so
   // an ungated Profit cell would read revenue minus zero and overstate the
   // business badly. `skip` keeps a CSR from firing the request at all.
@@ -159,17 +162,25 @@ export function AnalyticsSection() {
   const isOwner = (session?.user as { role?: string } | undefined)?.role === "Owner";
   const { data: overheadRes, isLoading: overheadLoading } = useGetOverheadDashboardQuery(
     { month: selectedMonth ?? undefined },
-    { skip: !isOwner },
+    { skip: !isOwner || allTime },
+  );
+  // All time: lifetime overhead over the same span as the all-time revenue.
+  const { data: overheadAllRes, isLoading: overheadAllLoading } = useGetOverheadAllTimeQuery(
+    undefined,
+    { skip: !isOwner || !allTime },
   );
   const oh = overheadRes?.data;
+  const ohAll = overheadAllRes?.data;
   // Until the overhead payload lands, profit would briefly equal full revenue.
   // Both cells render an em dash rather than a figure that is wrong for a frame.
-  const overheadReady = isOwner && !overheadLoading && !!oh;
+  const overheadReady = isOwner && (allTime ? !overheadAllLoading && !!ohAll : !overheadLoading && !!oh);
   // Pair like with like, as the Profitability tab does: collected revenue
   // against bills actually settled, gross against everything due.
-  const overheadFigure = revenueBasis === "gross"
-    ? Number(oh?.accrued_total ?? 0)
-    : Number(oh?.paid ?? 0);
+  const overheadFigure = allTime
+    ? Number((revenueBasis === "gross" ? ohAll?.overhead_accrued : ohAll?.overhead_paid) ?? 0)
+    : revenueBasis === "gross"
+      ? Number(oh?.accrued_total ?? 0)
+      : Number(oh?.paid ?? 0);
   const revenueFigure = revenueBasis === "gross"
     ? Number(s.total_gross_revenue ?? 0)
     : Number(s.total_revenue ?? 0);

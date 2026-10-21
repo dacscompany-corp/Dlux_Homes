@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { MonthNavigator, currentMonthKey } from "@/components/admin/owners/MonthNavigator";
-import { useGetOverheadDashboardQuery } from "@/redux/api/overheadApi";
+import { useGetOverheadDashboardQuery, useGetOverheadAllTimeQuery } from "@/redux/api/overheadApi";
 import {
   useGetAnalyticsSummaryQuery,
   useGetMonthlyRevenueQuery,
@@ -41,11 +41,14 @@ export function ProfitabilitySection({
 }) {
   const [basis, setBasis] = useState<"collected" | "gross">("collected");
 
-  // A monthly P&L has no meaningful "all time" reading: the overhead endpoint
-  // and the analytics endpoint fall back to two different windows (current
-  // calendar month vs. trailing 30 days) when month is null. Coerce to the
-  // current month so both sides of the subtraction describe the same window.
+  // "All time" (month = null) reads lifetime totals from /overhead/all-time,
+  // where revenue and overhead cover the same span (first record → this
+  // month). The monthly endpoints still load with the current month: the
+  // trend chart and the "no expenses yet" check come from them.
+  const allTime = month === null;
   const effectiveMonth = month ?? currentMonthKey();
+  const { data: allTimeRes, isLoading: allTimeLoading } =
+    useGetOverheadAllTimeQuery(undefined, { skip: !allTime });
 
   const { data: overheadRes, isLoading: overheadLoading } =
     useGetOverheadDashboardQuery({ month: effectiveMonth });
@@ -63,21 +66,29 @@ export function ProfitabilitySection({
   // the monthly-revenue query is not awaited otherwise, and its payload
   // (up to 120 months) can resolve last, briefly drawing loss bars against
   // real overhead with no revenue data.
-  if (overheadLoading || summaryLoading || monthlyLoading) {
+  if (overheadLoading || summaryLoading || monthlyLoading || (allTime && allTimeLoading)) {
     return <p style={{ fontSize: 13, color: "#8a8276" }}>Loading…</p>;
   }
 
-  const revenue = basis === "gross"
-    ? Number(s?.total_gross_revenue ?? 0)
-    : Number(s?.total_revenue ?? 0);
-  const overhead = basis === "gross"
-    ? Number(o?.accrued_total ?? 0)
-    : Number(o?.paid ?? 0);
+  const a = allTimeRes?.data;
+  const revenue = allTime
+    ? Number((basis === "gross" ? a?.gross_revenue : a?.revenue) ?? 0)
+    : basis === "gross"
+      ? Number(s?.total_gross_revenue ?? 0)
+      : Number(s?.total_revenue ?? 0);
+  const overhead = allTime
+    ? Number((basis === "gross" ? a?.overhead_accrued : a?.overhead_paid) ?? 0)
+    : basis === "gross"
+      ? Number(o?.accrued_total ?? 0)
+      : Number(o?.paid ?? 0);
 
   const net = netProfit(revenue, overhead);
   const margin = marginPct(revenue, net);
 
-  const monthLabel = new Date(effectiveMonth + "-01").toLocaleString("en", { month: "long", year: "numeric" });
+  const shortMonth = (k: string) => new Date(k + "-01").toLocaleString("en", { month: "short", year: "numeric" });
+  const monthLabel = allTime
+    ? (a?.since ? `all time (${shortMonth(a.since)} – ${shortMonth(a.through)})` : "all time")
+    : new Date(effectiveMonth + "-01").toLocaleString("en", { month: "long", year: "numeric" });
 
   // With no expenses recorded at all — nothing accrued, nothing estimated —
   // there is no overhead data yet; point the owner at Overhead instead of
@@ -155,9 +166,13 @@ export function ProfitabilitySection({
       </div>
 
       <p style={{ fontSize: 12, color: "#8a8276", margin: "0 0 16px" }}>
-        {basis === "gross"
-          ? "Full booked value of this month's stays, less every bill due for the month."
-          : "Payments received for this month's stays, less the bills for the month already settled."}
+        {allTime
+          ? (basis === "gross"
+            ? "Full booked value of every stay so far, less every bill due so far (up to this month)."
+            : "All payments received for stays so far, less every bill already paid (up to this month).")
+          : basis === "gross"
+            ? "Full booked value of this month's stays, less every bill due for the month."
+            : "Payments received for this month's stays, less the bills for the month already settled."}
       </p>
 
       {noExpenses ? (

@@ -33,7 +33,7 @@ import {
 import { useAssignmentChecklist, gateErrorMessage } from "@/components/admin/cleaners/useAssignmentChecklist";
 import { bookingRefFrom, sameBookingRef } from "@/components/admin/NotificationBell";
 import CleanerCalendarCard from "@/components/admin/cleaners/CleanerCalendarCard";
-import { canStartCleaning, cleaningDueAt, groupByDueDay, startOfLocalDay } from "@/lib/cleaning-schedule";
+import { canStartCleaning, cleaningDueAt, groupByDueDay, isCurrentCleaning, startOfManilaDay } from "@/lib/cleaning-schedule";
 import { translateCategory, translateTask, type ChecklistLanguage } from "@/lib/checklist-translations";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -80,9 +80,9 @@ const navItems: Array<
 // a raw DB cleaning_status.
 const statusConfig: Record<string, { label: string; color: string; bg: string; dot: string }> = {
   ready:                { label: "Done",                color: "#065f46", bg: "#d1fae5", dot: "#10b981" },
-  "awaiting-inspection": { label: "Awaiting Inspection", color: "#5b21b6", bg: "#ede9fe", dot: "#8b5cf6" },
+  "awaiting-inspection": { label: "Completed",           color: "#5b21b6", bg: "#ede9fe", dot: "#8b5cf6" },
   "in-progress":        { label: "In Progress",         color: "#8a6a2f", bg: "#F7F0E3", dot: "#B07848" },
-  pending:              { label: "Needs Cleaning",      color: "#92400e", bg: "#fef3c7", dot: "#f59e0b" },
+  pending:              { label: "Assigned",            color: "#92400e", bg: "#fef3c7", dot: "#f59e0b" },
 };
 
 // The Assignments page is split into these sections, in this order — the same
@@ -105,17 +105,60 @@ const PROPERTY_NAME = "D'Lux Homes — Tower 4, Grass Residences";
 const PROPERTY_ADDRESS = "Grass Residences, SM North EDSA, Quezon City";
 const propertyDirectionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${PROPERTY_COORDS[0]},${PROPERTY_COORDS[1]}`;
 
-// Each topic links to the real feature it describes — "goTo" is the nav
-// target, and "openChecklist" (owner spec, 2026-09-23) additionally expands
-// the Cleaning Checklist for the first assignment, since the checklist now
-// lives inline on My Assignments rather than as its own page.
-const guideTopics: { title: string; desc: string; icon: React.ElementType; goTo: string; openChecklist?: boolean }[] = [
-  { title: "Getting Started",             desc: "How to navigate the cleaner portal and find your daily assignments.", icon: BookOpen,       goTo: "Assignments" },
-  { title: "Cleaning Standards",          desc: "D'Lux Homes cleaning protocols and quality checklist guidelines.",   icon: CheckSquare,    goTo: "Assignments", openChecklist: true },
-  { title: "Reporting Issues",            desc: "Step-by-step guide to submitting a maintenance or damage report.",   icon: AlertTriangle,  goTo: "Report an Issue" },
-  { title: "Using the Checklist",         desc: "How to mark tasks complete and submit your cleaning report.",        icon: ClipboardList,  goTo: "Assignments", openChecklist: true },
-  { title: "Communication with CSR",      desc: "How to message CSR staff and respond to instructions.",              icon: MessageSquare,  goTo: "Messages" },
-  { title: "Schedule & Time Management",  desc: "Understanding your daily schedule and time slots.",                  icon: CalendarDays,   goTo: "My Schedule" },
+// User Guide topics. Each one opens to a few numbered steps that match how the
+// portal works today, plus a button to the page it describes. Keep the steps in
+// step with the real flow (start → tick tasks → one photo per area → sent
+// automatically → office approves).
+const guideTopics: { title: string; desc: string; icon: React.ElementType; goTo: string; goLabel: string; steps: string[] }[] = [
+  { title: "Your day at a glance", desc: "Where to find the rooms you need to clean.", icon: BookOpen, goTo: "Dashboard", goLabel: "Open Dashboard",
+    steps: [
+      "Dashboard shows today's rooms and how many are done.",
+      "Assignments lists every room given to you, grouped by status.",
+      "Use the tabs at the top of Assignments (All, In Progress, Assigned…) to see one group at a time.",
+      "New rooms appear by themselves, and you get a notification (the bell) when one is added.",
+    ] },
+  { title: "Cleaning a room, step by step", desc: "From Start cleaning to sending it to the office.", icon: ClipboardList, goTo: "Assignments", goLabel: "Go to Assignments",
+    steps: [
+      "Wait until the guest has checked out — the card tells you when you can start.",
+      "Press Start cleaning. The room's task list opens.",
+      "Click each task as you finish it to tick it.",
+      "Add one photo of each finished area (Bedroom, Bathroom…) with the camera button under that area.",
+      "When every task is ticked and every area has a photo, the room is sent to the office automatically.",
+    ] },
+  { title: "Taking the area photos", desc: "One photo per area, showing the finished result.", icon: Camera, goTo: "Assignments", goLabel: "Go to Assignments",
+    steps: [
+      "Take the photo after the whole area is clean — it shows the office the final result.",
+      "One photo per area is enough; you don't need a photo for every task.",
+      "Took a bad one? Press Replace photo and take it again.",
+      "If an upload fails, the area shows a warning — press the button again to retry.",
+    ] },
+  { title: "What the statuses mean", desc: "Assigned, In Progress, Completed, Done — the same names the office uses.", icon: CheckSquare, goTo: "Assignments", goLabel: "Go to Assignments",
+    steps: [
+      "Assigned — the room is yours but not started yet.",
+      "In Progress — you pressed Start cleaning and are working on it.",
+      "Completed — you finished; the office is checking your photos.",
+      "Done — the office approved it. Nothing more to do.",
+      "If the office sends a room back, it returns to In Progress with a purple note saying what to fix.",
+    ] },
+  { title: "Reporting a problem", desc: "Something broken, dirty or missing in a room.", icon: AlertTriangle, goTo: "Report an Issue", goLabel: "Report an Issue",
+    steps: [
+      "On the room's card, click Report a problem (or open Report an Issue in the menu).",
+      "Pick the type of problem and how urgent it is.",
+      "Say where it is (for example: bathroom sink) and describe it.",
+      "Send it — the office is told straight away.",
+    ] },
+  { title: "Talking to the office", desc: "Ask about supplies, access or anything else.", icon: MessageSquare, goTo: "Messages", goLabel: "Open Messages",
+    steps: [
+      "Open Messages in the menu.",
+      "Type your message and send — the Owner and CSR both see it.",
+      "Their replies show up in the same chat.",
+    ] },
+  { title: "Your schedule", desc: "See which rooms are coming up.", icon: CalendarDays, goTo: "My Schedule", goLabel: "Open My Schedule",
+    steps: [
+      "My Schedule shows your upcoming rooms by day.",
+      "Each room shows when the guest checks out — that's when cleaning can start.",
+      "You can also add your rooms to your Google Calendar from there.",
+    ] },
 ];
 
 // "2 adults, 1 child" — expected guests for the booking the cleaning follows.
@@ -169,7 +212,7 @@ export default function CleanerDesktopPortal() {
   // whether it's sitting with admin for inspection or already approved Ready.
   const isDoneStatus = (s: string) => s === "awaiting-inspection" || s === "ready";
   const formatDue = (d: Date | null) =>
-    d ? d.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—";
+    d ? d.toLocaleString("en-US", { timeZone: "Asia/Manila", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—";
 
   // Only this cleaner's own assignments. The server already scopes a
   // Cleaner's list to them; filtering again means a stale or admin-shaped
@@ -179,6 +222,8 @@ export default function CleanerDesktopPortal() {
     const rank = (s: string) => (s === "in-progress" ? 0 : s === "pending" ? 1 : s === "awaiting-inspection" ? 2 : 3);
     return (cleaningTasksData ?? [])
       .filter((t) => !!cleanerId && String(t.assigned_cleaner_id ?? "") === cleanerId)
+      // Today and upcoming only — older rooms are admin's to close out.
+      .filter((t) => isCurrentCleaning(t))
       .map((t) => {
         const dueAt = cleaningDueAt(t);
         return {
@@ -211,18 +256,20 @@ export default function CleanerDesktopPortal() {
   // Today = due today, plus anything still unfinished from an earlier day (a
   // task must not vanish just because midnight passed) — the phone's rule.
   const todays = useMemo(() => {
-    const today = startOfLocalDay(new Date()).getTime();
+    const today = startOfManilaDay(new Date()).getTime();
     return assignments.filter((a) => {
-      const day = a.dueAt ? startOfLocalDay(a.dueAt).getTime() : today;
+      const day = a.dueAt ? startOfManilaDay(a.dueAt).getTime() : today;
       return day <= today && (day === today || !isDoneStatus(a.status));
     });
   }, [assignments]);
   const todaysDone = todays.filter((a) => isDoneStatus(a.status)).length;
   const openIssueCount = assignments.reduce((n, a) => n + a.openIssues, 0);
-  const schedule = useMemo(
-    () => groupByDueDay(assignments.filter((a) => !isDoneStatus(a.status))),
-    [assignments]
-  );
+  // My Schedule, in admin's order: today and later only, soonest on top.
+  const upcomingDays = useMemo(() => {
+    const todayKey = startOfManilaDay(new Date()).getTime();
+    return groupByDueDay(assignments.filter((a) => !isDoneStatus(a.status)))
+      .filter((d) => d.day.getTime() >= todayKey);
+  }, [assignments]);
   const noData = tasksFailed && !cleaningTasksData;
 
   // ── Report an Issue → live report_issue (feeds Owner Maintenance) ──
@@ -366,6 +413,8 @@ export default function CleanerDesktopPortal() {
   // src/lib/checklist-translations.ts) — a custom task admin adds later just
   // falls back to whatever it was typed in, since it has no dictionary entry.
   const [checklistLang, setChecklistLang] = useState<ChecklistLanguage>("en");
+  // User Guide: which topic is open (one at a time).
+  const [openGuideTopic, setOpenGuideTopic] = useState<string | null>(null);
   // Checklists start HIDDEN — the full list is long — and show only once the
   // cleaner opens one (Show tasks, Start, Continue, a notification). Separate
   // from checklistOpenFor, which picks the room in progress by itself; this
@@ -441,7 +490,17 @@ export default function CleanerDesktopPortal() {
     const cs = a.status;
     const base = "inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white cursor-pointer";
     if (cs === "pending") {
-      if (!canStartCleaning(a)) return null;
+      // Before checkout the button is shown greyed out with when it opens,
+      // so cleaners can always see where Start cleaning is.
+      if (!canStartCleaning(a)) {
+        return (
+          <button type="button" disabled title="Opens once the guest has checked out"
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold cursor-not-allowed"
+            style={{ background: "#ece5d4", color: "#8B6344" }}>
+            <Clock className="w-4 h-4" />Start cleaning · from {formatDue(a.dueAt)}
+          </button>
+        );
+      }
       return (
         <button type="button" className={base} style={{ background: "#1f1b16" }}
           onClick={() => { if (fromDashboard) setActiveNav("Assignments"); startCleaning(a.id); }}>
@@ -460,9 +519,9 @@ export default function CleanerDesktopPortal() {
       );
     }
     if (cs === "awaiting-inspection") {
-      return <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border" style={{ backgroundColor: "#ede9fe", color: "#5b21b6", borderColor: "#c4b5fd" }}><CheckCircle2 className="w-3.5 h-3.5" />Awaiting Inspection</span>;
+      return <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border" style={{ backgroundColor: "#ede9fe", color: "#5b21b6", borderColor: "#c4b5fd" }}><CheckCircle2 className="w-3.5 h-3.5" />Completed</span>;
     }
-    return <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border" style={{ backgroundColor: "#d1fae5", color: "#065f46", borderColor: "#6ee7b7" }}><CheckCircle2 className="w-3.5 h-3.5" />Ready</span>;
+    return <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border" style={{ backgroundColor: "#d1fae5", color: "#065f46", borderColor: "#6ee7b7" }}><CheckCircle2 className="w-3.5 h-3.5" />Done</span>;
   };
 
   const reportIssueFor = (a: CardAssignment) => {
@@ -711,96 +770,111 @@ export default function CleanerDesktopPortal() {
           )}
 
           {/* ── Dashboard ── */}
-          {activeNav === "Dashboard" && (<>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+          {/* Every room assigned to this cleaner (today and upcoming), grouped by
+              day, each with what to do next — no separate checklist panel; the
+              checklist opens from the room itself once cleaning starts. */}
+          {activeNav === "Dashboard" && (() => {
+            const toClean = assignments.filter((x) => !isDoneStatus(x.status));
+            const dueToday = todays.filter((x) => !isDoneStatus(x.status));
+            const finished = assignments.filter((x) => isDoneStatus(x.status));
+            const days = groupByDueDay(assignments);
+            const dash = (n: number) => (tasksLoading || noData ? "—" : n);
+            const nextStepFor = (x: CardAssignment) => {
+              const locked = x.status === "pending" && !canStartCleaning(x);
+              if (x.status === "ready") return { text: "Approved — nothing more to do", color: "#065f46" };
+              if (x.status === "awaiting-inspection") return { text: "Sent — the office is checking", color: "#5b21b6" };
+              if (x.status === "in-progress") return { text: x.inspectionNote ? "Office asked for a fix — open the room" : "In progress — tick tasks and add area photos", color: "#8a6a2f" };
+              if (locked) return { text: `Guest still in — you can start from ${formatDue(x.dueAt)}`, color: "#92400e" };
+              return { text: "Guest has left — ready to start", color: "#b45309" };
+            };
+            return (<>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
               {[
-                { label: "Today's Assignments", value: tasksLoading || noData ? "—" : todays.length,     icon: ClipboardList, iconBg: "#F7F0E3", iconColor: "#B07848" },
-                { label: "Completed Today",      value: tasksLoading || noData ? "—" : todaysDone,        icon: CheckCircle2,  iconBg: "#d1fae5", iconColor: "#059669" },
-                // Open issue reports raised on this cleaner's own assignments —
-                // was a hard-coded 1.
-                { label: "Open Issues",          value: tasksLoading || noData ? "—" : openIssueCount,    icon: AlertCircle,   iconBg: "#fef3c7", iconColor: "#d97706" },
+                { label: "Rooms to clean", hint: "Assigned to you, not finished", value: dash(toClean.length), icon: ClipboardList, iconBg: "#F7F0E3", iconColor: "#B07848" },
+                { label: "Due today",      hint: "Guest checks out today",        value: dash(dueToday.length), icon: Clock,        iconBg: "#fef3c7", iconColor: "#d97706" },
+                { label: "Sent or done",   hint: "Finished by you",               value: dash(finished.length), icon: CheckCircle2, iconBg: "#d1fae5", iconColor: "#059669" },
+                { label: "Open issues",    hint: "Problems you reported",         value: dash(openIssueCount),  icon: AlertCircle,  iconBg: "#ffedd5", iconColor: "#ea580c" },
               ].map((card) => {
                 const Icon = card.icon;
                 return (
-                  <div key={card.label} className="border p-4 text-center" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }}>
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-2" style={{ backgroundColor: card.iconBg }}>
-                      <Icon className="w-5 h-5" strokeWidth={1.75} style={{ color: card.iconColor }} />
+                  <div key={card.label} className="border p-4" style={{ backgroundColor: "#ffffff", borderColor: "#ece5d4" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ backgroundColor: card.iconBg }}>
+                        <Icon className="w-[18px] h-[18px]" strokeWidth={1.75} style={{ color: card.iconColor }} />
+                      </div>
+                      <p style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 26, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1, color: "#1f1b16" }}>{card.value}</p>
                     </div>
-                    <p style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 24, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1, color: "#1f1b16" }}>{card.value}</p>
-                    <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{card.label}</p>
+                    <p className="text-sm font-semibold mt-2" style={{ color: "#1f1b16" }}>{card.label}</p>
+                    <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{card.hint}</p>
                   </div>
                 );
               })}
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Today's assignments preview */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>Today&apos;s Assignments</h2>
-                  <button onClick={() => setActiveNav("Assignments")} className="text-sm font-medium cursor-pointer" style={{ color: "#8a6a2f" }}>View All →</button>
-                </div>
-                {tasksLoading ? (
-                  <p className="text-sm border p-4" style={{ color: "#8B6344", borderColor: "#ece5d4" }}>Loading your assignments…</p>
-                ) : noData ? null : todays.length === 0 ? (
-                  <p className="text-sm border p-4" style={{ color: "#8B6344", borderColor: "#ece5d4" }}>
-                    {assignments.length ? "Nothing due today — see My Schedule for what's coming up." : "No rooms assigned to you yet."}
-                  </p>
-                ) : todays.map((a) => {
-                  const cs = a.status;
-                  const st = statusConfig[cs] || statusConfig.pending;
-                  const opensLater = cs === "pending" && !canStartCleaning(a);
-                  return (
-                    <div key={a.id} className="border p-4" style={{ borderColor: cs === "in-progress" ? "#D4BFA0" : "#E0CEB8" }}>
-                      <div className="flex items-start justify-between gap-3 mb-2">
-                        <div>
-                          <p className="font-bold text-sm" style={{ color: "#1a1a1a" }}>{a.room}</p>
-                          <div className="flex items-center gap-1.5 text-xs mt-0.5" style={{ color: "#8B6344" }}>
-                            <Building2 className="w-3 h-3" />{a.floor}
-                          </div>
-                        </div>
-                        <span className="text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0" style={{ backgroundColor: st.bg, color: st.color }}>{st.label}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-xs mb-1" style={{ color: "#8B6344" }}>
-                        <Clock className="w-3.5 h-3.5" style={{ color: "#8a6a2f" }} />{a.timeSlot}
-                      </div>
-                      {a.guestCount && (
-                        <div className="flex items-center gap-1.5 text-xs mb-1" style={{ color: "#8B6344" }}>
-                          <Users className="w-3.5 h-3.5" style={{ color: "#8a6a2f" }} />Expected guests: {a.guestCount}
-                        </div>
-                      )}
-                      {/* Property location, inline per task (owner spec, 2026-09-22) —
-                          replaces the old standalone Property Location page. */}
-                      <div className="flex items-center gap-1.5 text-xs mb-3" style={{ color: "#8B6344" }}>
-                        <MapPin className="w-3.5 h-3.5" style={{ color: "#8a6a2f" }} />{PROPERTY_ADDRESS}
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        {renderMainAction(a, true)}
-                        {opensLater && <span className="text-xs" style={{ color: "#92400e" }}>Guest still checked in · opens {formatDue(a.dueAt)}</span>}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Checklist preview */}
-              <div>
-                <div className="flex items-center justify-between mb-4">
-                  <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>Cleaning Checklist</h2>
-                  <button onClick={() => { setActiveNav("Assignments"); if (assignments[0]) showChecklist(assignments[0].id); }} className="text-sm font-medium cursor-pointer" style={{ color: "#8a6a2f" }}>View →</button>
-                </div>
-                {assignments.length === 0 ? (
-                  <div className="border p-5 text-center" style={{ borderColor: "#ece5d4" }}>
-                    <p className="text-sm" style={{ color: "#8B6344" }}>No assignments yet — checklists open from My Assignments.</p>
-                  </div>
-                ) : (
-                  <p className="text-sm" style={{ color: "#8B6344" }}>
-                    Each assignment has its own checklist. Tick each task as you finish it, then add one photo of each finished area. A room can&apos;t be sent for inspection until every task is ticked and every area has its photo.
-                  </p>
-                )}
-              </div>
+            <div className="flex items-center justify-between mb-3">
+              <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>Your cleanings</h2>
+              <button onClick={() => setActiveNav("Assignments")} className="text-sm font-medium cursor-pointer" style={{ color: "#8a6a2f" }}>Open Assignments →</button>
             </div>
-          </>)}
+
+            {tasksLoading ? (
+              <p className="text-sm border p-5" style={{ color: "#8B6344", borderColor: "#ece5d4" }}>Loading your cleanings…</p>
+            ) : noData ? null : days.length === 0 ? (
+              <div className="border p-8 text-center" style={{ borderColor: "#ece5d4" }}>
+                <CheckCircle2 className="w-8 h-8 mx-auto mb-2" style={{ color: "#059669" }} />
+                <p className="text-sm font-semibold" style={{ color: "#1f1b16" }}>No rooms assigned right now</p>
+                <p className="text-xs mt-1" style={{ color: "#8B6344" }}>New rooms appear here as soon as the office assigns them to you.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {days.map((day) => (
+                  <div key={day.day.getTime()} className="border overflow-hidden" style={{ borderColor: day.isToday ? "#D4BFA0" : "#ece5d4" }}>
+                    <div className="flex items-center justify-between px-5 py-2.5 border-b" style={{ backgroundColor: day.isToday ? "#F7F0E3" : "#FAF7F1", borderColor: "#ece5d4" }}>
+                      <p className="font-bold text-sm" style={{ color: "#8a6a2f" }}>
+                        {day.isToday ? "Today · " : day.isTomorrow ? "Tomorrow · " : ""}
+                        {day.day.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}
+                      </p>
+                      <span className="text-xs" style={{ color: "#8B6344" }}>{day.tasks.length} {day.tasks.length === 1 ? "room" : "rooms"}</span>
+                    </div>
+                    <div>
+                      {day.tasks.map((x, i) => {
+                        const st = statusConfig[x.status] || statusConfig.pending;
+                        const next = nextStepFor(x);
+                        return (
+                          <div key={x.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-4"
+                            style={{ borderTop: i ? "1px solid #F7F0E3" : "none", boxShadow: `inset 3px 0 0 ${st.dot}` }}>
+                            <div className="flex-1 min-w-[16rem]">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-semibold text-sm" style={{ color: "#1a1a1a" }}>{x.room}</span>
+                                <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-0.5 rounded-full" style={{ backgroundColor: st.bg, color: st.color }}>
+                                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: st.dot }} />{st.label}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs mt-1" style={{ color: "#8B6344" }}>
+                                <span className="inline-flex items-center gap-1"><Clock className="w-3.5 h-3.5" />
+                                  {x.dueAt ? x.dueAt.toLocaleTimeString("en-US", { timeZone: "Asia/Manila", hour: "numeric", minute: "2-digit" }) : "—"} checkout
+                                </span>
+                                {x.guestCount && <span className="inline-flex items-center gap-1"><Users className="w-3.5 h-3.5" />{x.guestCount}</span>}
+                                <span>{x.floor}</span>
+                              </div>
+                              <p className="text-sm font-medium mt-1.5" style={{ color: next.color }}>{next.text}</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {renderMainAction(x, true)}
+                              <button type="button" onClick={() => setActiveNav("Assignments")}
+                                className="text-xs font-medium cursor-pointer underline underline-offset-2" style={{ color: "#8B6344" }}>
+                                Details
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>);
+          })()}
 
           {/* ── Assignments (renamed from "My Assignment"; property location is
               now inline per task below instead of its own page) ── */}
@@ -894,6 +968,23 @@ export default function CleanerDesktopPortal() {
                         <span className="text-xs font-semibold" style={{ color: st.color }}>{st.label}</span>
                       </div>
                     </div>
+                    {(() => {
+                      // One sentence: what this cleaner should do with this room now.
+                      const next = cs === "ready"
+                        ? { text: "Approved by the office — nothing more to do.", bg: "#d1fae5", fg: "#065f46" }
+                        : cs === "awaiting-inspection"
+                          ? { text: "Sent — the office is checking your work. Nothing to do for now.", bg: "#ede9fe", fg: "#5b21b6" }
+                          : cs === "in-progress"
+                            ? { text: a.inspectionNote ? "The office asked for a fix — see the note below, then finish the checklist." : "You're cleaning this room — tick the tasks and add the area photos.", bg: "#F7F0E3", fg: "#8a6a2f" }
+                            : opensLater
+                              ? { text: `Guest still checked in — you can start from ${formatDue(a.dueAt)}.`, bg: "#fef3c7", fg: "#92400e" }
+                              : { text: "Guest has left — press Start cleaning when you begin.", bg: "#fef3c7", fg: "#92400e" };
+                      return (
+                        <div className="text-sm font-medium px-3 py-2 mb-3" style={{ backgroundColor: next.bg, color: next.fg }}>
+                          {next.text}
+                        </div>
+                      );
+                    })()}
                     <div className="flex items-center gap-2 text-sm mb-2" style={{ color: "#5a4a3a" }}>
                       <Clock className="w-4 h-4" style={{ color: "#8a6a2f" }} />{a.timeSlot}
                     </div>
@@ -925,17 +1016,12 @@ export default function CleanerDesktopPortal() {
                         <p className="text-xs" style={{ color: "#5b21b6" }}>{a.inspectionNote}</p>
                       </div>
                     )}
-                    {opensLater && (
-                      <div className="rounded-xl p-3 mb-3 border" style={{ backgroundColor: "#fef3c7", borderColor: "#f5d9a8" }}>
-                        <p className="text-xs" style={{ color: "#92400e" }}>
-                          Guest still checked in. You can start once they&apos;re checked out, or from the scheduled checkout — {formatDue(a.dueAt)}.
-                        </p>
-                      </div>
-                    )}
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="flex flex-wrap items-center gap-2">
                         {renderMainAction(a)}
-                        {(() => {
+                        {/* No task list until the room is started — Start cleaning
+                            opens it; after that it can be hidden and shown again. */}
+                        {cs !== "pending" && (() => {
                           const visible = checklistOpenFor === a.id && shownChecklists.has(a.id);
                           return (
                             <button type="button" onClick={() => toggleChecklist(a.id)}
@@ -961,11 +1047,11 @@ export default function CleanerDesktopPortal() {
                     {/* Cleaning Checklist — inline, scoped to this assignment.
                         Opens on Start, on "Continue checklist", or by itself
                         for the room being cleaned. */}
-                    {checklistOpenFor === a.id && shownChecklists.has(a.id) && (
+                    {cs !== "pending" && checklistOpenFor === a.id && shownChecklists.has(a.id) && (
                       <div className="mt-4 pt-4 border-t" style={{ borderColor: "#F7F0E3" }}>
                         <div className="border p-5 mb-4" style={{ borderColor: "#ece5d4" }}>
                           <div className="flex items-center justify-between mb-2 gap-2">
-                            <span className="text-sm font-medium" style={{ color: "#5a4a3a" }}>Overall Progress</span>
+                            <span className="text-sm font-semibold" style={{ color: "#1f1b16" }}>Your progress</span>
                             <div className="flex items-center gap-3">
                               <span className="text-sm font-bold" style={{ color: "#8a6a2f" }}>{progressPercent}%</span>
                               {/* English/Tagalog toggle — only the fixed default-template
@@ -980,8 +1066,33 @@ export default function CleanerDesktopPortal() {
                           <div className="w-full rounded-full h-3 overflow-hidden" style={{ backgroundColor: "#E0CEB8" }}>
                             <div className="h-3 rounded-full transition-all duration-500" style={{ width: `${progressPercent}%`, background: "#d4a96a" }} />
                           </div>
+                          {(() => {
+                            const areas = ck.gate.categories.length;
+                            const photographed = areas - ck.gate.missingPhotos.length;
+                            const sent = cs === "awaiting-inspection" || cs === "ready";
+                            const steps = [
+                              { label: "Tick every task", count: `${completedCount}/${checklistTotal}`, done: checklistTotal > 0 && completedCount === checklistTotal },
+                              { label: "Add 1 photo of each area", count: `${photographed}/${areas}`, done: areas > 0 && photographed === areas },
+                              { label: sent ? "Sent to the office" : "Sent to the office automatically", count: "", done: sent },
+                            ];
+                            return (
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3">
+                                {steps.map((st, i) => (
+                                  <div key={i} className="flex items-center gap-2 border px-3 py-2"
+                                    style={{ borderColor: st.done ? "#a7f3d0" : "#ece5d4", backgroundColor: st.done ? "#ecfdf5" : "#ffffff" }}>
+                                    <span className="w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center flex-shrink-0"
+                                      style={{ backgroundColor: st.done ? "#059669" : "#F7F0E3", color: st.done ? "#ffffff" : "#8a6a2f" }}>
+                                      {st.done ? <CheckCircle2 className="w-4 h-4" /> : i + 1}
+                                    </span>
+                                    <span className="text-xs flex-1 min-w-0" style={{ color: st.done ? "#065f46" : "#5a4a3a" }}>{st.label}</span>
+                                    {st.count && <span className="text-sm font-bold flex-shrink-0" style={{ color: st.done ? "#059669" : "#1f1b16" }}>{st.count}</span>}
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
                           <p className="text-xs mt-2" style={{ color: "#8B6344" }}>
-                            {completedCount} of {checklistTotal} done · click a task to tick it
+                            Click a task to tick it. Use the camera button under each area for its photo.
                           </p>
                           {!checklistEditable && (
                             <p className="text-xs mt-2" style={{ color: "#92400e" }}>
@@ -1231,11 +1342,12 @@ export default function CleanerDesktopPortal() {
                   <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>Upcoming</h2>
                   {tasksLoading ? (
                     <p className="text-sm border p-5" style={{ color: "#8B6344", borderColor: "#ece5d4" }}>Loading your schedule…</p>
-                  ) : noData ? null : schedule.length === 0 ? (
-                    <p className="text-sm border p-5" style={{ color: "#8B6344", borderColor: "#ece5d4" }}>
-                      Nothing scheduled. Rooms appear here as soon as a booking is confirmed and assigned to you.
-                    </p>
-                  ) : schedule.map((day) => (
+                  ) : noData ? null : (<>
+                    {upcomingDays.length === 0 ? (
+                      <p className="text-sm border p-5" style={{ color: "#8B6344", borderColor: "#ece5d4" }}>
+                        Nothing coming up. Rooms appear here as soon as a booking is confirmed and assigned to you.
+                      </p>
+                    ) : upcomingDays.map((day) => (
                     <div key={day.day.getTime()} className="border overflow-hidden" style={{ borderColor: "#ece5d4" }}>
                       <div className="px-5 py-3 border-b" style={{ backgroundColor: "#F7F0E3", borderColor: "#ece5d4" }}>
                         <p className="font-bold text-sm" style={{ color: "#8a6a2f" }}>
@@ -1252,7 +1364,7 @@ export default function CleanerDesktopPortal() {
                               onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
                               <Clock className="w-4 h-4 flex-shrink-0" style={{ color: "#D4BFA0" }} />
                               <span className="text-sm flex-1 min-w-0" style={{ color: "#5a4a3a" }}>
-                                {task.room} — {task.dueAt ? task.dueAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "—"}
+                                {task.room} — {task.dueAt ? task.dueAt.toLocaleTimeString("en-US", { timeZone: "Asia/Manila", hour: "numeric", minute: "2-digit" }) : "—"}
                                 <span style={{ color: "#8B6344" }}> · {task.floor}{task.guestCount ? ` · ${task.guestCount}` : ""}</span>
                               </span>
                               <span className="text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0" style={{ backgroundColor: st.bg, color: st.color }}>{st.label}</span>
@@ -1261,7 +1373,8 @@ export default function CleanerDesktopPortal() {
                         })}
                       </div>
                     </div>
-                  ))}
+                    ))}
+                  </>)}
                 </div>
               </div>
             </div>
@@ -1272,29 +1385,48 @@ export default function CleanerDesktopPortal() {
             <div className="space-y-4">
               <div className="mb-6">
                 <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontWeight: 400, fontSize: 20, lineHeight: 1, color: "#1f1b16" }}>User Guide</h2>
-                <p className="text-sm mt-0.5" style={{ color: "#8B6344" }}>Everything you need to know about the cleaner portal</p>
+                <p className="text-sm mt-0.5" style={{ color: "#8B6344" }}>Click a topic to see the steps. Each one has a button that takes you to the right page.</p>
               </div>
               {cleanerId && <GuideAssessment key={cleanerId} cleanerId={cleanerId} lang={checklistLang} onLangChange={setChecklistLang} />}
-              <p className="text-xs font-semibold uppercase tracking-wider pt-2" style={{ color: "#8a6a2f" }}>Portal help</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <p className="text-xs font-semibold uppercase tracking-wider pt-2" style={{ color: "#8a6a2f" }}>How to use the portal</p>
+              <div className="flex flex-col gap-3">
                 {guideTopics.map((topic) => {
                   const Icon = topic.icon;
+                  const open = openGuideTopic === topic.title;
                   return (
-                    <button key={topic.title} type="button"
-                      onClick={() => {
-                        if (topic.openChecklist && assignments[0]) showChecklist(assignments[0].id);
-                        setActiveNav(topic.goTo);
-                        setSidebarOpen(false);
-                      }}
-                      className="border p-5 text-left cursor-pointer transition-shadow hover:shadow-md" style={{ borderColor: "#ece5d4" }}
-                      onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
-                      onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
-                      <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-3" style={{ backgroundColor: "#F7F0E3" }}>
-                        <Icon className="w-5 h-5" strokeWidth={1.75} style={{ color: "#8a6a2f" }} />
-                      </div>
-                      <p className="font-bold text-sm mb-1" style={{ color: "#1a1a1a" }}>{topic.title}</p>
-                      <p className="text-xs" style={{ color: "#8B6344" }}>{topic.desc}</p>
-                    </button>
+                    <div key={topic.title} className="border" style={{ borderColor: open ? "#D4BFA0" : "#ece5d4", backgroundColor: "#ffffff" }}>
+                      <button type="button" aria-expanded={open}
+                        onClick={() => setOpenGuideTopic(open ? null : topic.title)}
+                        className="w-full flex items-center gap-4 p-4 text-left cursor-pointer"
+                        style={{ backgroundColor: open ? "#FDFBF7" : "transparent" }}>
+                        <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: "#F7F0E3" }}>
+                          <Icon className="w-5 h-5" strokeWidth={1.75} style={{ color: "#8a6a2f" }} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-bold text-sm" style={{ color: "#1a1a1a" }}>{topic.title}</p>
+                          <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{topic.desc}</p>
+                        </div>
+                        {open ? <ChevronDown className="w-5 h-5 flex-shrink-0" style={{ color: "#8a6a2f" }} /> : <ChevronRight className="w-5 h-5 flex-shrink-0" style={{ color: "#D4BFA0" }} />}
+                      </button>
+                      {open && (
+                        <div className="px-4 pb-4" style={{ paddingLeft: 72 }}>
+                          <ol className="flex flex-col gap-2.5">
+                            {topic.steps.map((step, i) => (
+                              <li key={i} className="flex items-start gap-2.5 text-sm" style={{ color: "#3d3328" }}>
+                                <span className="w-5 h-5 rounded-full text-[11px] font-bold flex items-center justify-center flex-shrink-0 mt-px" style={{ backgroundColor: "#B07848", color: "#ffffff" }}>{i + 1}</span>
+                                <span>{step}</span>
+                              </li>
+                            ))}
+                          </ol>
+                          <button type="button"
+                            onClick={() => { setActiveNav(topic.goTo); setSidebarOpen(false); }}
+                            className="inline-flex items-center gap-1.5 mt-4 px-4 py-2 text-sm font-semibold text-white cursor-pointer"
+                            style={{ backgroundColor: "#1f1b16" }}>
+                            {topic.goLabel} <ChevronRight className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   );
                 })}
               </div>
