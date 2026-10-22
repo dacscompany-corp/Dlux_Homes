@@ -156,6 +156,14 @@ const en = {
   startFrom: (when: string) => `Start cleaning · from ${when}`,
   tabMsg: "Messages",
   tabHelp: "Help",
+  tabStock: "Supplies",
+  menu: "Menu",
+  closeMenu: "Close menu",
+  roomSupplies: "Room supplies",
+  suppliesCardTitle: "Room supplies",
+  suppliesCardBody: "Count what's left and ask the office for anything you need.",
+  needSupplies: "Need supplies? Ask the office",
+  checkSupplies: "Check room supplies",
 
   steps: [
     "Tap Start cleaning on your room once the guest has left.",
@@ -324,6 +332,14 @@ const tl: CleanerStrings = {
   startFrom: (when) => `Simulan · mula ${when}`,
   tabMsg: "Mensahe",
   tabHelp: "Tulong",
+  tabStock: "Supply",
+  menu: "Menu",
+  closeMenu: "Isara ang menu",
+  roomSupplies: "Supply sa kwarto",
+  suppliesCardTitle: "Supply sa kwarto",
+  suppliesCardBody: "Bilangin ang natira at humingi sa opisina ng kailangan mo.",
+  needSupplies: "Kailangan ng supply? Humingi sa opisina",
+  checkSupplies: "Tingnan ang supply sa kwarto",
 
   steps: [
     "Pindutin ang Simulan sa iyong kwarto kapag nakaalis na ang bisita.",

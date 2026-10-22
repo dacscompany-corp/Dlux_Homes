@@ -24,6 +24,7 @@ import ImageThumb from "@/components/ImageThumb";
 import { cleaningDueAt } from "@/lib/cleaning-schedule";
 import { MonthNavigator, currentMonthKey } from "@/components/admin/owners/MonthNavigator";
 import { sameBookingRef } from "@/components/admin/NotificationBell";
+import { RoomStockAdmin } from "@/components/admin/owners/RoomStockAdmin";
 import {
   Clock, Building2, User, AlertTriangle, CheckCircle2, ChevronRight,
   Timer, ClipboardList, UserPlus, X, Plus, Pencil, Trash2, Camera, Search, ChevronDown,
@@ -390,7 +391,7 @@ function SearchBox({ value, onChange, placeholder }: { value: string; onChange: 
 
 export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRef = null }: {
   /** Tab to open on — e.g. Reports & Issues when coming from an issue notification. */
-  initialTab?: "tasks" | "checklist" | "reports" | "workload";
+  initialTab?: "tasks" | "checklist" | "reports" | "workload" | "stock";
   /** Open this booking's cleaning task straight away (from a notification). */
   focusBookingRef?: string | null;
 } = {}) {
@@ -416,7 +417,7 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
   // viewing/editing its checklist directly, without opening the drawer;
   // "Reports & Issues" lists every cleaner-submitted issue report across all
   // tasks in one place, instead of only inside one task's drawer.
-  const [topTab, setTopTab] = useState<"tasks" | "checklist" | "reports" | "workload">(initialTab);
+  const [topTab, setTopTab] = useState<"tasks" | "checklist" | "reports" | "workload" | "stock">(initialTab);
 
   const [filter, setFilter] = useState<"all" | "attention" | "awaiting-inspection">("all");
   const [taskQuery, setTaskQuery] = useState("");
@@ -495,6 +496,7 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
           { id: "checklist", label: "Cleaning Checklist" },
           { id: "reports", label: "Reports & Issues" },
           { id: "workload", label: "Cleaner Workload" },
+          { id: "stock", label: "Room Stock" },
         ] as const).map((t) => (
           <button key={t.id} onClick={() => setTopTab(t.id)}
             className="px-4 py-2 text-sm font-medium border cursor-pointer transition-colors"
@@ -512,6 +514,7 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
         {topTab === "checklist" && "Pick a room to see or change the list of jobs the cleaner must tick off there."}
         {topTab === "reports" && "Problems cleaners reported in rooms — damage, missing items, repairs."}
         {topTab === "workload" && "How many cleanings each cleaner has, so work is shared fairly."}
+        {topTab === "stock" && "Supplies kept in the room, and what cleaners have asked to be restocked."}
       </p>
 
       {topTab === "checklist" ? (
@@ -523,6 +526,8 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
         </>
       ) : topTab === "reports" ? (
         <ReportsIssuesTab />
+      ) : topTab === "stock" ? (
+        <RoomStockAdmin />
       ) : topTab === "workload" ? (
         <CleanerWorkloadTab tasks={tasks} cleaners={cleaners} isLoading={tasksLoading}
           month={month} onMonthChange={setMonth} monthsWithTasks={monthsWithTasks} />
