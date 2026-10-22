@@ -40,12 +40,13 @@ import {
   LayoutDashboard, ClipboardList, MapPin, CheckSquare, AlertTriangle,
   Bell, Menu, X, LogOut, Clock, CheckCircle2, Circle,
   AlertCircle, Building2, MessageSquare, CalendarDays, BookOpen,
-  Camera, Mail, Shield, ChevronDown, ChevronRight, LifeBuoy, Languages, Users,
+  Camera, Mail, Shield, ChevronDown, ChevronRight, LifeBuoy, Languages, Users, Package,
 } from "lucide-react";
 import { useSignedInStaff } from "@/components/admin/useSignedInStaff";
 import StaffAccountPanel from "@/components/admin/cleaners/StaffAccountPanel";
 import CleanerMonthCalendar from "@/components/admin/cleaners/CleanerMonthCalendar";
 import GuideAssessment from "@/components/admin/cleaners/GuideAssessment";
+import RoomStockCleaner from "@/components/admin/cleaners/RoomStockCleaner";
 
 // Simplified sidebar (owner spec, 2026-09-22): five top-level items —
 // Dashboard, Tasks, Schedule, Messages, Support. "Tasks" and "Support" are
@@ -67,6 +68,7 @@ const navItems: Array<
   { icon: ClipboardList,   label: "Tasks", children: [
     { icon: ClipboardList, label: "Assignments" },
   ] },
+  { icon: Package,         label: "Room Stock" },
   { icon: CalendarDays,    label: "My Schedule" },
   { icon: MessageSquare,   label: "Messages" },
   { icon: LifeBuoy,        label: "Support", children: [
@@ -1377,6 +1379,13 @@ export default function CleanerDesktopPortal() {
                   </>)}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* ── Room Stock — count room supplies and ask for what's low ── */}
+          {activeNav === "Room Stock" && (
+            <div className="max-w-3xl">
+              <RoomStockCleaner lang={checklistLang} />
             </div>
           )}
 

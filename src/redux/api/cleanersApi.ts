@@ -98,6 +98,54 @@ export interface ChecklistTaskItem {
 /** Photo of the finished area, one per checklist category, keyed by category name. */
 export type ChecklistPhotos = Record<string, { url: string; uploaded_at: string | null }>;
 
+/** Room Stock — one supply kept in the unit. */
+export interface RoomSupply {
+  id: string;
+  haven_id: string;
+  item_name: string;
+  unit_type: string;
+  /** How many the room should have when fully stocked. */
+  par_quantity: number;
+  /** Last counted amount in the room. */
+  current_quantity: number;
+  last_counted_at: string | null;
+  last_counted_by_name: string | null;
+  /** Total already asked for in requests that aren't completed yet. */
+  open_request_qty: number;
+}
+
+export interface RoomStock {
+  haven: { id: string; name: string } | null;
+  havens: { id: string; name: string }[];
+  supplies: RoomSupply[];
+}
+
+export type RestockStatus = "pending" | "processing" | "completed";
+
+export interface RestockRequest {
+  id: string;
+  haven_id: string;
+  room_name: string | null;
+  room_supply_id: string | null;
+  item_name: string;
+  quantity: number;
+  unit_type: string | null;
+  note: string | null;
+  status: RestockStatus;
+  requested_at: string;
+  processing_at: string | null;
+  completed_at: string | null;
+  admin_note: string | null;
+  requested_by_name: string | null;
+  handled_by_name: string | null;
+}
+
+/** "out" at 0, "low" below the full-stock amount, otherwise "ok". */
+export function supplyLevel(s: Pick<RoomSupply, "current_quantity" | "par_quantity">): "out" | "low" | "ok" {
+  if (s.current_quantity <= 0) return "out";
+  return s.current_quantity < s.par_quantity ? "low" : "ok";
+}
+
 /** Error body the complete/submit endpoints return when the gate fails. */
 export interface ChecklistGateError {
   error?: string;
@@ -141,7 +189,7 @@ export interface AvailableJobsResponse {
 export const cleanersApi = createApi({
   reducerPath: "cleanersApi",
   baseQuery: fetchBaseQuery({ baseUrl: "/api/admin/cleaners" }),
-  tagTypes: ["CleaningTask", "CleaningHistory", "Checklist", "CleanerCalendar", "AvailableJob"],
+  tagTypes: ["CleaningTask", "CleaningHistory", "Checklist", "CleanerCalendar", "AvailableJob", "RoomStock", "RestockRequest"],
   endpoints: (builder) => ({
     // Get (or lazily create) the checklist for one assignment's (haven, booking).
     getChecklist: builder.query<Checklist, { havenId: string; bookingId: string }>({
@@ -374,6 +422,46 @@ export const cleanersApi = createApi({
       invalidatesTags: ["CleaningTask", "CleaningHistory"],
     }),
 
+    // ── Room Stock ─────────────────────────────────────────────────────────
+    getRoomStock: builder.query<RoomStock, { havenId?: string } | void>({
+      query: (arg) => ({ url: "/room-stock", params: arg && arg.havenId ? { haven_id: arg.havenId } : undefined }),
+      transformResponse: (r: { success: boolean; data: RoomStock }) => r.data,
+      providesTags: ["RoomStock"],
+    }),
+    addRoomSupply: builder.mutation<{ added: number }, { havenId?: string; starter?: boolean; itemName?: string; unitType?: string; parQuantity?: number; currentQuantity?: number }>({
+      query: (a) => ({ url: "/room-stock", method: "POST", body: {
+        haven_id: a.havenId, starter: a.starter, item_name: a.itemName, unit_type: a.unitType,
+        par_quantity: a.parQuantity, current_quantity: a.currentQuantity,
+      } }),
+      transformResponse: (r: { success: boolean; data: { added: number } }) => r.data,
+      invalidatesTags: ["RoomStock"],
+    }),
+    updateRoomSupply: builder.mutation<unknown, { id: string; itemName?: string; unitType?: string; parQuantity?: number }>({
+      query: (a) => ({ url: `/room-stock/${a.id}`, method: "PUT", body: { item_name: a.itemName, unit_type: a.unitType, par_quantity: a.parQuantity } }),
+      invalidatesTags: ["RoomStock"],
+    }),
+    deleteRoomSupply: builder.mutation<unknown, string>({
+      query: (id) => ({ url: `/room-stock/${id}`, method: "DELETE" }),
+      invalidatesTags: ["RoomStock"],
+    }),
+    saveSupplyCounts: builder.mutation<unknown, { id: string; current_quantity: number }[]>({
+      query: (counts) => ({ url: "/room-stock/counts", method: "PATCH", body: { counts } }),
+      invalidatesTags: ["RoomStock"],
+    }),
+    getRestockRequests: builder.query<RestockRequest[], { status?: RestockStatus } | void>({
+      query: (arg) => ({ url: "/restock-requests", params: arg && arg.status ? { status: arg.status } : undefined }),
+      transformResponse: (r: { success: boolean; data: RestockRequest[] }) => r.data ?? [],
+      providesTags: ["RestockRequest"],
+    }),
+    createRestockRequest: builder.mutation<unknown, { havenId?: string; note?: string; items: { room_supply_id?: string; item_name?: string; quantity: number }[] }>({
+      query: (a) => ({ url: "/restock-requests", method: "POST", body: { haven_id: a.havenId, note: a.note, items: a.items } }),
+      invalidatesTags: ["RestockRequest", "RoomStock"],
+    }),
+    updateRestockRequest: builder.mutation<unknown, { id: string; status?: RestockStatus; adminNote?: string }>({
+      query: (a) => ({ url: `/restock-requests/${a.id}`, method: "PATCH", body: { status: a.status, admin_note: a.adminNote } }),
+      invalidatesTags: ["RestockRequest", "RoomStock"],
+    }),
+
     // The signed-in cleaner's own Google Calendar: status, and set up / resend.
     getMyCleaningCalendar: builder.query<CleanerCalendarStatus, void>({
       query() {
@@ -450,6 +538,14 @@ export const {
   useApproveInspectionMutation,
   useRejectInspectionMutation,
   useAdminCompleteCleaningMutation,
+  useGetRoomStockQuery,
+  useAddRoomSupplyMutation,
+  useUpdateRoomSupplyMutation,
+  useDeleteRoomSupplyMutation,
+  useSaveSupplyCountsMutation,
+  useGetRestockRequestsQuery,
+  useCreateRestockRequestMutation,
+  useUpdateRestockRequestMutation,
   useGetCleaningHistoryQuery,
   useGetChecklistQuery,
   useToggleChecklistTaskMutation,

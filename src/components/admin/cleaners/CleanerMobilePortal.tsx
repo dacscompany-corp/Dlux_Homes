@@ -30,7 +30,7 @@ import { signOut, useSession } from "next-auth/react";
 import { confirmSignOut } from "@/components/SignOutConfirm";
 import toast from "react-hot-toast";
 import {
-  Check, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Clock, MapPin, AlertTriangle, Camera, Play,
+  Check, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Clock, MapPin, AlertTriangle, Camera, Play, Menu, X, User,
   Image as ImageIcon, Phone, ClipboardList, MessageSquare, LifeBuoy,
   Wrench, Droplet, Package, HelpCircle, LogOut, CheckCircle2, Users, Send, Bell,
 } from "lucide-react";
@@ -56,7 +56,7 @@ import {
 } from "@/redux/api/cleanersApi";
 import { useAssignmentChecklist, gateErrorMessage } from "@/components/admin/cleaners/useAssignmentChecklist";
 import { bookingRefFrom, sameBookingRef } from "@/components/admin/NotificationBell";
-import CleanerCalendarCard from "@/components/admin/cleaners/CleanerCalendarCard";
+import RoomStockCleaner from "@/components/admin/cleaners/RoomStockCleaner";
 import GuideAssessment from "@/components/admin/cleaners/GuideAssessment";
 import StaffAccountPanel from "@/components/admin/cleaners/StaffAccountPanel";
 import { canStartCleaning, cleaningDueAt, isCurrentCleaning, stayKindFor, startOfManilaDay, type StayKind } from "@/lib/cleaning-schedule";
@@ -118,7 +118,7 @@ const LANG_KEY = "dlux-cleaner-lang";
 // the bottom — the Messages reply bar — sits above it instead of under it.
 const TAB_BAR_CLEARANCE = 108;
 
-type Screen = "home" | "room" | "done" | "problem" | "messages" | "notifications" | "help" | "account";
+type Screen = "home" | "room" | "done" | "problem" | "messages" | "notifications" | "help" | "account" | "stock";
 type CleanStatus = "pending" | "in-progress" | "awaiting-inspection" | "ready";
 type ProblemType = "broken" | "dirty" | "missing" | "other";
 
@@ -591,7 +591,8 @@ export default function CleanerMobilePortal() {
     if (screen === "room" && activeId && !tasksLoading && !active) setScreen("home");
   }, [screen, activeId, active, tasksLoading]);
 
-  const showTabs = screen === "home" || screen === "messages" || screen === "notifications" || screen === "help";
+  // Side menu (replaces the floating bottom bar, owner 2026-10-22).
+  const [menuOpen, setMenuOpen] = useState(false);
 
   // ── Booking details on each card ──────────────────────────────────────────
   // Every card is the same property, so the name alone can't tell two jobs
@@ -641,51 +642,98 @@ export default function CleanerMobilePortal() {
   );
 
   return (
-    <div style={{ minHeight: "100dvh", background: C.bg, fontFamily: SANS, color: C.ink, WebkitFontSmoothing: "antialiased" }}>
+    <div className="dlx-root" style={{ minHeight: "100dvh", background: C.bg, fontFamily: SANS, color: C.ink, WebkitFontSmoothing: "antialiased" }}>
+        {/* Motion (owner 2026-10-22: "not boring"). Short, gentle, and fully
+            switched off for anyone who has asked their phone to reduce motion. */}
+        <style>{`
+          @keyframes dlxFadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+          @keyframes dlxFade { from { opacity: 0; } to { opacity: 1; } }
+          @keyframes dlxSlideIn { from { transform: translateX(-100%); } to { transform: none; } }
+          @keyframes dlxPop { 0% { transform: scale(.3); opacity: 0; } 60% { transform: scale(1.15); opacity: 1; } 100% { transform: scale(1); } }
+          @keyframes dlxRing { from { box-shadow: 0 0 0 0 rgba(16,185,129,.45); } to { box-shadow: 0 0 0 26px rgba(16,185,129,0); } }
+          .dlx-root .dlx-screen { animation: dlxFadeUp .34s cubic-bezier(.2,.8,.2,1) both; }
+          .dlx-root .dlx-stagger > * { animation: dlxFadeUp .42s cubic-bezier(.2,.8,.2,1) both; }
+          .dlx-root .dlx-stagger > *:nth-child(2) { animation-delay: .05s; }
+          .dlx-root .dlx-stagger > *:nth-child(3) { animation-delay: .10s; }
+          .dlx-root .dlx-stagger > *:nth-child(4) { animation-delay: .15s; }
+          .dlx-root .dlx-stagger > *:nth-child(5) { animation-delay: .20s; }
+          .dlx-root .dlx-stagger > *:nth-child(n+6) { animation-delay: .25s; }
+          .dlx-root .dlx-overlay { animation: dlxFade .2s ease both; }
+          .dlx-root .dlx-drawer { animation: dlxSlideIn .3s cubic-bezier(.2,.8,.2,1) both; }
+          .dlx-root .dlx-pop { animation: dlxPop .35s cubic-bezier(.2,.8,.2,1) both; }
+          .dlx-root .dlx-celebrate { animation: dlxPop .6s cubic-bezier(.2,.8,.2,1) both, dlxRing 1.2s ease-out .4s 2; }
+          .dlx-root button { transition: transform .12s ease, background-color .2s ease, color .2s ease, box-shadow .2s ease; }
+          .dlx-root button:not(:disabled):active { transform: scale(.97); }
+          @media (prefers-reduced-motion: reduce) {
+            .dlx-root *, .dlx-root *::before, .dlx-root *::after { animation: none !important; transition: none !important; }
+          }
+        `}</style>
+
       <div style={{ position: "relative", margin: "0 auto", width: "100%", maxWidth: 480, minHeight: "100dvh", display: "flex", flexDirection: "column", background: C.bg }}>
+
+        {/* ═════════ TOP BAR (main screens) ═════════ */}
+        {/* Messages and Notifications keep their own header with a back button. */}
+        {(screen === "home" || screen === "stock" || screen === "help") && (
+          <div style={{
+            position: "sticky", top: 0, zIndex: 30, background: C.card, borderBottom: `1px solid ${C.line}`,
+            padding: `calc(env(safe-area-inset-top, 0px) + 8px) 12px 8px`,
+            display: "flex", alignItems: "center", gap: 10,
+          }}>
+            <button type="button" onClick={() => setMenuOpen(true)} aria-label={t.menu} style={{
+              position: "relative", width: 48, height: 48, borderRadius: 12, border: `1px solid ${C.line}`,
+              background: C.bg, color: C.ink, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0,
+            }}>
+              <Menu className="w-6 h-6" strokeWidth={2} />
+              {unreadMsgs > 0 && (
+                <span style={{ position: "absolute", top: 8, right: 8, width: 10, height: 10, borderRadius: "50%", background: C.gold, border: `2px solid ${C.bg}` }} />
+              )}
+            </button>
+            <div style={{ fontSize: 19, fontWeight: 700, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {screen === "home" ? t.menu : screen === "stock" ? t.roomSupplies : t.tabHelp}
+            </div>
+            {/* EN / TL — same place on every main screen. */}
+            <div style={{ display: "flex", background: C.bg, border: `1px solid ${C.line}`, borderRadius: 999, padding: 3, flexShrink: 0 }}>
+              {(["en", "tl"] as CleanerLanguage[]).map((code) => (
+                <button key={code} type="button" onClick={() => pickLang(code)} aria-pressed={lang === code} style={{
+                  height: 38, minWidth: 44, padding: "0 10px", border: 0, borderRadius: 999,
+                  font: `600 14px ${SANS}`, cursor: "pointer",
+                  background: lang === code ? C.ink : "transparent",
+                  color: lang === code ? C.onDark : C.muted,
+                }}>{code.toUpperCase()}</button>
+              ))}
+            </div>
+            <button type="button" onClick={() => setScreen("notifications")}
+              aria-label={unreadNotifs > 0 ? `${t.notifications} (${unreadNotifs})` : t.notifications}
+              style={{
+                position: "relative", width: 46, height: 46, borderRadius: "50%", flexShrink: 0,
+                background: C.bg, border: `1px solid ${C.line}`, color: C.ink,
+                display: "grid", placeItems: "center", cursor: "pointer",
+              }}>
+              <Bell className="w-6 h-6" strokeWidth={2} />
+              {unreadNotifs > 0 && (
+                <span style={{
+                  position: "absolute", top: -4, right: -4, minWidth: 22, height: 22, padding: "0 6px",
+                  borderRadius: 999, background: C.gold, color: C.ink, border: `2px solid ${C.card}`,
+                  fontSize: 12, fontWeight: 700, display: "grid", placeItems: "center",
+                }}>{unreadNotifs > 9 ? "9+" : unreadNotifs}</span>
+              )}
+            </button>
+          </div>
+        )}
 
         {/* ═════════ TODAY ═════════ */}
         {screen === "home" && (
-          <div style={{ flex: 1, padding: `calc(env(safe-area-inset-top, 0px) + 28px) 20px 124px` }}>
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 22 }}>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 16, color: C.muted }}>{t.hello}</div>
-                <div style={{ fontFamily: SERIF, fontSize: 40, lineHeight: 1.05, letterSpacing: "-0.01em" }}>{firstName}</div>
-                <div style={{ fontSize: 15, color: C.muted, marginTop: 6 }}>{formatDateLine(new Date(), lang)}</div>
+          <div className="dlx-screen" style={{ flex: 1, padding: "20px 20px 40px" }}>
+            {/* Short greeting — the rooms are what matter on this screen. */}
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ fontFamily: SERIF, fontSize: 28, lineHeight: 1.1 }}>{t.hello} {firstName}</div>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginTop: 6 }}>
+                <span style={{ fontSize: 15, color: C.muted }}>{formatDateLine(new Date(), lang)}</span>
                 {today.length > 0 && (
-                  <div style={{ display: "inline-block", marginTop: 8, padding: "4px 12px", borderRadius: 999, background: C.card, border: `1px solid ${C.line}`, fontSize: 15, fontWeight: 600 }}>
+                  <span style={{ padding: "3px 10px", borderRadius: 999, background: C.card, border: `1px solid ${C.line}`, fontSize: 14, fontWeight: 600 }}>
                     {t.todaySummary(today.length, today.filter((r) => r.status === "awaiting-inspection" || r.status === "ready").length)}
-                  </div>
+                  </span>
                 )}
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10, flexShrink: 0, marginTop: 4 }}>
-                <div style={{ display: "flex", background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: 3 }}>
-                  {(["en", "tl"] as CleanerLanguage[]).map((code) => (
-                    <button key={code} type="button" onClick={() => pickLang(code)} style={{
-                      height: 40, minWidth: 48, padding: "0 12px", border: 0, borderRadius: 999,
-                      font: `600 14px ${SANS}`, cursor: "pointer",
-                      background: lang === code ? C.ink : "transparent",
-                      color: lang === code ? C.onDark : C.muted,
-                    }}>{code.toUpperCase()}</button>
-                  ))}
-                </div>
-                {/* Notifications — bell with the unread count */}
-                <button type="button" onClick={() => setScreen("notifications")}
-                  aria-label={unreadNotifs > 0 ? `${t.notifications} (${unreadNotifs})` : t.notifications}
-                  style={{
-                    position: "relative", width: 48, height: 48, borderRadius: "50%",
-                    background: C.card, border: `1px solid ${C.line}`, color: C.ink,
-                    display: "grid", placeItems: "center", cursor: "pointer",
-                  }}>
-                  <Bell className="w-6 h-6" strokeWidth={2} />
-                  {unreadNotifs > 0 && (
-                    <span style={{
-                      position: "absolute", top: -4, right: -4, minWidth: 22, height: 22, padding: "0 6px",
-                      borderRadius: 999, background: C.gold, color: C.ink, border: `2px solid ${C.bg}`,
-                      fontSize: 12, fontWeight: 700, display: "grid", placeItems: "center",
-                    }}>{unreadNotifs > 9 ? "9+" : unreadNotifs}</span>
-                  )}
-                </button>
               </div>
             </div>
 
@@ -731,6 +779,7 @@ export default function CleanerMobilePortal() {
               }
               const chipsOrder: CleanStatus[] = ["in-progress", "pending", "awaiting-inspection", "ready"];
               return (<>
+
                 <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 12 }}>
                   <div style={{ fontFamily: SERIF, fontSize: 30, lineHeight: 1 }}>{t.myTasks}</div>
                   <div style={{ fontSize: 15, color: C.muted }}>{all.length}</div>
@@ -769,7 +818,7 @@ export default function CleanerMobilePortal() {
                 ) : groups.map((g) => (
                   <div key={g.label} style={{ marginBottom: 22 }}>
                     {sectionLabel(g.label)}
-                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    <div className="dlx-stagger" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                       {g.rooms.map((r) => {
                         const chip = CHIPS[r.status];
                         const locked = r.status === "pending" && !canStartCleaning(roomSchedule(r));
@@ -830,6 +879,22 @@ export default function CleanerMobilePortal() {
                   </div>
                 ))}
 
+                {/* Room supplies — below the rooms, one tap away. */}
+                <button type="button" onClick={() => setScreen("stock")} style={{
+                  width: "100%", marginBottom: 16, marginTop: 4, padding: "14px 16px", borderRadius: 16,
+                  border: `1px solid ${C.creamLine}`, background: C.cream, color: C.ink, cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 14, textAlign: "left", font: `400 16px ${SANS}`,
+                }}>
+                  <span style={{ width: 46, height: 46, borderRadius: 12, background: C.gold, display: "grid", placeItems: "center", flexShrink: 0 }}>
+                    <Package className="w-6 h-6" strokeWidth={2} style={{ color: C.ink }} />
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: "block", fontSize: 17, fontWeight: 700 }}>{t.suppliesCardTitle}</span>
+                    <span style={{ display: "block", fontSize: 14, color: C.muted, marginTop: 2 }}>{t.suppliesCardBody}</span>
+                  </span>
+                  <ChevronRight className="w-5 h-5 flex-shrink-0" style={{ color: C.goldInk }} />
+                </button>
+
                 {/* Property location, once for the whole list. */}
                 {all.length > 0 && (
                   <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 15, color: C.muted, marginTop: 4 }}>
@@ -847,7 +912,7 @@ export default function CleanerMobilePortal() {
         {screen === "room" && (
           <>
             {screenHeader(() => setScreen("home"), problemButton)}
-            <div style={{ flex: 1, padding: "20px 16px 120px" }}>
+            <div className="dlx-screen" style={{ flex: 1, padding: "20px 16px 120px" }}>
               <div style={{ fontFamily: SERIF, fontSize: 36, lineHeight: 1.05 }}>{active?.name ?? "—"}</div>
               <div style={{ fontSize: 15, color: C.muted, marginTop: 6 }}>
                 {active ? `${active.bookingRef} · ${stayText(active)}` : ""}
@@ -1001,7 +1066,7 @@ export default function CleanerMobilePortal() {
                               display: "grid", placeItems: "center", flexShrink: 0,
                               opacity: canEditChecklist || done ? 1 : 0.5,
                             }}>
-                              {done && <Check className="w-[18px] h-[18px]" strokeWidth={3} style={{ color: "#fff" }} />}
+                              {done && <Check className="w-[18px] h-[18px] dlx-pop" strokeWidth={3} style={{ color: "#fff" }} />}
                             </span>
                             <span style={{ fontSize: 17, lineHeight: 1.35, color: done ? C.faint : C.ink, textDecoration: done ? "line-through" : "none" }}>
                               {translateTask(item.task, lang)}
@@ -1048,6 +1113,17 @@ export default function CleanerMobilePortal() {
                   </div>
                 );
               })}
+
+              {/* Running low while cleaning? Ask without leaving the room. */}
+              {active && active.status !== "pending" && (
+                <button type="button" onClick={() => setScreen("stock")} style={{
+                  marginTop: 24, width: "100%", height: 56, borderRadius: 14, border: `1px solid ${C.creamLine}`,
+                  background: C.cream, color: C.goldInk, font: `700 17px ${SANS}`, cursor: "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                }}>
+                  <Package className="w-5 h-5" strokeWidth={2} />{t.needSupplies}
+                </button>
+              )}
             </div>
 
             <div style={{
@@ -1094,11 +1170,11 @@ export default function CleanerMobilePortal() {
         {/* ═════════ DONE ═════════ */}
         {screen === "done" && (
           <>
-            <div style={{
+            <div className="dlx-screen" style={{
               flex: 1, display: "flex", flexDirection: "column", alignItems: "center",
               justifyContent: "center", padding: "60px 28px 20px", textAlign: "center",
             }}>
-              <div style={{ width: 112, height: 112, borderRadius: "50%", background: C.greenBg, display: "grid", placeItems: "center" }}>
+              <div className="dlx-celebrate" style={{ width: 112, height: 112, borderRadius: "50%", background: C.greenBg, display: "grid", placeItems: "center" }}>
                 <Check className="w-[60px] h-[60px]" strokeWidth={2.5} style={{ color: C.green }} />
               </div>
               <div style={{ fontFamily: SERIF, fontSize: 44, lineHeight: 1.05, marginTop: 26 }}>{t.doneTitle}</div>
@@ -1107,6 +1183,11 @@ export default function CleanerMobilePortal() {
               </div>
             </div>
             <div style={{ padding: `12px 20px calc(env(safe-area-inset-bottom, 0px) + 28px)` }}>
+              <button type="button" onClick={() => { setActiveId(null); setScreen("stock"); }} style={{
+                width: "100%", height: 56, marginBottom: 10, borderRadius: 14, border: `1px solid ${C.creamLine}`,
+                background: C.cream, color: C.goldInk, font: `700 17px ${SANS}`, cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+              }}><Package className="w-5 h-5" strokeWidth={2} />{t.checkSupplies}</button>
               <button type="button" onClick={() => { setActiveId(null); setScreen("home"); }} style={{
                 width: "100%", height: 64, border: 0, borderRadius: 14, background: C.ink,
                 color: C.onDark, font: `700 19px ${SANS}`, cursor: "pointer",
@@ -1121,7 +1202,7 @@ export default function CleanerMobilePortal() {
             {screenHeader(closeProblem)}
             {psent ? (
               <>
-                <div style={{
+                <div className="dlx-screen" style={{
                   flex: 1, display: "flex", flexDirection: "column", alignItems: "center",
                   justifyContent: "center", padding: "20px 28px", textAlign: "center",
                 }}>
@@ -1214,7 +1295,7 @@ export default function CleanerMobilePortal() {
             bar stays visible; the reply bar's bottom padding reserves its
             space (see TAB_BAR_CLEARANCE) so it never covers the text box. */}
         {screen === "messages" && (
-          <div style={{ height: "100dvh", display: "flex", flexDirection: "column", background: C.bg }}>
+          <div className="dlx-screen" style={{ height: "100dvh", display: "flex", flexDirection: "column", background: C.bg }}>
             {/* Header */}
             <div style={{
               flexShrink: 0, background: C.card, borderBottom: `1px solid ${C.line}`,
@@ -1356,7 +1437,7 @@ export default function CleanerMobilePortal() {
 
         {/* ═════════ NOTIFICATIONS ═════════ */}
         {screen === "notifications" && (
-          <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+          <div className="dlx-screen" style={{ flex: 1, display: "flex", flexDirection: "column" }}>
             <div style={{
               position: "sticky", top: 0, zIndex: 20, background: C.card, borderBottom: `1px solid ${C.line}`,
               padding: `calc(env(safe-area-inset-top, 0px) + 10px) 12px 10px 6px`,
@@ -1423,7 +1504,7 @@ export default function CleanerMobilePortal() {
 
         {/* ═════════ HELP ═════════ */}
         {screen === "help" && (
-          <div style={{ flex: 1, padding: `calc(env(safe-area-inset-top, 0px) + 28px) 20px 124px` }}>
+          <div className="dlx-screen" style={{ flex: 1, padding: "20px 20px 40px" }}>
             <div style={{ fontFamily: SERIF, fontSize: 40, lineHeight: 1.05 }}>{t.helpTitle}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 20 }}>
               {OFFICE_PHONE ? (
@@ -1433,15 +1514,7 @@ export default function CleanerMobilePortal() {
                 }}>
                   <Phone className="w-[26px] h-[26px] flex-shrink-0" strokeWidth={2} style={{ color: C.gold }} />{t.callOffice}
                 </a>
-              ) : (
-                <button type="button" onClick={openMessages} style={{
-                  minHeight: 72, padding: "0 18px", borderRadius: 16, background: C.ink, color: C.onDark,
-                  border: 0, display: "flex", alignItems: "center", gap: 14, font: `600 19px ${SANS}`,
-                  cursor: "pointer", textAlign: "left",
-                }}>
-                  <MessageSquare className="w-[26px] h-[26px] flex-shrink-0" strokeWidth={2} style={{ color: C.gold }} />{t.messageOffice}
-                </button>
-              )}
+              ) : null /* Messages is in the side menu (☰). */}
               <button type="button" onClick={openProblem} style={{
                 minHeight: 72, padding: "0 18px", borderRadius: 16, background: C.amberBg, color: C.amberInk,
                 border: `1px solid ${C.amberLine}`, display: "flex", alignItems: "center", gap: 14,
@@ -1480,9 +1553,6 @@ export default function CleanerMobilePortal() {
               })}
             </div>
 
-            <div style={{ marginTop: 30 }}>
-              <CleanerCalendarCard lang={lang} size="mobile" />
-            </div>
 
             {me?.id && (
               <div style={{ marginTop: 30, background: C.card }}>
@@ -1491,40 +1561,20 @@ export default function CleanerMobilePortal() {
             )}
 
 
-            <div style={{
-              marginTop: 30, display: "flex", alignItems: "center", gap: 12, padding: "14px 16px",
-              background: C.card, border: `1px solid ${C.line}`, borderRadius: 16,
-            }}>
-              <span style={{
-                width: 44, height: 44, borderRadius: "50%", background: C.gold, color: "#2c1f14",
-                display: "grid", placeItems: "center", fontFamily: SERIF, fontSize: 22, flexShrink: 0,
-              }}>{firstName.charAt(0).toUpperCase()}</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 17, fontWeight: 600 }}>{me?.name || "Cleaner"}</div>
-                <div style={{ fontSize: 14, color: C.muted, overflow: "hidden", textOverflow: "ellipsis" }}>{me?.email || ""}</div>
-              </div>
-              <button type="button" onClick={() => confirmSignOut("/admin/login")} style={{
-                height: 44, padding: "0 14px", border: `1px solid ${C.line}`, background: C.bg,
-                borderRadius: 12, font: `500 15px ${SANS}`, color: C.ink, cursor: "pointer",
-                display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
-              }}>
-                <LogOut className="w-4 h-4" />{t.signOut}
-              </button>
-            </div>
-            <button type="button" onClick={() => setScreen("account")} style={{
-              marginTop: 10, width: "100%", minHeight: 56, padding: "0 16px", borderRadius: 16,
-              border: `1px solid ${C.creamLine}`, background: C.cream, color: C.goldInk,
-              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
-              font: `600 17px ${SANS}`, cursor: "pointer", textAlign: "left",
-            }}>
-              {t.accEdit}<ChevronRight className="w-5 h-5 flex-shrink-0" strokeWidth={2} />
-            </button>
+            {/* Account and Sign out live in the side menu (☰). */}
+          </div>
+        )}
+
+        {/* ═════════ ROOM SUPPLIES ═════════ */}
+        {screen === "stock" && (
+          <div className="dlx-screen" style={{ flex: 1, padding: "20px 16px 40px" }}>
+            <RoomStockCleaner lang={lang} big />
           </div>
         )}
 
         {/* ═════════ MY ACCOUNT ═════════ */}
         {screen === "account" && (
-          <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+          <div className="dlx-screen" style={{ flex: 1, display: "flex", flexDirection: "column" }}>
             <div style={{
               position: "sticky", top: 0, zIndex: 20, background: C.card, borderBottom: `1px solid ${C.line}`,
               padding: `calc(env(safe-area-inset-top, 0px) + 10px) 12px 10px 6px`,
@@ -1544,48 +1594,75 @@ export default function CleanerMobilePortal() {
           </div>
         )}
 
-        {/* ═════════ FLOATING NAV ═════════ */}
-        {showTabs && (
-          <div style={{
-            position: "fixed", left: "50%", transform: "translateX(-50%)",
-            bottom: `calc(env(safe-area-inset-bottom, 0px) + 22px)`,
-            width: "100%", maxWidth: 480, padding: "0 16px", zIndex: 40, pointerEvents: "none",
-          }}>
-            <div style={{
-              background: C.ink, borderRadius: 999, padding: 8, display: "flex", gap: 4,
-              boxShadow: "0 16px 40px rgba(31,27,22,0.35)", pointerEvents: "auto",
+        {/* ═════════ SIDE MENU ═════════ */}
+        {menuOpen && (
+          <div style={{ position: "fixed", inset: 0, zIndex: 60 }}>
+            <div className="dlx-overlay" onClick={() => setMenuOpen(false)} style={{ position: "absolute", inset: 0, background: "rgba(31,27,22,0.45)" }} />
+            <nav className="dlx-drawer" aria-label={t.menu} style={{
+              position: "absolute", top: 0, bottom: 0, left: 0, width: "84%", maxWidth: 340, background: C.card,
+              boxShadow: "8px 0 30px rgba(31,27,22,0.25)", display: "flex", flexDirection: "column",
+              padding: `calc(env(safe-area-inset-top, 0px) + 14px) 14px calc(env(safe-area-inset-bottom, 0px) + 16px)`,
+              overflowY: "auto",
             }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
+                <span style={{
+                  width: 48, height: 48, borderRadius: "50%", background: C.gold, color: "#2c1f14",
+                  display: "grid", placeItems: "center", fontFamily: SERIF, fontSize: 24, flexShrink: 0,
+                }}>{firstName.charAt(0).toUpperCase()}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 17, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{me?.name || "Cleaner"}</div>
+                  <div style={{ fontSize: 13, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{me?.email || ""}</div>
+                </div>
+                <button type="button" onClick={() => setMenuOpen(false)} aria-label={t.closeMenu} style={{
+                  width: 44, height: 44, borderRadius: 12, border: 0, background: C.bg, color: C.ink,
+                  display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0,
+                }}>
+                  <X className="w-5 h-5" strokeWidth={2} />
+                </button>
+              </div>
+
               {([
-                { id: "home" as Screen, label: t.tabTasks, Icon: ClipboardList, onClick: () => setScreen("home"), badge: false },
-                // Notifications have their own tab now, so each dot means one thing:
-                // Messages = unread office messages, Notifications = unread notifications.
-                { id: "messages" as Screen, label: t.tabMsg, Icon: MessageSquare, onClick: openMessages, badge: unreadMsgs > 0 },
-                { id: "notifications" as Screen, label: t.notifications, Icon: Bell, onClick: () => setScreen("notifications"), badge: unreadNotifs > 0 },
-                { id: "help" as Screen, label: t.tabHelp, Icon: LifeBuoy, onClick: () => setScreen("help"), badge: false },
-              ]).map(({ id, label, Icon, onClick, badge }) => {
+                { id: "home" as Screen, label: t.tabTasks, Icon: ClipboardList, go: () => setScreen("home"), count: 0 },
+                { id: "stock" as Screen, label: t.roomSupplies, Icon: Package, go: () => setScreen("stock"), count: 0 },
+                { id: "messages" as Screen, label: t.tabMsg, Icon: MessageSquare, go: openMessages, count: unreadMsgs },
+                // Notifications open from the bell in the top bar.
+                { id: "help" as Screen, label: t.tabHelp, Icon: LifeBuoy, go: () => setScreen("help"), count: 0 },
+              ]).map(({ id, label, Icon, go, count }) => {
                 const on = screen === id;
                 return (
-                  <button key={id} type="button" onClick={onClick} aria-label={label} aria-current={on ? "page" : undefined}
+                  <button key={id} type="button" aria-current={on ? "page" : undefined}
+                    onClick={() => { setMenuOpen(false); go(); }}
                     style={{
-                      flex: on ? "2.2" : "1", height: 60, border: 0, borderRadius: 999,
-                      background: on ? C.gold : "transparent", color: on ? C.ink : C.onDarkFaint,
-                      display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                      font: `700 16px ${SANS}`, cursor: "pointer", position: "relative",
-                      minWidth: 0, overflow: "hidden", whiteSpace: "nowrap",
-                      transition: "all .3s cubic-bezier(.2,.8,.2,1)",
+                      width: "100%", minHeight: 56, padding: "0 14px", marginBottom: 6, borderRadius: 14, border: 0,
+                      background: on ? C.gold : "transparent", color: C.ink, cursor: "pointer",
+                      display: "flex", alignItems: "center", gap: 14, textAlign: "left", font: `${on ? 700 : 600} 17px ${SANS}`,
                     }}>
                     <Icon className="w-6 h-6 flex-shrink-0" strokeWidth={2} />
-                    {on && <span>{label}</span>}
-                    {badge && !on && (
+                    <span style={{ flex: 1 }}>{label}</span>
+                    {count > 0 && (
                       <span style={{
-                        position: "absolute", top: 12, right: "calc(50% - 18px)", width: 10, height: 10,
-                        borderRadius: "50%", background: C.gold, border: `2px solid ${C.ink}`,
-                      }} />
+                        minWidth: 24, height: 24, padding: "0 7px", borderRadius: 999, background: on ? C.ink : C.gold,
+                        color: on ? C.onDark : C.ink, fontSize: 13, fontWeight: 700, display: "grid", placeItems: "center",
+                      }}>{count > 9 ? "9+" : count}</span>
                     )}
                   </button>
                 );
               })}
-            </div>
+
+              <div style={{ height: 1, background: C.line, margin: "10px 4px 12px" }} />
+              <button type="button" onClick={() => { setMenuOpen(false); setScreen("account"); }} style={{
+                width: "100%", minHeight: 52, padding: "0 14px", borderRadius: 14, border: 0, background: "transparent",
+                color: C.ink, cursor: "pointer", display: "flex", alignItems: "center", gap: 14, textAlign: "left", font: `600 16px ${SANS}`,
+              }}>
+                <User className="w-5 h-5 flex-shrink-0" strokeWidth={2} />{t.accEdit}
+              </button>
+              <button type="button" onClick={() => { setMenuOpen(false); confirmSignOut("/admin/login"); }} style={{
+                width: "100%", minHeight: 52, padding: "0 14px", borderRadius: 14, border: 0, background: "transparent",
+                color: "#A8492F", cursor: "pointer", display: "flex", alignItems: "center", gap: 14, textAlign: "left", font: `600 16px ${SANS}`,
+              }}>
+                <LogOut className="w-5 h-5 flex-shrink-0" strokeWidth={2} />{t.signOut}
+              </button>
+            </nav>
           </div>
         )}
       </div>
