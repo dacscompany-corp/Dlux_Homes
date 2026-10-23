@@ -46,6 +46,8 @@ const COPY = {
     none: "You haven't asked for anything yet.",
     empty: "No supply list for this room yet — you can still ask for anything below.",
     loading: "Loading supplies…",
+    loadFailed: "Couldn't load room supplies. Check your connection and try again.",
+    retry: "Try again",
     status: { pending: "Pending", processing: "Processing", completed: "Completed" } as Record<RestockStatus, string>,
     statusHint: { pending: "Waiting for the office", processing: "The office is getting it", completed: "Delivered to the room" } as Record<RestockStatus, string>,
   },
@@ -70,6 +72,8 @@ const COPY = {
     none: "Wala ka pang hinihingi.",
     empty: "Wala pang listahan ng supply ang kwarto — pwede ka pa ring humingi sa ibaba.",
     loading: "Kinukuha ang mga supply…",
+    loadFailed: "Hindi makuha ang supply sa kwarto. Tingnan ang koneksyon at subukan ulit.",
+    retry: "Subukan ulit",
     status: { pending: "Naghihintay", processing: "Inaasikaso", completed: "Tapos na" } as Record<RestockStatus, string>,
     statusHint: { pending: "Hinihintay ang opisina", processing: "Kinukuha na ng opisina", completed: "Naihatid na sa kwarto" } as Record<RestockStatus, string>,
   },
@@ -89,7 +93,7 @@ const STATUS_STYLE: Record<RestockStatus, { fg: string; bg: string; Icon: typeof
 
 export default function RoomStockCleaner({ lang = "en", big = false }: { lang?: Lang; big?: boolean }) {
   const t = COPY[lang];
-  const { data, isLoading } = useGetRoomStockQuery();
+  const { data, isLoading, isError, refetch } = useGetRoomStockQuery();
   const { data: requests = [] } = useGetRestockRequestsQuery(undefined, { pollingInterval: 60000 });
   const [saveCounts, { isLoading: saving }] = useSaveSupplyCountsMutation();
   const [createRequest, { isLoading: sending }] = useCreateRestockRequestMutation();
@@ -172,6 +176,18 @@ export default function RoomStockCleaner({ lang = "en", big = false }: { lang?: 
   );
 
   if (isLoading) return <p style={{ fontSize: fs, color: C.muted }}>{t.loading}</p>;
+  // Say so plainly instead of showing an empty, unresponsive screen.
+  if (isError && !data) {
+    return (
+      <div role="alert" style={{ background: C.amberBg, color: C.amber, borderRadius: 14, padding: 16, fontSize: fs, display: "flex", flexDirection: "column", gap: 12 }}>
+        {t.loadFailed}
+        <button type="button" onClick={() => refetch()}
+          style={{ height: btnH, borderRadius: 12, border: 0, background: C.amber, color: "#fff", fontWeight: 700, fontSize: fs, cursor: "pointer" }}>
+          {t.retry}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>

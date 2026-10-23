@@ -197,3 +197,23 @@ export async function fileToCompressedDataUrl(file: File, opts: CompressOptions 
     handle?.done();
   }
 }
+
+// Cleaner proof photos (checklist areas, problem reports). The office only needs
+// to see that a room is clean, so ~1600px / ~450 KB is plenty — and a phone on
+// mobile data uploads that in a second or two instead of pushing a 5–12 MB
+// camera original through the server to Cloudinary.
+export const CLEANING_PHOTO_PRESET = { maxDimension: 1600, maxBytes: 450 * 1024 };
+
+/**
+ * Same as fileToCompressedDataUrl, but hands back a File for multipart
+ * (FormData) uploads. Small files come back unchanged; HEIC is converted to
+ * JPEG. Throws only when a HEIC can't be converted (see above).
+ */
+export async function fileToCompressedFile(file: File, opts: CompressOptions = CLEANING_PHOTO_PRESET): Promise<File> {
+  const dataUrl = await fileToCompressedDataUrl(file, opts);
+  const blob = await (await fetch(dataUrl)).blob();
+  if (blob.size >= file.size && blob.type === file.type) return file; // nothing gained
+  const ext = blob.type === "image/jpeg" ? "jpg" : (blob.type.split("/")[1] || "img");
+  const base = file.name.replace(/.[^.]+$/, "") || "photo";
+  return new File([blob], `${base}.${ext}`, { type: blob.type || "image/jpeg" });
+}

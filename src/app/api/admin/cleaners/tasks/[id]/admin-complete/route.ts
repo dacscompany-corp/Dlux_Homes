@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
 import { requireAdmin } from "@/backend/utils/requireAdmin";
-import { logCleaningHistory } from "@/backend/controller/cleanersController";
+import { logCleaningHistory, notifyCleaningEvent } from "@/backend/controller/cleanersController";
 import { scheduleCleaningCalendarSync } from "@/backend/utils/cleaningCalendar";
 import { logActivity } from "@/backend/utils/activityLogger";
 import { describe } from "@/lib/cleaning-workflow";
@@ -48,6 +48,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     await logCleaningHistory(id, from, "ready", currentUserId, `Marked complete by admin (override from ${describe(from)})`);
 
     scheduleCleaningCalendarSync(id);
+    await notifyCleaningEvent(id, "admin-completed");
 
     await logActivity({
       employeeId: currentUserId ?? "00000000-0000-0000-0000-000000000000",

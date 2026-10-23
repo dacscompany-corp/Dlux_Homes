@@ -27,7 +27,8 @@ import {
   type Checklist,
 } from "@/redux/api/cleanersApi";
 import { evaluateChecklistGate, type GateResult } from "@/lib/cleaning-checklist-gate";
-import { imageFileError } from "@/lib/validateImageFile";
+import { imageFileError, PHOTO_READ_ERROR } from "@/lib/validateImageFile";
+import { CLEANING_PHOTO_PRESET, fileToCompressedFile } from "@/lib/compressImage";
 
 export type UploadState = "uploading" | "failed";
 
@@ -72,6 +73,17 @@ export function useAssignmentChecklist(target: Target): AssignmentChecklist {
   // Photos uploaded this session (by category), shown before the refetch lands.
   const [freshPhotos, setFreshPhotos] = useState<Record<string, string>>({});
   const [uploads, setUploads] = useState<Record<string, UploadState>>({});
+  // The picture the cleaner just took, shown at once (local object URL) while
+  // it uploads — so the photo "appears" immediately instead of after the upload.
+  const [previews, setPreviews] = useState<Record<string, string>>({});
+  const dropPreview = (category: string) =>
+    setPreviews((p) => {
+      if (!p[category]) return p;
+      URL.revokeObjectURL(p[category]);
+      const next = { ...p };
+      delete next[category];
+      return next;
+    });
   const [uploadErrors, setUploadErrors] = useState<Record<string, string>>({});
 
   const tasks = useMemo(
@@ -85,9 +97,9 @@ export function useAssignmentChecklist(target: Target): AssignmentChecklist {
   const photoFor = useCallback(
     (category: string) => {
       const fromServer = checklist?.categories.find((c) => c.category === category)?.photo_url ?? null;
-      return fromServer || freshPhotos[category] || null;
+      return previews[category] || freshPhotos[category] || fromServer || null;
     },
-    [checklist, freshPhotos],
+    [checklist, freshPhotos, previews],
   );
 
   const gate = useMemo(
@@ -136,6 +148,10 @@ export function useAssignmentChecklist(target: Target): AssignmentChecklist {
       if (!checklistId) return { ok: false, error: "No checklist to attach this photo to" };
 
       setUploads((u) => ({ ...u, [category]: "uploading" }));
+      setPreviews((p) => {
+        if (p[category]) URL.revokeObjectURL(p[category]);
+        return { ...p, [category]: URL.createObjectURL(file) };
+      });
       setUploadErrors((e) => {
         const next = { ...e };
         delete next[category];
@@ -144,7 +160,18 @@ export function useAssignmentChecklist(target: Target): AssignmentChecklist {
 
       try {
         const fd = new FormData();
-        fd.append("file", file);
+        // Shrink on the phone first: a 1600px JPEG uploads many times faster
+        // than the camera original. A HEIC that can't be read is reported.
+        let toSend: File;
+        try {
+          toSend = await fileToCompressedFile(file, CLEANING_PHOTO_PRESET);
+        } catch {
+          dropPreview(category);
+          setUploads((u) => ({ ...u, [category]: "failed" }));
+          setUploadErrors((e) => ({ ...e, [category]: PHOTO_READ_ERROR }));
+          return { ok: false, error: PHOTO_READ_ERROR };
+        }
+        fd.append("file", toSend);
         fd.append("checklist_id", checklistId);
         fd.append("category", category);
         const res = await fetch("/api/admin/cleaners/checklist-photos", { method: "POST", body: fd });
@@ -153,11 +180,13 @@ export function useAssignmentChecklist(target: Target): AssignmentChecklist {
         // exists — anything short of that is a failure the cleaner must see.
         if (!res.ok || !body?.url) {
           const msg = typeof body?.error === "string" && body.error ? body.error : "Photo upload failed";
+          dropPreview(category);
           setUploads((u) => ({ ...u, [category]: "failed" }));
           setUploadErrors((e) => ({ ...e, [category]: msg }));
           return { ok: false, error: msg };
         }
         setFreshPhotos((p) => ({ ...p, [category]: String(body.url) }));
+        dropPreview(category);
         setUploads((u) => {
           const next = { ...u };
           delete next[category];
@@ -168,6 +197,7 @@ export function useAssignmentChecklist(target: Target): AssignmentChecklist {
         return { ok: true, autoCompleted: !!body.autoCompleted };
       } catch {
         const msg = "Photo upload failed — check your connection and try again";
+        dropPreview(category);
         setUploads((u) => ({ ...u, [category]: "failed" }));
         setUploadErrors((e) => ({ ...e, [category]: msg }));
         return { ok: false, error: msg };

@@ -142,6 +142,52 @@ const en = {
   // Nav
   tabToday: "Today",
   tabTasks: "Tasks",
+  howDoI: "How do I…?",
+  howDoIHint: "Tap a question to see the steps.",
+  showMe: "Show me",
+  guide: [
+    { title: "Start cleaning a room", go: "home", steps: [
+      "Open Menu → Tasks. Your rooms are listed by day.",
+      "Wait until the guest has left — the button shows the time you can start.",
+      "Tap Start cleaning on the room. Its task list opens.",
+    ] },
+    { title: "Tick tasks and take the photos", go: "home", steps: [
+      "In the room, tap Show tasks if the list is hidden.",
+      "Tap each task when it's done — a ✓ appears.",
+      "Under each area (Bedroom, Bathroom…) tap the camera and take 1 photo of the finished area.",
+      "When all tasks are ticked and every area has a photo, the room is sent to the office by itself.",
+    ] },
+    { title: "Fix a room the office sent back", go: "home", steps: [
+      "The room shows Cleaning now again with a purple note.",
+      "Read the note — it says what to fix.",
+      "Tap Fix & continue, fix it, and replace the photo of that area if needed.",
+    ] },
+    { title: "Ask for supplies", go: "stock", steps: [
+      "Open Menu → Room supplies (or tap Need supplies? while cleaning).",
+      "Count what's left with − and +, then tap Save counts.",
+      "Pick what's low or type any item you need, then tap Send request.",
+      "Check My requests: Pending → Processing → Completed.",
+    ] },
+    { title: "Report something broken or missing", go: "problem", steps: [
+      "Open Menu → Report a problem (or tap Problem? in a room).",
+      "Pick what's wrong and add a photo if you can.",
+      "Send it — the office is told straight away.",
+    ] },
+    { title: "Message the office", go: "messages", steps: [
+      "Open Menu → Messages.",
+      "Type your message, or tap a quick reply like \"I need supplies\".",
+      "The Owner and CSR both see it and reply in the same chat.",
+    ] },
+    { title: "Switch to Tagalog / English", go: null, steps: [
+      "Tap EN or TL at the top right of the screen.",
+      "The whole app changes language, including the task list.",
+    ] },
+    { title: "Change my password or sign out", go: "account", steps: [
+      "Tap ☰ Menu at the top left.",
+      "Tap Edit profile & password to change your details.",
+      "Tap Sign out at the bottom of the menu when you're done for the day.",
+    ] },
+  ] as { title: string; go: "home" | "stock" | "problem" | "messages" | "account" | null; steps: string[] }[],
   labelsTitle: "What the labels mean",
   labelHints: {
     pending: "The room is yours, but not started yet.",
@@ -318,6 +364,52 @@ const tl: CleanerStrings = {
 
   tabToday: "Ngayon",
   tabTasks: "Gawain",
+  howDoI: "Paano ko…?",
+  howDoIHint: "Pindutin ang tanong para makita ang mga hakbang.",
+  showMe: "Ipakita",
+  guide: [
+    { title: "Simulan ang paglilinis ng kwarto", go: "home", steps: [
+      "Buksan ang Menu → Gawain. Nakalista ang mga kwarto mo ayon sa araw.",
+      "Hintaying makaalis ang bisita — nakasulat sa button kung kailan pwedeng magsimula.",
+      "Pindutin ang Simulan ang paglilinis sa kwarto. Bubukas ang listahan ng gawain.",
+    ] },
+    { title: "I-tsek ang gawain at kumuha ng litrato", go: "home", steps: [
+      "Sa kwarto, pindutin ang Ipakita ang mga gawain kung nakatago.",
+      "Pindutin ang bawat gawaing natapos — lalabas ang ✓.",
+      "Sa bawat bahagi (Kwarto, Banyo…) pindutin ang camera at kunan ng 1 litrato ang natapos na bahagi.",
+      "Kapag na-tsek lahat at may litrato ang bawat bahagi, kusang ipapadala ang kwarto sa opisina.",
+    ] },
+    { title: "Ayusin ang kwartong ibinalik ng opisina", go: "home", steps: [
+      "Babalik sa Nililinis ang kwarto na may kulay-ube na mensahe.",
+      "Basahin ang mensahe — nakasulat kung ano ang aayusin.",
+      "Pindutin ang Ayusin at ituloy, ayusin, at palitan ang litrato kung kailangan.",
+    ] },
+    { title: "Humingi ng supply", go: "stock", steps: [
+      "Buksan ang Menu → Supply sa kwarto (o pindutin ang Kailangan ng supply? habang naglilinis).",
+      "Bilangin ang natira gamit ang − at +, tapos pindutin ang I-save ang bilang.",
+      "Piliin ang kulang o isulat ang kailangan, tapos pindutin ang Ipadala ang hiling.",
+      "Tingnan ang Mga hiling ko: Naghihintay → Inaasikaso → Tapos na.",
+    ] },
+    { title: "Mag-report ng sira o nawawala", go: "problem", steps: [
+      "Buksan ang Menu → Mag-report ng problema (o pindutin ang May problema? sa kwarto).",
+      "Piliin kung ano ang problema at maglagay ng litrato kung kaya.",
+      "Ipadala — malalaman agad ng opisina.",
+    ] },
+    { title: "Mag-message sa opisina", go: "messages", steps: [
+      "Buksan ang Menu → Mensahe.",
+      "Isulat ang mensahe, o pindutin ang mabilis na sagot gaya ng \"Kailangan ko ng supplies\".",
+      "Makikita ito ng Owner at CSR at sasagot sila sa parehong chat.",
+    ] },
+    { title: "Lumipat sa Tagalog / English", go: null, steps: [
+      "Pindutin ang EN o TL sa kanang itaas ng screen.",
+      "Magpapalit ng wika ang buong app, pati ang listahan ng gawain.",
+    ] },
+    { title: "Palitan ang password o mag-sign out", go: "account", steps: [
+      "Pindutin ang ☰ Menu sa kaliwang itaas.",
+      "Pindutin ang I-edit ang profile at password para baguhin ang detalye mo.",
+      "Pindutin ang Mag-sign out sa ibaba ng menu kapag tapos na ang araw mo.",
+    ] },
+  ],
   labelsTitle: "Ibig sabihin ng mga label",
   labelHints: {
     pending: "Sa iyo ang kwarto, pero hindi pa nasisimulan.",
