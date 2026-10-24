@@ -20,7 +20,7 @@ import DluxMark from "@/components/brand/DluxMark";
 import toast from "react-hot-toast";
 import ImageThumb from "@/components/ImageThumb";
 import { useGetHavensQuery } from "@/redux/api/roomApi";
-import { useSubmitReportMutation } from "@/redux/api/reportApi";
+import { useGetReportsQuery, useSubmitReportMutation } from "@/redux/api/reportApi";
 import { useGetNotificationsQuery, useUpdateNotificationsMutation, type Notification } from "@/redux/api/notificationsApi";
 import { useGetStaffThreadsQuery } from "@/redux/api/messagesApi";
 import StaffChatThread from "@/components/admin/messages/StaffChatThread";
@@ -281,6 +281,9 @@ export default function CleanerDesktopPortal() {
     label: String(h.haven_name || h.name || "Haven"),
   }));
   const [submitReport, { isLoading: submittingIssue }] = useSubmitReportMutation();
+  // "My reports" on Report an Issue — the server returns only this cleaner's own.
+  const { data: myReportsRes } = useGetReportsQuery({}, { skip: activeNav !== "Report an Issue", pollingInterval: 60000 });
+  const myReports = ((myReportsRes as { data?: { report_id: string; issue_type: string; specific_location: string; status: string; created_at: string }[] } | undefined)?.data ?? []).slice(0, 15);
   // Set when "Report Issue" is clicked from a specific assignment card, so
   // the report stays linked to that cleaning task instead of only the haven.
   const [issueAssignmentId, setIssueAssignmentId] = useState<string | null>(null);
@@ -1273,6 +1276,31 @@ export default function CleanerDesktopPortal() {
                   </button>
                 </div>
               )}
+
+              {/* What happened to the things I reported. */}
+              <h3 className="text-sm font-semibold mt-8 mb-2" style={{ color: "#1f1b16" }}>My reports</h3>
+              <div className="border" style={{ borderColor: "#ece5d4" }}>
+                {myReports.length === 0 ? (
+                  <p className="px-4 py-4 text-sm" style={{ color: "#8B6344" }}>You haven&apos;t reported anything yet.</p>
+                ) : myReports.map((r, i) => {
+                  const st = String(r.status || "").toLowerCase();
+                  const stage = st === "resolved" || st === "closed"
+                    ? { label: "Fixed ✓", fg: "#065f46", bg: "#d1fae5" }
+                    : st === "in progress" ? { label: "Being fixed", fg: "#1e40af", bg: "#dbeafe" }
+                    : { label: "Open", fg: "#92400e", bg: "#fef3c7" };
+                  return (
+                    <div key={r.report_id} className="flex items-center gap-3 px-4 py-3" style={{ borderTop: i ? "1px solid #F7F0E3" : "none" }}>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold" style={{ color: "#1a1a1a" }}>{r.issue_type}</p>
+                        <p className="text-xs" style={{ color: "#8B6344" }}>
+                          {r.specific_location} · {new Date(r.created_at).toLocaleDateString("en-US", { timeZone: "Asia/Manila", month: "short", day: "numeric" })}
+                        </p>
+                      </div>
+                      <span className="text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0" style={{ backgroundColor: stage.bg, color: stage.fg }}>{stage.label}</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
 

@@ -329,15 +329,6 @@ function nextStep(task: CleaningTask): { text: string; color: string; act: boole
   }
 }
 
-// The cleaning journey, left to right, as shown in the guide strip above the
-// table. Each step filters the table to that status.
-const WORKFLOW_STEPS: { key: CleaningStatusKey; hint: string }[] = [
-  { key: "pending", hint: "No cleaner yet" },
-  { key: "assigned", hint: "Cleaner picked" },
-  { key: "in-progress", hint: "Being cleaned" },
-  { key: "awaiting-inspection", hint: "You check & approve" },
-  { key: "ready", hint: "Guests can book" },
-];
 
 function isOverdue(task: CleaningTask): boolean {
   if (!["pending", "assigned"].includes(task.cleaning_status)) return false;
@@ -389,9 +380,15 @@ function SearchBox({ value, onChange, placeholder }: { value: string; onChange: 
   );
 }
 
-export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRef = null }: {
+export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRef = null, issuesTab = true }: {
   /** Tab to open on — e.g. Reports & Issues when coming from an issue notification. */
   initialTab?: "tasks" | "checklist" | "reports" | "workload" | "stock";
+  /**
+   * Show the issue-reports tab. The Owner portal has its own Property → Issues
+   * & Repairs page (same records), so it turns this off to avoid two places
+   * for the same thing; the standalone page (CSR) keeps it.
+   */
+  issuesTab?: boolean;
   /** Open this booking's cleaning task straight away (from a notification). */
   focusBookingRef?: string | null;
 } = {}) {
@@ -494,7 +491,7 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
         {([
           { id: "tasks", label: "Tasks" },
           { id: "checklist", label: "Cleaning Checklist" },
-          { id: "reports", label: "Reports & Issues" },
+          ...(issuesTab ? [{ id: "reports" as const, label: "Issues & Repairs" }] : []),
           { id: "workload", label: "Cleaner Workload" },
           { id: "stock", label: "Room Stock" },
         ] as const).map((t) => (
@@ -533,40 +530,6 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
           month={month} onMonthChange={setMonth} monthsWithTasks={monthsWithTasks} />
       ) : (
       <>
-      {/* How cleaning works — the five steps in order, with how many rooms
-          are at each one. Clicking a step shows just those rooms. */}
-      <div className="border p-3 sm:p-4 mb-5" style={{ borderColor: "#ece5d4", backgroundColor: "#FDFBF7" }}>
-        <div className="flex items-center justify-between gap-2 mb-3">
-          <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#8a6a2f" }}>How cleaning works</p>
-          {statusFilters.length > 0 && (
-            <button type="button" onClick={() => applyStatusFilters([])} className="text-xs underline cursor-pointer" style={{ color: "#B07848" }}>Show all steps</button>
-          )}
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-          {WORKFLOW_STEPS.map((step, i) => {
-            const cfg = STATUS_LABELS[step.key];
-            const count = monthTasks.filter((t) => statusGroup(t.cleaning_status) === step.key).length;
-            const selected = statusFilters.length === 1 && statusFilters[0] === step.key;
-            return (
-              <button key={step.key} type="button" aria-pressed={selected}
-                onClick={() => applyStatusFilters(selected ? [] : [step.key])}
-                title={`Show only "${cfg.label}"`}
-                className="relative text-left border px-3 py-2.5 cursor-pointer transition-colors"
-                style={{ backgroundColor: selected ? cfg.bg : "#ffffff", borderColor: selected ? cfg.dot : "#ece5d4" }}>
-                <div className="flex items-center gap-1.5">
-                  <span className="w-5 h-5 rounded-full text-[11px] font-bold flex items-center justify-center flex-shrink-0" style={{ backgroundColor: cfg.dot, color: "#ffffff" }}>{i + 1}</span>
-                  <span className="text-xs font-semibold truncate" style={{ color: cfg.color }}>{cfg.label}</span>
-                </div>
-                <div className="flex items-baseline justify-between gap-2 mt-1.5">
-                  <span className="text-[11px]" style={{ color: "#8B6344" }}>{step.hint}</span>
-                  <span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 18, fontWeight: 500, color: "#1f1b16" }}>{count}</span>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
       {/* What needs you — each card says what it means, and turns from a
           quiet "all clear" into a highlighted card when there's something to do. */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
