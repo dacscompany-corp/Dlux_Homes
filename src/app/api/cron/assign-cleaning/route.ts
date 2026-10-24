@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sweepUnassignedCleaning } from "@/backend/controller/cleanersController";
+import { sendCleaningReminders, sweepUnassignedCleaning } from "@/backend/controller/cleanersController";
 import { reconcileCleaningCalendars } from "@/backend/utils/cleaningCalendar";
 
 export const runtime = "nodejs";
@@ -42,7 +42,10 @@ export async function GET(req: NextRequest) {
     // missed (a Google blip, a new booking that ends a cleaning window sooner,
     // an event deleted by hand).
     const calendar = await reconcileCleaningCalendars();
-    return NextResponse.json({ success: true, ...result, calendar });
+    // "Upcoming room" (24h ahead) and "ready to clean now" notifications for
+    // the cleaner and Owner/CSR — each sent once per room.
+    const reminders = await sendCleaningReminders();
+    return NextResponse.json({ success: true, ...result, calendar, reminders });
   } catch (error) {
     console.error("[cron/assign-cleaning] sweep failed:", error);
     return NextResponse.json(

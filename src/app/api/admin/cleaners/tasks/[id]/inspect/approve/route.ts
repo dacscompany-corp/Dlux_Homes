@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/backend/config/db";
 import { requireAdmin } from "@/backend/utils/requireAdmin";
-import { logCleaningHistory } from "@/backend/controller/cleanersController";
+import { logCleaningHistory, notifyCleaningEvent } from "@/backend/controller/cleanersController";
 import { scheduleCleaningCalendarSync } from "@/backend/utils/cleaningCalendar";
 import { logActivity } from "@/backend/utils/activityLogger";
 
@@ -38,6 +38,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     );
 
     await logCleaningHistory(id, "awaiting-inspection", "ready", currentUserId);
+    await notifyCleaningEvent(id, "approved");
 
     // Title flips to ✅ Ready / 🔁 Fix on the cleaner's calendar.
     scheduleCleaningCalendarSync(id);

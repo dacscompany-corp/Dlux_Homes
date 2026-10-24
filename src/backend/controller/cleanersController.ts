@@ -419,6 +419,8 @@ export const updateCleaningTask = async (
         changed_by ?? viewer.id ?? null,
         inspection_note ?? null
       );
+      // Cleaner handed the room in: tell the office and the cleaner.
+      if (cleaning_status === "awaiting-inspection") await notifyCleaningEvent(id, "handed-in");
     }
 
     const actor = actorForRole(viewer.role);
@@ -1148,6 +1150,7 @@ export async function onBookingStatusChanged(bookingId: string, status: string |
       await ensureCleaningAssignment(uuid, "booking-confirmed");
     } else if (status === "completed") {
       await ensureCleaningAssignment(uuid, "checkout");
+      await sendCleaningReminders();
     } else if (status === "cancelled" || status === "rejected") {
       await releaseCleaningForCancelledBooking(uuid);
     }
@@ -1206,10 +1209,147 @@ export async function autoCompleteIfChecklistDone(
     );
     await recordCleaningPerformed(cleaningId);
     await logCleaningHistory(cleaningId, "in-progress", "awaiting-inspection", actorId, "Completed automatically — every checklist item ticked and photographed");
+    await notifyCleaningEvent(cleaningId, "handed-in");
     scheduleCleaningCalendarSync(cleaningId);
     return true;
   } catch (err) {
     console.error("⚠️ Auto-complete check failed:", err);
     return false;
   }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * Cleaning notifications for cleaner AND office (owner, 2026-10-23)
+ * ════════════════════════════════════════════════════════════════════════════
+ *   - handed-in:        cleaner finished → office "ready to check", cleaner "sent"
+ *   - approved:         office approved  → cleaner "approved"
+ *   - admin-completed:  office marked it done (override) → cleaner told
+ *   - upcoming / start: sent by sendCleaningReminders() from the 15-min sweep
+ * Never throws: a failed notification must not fail the action behind it.
+ */
+
+const manilaWhen = (d: Date | string | null): string =>
+  d
+    ? new Date(d).toLocaleString("en-PH", {
+        timeZone: "Asia/Manila", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+      })
+    : "soon";
+
+type NotifyTask = { id: string; haven: string; ref: string; cleaner_id: string | null; cleaner_name: string | null; due: Date | null };
+
+async function loadNotifyTask(cleaningId: string): Promise<NotifyTask | null> {
+  const res = await pool.query<NotifyTask>(
+    `SELECT bc.id::text AS id, b.room_name AS haven, b.booking_id AS ref,
+            bc.assigned_to::text AS cleaner_id,
+            NULLIF(TRIM(COALESCE(e.first_name, '') || ' ' || COALESCE(e.last_name, '')), '') AS cleaner_name,
+            COALESCE(bc.scheduled_for, ${checkoutAtSql("b")}) AS due
+       FROM booking_cleaning bc
+       JOIN booking b ON b.id = bc.booking_id
+       LEFT JOIN employees e ON e.id = bc.assigned_to
+      WHERE bc.id = $1::uuid`,
+    [cleaningId],
+  );
+  return res.rows[0] ?? null;
+}
+
+export async function notifyCleaningEvent(
+  cleaningId: string,
+  event: "handed-in" | "approved" | "admin-completed",
+): Promise<void> {
+  try {
+    const t = await loadNotifyTask(cleaningId);
+    if (!t) return;
+    const who = t.cleaner_name ?? "The cleaner";
+    if (event === "handed-in") {
+      await createNotificationsForRoles(["Owner", "CSR"], {
+        title: "Room cleaned — ready to check",
+        message: `${who} finished cleaning ${t.haven} (${t.ref}). Check the photos and approve it in Cleaning Operations.`,
+        notificationType: "cleaning_done",
+      });
+      if (t.cleaner_id) {
+        await createNotificationForUser(t.cleaner_id, {
+          title: "Sent to the office",
+          message: `Thanks! ${t.haven} (${t.ref}) was sent to the office for checking. You'll be told when it's approved.`,
+          notificationType: "cleaning_submitted",
+        });
+      }
+    } else if (t.cleaner_id) {
+      await createNotificationForUser(t.cleaner_id, event === "approved"
+        ? { title: "Room approved ✓", message: `The office approved ${t.haven} (${t.ref}). Great work — nothing more to do.`, notificationType: "cleaning_approved" }
+        : { title: "Room marked done", message: `The office marked ${t.haven} (${t.ref}) as done. Nothing more to do.`, notificationType: "cleaning_approved" });
+    }
+  } catch (err) {
+    console.error(`⚠️ notifyCleaningEvent(${cleaningId}, ${event}) failed:`, err);
+  }
+}
+
+/**
+ * Reminders, run from the 15-minute sweep (and right after the office checks a
+ * guest out). Each one is "claimed" with an UPDATE … RETURNING on its own
+ * column first, so two overlapping runs can never send it twice.
+ *   - upcoming: assigned room whose cleaning is due within the next 24 hours
+ *   - start:    assigned room the guest has left (checked out, or checkout time
+ *               passed) — only for checkouts in the last day, so a backlog of
+ *               old rooms never floods anyone
+ */
+export async function sendCleaningReminders(): Promise<{ upcoming: number; start: number }> {
+  const out = { upcoming: 0, start: 0 };
+  try {
+    const due = `COALESCE(bc.scheduled_for, ${checkoutAtSql("b")})`;
+    const upcoming = await pool.query<{ id: string }>(
+      `UPDATE booking_cleaning bc SET reminder_upcoming_sent_at = NOW()
+         FROM booking b
+        WHERE b.id = bc.booking_id
+          AND bc.reminder_upcoming_sent_at IS NULL
+          AND bc.cleaning_status = 'assigned' AND bc.assigned_to IS NOT NULL
+          AND b.status NOT IN ('rejected', 'cancelled', 'completed')
+          AND ${due} > NOW() AND ${due} <= NOW() + INTERVAL '24 hours'
+        RETURNING bc.id::text AS id`,
+    );
+    for (const { id } of upcoming.rows) {
+      const t = await loadNotifyTask(id);
+      if (!t?.cleaner_id) continue;
+      out.upcoming++;
+      await createNotificationForUser(t.cleaner_id, {
+        title: "Upcoming room to clean",
+        message: `${t.haven} (${t.ref}) — the guest checks out ${manilaWhen(t.due)}. You can start cleaning after that.`,
+        notificationType: "cleaning_upcoming",
+      });
+      await createNotificationsForRoles(["Owner", "CSR"], {
+        title: "Upcoming cleaning",
+        message: `${t.haven} (${t.ref}) is due ${manilaWhen(t.due)} — assigned to ${t.cleaner_name ?? "a cleaner"}.`,
+        notificationType: "cleaning_upcoming",
+      });
+    }
+
+    const start = await pool.query<{ id: string }>(
+      `UPDATE booking_cleaning bc SET reminder_start_sent_at = NOW()
+         FROM booking b
+        WHERE b.id = bc.booking_id
+          AND bc.reminder_start_sent_at IS NULL
+          AND bc.cleaning_status = 'assigned' AND bc.assigned_to IS NOT NULL
+          AND b.status NOT IN ('rejected', 'cancelled')
+          AND (b.status IN ('completed', 'checked-out') OR ${due} <= NOW())
+          AND ${due} >= NOW() - INTERVAL '1 day'
+        RETURNING bc.id::text AS id`,
+    );
+    for (const { id } of start.rows) {
+      const t = await loadNotifyTask(id);
+      if (!t?.cleaner_id) continue;
+      out.start++;
+      await createNotificationForUser(t.cleaner_id, {
+        title: "Room ready to clean",
+        message: `The guest has left ${t.haven} (${t.ref}). You can start cleaning now.`,
+        notificationType: "cleaning_start",
+      });
+      await createNotificationsForRoles(["Owner", "CSR"], {
+        title: "Room ready to clean",
+        message: `${t.haven} (${t.ref}) can be cleaned now — ${t.cleaner_name ?? "the cleaner"} has been told.`,
+        notificationType: "cleaning_start",
+      });
+    }
+  } catch (err) {
+    console.error("⚠️ sendCleaningReminders failed:", err);
+  }
+  return out;
 }

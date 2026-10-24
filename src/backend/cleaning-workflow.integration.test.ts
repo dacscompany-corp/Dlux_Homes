@@ -101,6 +101,8 @@ vi.mock("next-auth", () => ({ getServerSession: vi.fn(async () => h.session) }))
 
 // Imported after the mocks are registered.
 import {
+  notifyCleaningEvent,
+  sendCleaningReminders,
   ensureCleaningAssignment,
   onBookingStatusChanged,
   reassignCleaningTask,
@@ -1063,5 +1065,63 @@ describe("cleaner Google Calendar sync", () => {
     expect(row.rows[0].gcal_error).toMatch(/Google is down/);
     expect(await syncCleaningCalendarEvent(t.id)).toBe("created");
     expect(g.eventsOf(await emailOf(C1))).toHaveLength(1);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Notifications to cleaner AND office (owner, 2026-10-23)
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("cleaning notifications for cleaner and office", () => {
+  const types = () => h.notifications.map((n) => n.notificationType);
+
+  it("reminds both about an upcoming room, then that it's ready to clean — once each", async () => {
+    const b = await addBooking({ when: "future" });
+    await confirm(b.id);
+    const [t] = await taskFor(b.id);
+    expect(t.assigned_to).toBeTruthy();
+
+    // Due in 3 hours → "upcoming" to the cleaner and to Owner/CSR.
+    await h.db.query(`UPDATE booking_cleaning SET scheduled_for = NOW() + INTERVAL '3 hours' WHERE id = $1::uuid`, [t.id]);
+    h.notifications.length = 0;
+    expect(await sendCleaningReminders()).toEqual({ upcoming: 1, start: 0 });
+    expect(h.notifications).toEqual(expect.arrayContaining([
+      expect.objectContaining({ userId: t.assigned_to, notificationType: "cleaning_upcoming" }),
+      expect.objectContaining({ roles: ["Owner", "CSR"], notificationType: "cleaning_upcoming" }),
+    ]));
+    // A second sweep sends nothing new.
+    expect(await sendCleaningReminders()).toEqual({ upcoming: 0, start: 0 });
+
+    // Checkout time passed → "ready to clean" to both, once.
+    await h.db.query(`UPDATE booking_cleaning SET scheduled_for = NOW() - INTERVAL '10 minutes' WHERE id = $1::uuid`, [t.id]);
+    h.notifications.length = 0;
+    expect(await sendCleaningReminders()).toEqual({ upcoming: 0, start: 1 });
+    expect(types().filter((x) => x === "cleaning_start")).toHaveLength(2);
+    expect(await sendCleaningReminders()).toEqual({ upcoming: 0, start: 0 });
+  });
+
+  it("doesn't flood anyone about old rooms", async () => {
+    const b = await addBooking({ when: "future" });
+    await confirm(b.id);
+    const [t] = await taskFor(b.id);
+    await h.db.query(`UPDATE booking_cleaning SET scheduled_for = NOW() - INTERVAL '5 days' WHERE id = $1::uuid`, [t.id]);
+    h.notifications.length = 0;
+    expect(await sendCleaningReminders()).toEqual({ upcoming: 0, start: 0 });
+    expect(h.notifications).toHaveLength(0);
+  });
+
+  it("tells the office a room is done, the cleaner it was sent, and the cleaner when it's approved", async () => {
+    const b = await addBooking({ when: "future" });
+    await confirm(b.id);
+    const [t] = await taskFor(b.id);
+    h.notifications.length = 0;
+    await notifyCleaningEvent(t.id, "handed-in");
+    expect(h.notifications).toEqual(expect.arrayContaining([
+      expect.objectContaining({ roles: ["Owner", "CSR"], notificationType: "cleaning_done" }),
+      expect.objectContaining({ userId: t.assigned_to, notificationType: "cleaning_submitted" }),
+    ]));
+    h.notifications.length = 0;
+    await notifyCleaningEvent(t.id, "approved");
+    expect(h.notifications).toEqual([expect.objectContaining({ userId: t.assigned_to, notificationType: "cleaning_approved" })]);
   });
 });

@@ -39,8 +39,8 @@ const when = (iso: string | null) =>
 
 export function RoomStockAdmin() {
   const [havenId, setHavenId] = useState<string | undefined>(undefined);
-  const { data: stock, isLoading: stockLoading } = useGetRoomStockQuery(havenId ? { havenId } : undefined);
-  const { data: requests = [], isLoading: reqLoading } = useGetRestockRequestsQuery(undefined, { pollingInterval: 30000 });
+  const { data: stock, isLoading: stockLoading, isError: stockFailed, refetch: refetchStock } = useGetRoomStockQuery(havenId ? { havenId } : undefined);
+  const { data: requests = [], isLoading: reqLoading, isError: reqFailed, refetch: refetchReqs } = useGetRestockRequestsQuery(undefined, { pollingInterval: 30000 });
   const [updateRequest, { isLoading: updatingReq }] = useUpdateRestockRequestMutation();
   const [addSupply, { isLoading: adding }] = useAddRoomSupplyMutation();
   const [updateSupply] = useUpdateRoomSupplyMutation();
@@ -98,6 +98,15 @@ export function RoomStockAdmin() {
   };
 
   const th = "text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider";
+
+  if ((stockFailed && !stock) || (reqFailed && requests.length === 0)) {
+    return (
+      <div role="alert" className="flex items-center gap-3 border px-4 py-3 text-sm" style={{ backgroundColor: "#fef3c7", borderColor: "#f5d9a8", color: "#92400e" }}>
+        <span className="flex-1">Couldn&apos;t load Room Stock. If this keeps happening, the Room Stock tables may be missing — run <code>npm run db:setup</code>.</span>
+        <button type="button" onClick={() => { refetchStock(); refetchReqs(); }} className="px-3 py-1.5 text-xs font-semibold text-white cursor-pointer" style={{ background: "#92400e" }}>Try again</button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

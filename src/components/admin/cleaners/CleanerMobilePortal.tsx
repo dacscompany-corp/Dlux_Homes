@@ -57,6 +57,7 @@ import {
 import { useAssignmentChecklist, gateErrorMessage } from "@/components/admin/cleaners/useAssignmentChecklist";
 import { bookingRefFrom, sameBookingRef } from "@/components/admin/NotificationBell";
 import RoomStockCleaner from "@/components/admin/cleaners/RoomStockCleaner";
+import { fileToCompressedFile } from "@/lib/compressImage";
 import GuideAssessment from "@/components/admin/cleaners/GuideAssessment";
 import StaffAccountPanel from "@/components/admin/cleaners/StaffAccountPanel";
 import { canStartCleaning, cleaningDueAt, isCurrentCleaning, stayKindFor, startOfManilaDay, type StayKind } from "@/lib/cleaning-schedule";
@@ -476,7 +477,8 @@ export default function CleanerMobilePortal() {
         issue_description: pnote.trim() || CLEANER_STRINGS.en[spec.label] as string,
         user_id: myId,
         booking_cleaning_id: problemRoom?.id || undefined,
-        images: pphoto ? [pphoto] : undefined,
+        // Shrunk on the phone first so the report sends quickly.
+        images: pphoto ? [await fileToCompressedFile(pphoto).catch(() => pphoto)] : undefined,
       }).unwrap();
       setPsent(true);
     } catch {
@@ -593,6 +595,8 @@ export default function CleanerMobilePortal() {
 
   // Side menu (replaces the floating bottom bar, owner 2026-10-22).
   const [menuOpen, setMenuOpen] = useState(false);
+  // Help → "How do I…?": which question is open (one at a time).
+  const [openGuide, setOpenGuide] = useState<number | null>(null);
 
   // ── Booking details on each card ──────────────────────────────────────────
   // Every card is the same property, so the name alone can't tell two jobs
@@ -673,7 +677,7 @@ export default function CleanerMobilePortal() {
 
         {/* ═════════ TOP BAR (main screens) ═════════ */}
         {/* Messages and Notifications keep their own header with a back button. */}
-        {(screen === "home" || screen === "stock" || screen === "help") && (
+        {(screen === "home" || screen === "stock" || screen === "help" || screen === "problem") && (
           <div style={{
             position: "sticky", top: 0, zIndex: 30, background: C.card, borderBottom: `1px solid ${C.line}`,
             padding: `calc(env(safe-area-inset-top, 0px) + 8px) 12px 8px`,
@@ -689,7 +693,7 @@ export default function CleanerMobilePortal() {
               )}
             </button>
             <div style={{ fontSize: 19, fontWeight: 700, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {screen === "home" ? t.menu : screen === "stock" ? t.roomSupplies : t.tabHelp}
+              {screen === "home" ? t.menu : screen === "stock" ? t.roomSupplies : screen === "problem" ? t.report : t.tabHelp}
             </div>
             {/* EN / TL — same place on every main screen. */}
             <div style={{ display: "flex", background: C.bg, border: `1px solid ${C.line}`, borderRadius: 999, padding: 3, flexShrink: 0 }}>
@@ -1199,7 +1203,7 @@ export default function CleanerMobilePortal() {
         {/* ═════════ REPORT A PROBLEM ═════════ */}
         {screen === "problem" && (
           <>
-            {screenHeader(closeProblem)}
+            {/* Same top bar as Tasks (☰ Menu) — no Back button. */}
             {psent ? (
               <>
                 <div className="dlx-screen" style={{
@@ -1515,13 +1519,7 @@ export default function CleanerMobilePortal() {
                   <Phone className="w-[26px] h-[26px] flex-shrink-0" strokeWidth={2} style={{ color: C.gold }} />{t.callOffice}
                 </a>
               ) : null /* Messages is in the side menu (☰). */}
-              <button type="button" onClick={openProblem} style={{
-                minHeight: 72, padding: "0 18px", borderRadius: 16, background: C.amberBg, color: C.amberInk,
-                border: `1px solid ${C.amberLine}`, display: "flex", alignItems: "center", gap: 14,
-                font: `600 19px ${SANS}`, cursor: "pointer", textAlign: "left",
-              }}>
-                <AlertTriangle className="w-[26px] h-[26px] flex-shrink-0" strokeWidth={2} />{t.report}
-              </button>
+              {/* Report a problem is in the side menu (☰) and in each room. */}
             </div>
 
             <div style={{ marginTop: 30 }}>{sectionLabel(t.how)}</div>
@@ -1535,6 +1533,57 @@ export default function CleanerMobilePortal() {
                   <span style={{ fontSize: 17, lineHeight: 1.4 }}>{step}</span>
                 </div>
               ))}
+            </div>
+
+            {/* "How do I…?" — the common jobs, step by step, with a jump to the screen. */}
+            <div style={{ marginTop: 30 }}>{sectionLabel(t.howDoI)}</div>
+            <div style={{ fontSize: 15, color: C.muted, margin: "-4px 0 10px" }}>{t.howDoIHint}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {t.guide.map((g, i) => {
+                const open = openGuide === i;
+                const go = g.go === "home" ? () => setScreen("home")
+                  : g.go === "stock" ? () => setScreen("stock")
+                  : g.go === "problem" ? openProblem
+                  : g.go === "messages" ? openMessages
+                  : g.go === "account" ? () => setScreen("account")
+                  : null;
+                return (
+                  <div key={g.title} style={{ background: C.card, border: `1px solid ${open ? C.creamLine : C.line}`, borderRadius: 16, overflow: "hidden" }}>
+                    <button type="button" aria-expanded={open} onClick={() => setOpenGuide(open ? null : i)} style={{
+                      width: "100%", minHeight: 60, padding: "12px 16px", border: 0, background: open ? C.cream : "transparent",
+                      display: "flex", alignItems: "center", gap: 12, textAlign: "left", cursor: "pointer", font: `600 17px ${SANS}`, color: C.ink,
+                    }}>
+                      <HelpCircle className="w-6 h-6 flex-shrink-0" strokeWidth={2} style={{ color: C.goldInk }} />
+                      <span style={{ flex: 1 }}>{g.title}</span>
+                      {open ? <ChevronUp className="w-5 h-5 flex-shrink-0" /> : <ChevronDown className="w-5 h-5 flex-shrink-0" style={{ color: C.muted }} />}
+                    </button>
+                    {open && (
+                      <div className="dlx-screen" style={{ padding: "4px 16px 16px" }}>
+                        <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+                          {g.steps.map((step, j) => (
+                            <li key={j} style={{ display: "flex", gap: 12, alignItems: "flex-start", fontSize: 16, lineHeight: 1.45 }}>
+                              <span style={{
+                                width: 28, height: 28, borderRadius: "50%", background: C.gold, color: C.ink,
+                                display: "grid", placeItems: "center", fontWeight: 700, fontSize: 14, flexShrink: 0,
+                              }}>{j + 1}</span>
+                              <span>{step}</span>
+                            </li>
+                          ))}
+                        </ol>
+                        {go && (
+                          <button type="button" onClick={go} style={{
+                            marginTop: 14, width: "100%", height: 52, borderRadius: 14, border: 0, background: C.ink,
+                            color: C.onDark, font: `700 17px ${SANS}`, cursor: "pointer",
+                            display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                          }}>
+                            {t.showMe}<ChevronRight className="w-5 h-5" strokeWidth={2.5} />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
 
             {/* The four labels a room can have, in plain words. */}
@@ -1625,6 +1674,7 @@ export default function CleanerMobilePortal() {
                 { id: "home" as Screen, label: t.tabTasks, Icon: ClipboardList, go: () => setScreen("home"), count: 0 },
                 { id: "stock" as Screen, label: t.roomSupplies, Icon: Package, go: () => setScreen("stock"), count: 0 },
                 { id: "messages" as Screen, label: t.tabMsg, Icon: MessageSquare, go: openMessages, count: unreadMsgs },
+                { id: "problem" as Screen, label: t.report, Icon: AlertTriangle, go: openProblem, count: 0 },
                 // Notifications open from the bell in the top bar.
                 { id: "help" as Screen, label: t.tabHelp, Icon: LifeBuoy, go: () => setScreen("help"), count: 0 },
               ]).map(({ id, label, Icon, go, count }) => {
