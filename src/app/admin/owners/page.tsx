@@ -167,7 +167,7 @@ export default function OwnerDashboard() {
   // which booking's task to open. `nonce` remounts the section so the same
   // notification can be followed twice.
   const [cleaningFocus, setCleaningFocus] = useState<{
-    tab: "tasks" | "reports"; ref: string | null; nonce: number;
+    tab: "tasks" | "stock"; ref: string | null; nonce: number;
   }>({ tab: "tasks", ref: null, nonce: 0 });
   // Booking guide starts open, matching the design — it is reference material an
   // owner can collapse once the flow is familiar.
@@ -362,6 +362,9 @@ export default function OwnerDashboard() {
   // Report id of the issue whose details panel is open; the row itself is
   // looked up from the live list so status/assignee edits show immediately.
   const [maintenanceDetailId, setMaintenanceDetailId] = useState<string | null>(null);
+  // Issues & Repairs list: Open / In progress / Fixed / All, plus search.
+  const [issueFilter, setIssueFilter] = useState<"open" | "in-progress" | "fixed" | "all">("open");
+  const [issueQuery, setIssueQuery] = useState("");
 
   const [havenModalOpen, setHavenModalOpen] = useState(false);
   const [editHaven, setEditHaven] = useState<Record<string, unknown> | null>(null);
@@ -712,7 +715,7 @@ export default function OwnerDashboard() {
       if (f.assignTo && res.data?.report_id) {
         await updateReportAssignment({ reportId: res.data.report_id, assignedTo: f.assignTo }).unwrap();
       }
-      toast.success("Maintenance added");
+      toast.success("Issue added");
       setMaintenanceModalOpen(false);
       setMaintenanceForm(emptyMaintenance);
     } catch { toast.error("Could not add maintenance"); }
@@ -1088,13 +1091,36 @@ export default function OwnerDashboard() {
     updatedAt: r.updated_at ? new Date(String(r.updated_at)).toLocaleString("en", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) : "—",
     linkedBooking: r.linked_booking_id ? String(r.linked_booking_id) : "",
     images: (Array.isArray(r.images) ? r.images : []) as { image_url: string }[],
+    // One of three simple steps: Open (incl. Pending) → In progress → Fixed (Resolved/Closed).
+    stage: (["resolved", "closed"].includes(String(r.status || "").toLowerCase()) ? "fixed"
+      : String(r.status || "").toLowerCase() === "in progress" ? "in-progress" : "open") as "open" | "in-progress" | "fixed",
+    createdMs: r.created_at ? new Date(String(r.created_at)).getTime() : 0,
   }));
+  const PRIORITY_RANK: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
+  const issueCounts = {
+    open: maintenanceIssues.filter((i) => i.stage === "open").length,
+    "in-progress": maintenanceIssues.filter((i) => i.stage === "in-progress").length,
+    fixed: maintenanceIssues.filter((i) => i.stage === "fixed").length,
+    urgent: maintenanceIssues.filter((i) => i.stage !== "fixed" && (i.priority === "urgent" || i.priority === "high")).length,
+  };
+  const iq = issueQuery.trim().toLowerCase();
+  const visibleIssues = maintenanceIssues
+    .filter((i) => issueFilter === "all" || i.stage === issueFilter)
+    .filter((i) => !iq || [i.type, i.location, i.description, i.reporter, i.assignedTo, i.linkedBooking].some((v) => v.toLowerCase().includes(iq)))
+    // Most urgent first, then newest.
+    .sort((a, b) => (PRIORITY_RANK[a.priority] ?? 9) - (PRIORITY_RANK[b.priority] ?? 9) || b.createdMs - a.createdMs);
+  const setIssueStage = async (id: string, status: string) => {
+    try {
+      await updateReportStatus({ reportId: id, status }).unwrap();
+      toast.success(status === "Resolved" ? "Marked as fixed — the reporter is told" : status === "In Progress" ? "Marked in progress" : "Reopened");
+    } catch { toast.error("Could not update status"); }
+  };
   const maintenanceDetail = maintenanceIssues.find((i) => i.id === maintenanceDetailId) ?? null;
   const setMaintenanceStatus = async (status: string) => {
     if (!maintenanceDetail) return;
     try {
       await updateReportStatus({ reportId: maintenanceDetail.id, status }).unwrap();
-      toast.success(status === "Resolved" ? "Marked as fixed" : `Status set to ${status}`);
+      toast.success(status === "Resolved" ? "Marked as fixed — the reporter is told" : status === "In Progress" ? "Marked in progress" : "Reopened");
     } catch { toast.error("Could not update status"); }
   };
   const setMaintenanceAssignee = async (assignedTo: string) => {
@@ -1262,10 +1288,15 @@ export default function OwnerDashboard() {
                 const booking = ref ? allAdminBookings.find((b) => sameBookingRef(b.displayId, ref)) : undefined;
                 if (booking) setBookingModal(booking);
                 else if (ref) toast(`Booking ${ref} isn't in the list any more.`, { icon: "ℹ️" });
-              } else if (kind.includes("report") || kind.includes("issue")) {
+              } else if (kind.includes("restock")) {
+                // A cleaner asked for room supplies.
                 setActiveNav("Property");
                 setPropertyTab("cleaning");
-                setCleaningFocus((f) => ({ tab: "reports", ref: null, nonce: f.nonce + 1 }));
+                setCleaningFocus((f) => ({ tab: "stock", ref: null, nonce: f.nonce + 1 }));
+              } else if (kind.includes("report") || kind.includes("issue")) {
+                // Problems in the unit live in Property → Issues & Repairs.
+                setActiveNav("Property");
+                setPropertyTab("maintenance");
               } else if (kind.includes("clean")) {
                 setActiveNav("Property");
                 setPropertyTab("cleaning");
@@ -2256,10 +2287,10 @@ export default function OwnerDashboard() {
 
           {/* ── Property ── */}
           {activeNav === "Property" && (<>
-            {tabBar([{ id: "havens", label: "Haven Management", icon: Building2 }, { id: "maintenance", label: "Maintenance", icon: Wrench }, { id: "cleaning", label: "Cleaning Operations", icon: Sparkles }], propertyTab, (id) => setPropertyTab(id as "havens" | "maintenance" | "cleaning"))}
+            {tabBar([{ id: "havens", label: "Haven Management", icon: Building2 }, { id: "maintenance", label: "Issues & Repairs", icon: Wrench }, { id: "cleaning", label: "Cleaning Operations", icon: Sparkles }], propertyTab, (id) => setPropertyTab(id as "havens" | "maintenance" | "cleaning"))}
             {propertyTab === "cleaning" && (
               <CleaningOperationsSection key={cleaningFocus.nonce}
-                initialTab={cleaningFocus.tab} focusBookingRef={cleaningFocus.ref} />
+                initialTab={cleaningFocus.tab} focusBookingRef={cleaningFocus.ref} issuesTab={false} />
             )}
             {propertyTab === "havens" && (
               <div className="flex justify-end mb-4">
@@ -2335,51 +2366,115 @@ export default function OwnerDashboard() {
             )}
 
             {propertyTab === "maintenance" && (<>
-              <div className="flex items-center justify-between mb-6">
+              {/* Issues & Repairs — the one place for problems in the unit:
+                  cleaner reports (with photos, linked to the cleaning) and
+                  ones the office adds. Replaces Cleaning Operations' separate
+                  Reports & Issues tab, which showed the same records. */}
+              <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
                 <div>
-                  <h2 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>Maintenance</h2>
-                  <p className="text-sm" style={{ color: "#8B6344" }}>{maintenanceIssues.length} issue{maintenanceIssues.length === 1 ? "" : "s"}</p>
+                  <h2 className="font-bold text-lg" style={{ color: "#1a1a1a" }}>Issues &amp; Repairs</h2>
+                  <p className="text-sm" style={{ color: "#8B6344" }}>Things broken, dirty or missing in the unit — from cleaners or added by you.</p>
                 </div>
                 <button type="button" onClick={openMaintenanceModal} className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white cursor-pointer" style={{ backgroundColor: "#1f1b16" }}>
-                  <Plus className="w-4 h-4" /> Add Maintenance
+                  <Plus className="w-4 h-4" /> Add issue
                 </button>
               </div>
-              {maintenanceIssues.length === 0 ? <Empty label="No maintenance issues yet." /> : (
-              <div className="border overflow-hidden" style={{ borderColor: "#ece5d4" }}>
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead><tr style={{ backgroundColor: "#faf7f1", borderBottom: "1px solid #ece5d4" }}>
-                      {["Issue ID","Haven","Type","Priority","Assigned To","Reported","Status"].map((h) => (
-                        <th key={h} className="px-4 py-3 text-left text-[11px] uppercase tracking-[0.08em]" style={{ color: "#8B6344" }}>{h}</th>
-                      ))}
-                    </tr></thead>
-                    <tbody>
-                      {maintenanceIssues.map((issue, idx) => {
-                        const pColor = issue.priority === "urgent" ? "#991b1b" : issue.priority === "high" ? "#92400e" : issue.priority === "medium" ? "#B07848" : "#065f46";
-                        const pBg   = issue.priority === "urgent" ? "#fee2e2" : issue.priority === "high" ? "#fef3c7" : issue.priority === "medium" ? "#F7F0E3" : "#d1fae5";
-                        const sColor = issue.issueStatus === "open" ? "#991b1b" : issue.issueStatus === "in-progress" ? "#B07848" : issue.issueStatus === "resolved" ? "#065f46" : "#374151";
-                        const sBg   = issue.issueStatus === "open" ? "#fee2e2" : issue.issueStatus === "in-progress" ? "#F7F0E3" : issue.issueStatus === "resolved" ? "#d1fae5" : "#f3f4f6";
-                        return (
-                          <tr key={issue.id} className="transition-colors cursor-pointer" style={{ borderTop: idx > 0 ? "1px solid #F7F0E3" : "none" }}
-                            onClick={() => setMaintenanceDetailId(issue.id)}
-                            title="View details"
-                            onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
-                            onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
-                            <td className="px-4 py-3.5"><span className="font-mono text-xs" style={{ color: "#8B6344" }} title={issue.id}>#{issue.id.slice(0, 8).toUpperCase()}</span></td>
-                            <td className="px-4 py-3.5"><span className="text-sm" style={{ color: "#1a1a1a" }}>{issue.haven}</span></td>
-                            <td className="px-4 py-3.5">
-                              <div className="flex items-center gap-1.5"><Wrench className="w-3.5 h-3.5" style={{ color: "#D4BFA0" }} /><span className="text-sm" style={{ color: "#5a4a3a" }}>{issue.type}</span></div>
-                            </td>
-                            <td className="px-4 py-3.5"><span className="text-xs font-semibold px-2.5 py-1 rounded-full capitalize" style={{ backgroundColor: pBg, color: pColor }}>{issue.priority}</span></td>
-                            <td className="px-4 py-3.5"><span className="text-sm" style={{ color: "#5a4a3a" }}>{issue.assignedTo}</span></td>
-                            <td className="px-4 py-3.5"><span className="text-sm" style={{ color: "#8B6344" }}>{issue.reported}</span></td>
-                            <td className="px-4 py-3.5"><span className="text-xs font-semibold px-2.5 py-1 rounded-full capitalize" style={{ backgroundColor: sBg, color: sColor }}>{issue.issueStatus.replace("-"," ")}</span></td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+
+              {/* Needs attention */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+                {[
+                  { key: "open", label: "Open", hint: "Not started yet", value: issueCounts.open, color: "#991b1b", bg: "#fee2e2" },
+                  { key: "urgent", label: "Urgent / high", hint: "Open and important", value: issueCounts.urgent, color: "#b45309", bg: "#fef3c7" },
+                  { key: "in-progress", label: "In progress", hint: "Being fixed", value: issueCounts["in-progress"], color: "#1e40af", bg: "#dbeafe" },
+                  { key: "fixed", label: "Fixed", hint: "Done", value: issueCounts.fixed, color: "#065f46", bg: "#d1fae5" },
+                ].map((c) => {
+                  const active = c.value > 0 && c.key !== "fixed";
+                  return (
+                    <button key={c.key} type="button"
+                      onClick={() => setIssueFilter(c.key === "urgent" ? "open" : (c.key as "open" | "in-progress" | "fixed"))}
+                      className="border p-4 text-left cursor-pointer"
+                      style={{ backgroundColor: active ? c.bg : "#fff", borderColor: active ? c.color : "#ece5d4" }}>
+                      <p style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 24, fontWeight: 500, lineHeight: 1, color: active ? c.color : "#1f1b16" }}>{c.value}</p>
+                      <p className="text-sm font-semibold mt-2" style={{ color: "#1f1b16" }}>{c.label}</p>
+                      <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>{c.hint}</p>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Filter + search */}
+              <div className="flex flex-wrap items-center gap-2 mb-4">
+                {([["open", "Open"], ["in-progress", "In progress"], ["fixed", "Fixed"], ["all", "All"]] as const).map(([id, label]) => (
+                  <button key={id} type="button" onClick={() => setIssueFilter(id)}
+                    className="px-3 py-1.5 text-xs font-medium border cursor-pointer"
+                    style={{ backgroundColor: issueFilter === id ? "#1f1b16" : "#fff", color: issueFilter === id ? "#fff" : "#6b6358", borderColor: issueFilter === id ? "#1f1b16" : "#ece5d4" }}>
+                    {label}{id !== "all" ? ` (${issueCounts[id]})` : ` (${maintenanceIssues.length})`}
+                  </button>
+                ))}
+                <input value={issueQuery} onChange={(e) => setIssueQuery(e.target.value)} placeholder="Search issue, place, person or booking…"
+                  className="flex-1 min-w-[14rem] border px-3 py-1.5 text-sm outline-none" style={{ borderColor: "#ece5d4" }} />
+              </div>
+
+              {visibleIssues.length === 0 ? (
+                <Empty label={maintenanceIssues.length === 0 ? "No issues reported yet." : issueFilter === "open" ? "Nothing open — all clear." : "No issues match."} />
+              ) : (
+              <div className="border" style={{ borderColor: "#ece5d4" }}>
+                {visibleIssues.map((issue, idx) => {
+                  const pColor = issue.priority === "urgent" ? "#991b1b" : issue.priority === "high" ? "#92400e" : issue.priority === "medium" ? "#B07848" : "#065f46";
+                  const pBg   = issue.priority === "urgent" ? "#fee2e2" : issue.priority === "high" ? "#fef3c7" : issue.priority === "medium" ? "#F7F0E3" : "#d1fae5";
+                  const stage = issue.stage === "fixed" ? { label: "Fixed", color: "#065f46", bg: "#d1fae5" }
+                    : issue.stage === "in-progress" ? { label: "In progress", color: "#1e40af", bg: "#dbeafe" }
+                    : { label: "Open", color: "#991b1b", bg: "#fee2e2" };
+                  return (
+                    <div key={issue.id} role="button" tabIndex={0}
+                      onClick={() => setMaintenanceDetailId(issue.id)}
+                      onKeyDown={(e) => { if (e.key === "Enter") setMaintenanceDetailId(issue.id); }}
+                      className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3.5 cursor-pointer transition-colors"
+                      style={{ borderTop: idx > 0 ? "1px solid #F7F0E3" : "none", boxShadow: issue.stage !== "fixed" ? `inset 3px 0 0 ${pColor}` : undefined }}
+                      onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#FAF7F1"}
+                      onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
+                      {issue.images[0]
+                        // eslint-disable-next-line @next/next/no-img-element
+                        ? <img src={issue.images[0].image_url} alt="" className="w-12 h-12 object-cover flex-shrink-0" style={{ border: "1px solid #ece5d4" }} />
+                        : <div className="w-12 h-12 flex items-center justify-center flex-shrink-0" style={{ backgroundColor: "#F7F0E3" }}><Wrench className="w-5 h-5" style={{ color: "#B07848" }} /></div>}
+                      <div className="flex-1 min-w-[14rem]">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-semibold" style={{ color: "#1a1a1a" }}>{issue.type}</span>
+                          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full capitalize" style={{ backgroundColor: pBg, color: pColor }}>{issue.priority}</span>
+                          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: stage.bg, color: stage.color }}>{stage.label}</span>
+                        </div>
+                        <p className="text-sm mt-0.5 break-words" style={{ color: "#5a4a3a" }}>
+                          {issue.location}{issue.description ? ` — ${issue.description.length > 90 ? issue.description.slice(0, 90) + "…" : issue.description}` : ""}
+                        </p>
+                        <p className="text-xs mt-0.5" style={{ color: "#8B6344" }}>
+                          {issue.reported} · by {issue.reporter}
+                          {issue.linkedBooking ? ` · while cleaning ${issue.linkedBooking}` : ""}
+                          {" · "}{issue.assignedTo === "Unassigned" ? "not assigned" : `assigned to ${issue.assignedTo}`}
+                          {issue.images.length > 1 ? ` · ${issue.images.length} photos` : ""}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                        {issue.stage === "open" && (
+                          <button type="button" disabled={updatingMaintenanceStatus} onClick={() => setIssueStage(issue.id, "In Progress")}
+                            className="px-3 py-1.5 text-xs font-semibold border cursor-pointer disabled:opacity-50" style={{ color: "#1e40af", borderColor: "#bfdbfe", backgroundColor: "#eff6ff" }}>
+                            Start
+                          </button>
+                        )}
+                        {issue.stage !== "fixed" ? (
+                          <button type="button" disabled={updatingMaintenanceStatus} onClick={() => setIssueStage(issue.id, "Resolved")}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white cursor-pointer disabled:opacity-50" style={{ backgroundColor: "#065f46" }}>
+                            <Check className="w-3.5 h-3.5" /> Mark fixed
+                          </button>
+                        ) : (
+                          <button type="button" disabled={updatingMaintenanceStatus} onClick={() => setIssueStage(issue.id, "Open")}
+                            className="px-3 py-1.5 text-xs font-medium border cursor-pointer disabled:opacity-50" style={{ color: "#991b1b", borderColor: "#fecaca", backgroundColor: "#fff" }}>
+                            Reopen
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
               )}
             </>)}
@@ -2864,13 +2959,13 @@ export default function OwnerDashboard() {
               <div className="mt-4">
                 {label("Update status")}
                 <div className="flex flex-wrap gap-1.5">
-                  {["Open", "In Progress", "Resolved", "Closed"].map((st) => {
-                    const on = d.statusLabel === st;
+                  {([["open", "Open", "Open"], ["in-progress", "In progress", "In Progress"], ["fixed", "Fixed", "Resolved"]] as const).map(([stage, text, status]) => {
+                    const on = d.stage === stage;
                     return (
-                      <button key={st} type="button" disabled={on || updatingMaintenanceStatus} onClick={() => setMaintenanceStatus(st)}
+                      <button key={stage} type="button" disabled={on || updatingMaintenanceStatus} onClick={() => setMaintenanceStatus(status)}
                         className="px-3 py-1.5 text-sm cursor-pointer disabled:cursor-default"
                         style={{ backgroundColor: on ? "#1f1b16" : "transparent", color: on ? "#faf7f1" : "#6b6358", border: `1px solid ${on ? "#1f1b16" : "#d9d1c2"}` }}>
-                        {st}
+                        {text}
                       </button>
                     );
                   })}
@@ -2925,7 +3020,7 @@ export default function OwnerDashboard() {
             </div>
             <div className="flex justify-end gap-2 mt-5">
               <button type="button" onClick={() => setMaintenanceModalOpen(false)} className="px-4 py-2 rounded-xl text-sm font-semibold border cursor-pointer" style={{ color: "#8B6344", borderColor: "#ece5d4", backgroundColor: "#ffffff" }}>Cancel</button>
-              <button type="button" onClick={submitMaintenance} disabled={submittingMaintenance} className="px-4 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#1f1b16" }}>{submittingMaintenance ? "Saving…" : "Add Maintenance"}</button>
+              <button type="button" onClick={submitMaintenance} disabled={submittingMaintenance} className="px-4 py-2 text-sm font-medium text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#1f1b16" }}>{submittingMaintenance ? "Saving…" : "Add issue"}</button>
             </div>
           </div>
         </div>

@@ -58,6 +58,7 @@ import { useAssignmentChecklist, gateErrorMessage } from "@/components/admin/cle
 import { bookingRefFrom, sameBookingRef } from "@/components/admin/NotificationBell";
 import RoomStockCleaner from "@/components/admin/cleaners/RoomStockCleaner";
 import { fileToCompressedFile } from "@/lib/compressImage";
+import { useGetReportsQuery } from "@/redux/api/reportApi";
 import GuideAssessment from "@/components/admin/cleaners/GuideAssessment";
 import StaffAccountPanel from "@/components/admin/cleaners/StaffAccountPanel";
 import { canStartCleaning, cleaningDueAt, isCurrentCleaning, stayKindFor, startOfManilaDay, type StayKind } from "@/lib/cleaning-schedule";
@@ -424,6 +425,9 @@ export default function CleanerMobilePortal() {
     return first ? String(first.uuid_id || first.id || "") : "";
   }, [havensData]);
   const [submitReport, { isLoading: sendingProblem }] = useSubmitReportMutation();
+  // "My reports" under the form — the server returns only this cleaner's own.
+  const { data: myReportsRes } = useGetReportsQuery({}, { skip: screen !== "problem", pollingInterval: 60000 });
+  const myReports = ((myReportsRes as { data?: { report_id: string; issue_type: string; specific_location: string; status: string; created_at: string }[] } | undefined)?.data ?? []).slice(0, 10);
   const [ptype, setPtype] = useState<ProblemType | null>(null);
   const [pnote, setPnote] = useState("");
   const [pphoto, setPphoto] = useState<File | null>(null);
@@ -1273,6 +1277,31 @@ export default function CleanerMobilePortal() {
                       borderRadius: 16, padding: "14px 16px", font: `400 17px/1.4 ${SANS}`, color: C.ink,
                       background: C.card, resize: "none",
                     }} />
+
+                  {/* What happened to the things I reported. */}
+                  <div style={{ marginTop: 28 }}>{sectionLabel(t.myReports)}</div>
+                  <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16 }}>
+                    {myReports.length === 0 ? (
+                      <div style={{ padding: 16, fontSize: 15, color: C.muted }}>{t.noReports}</div>
+                    ) : myReports.map((r, i) => {
+                      const st = String(r.status || "").toLowerCase();
+                      const stage = st === "resolved" || st === "closed" ? "fixed" : st === "in progress" ? "in-progress" : "open";
+                      const look = stage === "fixed" ? { bg: C.greenBg, fg: C.greenInk } : stage === "in-progress" ? { bg: C.cream, fg: C.goldInk } : { bg: C.amberBg, fg: C.amberInk };
+                      return (
+                        <div key={r.report_id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: i ? `1px solid ${C.hair}` : 0 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 16, fontWeight: 600 }}>{r.issue_type}</div>
+                            <div style={{ fontSize: 13, color: C.muted, marginTop: 2 }}>
+                              {r.specific_location} · {new Date(r.created_at).toLocaleDateString("en-US", { timeZone: "Asia/Manila", month: "short", day: "numeric" })}
+                            </div>
+                          </div>
+                          <span style={{ flex: "none", padding: "4px 10px", borderRadius: 999, fontSize: 13, fontWeight: 700, background: look.bg, color: look.fg }}>
+                            {t.issueStage[stage]}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
                 <div style={{
                   position: "sticky", bottom: 0, background: C.card, borderTop: `1px solid ${C.line}`,

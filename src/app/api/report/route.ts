@@ -1,7 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/backend/config/db';
+import { requireAdmin, requireEmployee } from '@/backend/utils/requireAdmin';
+import { createNotificationForUser } from '@/backend/utils/notificationHelper';
+
+// Issue reports (Property → Issues & Repairs). These used to be readable and
+// re-assignable by anyone, signed in or not. Now: any staff can list (a
+// Cleaner sees only their own reports); only Owner/CSR can assign.
 // Database connection
 export async function GET(request: NextRequest) {
+  const guard = await requireEmployee();
+  if (!guard.ok) return guard.response;
+  const isAdmin = guard.role === 'Owner' || guard.role === 'CSR';
+  const actorId = (guard.session.user as { id?: string }).id ?? null;
   try {
     const { searchParams } = new URL(request.url);
     const haven_id = searchParams.get('haven_id');
@@ -56,7 +66,12 @@ export async function GET(request: NextRequest) {
       }
       if (booking_cleaning_id) {
         params.push(booking_cleaning_id);
-        where.push(`ri.booking_cleaning_id = $${params.length}::uuid`);
+        where.push(`ri.booking_cleaning_id = ${params.length}::uuid`);
+      }
+      if (!isAdmin) {
+        // Cleaners: only the reports they filed ("My reports").
+        params.push(actorId ?? '00000000-0000-0000-0000-000000000000');
+        where.push(`ri.user_id = ${params.length}::uuid`);
       }
       if (where.length) {
         query += ' WHERE ' + where.join(' AND ');
@@ -86,6 +101,8 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
   try {
     const body = await request.json();
     const { reportId, assigned_to } = body;
@@ -121,9 +138,22 @@ export async function PATCH(request: NextRequest) {
         message: 'Report assigned successfully',
         data: result.rows[0]
       });
-      
     } finally {
       client.release();
+      // Tell the person it was given to (not when it's un-assigned).
+      if (assigned_to) {
+        try {
+          const r = await pool.query<{ issue_type: string; specific_location: string }>(
+            `SELECT issue_type, specific_location FROM report_issue WHERE report_id = $1`, [reportId]);
+          if (r.rows[0]) {
+            await createNotificationForUser(String(assigned_to), {
+              title: 'Issue assigned to you',
+              message: `${r.rows[0].issue_type} at ${r.rows[0].specific_location} was assigned to you. See Property → Issues & Repairs.`,
+              notificationType: 'issue_assigned',
+            });
+          }
+        } catch (e) { console.error('issue assignment notify failed:', e); }
+      }
     }
     
   } catch (error) {
