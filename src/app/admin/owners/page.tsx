@@ -1541,7 +1541,7 @@ export default function OwnerDashboard() {
                             </div>
                             <div>
                               <p className="font-medium text-sm" style={{ color: "#1a1a1a" }}>{booking.guest}</p>
-                              <p className="text-xs hidden sm:block" style={{ color: "#8B6344" }}>{booking.email}</p>
+                              <p className="text-xs hidden sm:block break-all" style={{ color: "#8B6344" }}>{booking.email}</p>
                             </div>
                           </div>
                         </td>
@@ -1938,12 +1938,15 @@ export default function OwnerDashboard() {
               </div>
             )}
 
-            <div className="overflow-x-auto">
+            {/* Fits the page — no side scroll. Long values (emails, the room
+                name) wrap, the Room column only shows on wide screens (it's the
+                same unit on every row), and action icons wrap to a second line. */}
+            <div className="overflow-x-hidden">
               <table className="w-full">
                 <thead>
                   <tr style={{ backgroundColor: "#faf7f1", borderBottom: "1px solid #ece5d4" }}>
                     {["Booking ID","Guest","Room","Check-in","Stay Type","Amount","Status","Actions"].map((h,i) => (
-                      <th key={h} className={`px-3 sm:px-4 py-3 text-left text-[11px] uppercase tracking-[0.08em] ${i===0||i===2||i===5?"hidden sm:table-cell":i===3?"hidden lg:table-cell":i===4?"hidden md:table-cell":""}`} style={{ color: "#8B6344" }}>{h}</th>
+                      <th key={h} className={`px-3 sm:px-4 py-3 text-left text-[11px] uppercase tracking-[0.08em] ${i===0||i===5?"hidden sm:table-cell":i===2?"hidden xl:table-cell":i===3?"hidden lg:table-cell":i===4?"hidden md:table-cell":""}`} style={{ color: "#8B6344" }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -1954,7 +1957,7 @@ export default function OwnerDashboard() {
                       <tr key={booking.id} className="transition-colors" style={{ borderTop: idx > 0 ? "1px solid #F7F0E3" : "none" }}
                         onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
                         onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
-                        <td className="px-4 py-3.5 hidden sm:table-cell"><span className="font-mono text-xs" style={{ color: "#8B6344" }}>{booking.displayId}</span></td>
+                        <td className="px-4 py-3.5 hidden sm:table-cell"><span className="font-mono text-xs break-all" style={{ color: "#8B6344" }}>{booking.displayId}</span></td>
                         <td className="px-3 sm:px-4 py-3.5">
                           <div className="flex items-center gap-2.5">
                             <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: "#f3eee2" }}>
@@ -1971,7 +1974,7 @@ export default function OwnerDashboard() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-4 py-3.5 hidden sm:table-cell"><p className="text-sm" style={{ color: "#5a4a3a" }}>{booking.room}</p></td>
+                        <td className="px-4 py-3.5 hidden xl:table-cell"><p className="text-sm break-words" style={{ color: "#5a4a3a" }}>{booking.room}</p></td>
                         <td className="px-4 py-3.5 hidden lg:table-cell"><p className="text-sm" style={{ color: "#5a4a3a" }}>{booking.checkIn}</p></td>
                         <td className="px-4 py-3.5 hidden md:table-cell"><span style={{ fontSize: 12, color: "#8a8276" }}>{booking.stayType}</span></td>
                         <td className="px-4 py-3.5 hidden sm:table-cell"><span style={{ fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 13, color: "#1f1b16" }}>₱{booking.amount.toLocaleString()}</span></td>
@@ -1982,7 +1985,7 @@ export default function OwnerDashboard() {
                           </span>
                         </td>
                         <td className="px-2 sm:px-4 py-3.5">
-                          <div className="flex items-center gap-0.5 sm:gap-1">
+                          <div className="flex flex-wrap items-center gap-0.5 sm:gap-1">
                             <button title="View booking"
                               onClick={() => setBookingModal(booking)}
                               className="p-1.5 rounded-lg transition-colors" style={{ color: "#8B6344" }}
