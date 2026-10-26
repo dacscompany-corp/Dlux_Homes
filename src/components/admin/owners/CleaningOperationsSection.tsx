@@ -319,9 +319,13 @@ function nextStep(task: CleaningTask): { text: string; color: string; act: boole
     case "in-progress":
       return { text: "Cleaner is working on it", color: "#8a6a2f", act: false };
     case "assigned":
-      return isOverdue(task)
-        ? { text: "Late — cleaner hasn't started yet", color: "#dc2626", act: true }
-        : { text: "Waiting for the cleaner to start", color: "#1e40af", act: false };
+      // A deactivated cleaner can't log in to accept or start — needs someone else.
+      if (task.cleaner_status === "inactive") return { text: "Cleaner is inactive — pick someone else", color: "#dc2626", act: true };
+      if (isOverdue(task)) return { text: "Late — cleaner hasn't started yet", color: "#dc2626", act: true };
+      // Cleaners Accept or Reject a new room (owner, 2026-10-26).
+      return task.accepted_at
+        ? { text: "Accepted — waiting for the cleaner to start", color: "#1e40af", act: false }
+        : { text: "Waiting for the cleaner to accept", color: "#8a6a2f", act: false };
     default:
       return task.booking_status === "pending"
         ? { text: "Waiting for booking confirmation", color: "#8B6344", act: false }

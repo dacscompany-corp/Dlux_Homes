@@ -101,6 +101,8 @@ vi.mock("next-auth", () => ({ getServerSession: vi.fn(async () => h.session) }))
 
 // Imported after the mocks are registered.
 import {
+  acceptCleaningTask,
+  declineCleaningTask,
   notifyCleaningEvent,
   sendCleaningReminders,
   ensureCleaningAssignment,
@@ -110,6 +112,8 @@ import {
 } from "@/backend/controller/cleanersController";
 import { GET as listTasks } from "@/app/api/admin/cleaners/tasks/route";
 import { PUT as startTask } from "@/app/api/admin/cleaners/tasks/[id]/start/route";
+import { PUT as acceptRoute } from "@/app/api/admin/cleaners/tasks/[id]/accept/route";
+import { PUT as declineRoute } from "@/app/api/admin/cleaners/tasks/[id]/decline/route";
 import { PUT as completeTask } from "@/app/api/admin/cleaners/tasks/[id]/complete/route";
 import { PUT as setStatus } from "@/app/api/admin/cleaners/tasks/[id]/status/route";
 import { PUT as putTask } from "@/app/api/admin/cleaners/tasks/[id]/route";
@@ -1123,5 +1127,154 @@ describe("cleaning notifications for cleaner and office", () => {
     h.notifications.length = 0;
     await notifyCleaningEvent(t.id, "approved");
     expect(h.notifications).toEqual([expect.objectContaining({ userId: t.assigned_to, notificationType: "cleaning_approved" })]);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// A cleaner says they're not available (owner, 2026-10-26)
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("cleaner declines an assigned room", () => {
+  it("frees the room, tells the office, and keeps automatic assignment off it until the office reassigns", async () => {
+    const b = await addBooking({ when: "future" });
+    await confirm(b.id);
+    const [t] = await taskFor(b.id);
+    const cleaner = t.assigned_to!;
+
+    // Only the assigned cleaner can decline.
+    const other = [C1, C2, C3, C4].find((c) => c !== cleaner)!;
+    expect(await declineCleaningTask({ cleaningTaskId: t.id, cleanerId: other, reason: "" })).toMatchObject({ ok: false, status: 403 });
+
+    h.notifications.length = 0;
+    expect(await declineCleaningTask({ cleaningTaskId: t.id, cleanerId: cleaner, reason: "Sick" })).toEqual({ ok: true });
+    const [after] = await taskFor(b.id);
+    expect(after.assigned_to).toBeNull();
+    expect(after.cleaning_status).toBe("pending");
+    expect(after.unassigned_reason).toMatch(/isn't available: Sick/);
+    expect(h.notifications).toEqual(expect.arrayContaining([
+      expect.objectContaining({ roles: ["Owner", "CSR"], notificationType: "cleaning_declined" }),
+    ]));
+
+    // No replacement credit for declining.
+    const credits = await h.db.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM cleaning_opportunities WHERE employee_id = $1::uuid AND state = 'released' AND credit_consumed = false`, [cleaner]);
+    expect(credits.rows[0].n).toBe(0);
+
+    // The sweep and the confirmation hook leave it for the office.
+    await sweepUnassignedCleaning();
+    await ensureCleaningAssignment(b.id, "checkout");
+    expect((await taskFor(b.id))[0].assigned_to).toBeNull();
+
+    // The office assigns someone — the decline mark is cleared.
+    await reassignCleaningTask({ cleaningTaskId: t.id, toEmployeeId: other, assignedBy: OWNER, currentStatus: "pending", currentAssigneeId: null });
+    const marked = await h.db.query<{ declined_at: Date | null }>(`SELECT declined_at FROM booking_cleaning WHERE id = $1::uuid`, [t.id]);
+    expect(marked.rows[0].declined_at).toBeNull();
+    expect((await taskFor(b.id))[0].assigned_to).toBe(other);
+  });
+
+  it("can't decline a room already being cleaned", async () => {
+    const b = await addBooking({ when: "future" });
+    await confirm(b.id);
+    const [t] = await taskFor(b.id);
+    await h.db.query(`UPDATE booking_cleaning SET cleaning_status = 'in-progress' WHERE id = $1::uuid`, [t.id]);
+    expect(await declineCleaningTask({ cleaningTaskId: t.id, cleanerId: t.assigned_to!, reason: "" })).toMatchObject({ ok: false, status: 400 });
+  });
+});
+
+describe("cleaner accepts an assigned room", () => {
+  it("records the accept once, tells the office once, and resets when the room changes hands", async () => {
+    const b = await addBooking({ when: "future" });
+    await confirm(b.id);
+    const [t] = await taskFor(b.id);
+    const cleaner = t.assigned_to!;
+    const other = [C1, C2, C3, C4].find((c) => c !== cleaner)!;
+
+    expect(await acceptCleaningTask({ cleaningTaskId: t.id, cleanerId: other })).toMatchObject({ ok: false, status: 403 });
+
+    h.notifications.length = 0;
+    expect(await acceptCleaningTask({ cleaningTaskId: t.id, cleanerId: cleaner })).toEqual({ ok: true });
+    expect(await acceptCleaningTask({ cleaningTaskId: t.id, cleanerId: cleaner })).toEqual({ ok: true });
+    expect(h.notifications.filter((n) => n.notificationType === "cleaning_accepted")).toHaveLength(1);
+    const acc = await h.db.query<{ accepted_at: Date | null }>(`SELECT accepted_at FROM booking_cleaning WHERE id = $1::uuid`, [t.id]);
+    expect(acc.rows[0].accepted_at).not.toBeNull();
+
+    // Reassigned to someone else → they accept it themselves.
+    await reassignCleaningTask({ cleaningTaskId: t.id, toEmployeeId: other, assignedBy: OWNER, currentStatus: "assigned", currentAssigneeId: cleaner });
+    const reset = await h.db.query<{ accepted_at: Date | null }>(`SELECT accepted_at FROM booking_cleaning WHERE id = $1::uuid`, [t.id]);
+    expect(reset.rows[0].accepted_at).toBeNull();
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Accept / Reject through the real API routes the buttons call
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("Accept / Reject API (what the cleaner's buttons call)", () => {
+  const accepted = async (id: string) =>
+    (await h.db.query<{ accepted_at: Date | null }>(`SELECT accepted_at FROM booking_cleaning WHERE id = $1::uuid`, [id])).rows[0].accepted_at;
+
+  it("Accept: needs a login, only the assigned cleaner, shows up in their task list", async () => {
+    const b = await addBooking({ when: "future" });
+    await confirm(b.id);
+    const [t] = await taskFor(b.id);
+    const mine = t.assigned_to!;
+    const other = [C1, C2, C3, C4].find((c) => c !== mine)!;
+
+    as(null);
+    expect((await acceptRoute(req("/x", { method: "PUT" }), ctx(t.id))).status).toBe(401);
+    as({ id: other, role: "Cleaner" });
+    expect((await acceptRoute(req("/x", { method: "PUT" }), ctx(t.id))).status).toBe(403);
+
+    as({ id: mine, role: "Cleaner" });
+    const ok = await acceptRoute(req("/x", { method: "PUT" }), ctx(t.id));
+    expect(ok.status).toBe(200);
+    expect(await accepted(t.id)).not.toBeNull();
+
+    // Their own task list carries it (that's what flips the card to Start cleaning).
+    const list = await (await listTasks(req("/api/admin/cleaners/tasks"))).json();
+    const row = list.data.find((x: { cleaning_id: string }) => x.cleaning_id === t.id);
+    expect(row.accepted_at).toBeTruthy();
+  });
+
+  it("Reject: sends the room back to the office with the reason, and the cleaner can't accept it after", async () => {
+    const b = await addBooking({ when: "future" });
+    await confirm(b.id);
+    const [t] = await taskFor(b.id);
+    const mine = t.assigned_to!;
+
+    as({ id: mine, role: "Cleaner" });
+    h.notifications.length = 0;
+    const res = await declineRoute(req("/x", { method: "PUT", body: { reason: "Schedule conflict" } }), ctx(t.id));
+    expect(res.status).toBe(200);
+    const [after] = await taskFor(b.id);
+    expect(after.assigned_to).toBeNull();
+    expect(after.unassigned_reason).toMatch(/Schedule conflict/);
+    expect(h.notifications).toEqual(expect.arrayContaining([
+      expect.objectContaining({ roles: ["Owner", "CSR"], notificationType: "cleaning_declined" }),
+    ]));
+    // It's gone from their list, and accepting it now is refused.
+    const list = await (await listTasks(req("/api/admin/cleaners/tasks"))).json();
+    expect(list.data.some((x: { cleaning_id: string }) => x.cleaning_id === t.id)).toBe(false);
+    expect((await acceptRoute(req("/x", { method: "PUT" }), ctx(t.id))).status).toBe(403);
+  });
+
+  it("Reject also works after accepting (\"Can't make it any more?\")", async () => {
+    const b = await addBooking({ when: "future" });
+    await confirm(b.id);
+    const [t] = await taskFor(b.id);
+    as({ id: t.assigned_to!, role: "Cleaner" });
+    expect((await acceptRoute(req("/x", { method: "PUT" }), ctx(t.id))).status).toBe(200);
+    expect((await declineRoute(req("/x", { method: "PUT", body: {} }), ctx(t.id))).status).toBe(200);
+    expect(await accepted(t.id)).toBeNull();
+  });
+
+  it("Starting a room counts as accepting it", async () => {
+    const b = await addBooking(); // past stay → can start now
+    await confirm(b.id);
+    const [t] = await taskFor(b.id);
+    as({ id: t.assigned_to!, role: "Cleaner" });
+    expect(await accepted(t.id)).toBeNull();
+    expect((await startTask(req("/x", { method: "PUT" }), ctx(t.id))).status).toBe(200);
+    expect(await accepted(t.id)).not.toBeNull();
   });
 });

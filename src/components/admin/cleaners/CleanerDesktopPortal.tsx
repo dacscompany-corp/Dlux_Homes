@@ -27,6 +27,8 @@ import StaffChatThread from "@/components/admin/messages/StaffChatThread";
 import {
   useGetCleaningTasksQuery,
   useStartCleaningMutation,
+  useDeclineCleaningMutation,
+  useAcceptCleaningMutation,
   useCompleteCleaningMutation,
   isAccountDeactivatedError,
 } from "@/redux/api/cleanersApi";
@@ -199,6 +201,24 @@ export default function CleanerDesktopPortal() {
     refetch: refetchTasks,
   } = useGetCleaningTasksQuery(undefined, { pollingInterval: 30000, refetchOnMountOrArgChange: true });
   const [startCleaningM] = useStartCleaningMutation();
+  // Accept / Reject a new room. Reject sends it back to the office to reassign.
+  const [acceptM, { isLoading: accepting }] = useAcceptCleaningMutation();
+  const acceptRoom = async (id: string) => {
+    try { await acceptM(id).unwrap(); toast.success("Accepted — the office has been told."); }
+    catch (err) { toast.error((err as { data?: { error?: string } })?.data?.error || "Could not accept"); }
+  };
+  const [declineM, { isLoading: declining }] = useDeclineCleaningMutation();
+  const [declineFor, setDeclineFor] = useState<string | null>(null);
+  const [declineReason, setDeclineReason] = useState("");
+  const sendDecline = async (id: string) => {
+    try {
+      await declineM({ taskId: id, reason: declineReason.trim() || undefined }).unwrap();
+      toast.success("Sent — the office will assign someone else.");
+      setDeclineFor(null); setDeclineReason("");
+    } catch (err) {
+      toast.error((err as { data?: { error?: string } })?.data?.error || "Could not send that");
+    }
+  };
   const [completeCleaningM] = useCompleteCleaningMutation();
   const { data: session } = useSession();
   const cleanerId = (session?.user as { id?: string } | undefined)?.id;
@@ -247,6 +267,8 @@ export default function CleanerDesktopPortal() {
           guestCount: t.adults == null ? "" : guestCountText(Number(t.adults), Number(t.children ?? 0)),
           notes: `Guest: ${`${t.guest_first_name ?? ""} ${t.guest_last_name ?? ""}`.trim() || "—"}`,
           inspectionNote: t.inspection_note ? String(t.inspection_note) : "",
+          // Has the cleaner pressed Accept on this room yet?
+          accepted: !!t.accepted_at,
           openIssues: Number(t.open_issue_count ?? 0),
         };
       })
@@ -494,6 +516,23 @@ export default function CleanerDesktopPortal() {
   const renderMainAction = (a: CardAssignment, fromDashboard = false) => {
     const cs = a.status;
     const base = "inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white cursor-pointer";
+    if (cs === "pending" && !a.accepted) {
+      return (
+        <>
+          <button type="button" disabled={accepting} onClick={() => acceptRoom(a.id)}
+            className="inline-flex items-center gap-1.5 px-5 py-2 text-sm font-semibold text-white cursor-pointer disabled:opacity-60"
+            style={{ background: "#059669" }}>
+            <CheckCircle2 className="w-4 h-4" />Accept
+          </button>
+          <button type="button" aria-expanded={declineFor === a.id}
+            onClick={() => { if (fromDashboard) setActiveNav("Assignments"); setDeclineFor(declineFor === a.id ? null : a.id); setDeclineReason(""); }}
+            className="inline-flex items-center gap-1.5 px-5 py-2 text-sm font-semibold border cursor-pointer"
+            style={{ color: "#991b1b", borderColor: "#fecaca", backgroundColor: declineFor === a.id ? "#fef2f2" : "#ffffff" }}>
+            <X className="w-4 h-4" />Reject
+          </button>
+        </>
+      );
+    }
     if (cs === "pending") {
       // Before checkout the button is shown greyed out with when it opens,
       // so cleaners can always see where Start cleaning is.
@@ -789,6 +828,7 @@ export default function CleanerDesktopPortal() {
               if (x.status === "ready") return { text: "Approved — nothing more to do", color: "#065f46" };
               if (x.status === "awaiting-inspection") return { text: "Sent — the office is checking", color: "#5b21b6" };
               if (x.status === "in-progress") return { text: x.inspectionNote ? "Office asked for a fix — open the room" : "In progress — tick tasks and add area photos", color: "#8a6a2f" };
+              if (!x.accepted) return { text: "New room — Accept or Reject it", color: "#065f46" };
               if (locked) return { text: `Guest still in — you can start from ${formatDue(x.dueAt)}`, color: "#92400e" };
               return { text: "Guest has left — ready to start", color: "#b45309" };
             };
@@ -981,6 +1021,8 @@ export default function CleanerDesktopPortal() {
                           ? { text: "Sent — the office is checking your work. Nothing to do for now.", bg: "#ede9fe", fg: "#5b21b6" }
                           : cs === "in-progress"
                             ? { text: a.inspectionNote ? "The office asked for a fix — see the note below, then finish the checklist." : "You're cleaning this room — tick the tasks and add the area photos.", bg: "#F7F0E3", fg: "#8a6a2f" }
+                            : !a.accepted
+                              ? { text: "New room for you — please Accept or Reject it.", bg: "#ecfdf5", fg: "#065f46" }
                             : opensLater
                               ? { text: `Guest still checked in — you can start from ${formatDue(a.dueAt)}.`, bg: "#fef3c7", fg: "#92400e" }
                               : { text: "Guest has left — press Start cleaning when you begin.", bg: "#fef3c7", fg: "#92400e" };
@@ -1040,14 +1082,49 @@ export default function CleanerDesktopPortal() {
                           );
                         })()}
                       </div>
-                      {/* A quiet link, not a button — problems can come up at
-                          any step, but they're not the next thing to do. */}
-                      <button type="button" onClick={() => reportIssueFor(a)}
-                        className="inline-flex items-center gap-1 text-xs font-medium cursor-pointer underline underline-offset-2"
-                        style={{ color: "#8B6344" }}>
-                        <AlertCircle className="w-3.5 h-3.5" />Report a problem
-                      </button>
+                      <div className="flex items-center gap-4">
+                        {cs === "pending" && a.accepted && (
+                          <button type="button" onClick={() => { setDeclineFor(declineFor === a.id ? null : a.id); setDeclineReason(""); }}
+                            className="text-xs font-medium cursor-pointer underline underline-offset-2" style={{ color: "#991b1b" }}>
+                            Can&apos;t make it any more?
+                          </button>
+                        )}
+                        {/* A quiet link, not a button — problems can come up at
+                            any step, but they're not the next thing to do. */}
+                        <button type="button" onClick={() => reportIssueFor(a)}
+                          className="inline-flex items-center gap-1 text-xs font-medium cursor-pointer underline underline-offset-2"
+                          style={{ color: "#8B6344" }}>
+                          <AlertCircle className="w-3.5 h-3.5" />Report a problem
+                        </button>
+                      </div>
                     </div>
+
+                    {cs === "pending" && declineFor === a.id && (
+                      <div className="mt-3 border p-4" style={{ borderColor: "#fecaca", backgroundColor: "#fef2f2" }}>
+                        <p className="text-sm font-semibold" style={{ color: "#991b1b" }}>Reject this room?</p>
+                        <p className="text-xs mt-0.5" style={{ color: "#7f1d1d" }}>
+                          It goes back to the office and they&apos;ll assign another cleaner. You&apos;re not penalised, but you won&apos;t jump the queue for the next room either.
+                        </p>
+                        <div className="flex flex-wrap gap-1.5 mt-3">
+                          {["I'm sick", "Schedule conflict", "Emergency", "Too far today"].map((r) => (
+                            <button key={r} type="button" onClick={() => setDeclineReason(r)}
+                              className="px-2.5 py-1 text-xs border cursor-pointer"
+                              style={{ borderColor: declineReason === r ? "#991b1b" : "#fecaca", backgroundColor: declineReason === r ? "#991b1b" : "#fff", color: declineReason === r ? "#fff" : "#991b1b" }}>
+                              {r}
+                            </button>
+                          ))}
+                        </div>
+                        <input value={declineReason} onChange={(e) => setDeclineReason(e.target.value)} placeholder="Reason (optional)"
+                          className="w-full mt-2 border px-3 py-2 text-sm outline-none" style={{ borderColor: "#fecaca", backgroundColor: "#fff" }} />
+                        <div className="flex justify-end gap-2 mt-3">
+                          <button type="button" onClick={() => setDeclineFor(null)} className="px-3 py-1.5 text-sm cursor-pointer" style={{ color: "#8B6344" }}>Cancel</button>
+                          <button type="button" disabled={declining} onClick={() => sendDecline(a.id)}
+                            className="px-4 py-1.5 text-sm font-semibold text-white cursor-pointer disabled:opacity-60" style={{ backgroundColor: "#991b1b" }}>
+                            {declining ? "Sending…" : "Reject room"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Cleaning Checklist — inline, scoped to this assignment.
                         Opens on Start, on "Continue checklist", or by itself

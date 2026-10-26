@@ -14,6 +14,10 @@ export type CleaningStatus =
 
 export interface CleaningTask {
   cleaning_id: string;
+  /** Set when the assigned cleaner pressed Accept; null until then. */
+  accepted_at?: string | null;
+  /** The assigned cleaner's account status ('active' | 'inactive'). */
+  cleaner_status?: string | null;
   booking_id: string;
   booking_uuid?: string;
   /** The booking's own status — 'pending' means it isn't confirmed yet. */
@@ -388,6 +392,19 @@ export const cleanersApi = createApi({
       invalidatesTags: ["CleaningTask", "Checklist"],
     }),
 
+    // Cleaner accepts a room assigned to them (before starting).
+    acceptCleaning: builder.mutation<unknown, string>({
+      query: (taskId) => ({ url: `/tasks/${taskId}/accept`, method: "PUT" }),
+      invalidatesTags: ["CleaningTask"],
+    }),
+
+    // Cleaner can't take a room assigned to them (before starting). The room
+    // goes back to the office, who are notified to reassign it.
+    declineCleaning: builder.mutation<unknown, { taskId: string; reason?: string }>({
+      query: ({ taskId, reason }) => ({ url: `/tasks/${taskId}/decline`, method: "PUT", body: { reason } }),
+      invalidatesTags: ["CleaningTask"],
+    }),
+
     // Admin approves an inspection: awaiting-inspection -> ready. Only this
     // call can put a task into 'ready'.
     approveInspection: builder.mutation<CleaningTask, string>({
@@ -493,7 +510,9 @@ export const cleanersApi = createApi({
     // cleaner got there first or the offer lapsed.
     acceptJob: builder.mutation<CleaningTask, string>({
       query(taskId) {
-        return { url: `/tasks/${taskId}/accept`, method: "PUT" };
+        // /jobs/… (the offer routes) — NOT /tasks/{id}/accept, which is the
+        // Accept button on an assigned room.
+        return { url: `/jobs/${taskId}/accept`, method: "PUT" };
       },
       invalidatesTags: ["AvailableJob", "CleaningTask"],
     }),
@@ -501,7 +520,7 @@ export const cleanersApi = createApi({
     // Pass on an offered job so it goes to the next cleaner.
     skipJob: builder.mutation<{ cleaning_id: string }, string>({
       query(taskId) {
-        return { url: `/tasks/${taskId}/skip`, method: "PUT" };
+        return { url: `/jobs/${taskId}/skip`, method: "PUT" };
       },
       invalidatesTags: ["AvailableJob"],
     }),
@@ -538,6 +557,8 @@ export const {
   useApproveInspectionMutation,
   useRejectInspectionMutation,
   useAdminCompleteCleaningMutation,
+  useDeclineCleaningMutation,
+  useAcceptCleaningMutation,
   useGetRoomStockQuery,
   useAddRoomSupplyMutation,
   useUpdateRoomSupplyMutation,
