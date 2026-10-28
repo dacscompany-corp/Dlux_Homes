@@ -102,11 +102,13 @@ const BASE_TASK_COLUMNS = `
   bc.assignment_method,
   bc.assigned_by::text as assigned_by_id,
   bc.assigned_at,
+  bc.accepted_at,
   ab.first_name as assigned_by_first_name,
   ab.last_name as assigned_by_last_name,
   e.first_name as cleaner_first_name,
   e.last_name as cleaner_last_name,
   e.employment_id as cleaner_employment_id,
+  COALESCE(e.status, 'active') as cleaner_status,
   bc.cleaning_time_in,
   bc.cleaning_time_out,
   bc.cleaned_at,
@@ -685,7 +687,10 @@ export async function reassignCleaningTask(params: {
            assignment_method = 'manual',
            assigned_by = $3::uuid,
            assigned_at = NOW(),
-           unassigned_reason = NULL
+           unassigned_reason = NULL,
+           declined_by = NULL,
+           declined_at = NULL,
+           accepted_at = CASE WHEN assigned_to IS DISTINCT FROM $1::uuid THEN NULL ELSE accepted_at END
        WHERE id = $2::uuid
        RETURNING cleaning_status`,
       [toEmployeeId, cleaningTaskId, assignedBy]
@@ -878,7 +883,7 @@ export async function ensureCleaningAssignment(
       // or by a previous run of this same function. Reuse it; never replace it.
       const existing = await client.query(
         `SELECT bc.id::text AS id, bc.cleaning_status, bc.assigned_to::text AS assigned_to,
-                bc.unassigned_reason,
+                bc.unassigned_reason, bc.declined_at,
                 EXISTS (
                   SELECT 1 FROM cleaning_opportunities o
                   WHERE o.booking_cleaning_id = bc.id AND o.state <> 'released'
@@ -908,6 +913,14 @@ export async function ensureCleaningAssignment(
       // re-assigning it would send a cleaner back to a finished room.
       if (isPerformed(String(row.cleaning_status))) {
         outcome.skipped = "already-performed";
+        await client.query("COMMIT");
+        return outcome;
+      }
+
+      // A cleaner declined it: the office reassigns it by hand, so automatic
+      // assignment doesn't hand it straight back to the same person.
+      if (row.declined_at && !row.assigned_to) {
+        outcome.skipped = "already-assigned";
         await client.query("COMMIT");
         return outcome;
       }
@@ -1069,13 +1082,25 @@ export async function sweepUnassignedCleaning(limit = 50): Promise<{
   assigned: number;
   stillUnassigned: number;
 }> {
+  // Rooms held by a cleaner who has since been deactivated go back into the
+  // rotation first, so the pass below can hand them to someone active.
+  await releaseInactiveCleanerTasks();
+
   const res = await pool.query(
     `SELECT b.id::text AS id
      FROM booking b
      LEFT JOIN booking_cleaning bc ON bc.booking_id = b.id
-     WHERE b.status IN ('approved', 'confirmed', 'on-going', 'checked-in')
+     WHERE (
+             b.status IN ('approved', 'confirmed', 'on-going', 'checked-in')
+             -- A stay that already checked out but never got a task (its
+             -- hooks didn't run) still needs cleaning — recent ones only, so
+             -- old history is never handed out.
+             OR (b.status IN ('completed', 'checked-out') AND bc.id IS NULL
+                 AND ${checkoutAtSql("b")} >= NOW() - INTERVAL '3 days')
+           )
        AND (bc.id IS NULL
             OR (bc.assigned_to IS NULL
+                AND bc.declined_at IS NULL
                 AND bc.cleaning_status NOT IN ('awaiting-inspection', 'ready', 'cleaned', 'inspected')))
      ORDER BY ${checkoutAtSql("b")} ASC
      LIMIT $1`,
@@ -1146,9 +1171,14 @@ export async function onBookingStatusChanged(bookingId: string, status: string |
     const uuid: string | undefined = res.rows[0]?.id;
     if (!uuid) return;
 
-    if (status === "approved") {
+    // Any confirmed state ensures the cleaning task exists and has a cleaner —
+    // not only 'approved': a booking can reach 'on-going' (down payment
+    // approved) or 'checked-in' without passing through an 'approved' write,
+    // and used to wait for the 15-minute sweep. ensureCleaningAssignment is
+    // idempotent, so calling it again for an already-placed task is a no-op.
+    if (LIVE_BOOKING_STATUSES.includes(status)) {
       await ensureCleaningAssignment(uuid, "booking-confirmed");
-    } else if (status === "completed") {
+    } else if (status === "completed" || status === "checked-out") {
       await ensureCleaningAssignment(uuid, "checkout");
       await sendCleaningReminders();
     } else if (status === "cancelled" || status === "rejected") {
@@ -1352,4 +1382,201 @@ export async function sendCleaningReminders(): Promise<{ upcoming: number; start
     console.error("⚠️ sendCleaningReminders failed:", err);
   }
   return out;
+}
+
+
+/**
+ * A cleaner says they can't take a room assigned to them (owner, 2026-10-26).
+ *
+ * Only before they've started (Assigned). The room goes back to Needs
+ * Cleaning with no cleaner, marked declined so automatic assignment leaves it
+ * for the office, and Owner/CSR are notified to pick someone else. In the
+ * fairness ledger the opportunity is released WITHOUT a replacement credit —
+ * declining shouldn't move them up the queue the way a cancellation does.
+ */
+export async function declineCleaningTask(params: {
+  cleaningTaskId: string;
+  cleanerId: string;
+  reason: string;
+}): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const { cleaningTaskId, cleanerId } = params;
+  const reason = params.reason.trim().slice(0, 300);
+  let info: { ref: string; room: string | null; due: Date | null; cleanerName: string };
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`SELECT 1 FROM cleaning_rotation_state WHERE id = 1 FOR UPDATE`);
+    const res = await client.query(
+      `SELECT bc.cleaning_status, bc.assigned_to::text AS assigned_to, b.booking_id AS ref, b.room_name AS room,
+              COALESCE(bc.scheduled_for, ${checkoutAtSql("b")}) AS due,
+              NULLIF(TRIM(COALESCE(e.first_name, '') || ' ' || COALESCE(e.last_name, '')), '') AS cleaner_name
+         FROM booking_cleaning bc
+         JOIN booking b ON b.id = bc.booking_id
+         LEFT JOIN employees e ON e.id = bc.assigned_to
+        WHERE bc.id = $1::uuid
+        FOR UPDATE OF bc`,
+      [cleaningTaskId],
+    );
+    const t = res.rows[0];
+    if (!t) { await client.query("ROLLBACK"); return { ok: false, status: 404, error: "Cleaning task not found" }; }
+    if (t.assigned_to !== cleanerId) { await client.query("ROLLBACK"); return { ok: false, status: 403, error: "This room isn't assigned to you." }; }
+    if (t.cleaning_status !== "assigned") {
+      await client.query("ROLLBACK");
+      return { ok: false, status: 400, error: "You can only decline a room before you start cleaning it. Message the office instead." };
+    }
+
+    const releasedFrom = await releaseOpportunity(client, cleaningTaskId, "unassigned");
+    if (releasedFrom) {
+      // No replacement credit for a decline.
+      await client.query(
+        `UPDATE cleaning_opportunities SET credit_consumed = true
+          WHERE booking_cleaning_id = $1::uuid AND employee_id = $2::uuid AND state = 'released' AND credit_consumed = false`,
+        [cleaningTaskId, releasedFrom],
+      );
+    }
+    const name = t.cleaner_name ?? "The cleaner";
+    await client.query(
+      `UPDATE booking_cleaning
+          SET assigned_to = NULL, cleaning_status = 'pending', assignment_method = NULL,
+              assigned_by = NULL, assigned_at = NULL, cleaning_time_in = NULL,
+              declined_by = $2::uuid, declined_at = NOW(), accepted_at = NULL,
+              reminder_upcoming_sent_at = NULL, reminder_start_sent_at = NULL,
+              unassigned_reason = $3
+        WHERE id = $1::uuid`,
+      [cleaningTaskId, cleanerId, `${name} isn't available${reason ? `: ${reason}` : "."} Please assign another cleaner.`],
+    );
+    await client.query("COMMIT");
+    info = { ref: t.ref, room: t.room ?? null, due: t.due ?? null, cleanerName: name };
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("declineCleaningTask failed:", err);
+    return { ok: false, status: 500, error: "Could not decline the room" };
+  } finally {
+    client.release();
+  }
+
+  // The event comes off their calendar; the office is told.
+  scheduleCleaningCalendarSync(cleaningTaskId);
+  await logCleaningHistory(cleaningTaskId, "assigned", "pending", cleanerId,
+    `Declined by ${info.cleanerName}${reason ? ` — ${reason}` : ""}`);
+  await createNotificationsForRoles(["Owner", "CSR"], {
+    title: "Cleaner not available — reassign needed",
+    message: `${info.cleanerName} can't clean ${info.room ?? "a room"} (${info.ref}), due ${manilaWhen(info.due)}.${reason ? ` Reason: ${reason}.` : ""} Please assign another cleaner in Cleaning Operations.`,
+    notificationType: "cleaning_declined",
+  }).catch((e) => console.error("decline notify failed:", e));
+  return { ok: true };
+}
+
+
+/**
+ * A cleaner accepts a room assigned to them (owner, 2026-10-26) — the other
+ * half of Accept / Reject. Only the assigned cleaner, only before starting.
+ * Accepting twice is harmless. The office is told so they know it's covered.
+ */
+export async function acceptCleaningTask(params: {
+  cleaningTaskId: string;
+  cleanerId: string;
+}): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const { cleaningTaskId, cleanerId } = params;
+  try {
+    const res = await pool.query(
+      `UPDATE booking_cleaning SET accepted_at = NOW()
+        WHERE id = $1::uuid AND assigned_to = $2::uuid AND cleaning_status = 'assigned' AND accepted_at IS NULL
+        RETURNING id`,
+      [cleaningTaskId, cleanerId],
+    );
+    if (res.rows.length === 0) {
+      const t = await pool.query(`SELECT assigned_to::text AS assigned_to, cleaning_status, accepted_at FROM booking_cleaning WHERE id = $1::uuid`, [cleaningTaskId]);
+      if (!t.rows[0]) return { ok: false, status: 404, error: "Cleaning task not found" };
+      if (t.rows[0].assigned_to !== cleanerId) return { ok: false, status: 403, error: "This room isn't assigned to you." };
+      if (t.rows[0].accepted_at) return { ok: true }; // already accepted — nothing new to tell anyone
+      return { ok: false, status: 400, error: "This room can't be accepted any more." };
+    }
+    const task = await loadNotifyTask(cleaningTaskId);
+    if (task) {
+      await logCleaningHistory(cleaningTaskId, "assigned", "assigned", cleanerId, `Accepted by ${task.cleaner_name ?? "the cleaner"}`);
+      await createNotificationsForRoles(["Owner", "CSR"], {
+        title: "Cleaner accepted a room",
+        message: `${task.cleaner_name ?? "The cleaner"} accepted ${task.haven} (${task.ref}), due ${manilaWhen(task.due)}.`,
+        notificationType: "cleaning_accepted",
+      }).catch((e) => console.error("accept notify failed:", e));
+    }
+    return { ok: true };
+  } catch (err) {
+    console.error("acceptCleaningTask failed:", err);
+    return { ok: false, status: 500, error: "Could not accept the room" };
+  }
+}
+
+
+/** Booking statuses that mean the stay is confirmed and needs a cleaning task. */
+const LIVE_BOOKING_STATUSES = ["approved", "confirmed", "on-going", "checked-in"];
+
+/**
+ * Rooms still held by a cleaner whose account was deactivated can't be
+ * accepted, started or even seen by anyone on the cleaning side. Release them
+ * (unperformed work only, recent/upcoming stays only) and run them back
+ * through the normal fair assignment, which skips inactive cleaners — or
+ * leaves them for the office, who are notified, if nobody is available.
+ *
+ * Called when a cleaner is deactivated, and by the 15-minute sweep as a
+ * safety net. Idempotent: an already-released room isn't held by anyone.
+ */
+export async function releaseInactiveCleanerTasks(employeeId?: string): Promise<number> {
+  let bookingIds: string[] = [];
+  try {
+    const params: unknown[] = [];
+    let who = `COALESCE(e.status, 'active') = 'inactive'`;
+    if (employeeId) { params.push(employeeId); who += ` AND e.id = $${params.length}::uuid`; }
+    const res = await pool.query<{ id: string; booking_uuid: string; status: string; name: string | null }>(
+      `SELECT bc.id::text AS id, b.id::text AS booking_uuid, bc.cleaning_status AS status,
+              NULLIF(TRIM(COALESCE(e.first_name, '') || ' ' || COALESCE(e.last_name, '')), '') AS name
+         FROM booking_cleaning bc
+         JOIN booking b ON b.id = bc.booking_id
+         JOIN employees e ON e.id = bc.assigned_to
+        WHERE ${who}
+          AND bc.cleaning_status IN ('pending', 'assigned', 'in-progress')
+          AND b.status NOT IN ('rejected', 'cancelled')
+          AND COALESCE(bc.scheduled_for, ${checkoutAtSql("b")}) >= NOW() - INTERVAL '3 days'`,
+      params,
+    );
+    for (const t of res.rows) {
+      let released = false;
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(`SELECT 1 FROM cleaning_rotation_state WHERE id = 1 FOR UPDATE`);
+        await releaseOpportunity(client, t.id, "unassigned");
+        await client.query(
+          `UPDATE booking_cleaning
+              SET assigned_to = NULL, cleaning_status = 'pending', assignment_method = NULL,
+                  assigned_by = NULL, assigned_at = NULL, cleaning_time_in = NULL, accepted_at = NULL,
+                  reminder_upcoming_sent_at = NULL, reminder_start_sent_at = NULL,
+                  unassigned_reason = $2
+            WHERE id = $1::uuid`,
+          [t.id, `${t.name ?? "The cleaner"}'s account is inactive.`],
+        );
+        await client.query("COMMIT");
+        released = true;
+      } catch (err) {
+        await client.query("ROLLBACK").catch(() => {});
+        console.error(`⚠️ releaseInactiveCleanerTasks: ${t.id} failed:`, err);
+      } finally {
+        client.release();
+      }
+      // After the connection is back in the pool.
+      if (released) {
+        bookingIds.push(t.booking_uuid);
+        await logCleaningHistory(t.id, t.status, "pending", null, `Released from ${t.name ?? "a cleaner"} — account inactive`);
+        scheduleCleaningCalendarSync(t.id);
+      }
+    }
+  } catch (err) {
+    console.error("⚠️ releaseInactiveCleanerTasks failed:", err);
+    bookingIds = [];
+  }
+  // Back through the fair rotation (active cleaners only).
+  for (const id of bookingIds) await ensureCleaningAssignment(id, "booking-confirmed");
+  return bookingIds.length;
 }

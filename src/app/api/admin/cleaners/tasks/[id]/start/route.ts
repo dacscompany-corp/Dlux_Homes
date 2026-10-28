@@ -76,6 +76,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       );
     }
 
+    // Starting a room is taking it: if the cleaner never pressed Accept (e.g.
+    // opened it from a notification), count it as accepted now so the office
+    // doesn't keep seeing "waiting for the cleaner to accept".
+    await pool.query(
+      `UPDATE booking_cleaning SET accepted_at = COALESCE(accepted_at, NOW()) WHERE id = $1::uuid`,
+      [id]
+    );
+
     const url = new URL(`/api/admin/cleaners/tasks/${id}`, req.url);
     const forwarded = new Request(url, {
       method: "PUT",

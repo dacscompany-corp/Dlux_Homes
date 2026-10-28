@@ -147,9 +147,19 @@ describe("isCurrentCleaning", () => {
     expect(isCurrentCleaning({ scheduled_for: manila(2026, 8, 28, 5).toISOString(), cleaning_status: "assigned" }, now)).toBe(false);
   });
 
+  it("keeps a room nobody has cleaned yet for a few days after checkout", () => {
+    // Checked out yesterday, still Assigned → still on the cleaner's list.
+    expect(isCurrentCleaning({ scheduled_for: manila(2026, 9, 19, 17).toISOString(), cleaning_status: "assigned" }, now)).toBe(true);
+    // …but a finished one from yesterday drops off.
+    expect(isCurrentCleaning({ scheduled_for: manila(2026, 9, 19, 17).toISOString(), cleaning_status: "ready" }, now)).toBe(false);
+    // …and an unfinished one from a week ago does too.
+    expect(isCurrentCleaning({ scheduled_for: manila(2026, 9, 13, 17).toISOString(), cleaning_status: "assigned" }, now)).toBe(false);
+  });
+
   it("keeps a room started in the last 24 hours even if checkout was yesterday", () => {
     const t = { scheduled_for: manila(2026, 9, 19, 17).toISOString(), cleaning_status: "in-progress", cleaning_time_in: manila(2026, 9, 19, 18).toISOString() };
     expect(isCurrentCleaning(t, now)).toBe(true);
-    expect(isCurrentCleaning({ ...t, cleaning_time_in: manila(2026, 8, 28, 18).toISOString() }, now)).toBe(false);
+    // A room started long ago whose checkout was also long ago drops off.
+    expect(isCurrentCleaning({ ...t, scheduled_for: manila(2026, 8, 27, 17).toISOString(), cleaning_time_in: manila(2026, 8, 28, 18).toISOString() }, now)).toBe(false);
   });
 });

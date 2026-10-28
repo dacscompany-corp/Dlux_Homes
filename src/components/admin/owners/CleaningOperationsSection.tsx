@@ -9,6 +9,7 @@ import {
   useApproveInspectionMutation,
   useRejectInspectionMutation,
   useAdminCompleteCleaningMutation,
+  useSyncCleaningTasksMutation,
   useAssignCleanerMutation,
   useGetChecklistQuery,
   useGetChecklistPhotosQuery,
@@ -319,9 +320,13 @@ function nextStep(task: CleaningTask): { text: string; color: string; act: boole
     case "in-progress":
       return { text: "Cleaner is working on it", color: "#8a6a2f", act: false };
     case "assigned":
-      return isOverdue(task)
-        ? { text: "Late — cleaner hasn't started yet", color: "#dc2626", act: true }
-        : { text: "Waiting for the cleaner to start", color: "#1e40af", act: false };
+      // A deactivated cleaner can't log in to accept or start — needs someone else.
+      if (task.cleaner_status === "inactive") return { text: "Cleaner is inactive — pick someone else", color: "#dc2626", act: true };
+      if (isOverdue(task)) return { text: "Late — cleaner hasn't started yet", color: "#dc2626", act: true };
+      // Cleaners Accept or Reject a new room (owner, 2026-10-26).
+      return task.accepted_at
+        ? { text: "Accepted — waiting for the cleaner to start", color: "#1e40af", act: false }
+        : { text: "Waiting for the cleaner to accept", color: "#8a6a2f", act: false };
     default:
       return task.booking_status === "pending"
         ? { text: "Waiting for booking confirmation", color: "#8B6344", act: false }
@@ -397,6 +402,18 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
   const { data: tasksData, isFetching, isLoading: tasksLoading, isError: tasksFailed, refetch: refetchTasks } =
     useGetCleaningTasksQuery(undefined, { pollingInterval: 30000 });
   const tasks = tasksData ?? [];
+
+  // "Check for missing tasks": every confirmed booking gets its cleaning task
+  // and a cleaner (same catch-up as the 15-minute cron). Never duplicates.
+  const [syncTasks, { isLoading: syncing }] = useSyncCleaningTasksMutation();
+  const runSync = async () => {
+    try {
+      const r = await syncTasks().unwrap();
+      toast.success(r.checked === 0
+        ? "All bookings already have their cleaning tasks."
+        : `Checked ${r.checked} booking${r.checked === 1 ? "" : "s"}: ${r.assigned} assigned${r.stillUnassigned ? `, ${r.stillUnassigned} need a cleaner` : ""}.`);
+    } catch { toast.error("Could not check for missing tasks"); }
+  };
 
   // Manual assignment — same /assign endpoint the automatic checkout trigger
   // uses, just picked by a human here instead of by least-loaded-cleaner
@@ -593,6 +610,12 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
           }}
           counts={{ ...statusCounts, ...assignCounts }}
           resultCount={visibleTasks.length} />
+        <button type="button" onClick={runSync} disabled={syncing}
+          title="Make sure every confirmed booking has its cleaning task and a cleaner"
+          className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium border cursor-pointer disabled:opacity-60"
+          style={{ color: "#5a4a3a", borderColor: "#D4BFA0", backgroundColor: "#F7F0E3" }}>
+          <ClipboardList className="w-4 h-4" />{syncing ? "Checking…" : "Check for missing tasks"}
+        </button>
       </div>
 
       {/* Active filters, restated outside the panels (as on Bookings) so a

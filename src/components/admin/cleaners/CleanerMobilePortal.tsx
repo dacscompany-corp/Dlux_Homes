@@ -51,6 +51,8 @@ import {
 import {
   useGetCleaningTasksQuery,
   useStartCleaningMutation,
+  useDeclineCleaningMutation,
+  useAcceptCleaningMutation,
   useCompleteCleaningMutation,
   isAccountDeactivatedError,
 } from "@/redux/api/cleanersApi";
@@ -198,6 +200,8 @@ type Room = {
   dueAt: Date | null;
   /** Booking status — once the guest is checked out the room opens early. */
   bookingStatus: string | null;
+  /** The cleaner pressed Accept on this room. */
+  accepted: boolean;
   /** Guest first name only — no contact details reach the cleaner. */
   guestName: string;
   /** Party size, for towels/linens; null when the booking didn't record it. */
@@ -267,6 +271,24 @@ export default function CleanerMobilePortal() {
     refetchOnMountOrArgChange: true,
   });
   const [startCleaningM] = useStartCleaningMutation();
+  // "I'm not available" on a room not started yet — goes back to the office.
+  const [declineM, { isLoading: declining }] = useDeclineCleaningMutation();
+  const [acceptM, { isLoading: accepting }] = useAcceptCleaningMutation();
+  const acceptRoom = async (id: string) => {
+    try { await acceptM(id).unwrap(); toast.success(t.acceptedToast); }
+    catch (err) { toast.error((err as { data?: { error?: string } })?.data?.error || "Could not accept"); }
+  };
+  const [declineFor, setDeclineFor] = useState<string | null>(null);
+  const [declineReason, setDeclineReason] = useState("");
+  const sendDecline = async (id: string) => {
+    try {
+      await declineM({ taskId: id, reason: declineReason.trim() || undefined }).unwrap();
+      toast.success(t.declineSent);
+      setDeclineFor(null); setDeclineReason("");
+    } catch (err) {
+      toast.error((err as { data?: { error?: string } })?.data?.error || "Could not send that");
+    }
+  };
   const [completeCleaningM] = useCompleteCleaningMutation();
 
   const { today, upcoming } = useMemo(() => {
@@ -295,6 +317,7 @@ export default function CleanerMobilePortal() {
           date: dueAt ? startOfManilaDay(dueAt) : toLocalDate(r.check_out_date),
           dueAt,
           bookingStatus: r.booking_status ? String(r.booking_status) : null,
+          accepted: !!r.accepted_at,
           guestName: String(r.guest_first_name ?? "").trim(),
           adults: r.adults == null ? null : Number(r.adults),
           children: Number(r.children ?? 0),
@@ -732,11 +755,19 @@ export default function CleanerMobilePortal() {
         {/* ═════════ TODAY ═════════ */}
         {screen === "home" && (
           <div className="dlx-screen" style={{ flex: 1, padding: "20px 20px 40px" }}>
-            {/* Short greeting — the rooms are what matter on this screen. */}
-            <div style={{ marginBottom: 18 }}>
-              <div style={{ fontFamily: SERIF, fontSize: 28, lineHeight: 1.1 }}>{t.hello} {firstName}</div>
-              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginTop: 6 }}>
-                <span style={{ fontSize: 15, color: C.muted }}>{formatDateLine(new Date(), lang)}</span>
+            {/* "My tasks" first — it's what this screen is for. A short hello
+                and today's date sit under it. */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ fontFamily: SERIF, fontSize: 32, lineHeight: 1.05 }}>{t.myTasks}</div>
+                {(today.length + upcoming.length) > 0 && (
+                  <span style={{ minWidth: 30, height: 30, padding: "0 10px", borderRadius: 999, background: C.ink, color: C.onDark, fontSize: 15, fontWeight: 700, display: "grid", placeItems: "center" }}>
+                    {today.length + upcoming.length}
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: 15, color: C.muted, marginTop: 6 }}>{t.hello} {firstName} · {formatDateLine(new Date(), lang)}</div>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginTop: 8 }}>
                 {today.length > 0 && (
                   <span style={{ padding: "3px 10px", borderRadius: 999, background: C.card, border: `1px solid ${C.line}`, fontSize: 14, fontWeight: 600 }}>
                     {t.todaySummary(today.length, today.filter((r) => r.status === "awaiting-inspection" || r.status === "ready").length)}
@@ -788,14 +819,12 @@ export default function CleanerMobilePortal() {
               const chipsOrder: CleanStatus[] = ["in-progress", "pending", "awaiting-inspection", "ready"];
               return (<>
 
-                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 12 }}>
-                  <div style={{ fontFamily: SERIF, fontSize: 30, lineHeight: 1 }}>{t.myTasks}</div>
-                  <div style={{ fontSize: 15, color: C.muted }}>{all.length}</div>
-                </div>
-
                 {/* Status filter */}
                 {all.length > 0 && (
-                  <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, marginBottom: 16 }}>
+                  <div style={{
+                    position: "sticky", top: "calc(env(safe-area-inset-top, 0px) + 65px)", zIndex: 5, background: C.bg,
+                    display: "flex", gap: 8, overflowX: "auto", padding: "8px 0", margin: "0 0 12px",
+                  }}>
                     {(["all", ...chipsOrder] as const).filter((k) => k === "all" || counts[k]).map((k) => {
                       const on = taskFilter === k;
                       const chip = k === "all" ? null : CHIPS[k];
@@ -869,6 +898,27 @@ export default function CleanerMobilePortal() {
                                 <div>{r.note}</div>
                               </div>
                             )}
+                            {r.status === "pending" && !r.accepted ? (<>
+                              <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 12, background: C.greenBg, color: C.greenInk, fontSize: 15, fontWeight: 600 }}>
+                                {t.newRoomHint}
+                              </div>
+                              <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+                                <button type="button" disabled={accepting} onClick={() => acceptRoom(r.id)} style={{
+                                  flex: 1, height: 56, borderRadius: 14, border: 0, background: C.green, color: "#fff",
+                                  font: `700 18px ${SANS}`, cursor: "pointer", display: "flex", alignItems: "center",
+                                  justifyContent: "center", gap: 8, opacity: accepting ? 0.7 : 1,
+                                }}>
+                                  <Check className="w-5 h-5" strokeWidth={3} />{t.accept}
+                                </button>
+                                <button type="button" onClick={() => { setDeclineFor(declineFor === r.id ? null : r.id); setDeclineReason(""); }} style={{
+                                  flex: 1, height: 56, borderRadius: 14, border: "1.5px solid #fecaca",
+                                  background: declineFor === r.id ? "#fef2f2" : "#fff", color: "#991b1b",
+                                  font: `700 18px ${SANS}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                                }}>
+                                  <X className="w-5 h-5" strokeWidth={3} />{t.reject}
+                                </button>
+                              </div>
+                            </>) : (
                             <button type="button" onClick={() => openRoom(r)} style={{
                               marginTop: 14, width: "100%", height: action.primary ? 56 : 48, borderRadius: 14,
                               border: action.primary ? 0 : `1px solid ${C.creamLine}`,
@@ -880,6 +930,43 @@ export default function CleanerMobilePortal() {
                               {action.label}
                               {!locked && <ChevronRight className="w-5 h-5" strokeWidth={2.5} />}
                             </button>
+                            )}
+                            {/* Accepted, but plans changed — a quiet way to back out. */}
+                            {r.status === "pending" && r.accepted && declineFor !== r.id && (
+                              <button type="button" onClick={() => { setDeclineFor(r.id); setDeclineReason(""); }} style={{
+                                marginTop: 8, width: "100%", height: 40, border: 0, background: "transparent",
+                                color: "#991b1b", font: `600 14px ${SANS}`, cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3,
+                              }}>{t.cantMakeIt}</button>
+                            )}
+                            {r.status === "pending" && declineFor === r.id && (
+                              <div className="dlx-screen" style={{ marginTop: 12, padding: 14, borderRadius: 14, background: "#fef2f2", border: "1px solid #fecaca" }}>
+                                <div style={{ fontSize: 16, fontWeight: 700, color: "#991b1b" }}>{t.declineTitle}</div>
+                                <div style={{ fontSize: 14, color: "#7f1d1d", marginTop: 2, lineHeight: 1.4 }}>{t.declineBody}</div>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+                                  {t.declineReasons.map((why) => (
+                                    <button key={why} type="button" onClick={() => setDeclineReason(why)} style={{
+                                      height: 40, padding: "0 12px", borderRadius: 999, cursor: "pointer", font: `600 14px ${SANS}`,
+                                      border: `1px solid ${declineReason === why ? "#991b1b" : "#fecaca"}`,
+                                      background: declineReason === why ? "#991b1b" : "#fff", color: declineReason === why ? "#fff" : "#991b1b",
+                                    }}>{why}</button>
+                                  ))}
+                                </div>
+                                <input value={declineReason} onChange={(e) => setDeclineReason(e.target.value)} placeholder={t.declineOther} style={{
+                                  marginTop: 10, width: "100%", boxSizing: "border-box", height: 46, borderRadius: 12,
+                                  border: "1px solid #fecaca", padding: "0 12px", font: `400 15px ${SANS}`, background: "#fff",
+                                }} />
+                                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                                  <button type="button" onClick={() => setDeclineFor(null)} style={{
+                                    flex: 1, height: 48, borderRadius: 12, border: `1px solid ${C.line}`, background: "#fff",
+                                    color: C.ink, font: `600 15px ${SANS}`, cursor: "pointer",
+                                  }}>{t.cancel}</button>
+                                  <button type="button" disabled={declining} onClick={() => sendDecline(r.id)} style={{
+                                    flex: 2, height: 48, borderRadius: 12, border: 0, background: "#991b1b",
+                                    color: "#fff", font: `700 15px ${SANS}`, cursor: "pointer", opacity: declining ? 0.7 : 1,
+                                  }}>{declining ? t.sending : t.declineSend}</button>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         );
                       })}
