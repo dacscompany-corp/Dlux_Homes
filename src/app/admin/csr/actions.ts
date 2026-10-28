@@ -4,6 +4,7 @@ import pool from "@/backend/config/db";
 import { headers } from "next/headers";
 import { createNotificationsForRoles } from "@/backend/utils/notificationHelper";
 import { requireAdmin } from "@/backend/utils/requireAdmin";
+import { onBookingStatusChanged } from "@/backend/controller/cleanersController";
 import { upload_image_from_form } from "@/backend/utils/fileUpload";
 import type { PromoStayType } from "@/redux/api/promotionsApi";
 import { securityDepositFor, DEPOSIT_DEFAULT } from "@/lib/pricing";
@@ -675,6 +676,9 @@ export async function approveDownPaymentByBookingId(bookingId: string): Promise<
       [bookingId]
     );
     await client.query('COMMIT');
+    // Same hook every other status change runs: make sure the stay has its
+    // cleaning task and a cleaner. Idempotent; never throws.
+    await onBookingStatusChanged(String(bookingId), "on-going");
   } catch (error) {
     await client.query('ROLLBACK');
     console.error("Error approving down payment:", error);

@@ -1082,11 +1082,22 @@ export async function sweepUnassignedCleaning(limit = 50): Promise<{
   assigned: number;
   stillUnassigned: number;
 }> {
+  // Rooms held by a cleaner who has since been deactivated go back into the
+  // rotation first, so the pass below can hand them to someone active.
+  await releaseInactiveCleanerTasks();
+
   const res = await pool.query(
     `SELECT b.id::text AS id
      FROM booking b
      LEFT JOIN booking_cleaning bc ON bc.booking_id = b.id
-     WHERE b.status IN ('approved', 'confirmed', 'on-going', 'checked-in')
+     WHERE (
+             b.status IN ('approved', 'confirmed', 'on-going', 'checked-in')
+             -- A stay that already checked out but never got a task (its
+             -- hooks didn't run) still needs cleaning — recent ones only, so
+             -- old history is never handed out.
+             OR (b.status IN ('completed', 'checked-out') AND bc.id IS NULL
+                 AND ${checkoutAtSql("b")} >= NOW() - INTERVAL '3 days')
+           )
        AND (bc.id IS NULL
             OR (bc.assigned_to IS NULL
                 AND bc.declined_at IS NULL
@@ -1160,9 +1171,14 @@ export async function onBookingStatusChanged(bookingId: string, status: string |
     const uuid: string | undefined = res.rows[0]?.id;
     if (!uuid) return;
 
-    if (status === "approved") {
+    // Any confirmed state ensures the cleaning task exists and has a cleaner —
+    // not only 'approved': a booking can reach 'on-going' (down payment
+    // approved) or 'checked-in' without passing through an 'approved' write,
+    // and used to wait for the 15-minute sweep. ensureCleaningAssignment is
+    // idempotent, so calling it again for an already-placed task is a no-op.
+    if (LIVE_BOOKING_STATUSES.includes(status)) {
       await ensureCleaningAssignment(uuid, "booking-confirmed");
-    } else if (status === "completed") {
+    } else if (status === "completed" || status === "checked-out") {
       await ensureCleaningAssignment(uuid, "checkout");
       await sendCleaningReminders();
     } else if (status === "cancelled" || status === "rejected") {
@@ -1491,4 +1507,76 @@ export async function acceptCleaningTask(params: {
     console.error("acceptCleaningTask failed:", err);
     return { ok: false, status: 500, error: "Could not accept the room" };
   }
+}
+
+
+/** Booking statuses that mean the stay is confirmed and needs a cleaning task. */
+const LIVE_BOOKING_STATUSES = ["approved", "confirmed", "on-going", "checked-in"];
+
+/**
+ * Rooms still held by a cleaner whose account was deactivated can't be
+ * accepted, started or even seen by anyone on the cleaning side. Release them
+ * (unperformed work only, recent/upcoming stays only) and run them back
+ * through the normal fair assignment, which skips inactive cleaners — or
+ * leaves them for the office, who are notified, if nobody is available.
+ *
+ * Called when a cleaner is deactivated, and by the 15-minute sweep as a
+ * safety net. Idempotent: an already-released room isn't held by anyone.
+ */
+export async function releaseInactiveCleanerTasks(employeeId?: string): Promise<number> {
+  let bookingIds: string[] = [];
+  try {
+    const params: unknown[] = [];
+    let who = `COALESCE(e.status, 'active') = 'inactive'`;
+    if (employeeId) { params.push(employeeId); who += ` AND e.id = $${params.length}::uuid`; }
+    const res = await pool.query<{ id: string; booking_uuid: string; status: string; name: string | null }>(
+      `SELECT bc.id::text AS id, b.id::text AS booking_uuid, bc.cleaning_status AS status,
+              NULLIF(TRIM(COALESCE(e.first_name, '') || ' ' || COALESCE(e.last_name, '')), '') AS name
+         FROM booking_cleaning bc
+         JOIN booking b ON b.id = bc.booking_id
+         JOIN employees e ON e.id = bc.assigned_to
+        WHERE ${who}
+          AND bc.cleaning_status IN ('pending', 'assigned', 'in-progress')
+          AND b.status NOT IN ('rejected', 'cancelled')
+          AND COALESCE(bc.scheduled_for, ${checkoutAtSql("b")}) >= NOW() - INTERVAL '3 days'`,
+      params,
+    );
+    for (const t of res.rows) {
+      let released = false;
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(`SELECT 1 FROM cleaning_rotation_state WHERE id = 1 FOR UPDATE`);
+        await releaseOpportunity(client, t.id, "unassigned");
+        await client.query(
+          `UPDATE booking_cleaning
+              SET assigned_to = NULL, cleaning_status = 'pending', assignment_method = NULL,
+                  assigned_by = NULL, assigned_at = NULL, cleaning_time_in = NULL, accepted_at = NULL,
+                  reminder_upcoming_sent_at = NULL, reminder_start_sent_at = NULL,
+                  unassigned_reason = $2
+            WHERE id = $1::uuid`,
+          [t.id, `${t.name ?? "The cleaner"}'s account is inactive.`],
+        );
+        await client.query("COMMIT");
+        released = true;
+      } catch (err) {
+        await client.query("ROLLBACK").catch(() => {});
+        console.error(`⚠️ releaseInactiveCleanerTasks: ${t.id} failed:`, err);
+      } finally {
+        client.release();
+      }
+      // After the connection is back in the pool.
+      if (released) {
+        bookingIds.push(t.booking_uuid);
+        await logCleaningHistory(t.id, t.status, "pending", null, `Released from ${t.name ?? "a cleaner"} — account inactive`);
+        scheduleCleaningCalendarSync(t.id);
+      }
+    }
+  } catch (err) {
+    console.error("⚠️ releaseInactiveCleanerTasks failed:", err);
+    bookingIds = [];
+  }
+  // Back through the fair rotation (active cleaners only).
+  for (const id of bookingIds) await ensureCleaningAssignment(id, "booking-confirmed");
+  return bookingIds.length;
 }

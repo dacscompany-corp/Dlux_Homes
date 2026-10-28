@@ -117,6 +117,9 @@ export function startOfManilaDay(d: Date): Date {
  * Cleaning Operations but drop off the cleaner's lists (owner, 2026-10-20:
  * "focus on the upcoming cleaning").
  */
+/** Unfinished rooms stay on a cleaner's list this long after checkout. */
+export const UNFINISHED_GRACE_DAYS = 3;
+
 export function isCurrentCleaning(
   task: SchedulableTask & { cleaning_status?: string | null; cleaning_time_in?: string | null },
   now: Date = new Date(),
@@ -124,6 +127,10 @@ export function isCurrentCleaning(
   const due = cleaningDueAt(task);
   if (!due) return true;
   if (startOfManilaDay(due).getTime() >= startOfManilaDay(now).getTime()) return true;
+  // Not cleaned yet: stays on their list for a few days after checkout — a
+  // room that still needs cleaning must never vanish just because its day passed.
+  const unfinished = !task.cleaning_status || ["pending", "assigned", "in-progress"].includes(task.cleaning_status);
+  if (unfinished && now.getTime() - due.getTime() < UNFINISHED_GRACE_DAYS * 24 * 60 * 60 * 1000) return true;
   if (task.cleaning_status === "in-progress" && task.cleaning_time_in) {
     const started = new Date(task.cleaning_time_in).getTime();
     return Number.isFinite(started) && now.getTime() - started < 24 * 60 * 60 * 1000;

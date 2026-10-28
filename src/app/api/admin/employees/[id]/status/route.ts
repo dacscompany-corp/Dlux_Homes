@@ -3,6 +3,7 @@ import pool from "@/backend/config/db";
 import { requireAdmin } from "@/backend/utils/requireAdmin";
 import { logActivity } from "@/backend/utils/activityLogger";
 import { checkStatusChange } from "@/lib/staff-accounts";
+import { releaseInactiveCleanerTasks } from "@/backend/controller/cleanersController";
 
 export const runtime = "nodejs";
 
@@ -64,7 +65,13 @@ export async function PATCH(request: NextRequest, { params }: RouteContext): Pro
       request,
     });
 
-    return NextResponse.json({ success: true, data: updated.rows[0] });
+    // A deactivated cleaner's upcoming rooms go to an active cleaner straight
+    // away (or to the office if nobody's free) instead of sitting invisible.
+    const releasedRooms = next === "inactive" && target.role === "Cleaner"
+      ? await releaseInactiveCleanerTasks(target.id)
+      : 0;
+
+    return NextResponse.json({ success: true, data: updated.rows[0], releasedRooms });
   } catch (error) {
     console.error("❌ Error changing staff status:", error);
     return NextResponse.json({ success: false, error: "Couldn't update this account. Try again." }, { status: 500 });

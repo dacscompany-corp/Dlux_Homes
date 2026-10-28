@@ -392,6 +392,14 @@ export const cleanersApi = createApi({
       invalidatesTags: ["CleaningTask", "Checklist"],
     }),
 
+    // Owner/CSR: run the booking → cleaning-task catch-up now (same as the
+    // 15-minute cron). Safe to repeat — never creates duplicates.
+    syncCleaningTasks: builder.mutation<{ checked: number; assigned: number; stillUnassigned: number }, void>({
+      query: () => ({ url: "/tasks/sync", method: "POST" }),
+      transformResponse: (r: { success: boolean; data: { checked: number; assigned: number; stillUnassigned: number } }) => r.data,
+      invalidatesTags: ["CleaningTask"],
+    }),
+
     // Cleaner accepts a room assigned to them (before starting).
     acceptCleaning: builder.mutation<unknown, string>({
       query: (taskId) => ({ url: `/tasks/${taskId}/accept`, method: "PUT" }),
@@ -559,6 +567,7 @@ export const {
   useAdminCompleteCleaningMutation,
   useDeclineCleaningMutation,
   useAcceptCleaningMutation,
+  useSyncCleaningTasksMutation,
   useGetRoomStockQuery,
   useAddRoomSupplyMutation,
   useUpdateRoomSupplyMutation,

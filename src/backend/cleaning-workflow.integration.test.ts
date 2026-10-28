@@ -113,6 +113,8 @@ import {
 import { GET as listTasks } from "@/app/api/admin/cleaners/tasks/route";
 import { PUT as startTask } from "@/app/api/admin/cleaners/tasks/[id]/start/route";
 import { PUT as acceptRoute } from "@/app/api/admin/cleaners/tasks/[id]/accept/route";
+import { POST as syncRoute } from "@/app/api/admin/cleaners/tasks/sync/route";
+import { PATCH as staffStatusRoute } from "@/app/api/admin/employees/[id]/status/route";
 import { PUT as declineRoute } from "@/app/api/admin/cleaners/tasks/[id]/decline/route";
 import { PUT as completeTask } from "@/app/api/admin/cleaners/tasks/[id]/complete/route";
 import { PUT as setStatus } from "@/app/api/admin/cleaners/tasks/[id]/status/route";
@@ -1276,5 +1278,111 @@ describe("Accept / Reject API (what the cleaner's buttons call)", () => {
     expect(await accepted(t.id)).toBeNull();
     expect((await startTask(req("/x", { method: "PUT" }), ctx(t.id))).status).toBe(200);
     expect(await accepted(t.id)).not.toBeNull();
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Booking → Cleaning Operations transmission (2026-10-28)
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("booking → cleaning task transmission", () => {
+  const taskCount = async (bookingId: string) =>
+    (await h.db.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM booking_cleaning WHERE booking_id = $1::uuid`, [bookingId])).rows[0].n;
+
+  // A stay whose checkout was N days ago (Manila calendar).
+  async function addRecentBooking(status: string, daysAgo: number): Promise<{ id: string }> {
+    bookingSeq++;
+    const r = await h.db.query<{ id: string }>(
+      `INSERT INTO booking (booking_id, room_name, check_in_date, check_out_date, check_in_time, check_out_time, status)
+       VALUES ($1, 'Haven 1', (NOW() AT TIME ZONE 'Asia/Manila')::date - $2::int - 1,
+               (NOW() AT TIME ZONE 'Asia/Manila')::date - $2::int, '14:00', '12:00', $3)
+       RETURNING id::text AS id`,
+      [`DL-RECENT-${bookingSeq}`, daysAgo, status],
+    );
+    return r.rows[0];
+  }
+
+  it("a booking that goes straight to on-going / checked-in gets its task and a cleaner", async () => {
+    for (const status of ["on-going", "checked-in"]) {
+      const b = await addBooking({ when: "future" });
+      await h.db.query(`UPDATE booking SET status = $2 WHERE id = $1::uuid`, [b.id, status]);
+      await onBookingStatusChanged(b.id, status);
+      const [t] = await taskFor(b.id);
+      expect(t?.assigned_to, status).toBeTruthy();
+    }
+  });
+
+  it("the sweep / 'Check for missing tasks' recovers a missed booking and a recent checkout, without duplicates", async () => {
+    // Confirmed, but the hook never ran.
+    const missed = await addBooking({ when: "future" });
+    await h.db.query(`UPDATE booking SET status = 'approved' WHERE id = $1::uuid`, [missed.id]);
+    // Checked out yesterday, never had a task.
+    const recent = await addRecentBooking("completed", 1);
+    // Checked out long ago with no task — old history stays untouched.
+    const old = await addRecentBooking("completed", 30);
+
+    as({ id: OWNER, role: "Owner" });
+    expect((await syncRoute()).status).toBe(200);
+    expect(await taskCount(missed.id)).toBe(1);
+    expect(await taskCount(recent.id)).toBe(1);
+    expect(await taskCount(old.id)).toBe(0);
+    expect((await taskFor(missed.id))[0].assigned_to).toBeTruthy();
+
+    // Running it again changes nothing.
+    const before = (await taskFor(missed.id))[0].assigned_to;
+    await syncRoute();
+    await sweepUnassignedCleaning();
+    expect(await taskCount(missed.id)).toBe(1);
+    expect(await taskCount(recent.id)).toBe(1);
+    expect((await taskFor(missed.id))[0].assigned_to).toBe(before);
+
+    // Cleaners can't run it.
+    as({ id: C1, role: "Cleaner" });
+    expect((await syncRoute()).status).toBe(403);
+  });
+
+  it("deactivating a cleaner hands their upcoming rooms to an active cleaner", async () => {
+    const b = await addBooking({ when: "future" });
+    await confirm(b.id);
+    const [t] = await taskFor(b.id);
+    const leaving = t.assigned_to!;
+
+    as({ id: OWNER, role: "Owner" });
+    const res = await staffStatusRoute(req("/x", { method: "PATCH", body: { status: "inactive" } }), ctx(leaving));
+    expect(res.status).toBe(200);
+    expect((await res.json()).releasedRooms).toBe(1);
+
+    const [after] = await taskFor(b.id);
+    expect(after.assigned_to).toBeTruthy();
+    expect(after.assigned_to).not.toBe(leaving);
+    expect(await taskCount(b.id)).toBe(1);
+  });
+
+  it("the sweep also rescues rooms already stuck with an inactive cleaner", async () => {
+    const b = await addBooking({ when: "future" });
+    await confirm(b.id);
+    const [t] = await taskFor(b.id);
+    await h.db.query(`UPDATE employees SET status = 'inactive' WHERE id = $1::uuid`, [t.assigned_to]);
+    await sweepUnassignedCleaning();
+    const [after] = await taskFor(b.id);
+    expect(after.assigned_to).toBeTruthy();
+    expect(after.assigned_to).not.toBe(t.assigned_to);
+  });
+
+  it("assigned rooms show on that cleaner's list; unassigned ones show to admin", async () => {
+    const b = await addBooking({ when: "future" });
+    await confirm(b.id);
+    const [t] = await taskFor(b.id);
+    as({ id: t.assigned_to!, role: "Cleaner" });
+    const mine = await (await listTasks(req("/api/admin/cleaners/tasks"))).json();
+    expect(mine.data.some((x: { cleaning_id: string }) => x.cleaning_id === t.id)).toBe(true);
+
+    // Rejected by the cleaner → off their list, on admin's list with no cleaner.
+    await declineCleaningTask({ cleaningTaskId: t.id, cleanerId: t.assigned_to!, reason: "" });
+    as({ id: OWNER, role: "Owner" });
+    const all = await (await listTasks(req("/api/admin/cleaners/tasks"))).json();
+    const row = all.data.find((x: { cleaning_id: string }) => x.cleaning_id === t.id);
+    expect(row).toBeTruthy();
+    expect(row.assigned_cleaner_id).toBeNull();
   });
 });

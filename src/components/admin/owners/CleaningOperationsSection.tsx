@@ -9,6 +9,7 @@ import {
   useApproveInspectionMutation,
   useRejectInspectionMutation,
   useAdminCompleteCleaningMutation,
+  useSyncCleaningTasksMutation,
   useAssignCleanerMutation,
   useGetChecklistQuery,
   useGetChecklistPhotosQuery,
@@ -402,6 +403,18 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
     useGetCleaningTasksQuery(undefined, { pollingInterval: 30000 });
   const tasks = tasksData ?? [];
 
+  // "Check for missing tasks": every confirmed booking gets its cleaning task
+  // and a cleaner (same catch-up as the 15-minute cron). Never duplicates.
+  const [syncTasks, { isLoading: syncing }] = useSyncCleaningTasksMutation();
+  const runSync = async () => {
+    try {
+      const r = await syncTasks().unwrap();
+      toast.success(r.checked === 0
+        ? "All bookings already have their cleaning tasks."
+        : `Checked ${r.checked} booking${r.checked === 1 ? "" : "s"}: ${r.assigned} assigned${r.stillUnassigned ? `, ${r.stillUnassigned} need a cleaner` : ""}.`);
+    } catch { toast.error("Could not check for missing tasks"); }
+  };
+
   // Manual assignment — same /assign endpoint the automatic checkout trigger
   // uses, just picked by a human here instead of by least-loaded-cleaner
   // logic. Available any time before Ready, so admin can hand-assign an
@@ -597,6 +610,12 @@ export function CleaningOperationsSection({ initialTab = "tasks", focusBookingRe
           }}
           counts={{ ...statusCounts, ...assignCounts }}
           resultCount={visibleTasks.length} />
+        <button type="button" onClick={runSync} disabled={syncing}
+          title="Make sure every confirmed booking has its cleaning task and a cleaner"
+          className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium border cursor-pointer disabled:opacity-60"
+          style={{ color: "#5a4a3a", borderColor: "#D4BFA0", backgroundColor: "#F7F0E3" }}>
+          <ClipboardList className="w-4 h-4" />{syncing ? "Checking…" : "Check for missing tasks"}
+        </button>
       </div>
 
       {/* Active filters, restated outside the panels (as on Bookings) so a
