@@ -819,27 +819,42 @@ export default function CleanerMobilePortal() {
               const chipsOrder: CleanStatus[] = ["in-progress", "pending", "awaiting-inspection", "ready"];
               return (<>
 
-                {/* Status filter */}
+                {/* Status filter — every status as a tile, all in view at once.
+                    Tap a tile to show only that status; tap it again (or
+                    "Show all") to see everything. */}
                 {all.length > 0 && (
-                  <div style={{
-                    position: "sticky", top: "calc(env(safe-area-inset-top, 0px) + 65px)", zIndex: 5, background: C.bg,
-                    display: "flex", gap: 8, overflowX: "auto", padding: "8px 0", margin: "0 0 12px",
-                  }}>
-                    {(["all", ...chipsOrder] as const).filter((k) => k === "all" || counts[k]).map((k) => {
-                      const on = taskFilter === k;
-                      const chip = k === "all" ? null : CHIPS[k];
-                      return (
-                        <button key={k} type="button" onClick={() => setTaskFilter(k)} style={{
-                          flex: "none", height: 40, padding: "0 14px", borderRadius: 999, cursor: "pointer",
-                          border: `1px solid ${on ? C.ink : C.line}`, background: on ? C.ink : C.card,
-                          color: on ? C.onDark : chip ? chip.fg : C.ink, font: `600 15px ${SANS}`,
-                          display: "inline-flex", alignItems: "center", gap: 6,
-                        }}>
-                          {k === "all" ? t.filterAll : (t[chip!.label] as string)}
-                          <span style={{ opacity: 0.7 }}>{k === "all" ? all.length : counts[k]}</span>
-                        </button>
-                      );
-                    })}
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+                      {chipsOrder.map((k) => {
+                        const on = taskFilter === k;
+                        const chip = CHIPS[k];
+                        const n = counts[k] ?? 0;
+                        return (
+                          <button key={k} type="button" aria-pressed={on} onClick={() => setTaskFilter(on ? "all" : k)} style={{
+                            minHeight: 64, padding: "10px 12px", borderRadius: 14, cursor: "pointer", textAlign: "left",
+                            border: `1.5px solid ${on ? chip.fg : C.line}`, background: on ? chip.bg : C.card,
+                            display: "flex", alignItems: "center", gap: 10, fontFamily: SANS,
+                            opacity: n === 0 && !on ? 0.6 : 1, transition: "background .15s, border-color .15s",
+                          }}>
+                            <span style={{ width: 34, height: 34, borderRadius: 10, background: chip.bg, color: chip.fg, display: "grid", placeItems: "center", flexShrink: 0 }}>
+                              <chip.Icon className="w-[18px] h-[18px]" strokeWidth={2.5} />
+                            </span>
+                            <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 700, lineHeight: 1.25, color: on ? chip.fg : C.ink }}>
+                              {t[chip.label] as string}
+                            </span>
+                            <span style={{ fontSize: 22, fontWeight: 700, lineHeight: 1, color: chip.fg, flexShrink: 0 }}>{n}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {taskFilter !== "all" && (
+                      <button type="button" onClick={() => setTaskFilter("all")} style={{
+                        marginTop: 10, width: "100%", height: 44, borderRadius: 12, border: `1px solid ${C.line}`,
+                        background: C.bg, color: C.ink, font: `600 15px ${SANS}`, cursor: "pointer",
+                      }}>
+                        {t.showAll(all.length)}
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -866,18 +881,22 @@ export default function CleanerMobilePortal() {
                             : { label: t.viewRoom, primary: false };
                         return (
                           <div key={r.id} style={{
-                            background: C.card, border: `1px solid ${C.line}`, borderLeft: `5px solid ${chip.fg}`,
-                            borderRadius: 16, padding: 16,
+                            background: C.card, border: `1px solid ${C.line}`,
+                            borderRadius: 16, padding: 16, overflow: "hidden",
                           }}>
-                            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
-                              <div style={{ minWidth: 0 }}>
-                                <div style={{ fontSize: 19, fontWeight: 700, lineHeight: 1.25 }}>{r.name}</div>
-                                <div style={{ fontSize: 14, color: C.muted, marginTop: 3 }}>{r.bookingRef} · {stayText(r)}</div>
-                              </div>
-                              <span style={{ flex: "none", padding: "4px 10px", borderRadius: 999, fontSize: 13, fontWeight: 700, background: chip.bg, color: chip.fg, display: "inline-flex", alignItems: "center", gap: 5 }}>
-                                <chip.Icon className="w-3.5 h-3.5" strokeWidth={2.5} />{t[chip.label] as string}
+                            {/* Status first: a full-width strip in the status colour. */}
+                            <div style={{
+                              margin: "-16px -16px 14px", padding: "10px 16px", background: chip.bg, color: chip.fg,
+                              borderBottom: `1px solid ${C.line}`, display: "flex", alignItems: "center", gap: 8,
+                              fontSize: 15, fontWeight: 700,
+                            }}>
+                              <span style={{ width: 26, height: 26, borderRadius: 8, background: chip.fg, color: "#fff", display: "grid", placeItems: "center", flexShrink: 0 }}>
+                                <chip.Icon className="w-4 h-4" strokeWidth={2.5} />
                               </span>
+                              {t[chip.label] as string}
                             </div>
+                            <div style={{ fontSize: 19, fontWeight: 700, lineHeight: 1.25, overflowWrap: "anywhere" }}>{r.name}</div>
+                            <div style={{ fontSize: 14, color: C.muted, marginTop: 3, overflowWrap: "anywhere" }}>{r.bookingRef} · {stayText(r)}</div>
                             <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 12, fontSize: 16, color: C.ink }}>
                               {r.dueAt && (
                                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -904,31 +923,31 @@ export default function CleanerMobilePortal() {
                               </div>
                               <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
                                 <button type="button" disabled={accepting} onClick={() => acceptRoom(r.id)} style={{
-                                  flex: 1, height: 56, borderRadius: 14, border: 0, background: C.green, color: "#fff",
+                                  flex: 2, minWidth: 0, height: 56, borderRadius: 14, border: 0, background: C.green, color: "#fff",
                                   font: `700 18px ${SANS}`, cursor: "pointer", display: "flex", alignItems: "center",
                                   justifyContent: "center", gap: 8, opacity: accepting ? 0.7 : 1,
                                 }}>
                                   <Check className="w-5 h-5" strokeWidth={3} />{t.accept}
                                 </button>
                                 <button type="button" onClick={() => { setDeclineFor(declineFor === r.id ? null : r.id); setDeclineReason(""); }} style={{
-                                  flex: 1, height: 56, borderRadius: 14, border: "1.5px solid #fecaca",
+                                  flex: 1, minWidth: 0, height: 56, borderRadius: 14, border: "1.5px solid #fecaca",
                                   background: declineFor === r.id ? "#fef2f2" : "#fff", color: "#991b1b",
-                                  font: `700 18px ${SANS}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                                  font: `700 17px ${SANS}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                                 }}>
                                   <X className="w-5 h-5" strokeWidth={3} />{t.reject}
                                 </button>
                               </div>
                             </>) : (
                             <button type="button" onClick={() => openRoom(r)} style={{
-                              marginTop: 14, width: "100%", height: action.primary ? 56 : 48, borderRadius: 14,
+                              marginTop: 14, width: "100%", minHeight: action.primary ? 56 : 50, padding: "10px 16px", borderRadius: 14,
                               border: action.primary ? 0 : `1px solid ${C.creamLine}`,
                               background: action.primary ? C.ink : C.bg, color: action.primary ? C.onDark : C.goldInk,
-                              font: `700 ${action.primary ? 18 : 16}px ${SANS}`, cursor: "pointer",
-                              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                              font: `700 ${action.primary ? 18 : 16}px ${SANS}`, cursor: "pointer", lineHeight: 1.3,
+                              display: "flex", alignItems: "center", justifyContent: "center", gap: 8, textAlign: "center",
                             }}>
-                              {locked && <Clock className="w-5 h-5" strokeWidth={2} />}
-                              {action.label}
-                              {!locked && <ChevronRight className="w-5 h-5" strokeWidth={2.5} />}
+                              {locked && <Clock className="w-5 h-5 flex-shrink-0" strokeWidth={2} />}
+                              <span>{action.label}</span>
+                              {!locked && <ChevronRight className="w-5 h-5 flex-shrink-0" strokeWidth={2.5} />}
                             </button>
                             )}
                             {/* Accepted, but plans changed — a quiet way to back out. */}
@@ -1008,13 +1027,30 @@ export default function CleanerMobilePortal() {
           <>
             {screenHeader(() => setScreen("home"), problemButton)}
             <div className="dlx-screen" style={{ flex: 1, padding: "20px 16px 120px" }}>
-              <div style={{ fontFamily: SERIF, fontSize: 36, lineHeight: 1.05 }}>{active?.name ?? "—"}</div>
-              <div style={{ fontSize: 15, color: C.muted, marginTop: 6 }}>
-                {active ? `${active.bookingRef} · ${stayText(active)}` : ""}
-              </div>
+              <div style={{ fontFamily: SERIF, fontSize: 28, lineHeight: 1.15 }}>{active?.name ?? "—"}</div>
+              {active && (() => {
+                const chip = CHIPS[active.status];
+                return (
+                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginTop: 8 }}>
+                    <span style={{ padding: "4px 10px", borderRadius: 999, fontSize: 13, fontWeight: 700, background: chip.bg, color: chip.fg, display: "inline-flex", alignItems: "center", gap: 5 }}>
+                      <chip.Icon className="w-3.5 h-3.5" strokeWidth={2.5} />{t[chip.label] as string}
+                    </span>
+                    <span style={{ fontSize: 14, color: C.muted }}>{active.bookingRef} · {stayText(active)}</span>
+                  </div>
+                );
+              })()}
               {active && (
-                <div style={{ fontSize: 15, color: C.muted, marginTop: 2 }}>
-                  {outText(active)}{guestText(active) ? ` · ${guestText(active)}` : ""}
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 12, fontSize: 16 }}>
+                  {active.dueAt && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <Clock className="w-5 h-5 flex-shrink-0" strokeWidth={2} style={{ color: C.goldInk }} />{outText(active)}
+                    </div>
+                  )}
+                  {guestText(active) && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <Users className="w-5 h-5 flex-shrink-0" strokeWidth={2} style={{ color: C.goldInk }} />{guestText(active)}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1025,7 +1061,23 @@ export default function CleanerMobilePortal() {
                 </div>
               )}
 
-              {active?.status === "pending" && (() => {
+              {active?.status === "pending" && !active.accepted && (
+                <div style={{ marginTop: 16, background: C.greenBg, color: C.greenInk, borderRadius: 14, padding: 14 }}>
+                  <div style={{ fontSize: 16, fontWeight: 600 }}>{t.newRoomHint}</div>
+                  <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+                    <button type="button" disabled={accepting} onClick={() => acceptRoom(active.id)} style={{
+                      flex: 2, minWidth: 0, height: 56, borderRadius: 14, border: 0, background: C.green, color: "#fff",
+                      font: `700 18px ${SANS}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                      opacity: accepting ? 0.7 : 1,
+                    }}><Check className="w-5 h-5" strokeWidth={3} />{t.accept}</button>
+                    <button type="button" onClick={() => { setDeclineFor(active.id); setDeclineReason(""); setScreen("home"); }} style={{
+                      flex: 1, minWidth: 0, height: 56, borderRadius: 14, border: "1.5px solid #fecaca", background: "#fff", color: "#991b1b",
+                      font: `700 18px ${SANS}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                    }}><X className="w-5 h-5" strokeWidth={3} />{t.reject}</button>
+                  </div>
+                </div>
+              )}
+              {active?.status === "pending" && active.accepted && (() => {
                 const canStart = canStartCleaning(roomSchedule(active));
                 return (
                   <div style={{ marginTop: 14, background: C.amberBg, color: C.amberInk, borderRadius: 12, padding: "12px 14px", fontSize: 16, lineHeight: 1.4 }}>
@@ -1055,6 +1107,7 @@ export default function CleanerMobilePortal() {
                 </div>
               )}
 
+              {active?.status !== "pending" && (
               <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: 16, marginTop: 16 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                   <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.goldInk }}>{t.stepsTitle}</span>
@@ -1095,7 +1148,7 @@ export default function CleanerMobilePortal() {
                     </div>
                   );
                 })()}
-                {active?.status !== "pending" && (() => {
+                {(() => {
                   const shown = !!active && tasksShownFor === active.id;
                   return (
                     <button type="button" aria-expanded={shown}
@@ -1112,6 +1165,7 @@ export default function CleanerMobilePortal() {
                   );
                 })()}
               </div>
+              )}
 
               {!(active && active.status !== "pending" && tasksShownFor === active.id) ? null : categories.length === 0 ? (
                 ck.loadError ? (
@@ -1149,8 +1203,8 @@ export default function CleanerMobilePortal() {
                             disabled={!canEditChecklist}
                             aria-pressed={done}
                             style={{
-                              width: "100%", minHeight: 64, padding: "12px 14px", border: 0,
-                              borderTop: i ? `1px solid ${C.hair}` : 0,
+                              width: "100%", minHeight: 64, padding: "12px 14px",
+                              borderTop: i ? `1px solid ${C.hair}` : 0, borderRight: 0, borderBottom: 0, borderLeft: 0,
                               background: done ? "#FBFAF6" : C.card, display: "flex", alignItems: "center", gap: 14,
                               textAlign: "left", cursor: canEditChecklist ? "pointer" : "default", fontFamily: SANS,
                             }}>
@@ -1595,7 +1649,8 @@ export default function CleanerMobilePortal() {
                     const Icon = icon.Icon;
                     return (
                       <button key={n.id} type="button" onClick={() => openNotification(n)} style={{
-                        width: "100%", textAlign: "left", border: 0, borderTop: i ? `1px solid ${C.hair}` : 0,
+                        width: "100%", textAlign: "left",
+                        borderTop: i ? `1px solid ${C.hair}` : 0, borderRight: 0, borderBottom: 0, borderLeft: 0,
                         background: n.read ? C.card : "#FDF8F3", padding: "14px 14px", cursor: "pointer",
                         display: "flex", gap: 12, alignItems: "flex-start", fontFamily: SANS, color: C.ink,
                       }}>

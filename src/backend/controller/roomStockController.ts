@@ -78,10 +78,13 @@ export async function listRoomSupplies(havenId: string | null): Promise<NextResp
   }
 }
 
-/** POST — add one item, or the starter list (Owner/CSR). */
+/**
+ * POST — add one item, or the starter list (Owner/CSR). A cleaner may add one
+ * item too (owner, 2026-10-29); `byCleaner` names them so the office is told.
+ */
 export async function createRoomSupplies(body: {
   haven_id?: string; starter?: boolean; item_name?: string; unit_type?: string; par_quantity?: unknown; current_quantity?: unknown;
-}): Promise<NextResponse> {
+}, byCleaner: string | null = null): Promise<NextResponse> {
   try {
     const haven = await resolveHaven(isUuid(body.haven_id) ? body.haven_id : null);
     if (!haven) return fail("No room found to add supplies to.", 404);
@@ -116,6 +119,13 @@ export async function createRoomSupplies(body: {
       added += res.rowCount ?? 0;
     }
     if (!body.starter && added === 0) return fail("That item is already on the list.", 409);
+    if (byCleaner) {
+      await createNotificationsForRoles(["Owner", "CSR"], {
+        title: "Room supply added",
+        message: `${byCleaner} added ${items[0].item_name} (full = ${items[0].par_quantity} ${items[0].unit_type}) to ${haven.name}'s supply list.`,
+        notificationType: "restock_request",
+      }).catch((e) => console.error("supply-added notify failed:", e));
+    }
     return ok({ added });
   } catch (err) {
     console.error("createRoomSupplies failed:", err);
@@ -149,12 +159,22 @@ export async function updateRoomSupply(id: string, body: { item_name?: string; u
   }
 }
 
-/** DELETE — remove an item from the room list (Owner/CSR). Requests keep their name. */
-export async function deleteRoomSupply(id: string): Promise<NextResponse> {
+/**
+ * DELETE — remove an item from the room list. Requests keep their name.
+ * Owner/CSR, or a cleaner (owner, 2026-10-29) — then the office is told.
+ */
+export async function deleteRoomSupply(id: string, byCleaner: string | null = null): Promise<NextResponse> {
   if (!isUuid(id)) return fail("Unknown item", 404);
   try {
-    const res = await pool.query(`DELETE FROM room_supplies WHERE id = $1::uuid`, [id]);
+    const res = await pool.query<{ item_name: string }>(`DELETE FROM room_supplies WHERE id = $1::uuid RETURNING item_name`, [id]);
     if (!res.rowCount) return fail("Unknown item", 404);
+    if (byCleaner) {
+      await createNotificationsForRoles(["Owner", "CSR"], {
+        title: "Room supply removed",
+        message: `${byCleaner} removed ${res.rows[0].item_name} from the room's supply list.`,
+        notificationType: "restock_request",
+      }).catch((e) => console.error("supply-removed notify failed:", e));
+    }
     return ok({ id });
   } catch (err) {
     console.error("deleteRoomSupply failed:", err);

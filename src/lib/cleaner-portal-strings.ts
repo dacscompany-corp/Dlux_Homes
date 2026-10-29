@@ -37,7 +37,7 @@ const en = {
   // Status chips
   sPending: "To clean",
   sProgress: "Cleaning now",
-  sWaiting: "Sent · office is checking",
+  sWaiting: "Waiting for confirmation",
   sReady: "Done",
 
   // Room / checklist
@@ -164,9 +164,9 @@ const en = {
     ] },
     { title: "Ask for supplies", go: "stock", steps: [
       "Open Menu → Room supplies (or tap Need supplies? while cleaning).",
-      "Count what's left with − and +, then tap Save counts.",
-      "Pick what's low or type any item you need, then tap Send request.",
-      "Check My requests: Pending → Processing → Completed.",
+      "Count what's left with − and +. Anything missing is added by itself.",
+      "Need something not on the list? Tap Something else? and type it.",
+      "Tap Send to office. Each item shows its status: Waiting for office → On the way → Delivered.",
     ] },
     { title: "Report something broken or missing", go: "problem", steps: [
       "Open Menu → Report a problem (or tap Problem? in a room).",
@@ -197,6 +197,7 @@ const en = {
   } as Record<"pending" | "in-progress" | "awaiting-inspection" | "ready", string>,
   myTasks: "My tasks",
   filterAll: "All",
+  showAll: (n: number) => `Show all rooms (${n})`,
   nothingHere: "No rooms here right now.",
   viewRoom: "View room",
   startFrom: (when: string) => `Start cleaning · from ${when}`,
@@ -283,7 +284,7 @@ const tl: CleanerStrings = {
 
   sPending: "Lilinisin",
   sProgress: "Nililinis",
-  sWaiting: "Naipadala · sinusuri ng opisina",
+  sWaiting: "Hinihintay ang kumpirmasyon",
   sReady: "Tapos na",
 
   back: "Bumalik",
@@ -402,9 +403,9 @@ const tl: CleanerStrings = {
     ] },
     { title: "Humingi ng supply", go: "stock", steps: [
       "Buksan ang Menu → Supply sa kwarto (o pindutin ang Kailangan ng supply? habang naglilinis).",
-      "Bilangin ang natira gamit ang − at +, tapos pindutin ang I-save ang bilang.",
-      "Piliin ang kulang o isulat ang kailangan, tapos pindutin ang Ipadala ang hiling.",
-      "Tingnan ang Mga hiling ko: Naghihintay → Inaasikaso → Tapos na.",
+      "Bilangin ang natira gamit ang − at +. Kusang idadagdag ang kulang.",
+      "May kailangang wala sa listahan? Pindutin ang Iba pa? at isulat ito.",
+      "Pindutin ang Ipadala sa opisina. May status ang bawat item: Hinihintay ang opisina → Parating na → Naihatid na.",
     ] },
     { title: "Mag-report ng sira o nawawala", go: "problem", steps: [
       "Buksan ang Menu → Mag-report ng problema (o pindutin ang May problema? sa kwarto).",
@@ -435,6 +436,7 @@ const tl: CleanerStrings = {
   },
   myTasks: "Mga gawain ko",
   filterAll: "Lahat",
+  showAll: (n: number) => `Ipakita lahat ng kwarto (${n})`,
   nothingHere: "Walang kwarto rito ngayon.",
   viewRoom: "Tingnan ang kwarto",
   startFrom: (when) => `Simulan · mula ${when}`,

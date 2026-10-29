@@ -150,7 +150,9 @@ describe("isCurrentCleaning", () => {
   it("keeps a room nobody has cleaned yet for a few days after checkout", () => {
     // Checked out yesterday, still Assigned → still on the cleaner's list.
     expect(isCurrentCleaning({ scheduled_for: manila(2026, 9, 19, 17).toISOString(), cleaning_status: "assigned" }, now)).toBe(true);
-    // …but a finished one from yesterday drops off.
+    // Handed in yesterday, office hasn't confirmed yet → still there.
+    expect(isCurrentCleaning({ scheduled_for: manila(2026, 9, 19, 17).toISOString(), cleaning_status: "awaiting-inspection" }, now)).toBe(true);
+    // …but a confirmed (Done) one from yesterday drops off.
     expect(isCurrentCleaning({ scheduled_for: manila(2026, 9, 19, 17).toISOString(), cleaning_status: "ready" }, now)).toBe(false);
     // …and an unfinished one from a week ago does too.
     expect(isCurrentCleaning({ scheduled_for: manila(2026, 9, 13, 17).toISOString(), cleaning_status: "assigned" }, now)).toBe(false);
