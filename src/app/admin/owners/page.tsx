@@ -34,6 +34,7 @@ import {
   PricingCalendarSection, Empty,
 } from "@/components/admin/owners/OwnerModules";
 import { CleaningOperationsSection } from "@/components/admin/owners/CleaningOperationsSection";
+import { ExtendBookingModal, ExtensionHistory, useBookingExtensions, EXTENDABLE_UI_STATUSES } from "@/components/admin/owners/ExtendBooking";
 import { SeasonalRatesSection } from "@/components/admin/owners/SeasonalRatesSection";
 import HavenWizard from "@/components/admin/owners/HavenWizard";
 import { MonthNavigator, currentMonthKey } from "@/components/admin/owners/MonthNavigator";
@@ -94,6 +95,7 @@ import {
   Bookmark,
   Receipt,
   CalendarRange,
+  CalendarPlus,
 } from "lucide-react";
 import { useSignedInStaff } from "@/components/admin/useSignedInStaff";
 
@@ -389,6 +391,9 @@ export default function OwnerDashboard() {
     addOnItems: { name: string; price: number; quantity: number; status: string; guests: string }[];
   };
   const [bookingModal, setBookingModal] = useState<AdminBookingRow | null>(null);
+  // Extend Booking (admin-only): the booking being extended, and all extensions.
+  const [extendFor, setExtendFor] = useState<AdminBookingRow | null>(null);
+  const extensions = useBookingExtensions();
 
   // Guest-record PDF download. Fetched as a blob rather than navigated to, so a
   // 401/500 surfaces as a toast instead of the browser replacing the dashboard
@@ -2022,6 +2027,20 @@ export default function OwnerDashboard() {
                               className="p-1.5 rounded-lg transition-colors" style={{ color: "#8B6344" }}
                               onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#F7F0E3";}}
                               onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";}}><Eye className="w-3.5 h-3.5"/></button>
+                            {EXTENDABLE_UI_STATUSES.includes(booking.status) && booking.checkInRaw.slice(0, 10) !== booking.checkOutRaw.slice(0, 10) && (
+                              <button type="button" onClick={() => setExtendFor(booking)} title="Extend stay (new checkout + extra charge)"
+                                className="p-1.5 rounded-lg transition-colors" style={{ color: "#6b7280" }}
+                                onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#F7F0E3";(e.currentTarget as HTMLElement).style.color="#B07848";}}
+                                onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#6b7280";}}><CalendarPlus className="w-3.5 h-3.5"/></button>
+                            )}
+                            {/* An unpaid extension is paid from the booking's
+                                Money column — not through Collect, which would
+                                take the security deposit a second time. */}
+                            {(extensions.unpaidByBooking[booking.id] ?? 0) > 0 && (
+                              <button type="button" onClick={() => setBookingModal(booking)}
+                                title={`Extension unpaid — ₱${Math.round(extensions.unpaidByBooking[booking.id]).toLocaleString()} (open to mark paid)`}
+                                className="p-1.5 rounded-lg transition-colors" style={{ color: "#b45309", backgroundColor: "#FFF8E8" }}><CalendarPlus className="w-3.5 h-3.5"/></button>
+                            )}
                             {booking.status === "pending" && (<>
                               <button type="button" onClick={() => handleApproveBooking(booking.id)} disabled={busyBookingId === booking.id} title="Approve booking" className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#6b7280" }}
                                 onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#d1fae5";(e.currentTarget as HTMLElement).style.color="#059669";}}
@@ -2064,8 +2083,8 @@ export default function OwnerDashboard() {
                                 onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#d1fae5";(e.currentTarget as HTMLElement).style.color="#059669";}}
                                 onMouseLeave={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="transparent";(e.currentTarget as HTMLElement).style.color="#b08968";}}><Send className="w-3.5 h-3.5"/></button>
                             )}
-                            {booking.status === "checked-in" && booking.balance > 0 && (
-                              <button type="button" onClick={() => openCheckIn({ id: booking.id, displayId: booking.displayId, guest: booking.guest, remaining: booking.balance, deposit: booking.deposit, checkInRaw: booking.checkInRaw, checkOutRaw: booking.checkOutRaw })} disabled={busyBookingId === booking.id}
+                            {booking.status === "checked-in" && booking.balance - (extensions.unpaidByBooking[booking.id] ?? 0) > 0 && (
+                              <button type="button" onClick={() => openCheckIn({ id: booking.id, displayId: booking.displayId, guest: booking.guest, remaining: booking.balance - (extensions.unpaidByBooking[booking.id] ?? 0), deposit: booking.deposit, checkInRaw: booking.checkInRaw, checkOutRaw: booking.checkOutRaw })} disabled={busyBookingId === booking.id}
                                 title="Collect remaining balance + deposit (sends the house rules)"
                                 className="p-1.5 rounded-lg transition-colors disabled:opacity-50" style={{ color: "#6b7280" }}
                                 onMouseEnter={(e)=>{(e.currentTarget as HTMLElement).style.backgroundColor="#fef3c7";(e.currentTarget as HTMLElement).style.color="#b45309";}}
@@ -3029,6 +3048,13 @@ export default function OwnerDashboard() {
       {/* Add Haven wizard (9-step) */}
       <HavenWizard open={havenModalOpen} onClose={closeHavenWizard} createHaven={createHaven} updateHaven={updateHaven} editHaven={editHaven} />
       <NewBookingWizard open={newBookingOpen} onClose={() => setNewBookingOpen(false)} onCreated={refetchBookings} />
+      {extendFor && (
+        <ExtendBookingModal
+          booking={extendFor}
+          onClose={() => setExtendFor(null)}
+          onDone={() => { void extensions.reload(); refetchBookings(); }}
+        />
+      )}
 
       {/* Command-palette search (⌘K) — bookings, guests, havens */}
       {searchOpen && (() => {
@@ -3121,7 +3147,8 @@ export default function OwnerDashboard() {
 
       {/* Redesigned booking detail modal */}
       {bookingModal && (() => {
-        const bk = bookingModal;
+        // The live row, so the totals refresh after an extension or payment.
+        const bk = allAdminBookings.find((b) => b.id === bookingModal.id) ?? bookingModal;
         const sp = statusPill(bk.status);
         const pp = statusPill(bk.paymentStatus);
         const dp = statusPill(bk.depositStatus);
@@ -3199,6 +3226,12 @@ export default function OwnerDashboard() {
                   </span>
                 )}
                 <div className="bb-actions" style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+                  {EXTENDABLE_UI_STATUSES.includes(bk.status) && bk.checkInRaw.slice(0, 10) !== bk.checkOutRaw.slice(0, 10) && (
+                    <button type="button" onClick={() => setExtendFor(bk)} title="Choose a new checkout and the extra charge"
+                      style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "11px 16px", borderRadius: 11, border: "1px solid #D4BE9A", background: "#FFFCF4", color: "#5A4632", fontFamily: "inherit", fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap", cursor: "pointer" }}>
+                      <CalendarPlus className="w-4 h-4" />Extend stay
+                    </button>
+                  )}
                   {canCheckIn && (
                     <button type="button"
                       onClick={() => { setBookingModal(null); handleCheckInOnly(bk); }}
@@ -3293,6 +3326,11 @@ export default function OwnerDashboard() {
                       <span style={{ color: "#8C5A2E", fontWeight: 600 }}>{peso(bk.balance)} left</span>
                     </div>
                   </div>
+
+                  <ExtensionHistory
+                    extensions={extensions.list.filter((x) => x.booking_uuid === bk.id)}
+                    onChanged={() => { void extensions.reload(); refetchBookings(); }}
+                  />
 
                   {bk.paymentReference && (
                     <div style={{ background: "#F6EFE2", border: "1.5px dashed #B07848", borderRadius: 14, padding: "11px 14px" }}>

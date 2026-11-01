@@ -58,6 +58,17 @@ describe("resolveDayCell", () => {
     expect(c.nightFill).not.toBe(COLOR.empty);
   });
 
+  // Two different guests, so the cell must not read as one continuing stay.
+  it("labels that day Out + In and names each guest", () => {
+    const leaving = { ...overnightOut(), name: "Roselle Razon", checkOutTime: "17:00" };
+    const arriving = { ...overnightIn(), name: "Limuel John Olfindo", checkInTime: "19:00" };
+    const c = resolveDayCell([leaving, arriving])!;
+    expect(c.label).toBe("Out + In");
+    expect(c.sub).toBe("Out 5PM · In 7PM");
+    expect(c.dayText).toBe("Roselle leaves 5PM");
+    expect(c.nightText).toBe("Limuel arrives 7PM");
+  });
+
   it("is order-independent on that handover day", () => {
     const leaving = overnightOut();
     const arriving = overnightIn();
