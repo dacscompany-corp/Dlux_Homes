@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { collectedRevenueSql, grossRevenueSql, poolPassCollectedSql } from "@/lib/poolPassRevenue";
 import pool from "../config/db";
 import { ensureMaterialized } from "./overheadPeriodsController";
 import {
@@ -237,13 +238,12 @@ export async function getAllTimeTotals(): Promise<NextResponse> {
     })();
 
     const [revenue, overhead] = await Promise.all([
-      pool.query<{ revenue: string; gross: string; first: string | null }>(
+      pool.query<{ revenue: string; gross: string; pool_pass: string; first: string | null }>(
         `SELECT
-           COALESCE(SUM(CASE
-             WHEN bp.payment_status = 'approved_down_payment' THEN bp.down_payment
-             WHEN bp.payment_status = 'approved_full_payment' THEN bp.total_amount
-             ELSE 0 END), 0)::numeric AS revenue,
-           COALESCE(SUM(GREATEST(0, bp.total_amount - COALESCE(bp.add_ons_total, 0))), 0)::numeric AS gross,
+           -- Pool Pass fees excluded, same as the analytics dashboard.
+           COALESCE(SUM(${collectedRevenueSql()}), 0)::numeric AS revenue,
+           COALESCE(SUM(${grossRevenueSql()}), 0)::numeric AS gross,
+           COALESCE(SUM(${poolPassCollectedSql()}), 0)::numeric AS pool_pass,
            to_char(MIN(b.check_in_date::date), 'YYYY-MM') AS first
          FROM ${bookingTable} b
          LEFT JOIN booking_payments bp ON b.id = bp.booking_id
@@ -278,6 +278,8 @@ export async function getAllTimeTotals(): Promise<NextResponse> {
       data: {
         revenue: Number(revenue.rows[0]?.revenue ?? 0),
         gross_revenue: Number(revenue.rows[0]?.gross ?? 0),
+        // Pool Pass fees — tracked here, not part of revenue.
+        pool_pass_total: Number(revenue.rows[0]?.pool_pass ?? 0),
         overhead_accrued: Number(overhead.rows[0]?.accrued ?? 0),
         overhead_paid: Number(overhead.rows[0]?.paid ?? 0),
         since: firsts[0] ?? null,

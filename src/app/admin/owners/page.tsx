@@ -776,7 +776,7 @@ export default function OwnerDashboard() {
   const kpis = [
     revenueBasis === "gross"
       ? { label: "Gross Revenue", hint: "Full value of bookings, paid or not", value: peso(s?.total_gross_revenue ?? 0), change: pct(s?.gross_revenue_change ?? 0), icon: PhilippinePeso, iconBg: "#d1fae5", iconColor: "#059669" }
-      : { label: "Total Revenue", hint: "Money actually received from guests", value: peso(s?.total_revenue ?? 0), change: pct(s?.revenue_change ?? 0), icon: PhilippinePeso, iconBg: "#d1fae5", iconColor: "#059669" },
+      : { label: "Total Revenue", hint: Number(s?.pool_pass_total ?? 0) > 0 ? `Received from guests · Pool Pass ₱${Number(s?.pool_pass_total).toLocaleString()} kept separate` : "Money received from guests · Pool Pass not counted", value: peso(s?.total_revenue ?? 0), change: pct(s?.revenue_change ?? 0), icon: PhilippinePeso, iconBg: "#d1fae5", iconColor: "#059669" },
     // No change percentage on these two: a real profit-versus-last-month figure
     // needs last month's revenue as an absolute, which the summary endpoint does
     // not return. An em dash beats an invented number.
