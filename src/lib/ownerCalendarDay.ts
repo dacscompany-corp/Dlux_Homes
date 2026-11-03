@@ -92,14 +92,19 @@ export function resolveDayCell(list: DayBooking[]): DayCell | null {
   // check-in case below, which would otherwise return first and drop the
   // departing guest — leaving the daytime reading as sellable on a day the
   // unit is occupied until 5PM.
+  // Labelled "Out + In" (it used to say "Back-to-back", which read as one guest
+  // staying on — owner, 2026-10-31); each half names its own guest.
   if (overnightCheckIn && overnightCheckOut) {
     const outT = fmt12h(overnightCheckOut.checkOutTime);
     const inT = fmt12h(overnightCheckIn.checkInTime);
     const sub = [outT ? `Out ${outT}` : "", inT ? `In ${inT}` : ""].filter(Boolean).join(" · ");
-    return cell(COLOR.full, COLOR.full, "Back-to-back", sub, {
+    const first = (n: string) => String(n || "").trim().split(/\s+/)[0] || "";
+    const outName = first(overnightCheckOut.name);
+    const inName = first(overnightCheckIn.name);
+    return cell(COLOR.full, COLOR.full, "Out + In", sub, {
       moon: true, asterisk: true,
-      dayText: outT ? `Leaves ${outT}` : "Leaves",
-      nightText: inT ? `Arrives ${inT}` : "Arrives",
+      dayText: `${outName ? `${outName} leaves` : "Leaves"}${outT ? ` ${outT}` : ""}`,
+      nightText: `${inName ? `${inName} arrives` : "New guest arrives"}${inT ? ` ${inT}` : ""}`,
       dayBooking: overnightCheckOut, nightBooking: overnightCheckIn,
     });
   }

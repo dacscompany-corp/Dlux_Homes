@@ -1,9 +1,10 @@
-import { NextRequest } from "next/server";
-import { requireAdmin, requireEmployee } from "@/backend/utils/requireAdmin";
+import { NextRequest, NextResponse } from "next/server";
+import { requireEmployee } from "@/backend/utils/requireAdmin";
 import { createRoomSupplies, listRoomSupplies } from "@/backend/controller/roomStockController";
 
 // Room Stock — the supplies kept in the unit.
-// GET: any staff (cleaners count them). POST: Owner/CSR add items or the starter list.
+// GET: any staff (cleaners count them). POST: any staff adds an item; only
+// Owner/CSR add the starter list. A cleaner's addition is reported to the office.
 export async function GET(req: NextRequest) {
   const guard = await requireEmployee();
   if (!guard.ok) return guard.response;
@@ -11,8 +12,13 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireEmployee();
   if (!guard.ok) return guard.response;
   const body = await req.json().catch(() => ({}));
-  return createRoomSupplies(body);
+  const isAdmin = guard.role === "Owner" || guard.role === "CSR";
+  if (!isAdmin && body.starter) {
+    return NextResponse.json({ success: false, error: "Only the office can add the starter list." }, { status: 403 });
+  }
+  const name = (guard.session.user as { name?: string | null }).name || "A cleaner";
+  return createRoomSupplies(body, isAdmin ? null : name);
 }

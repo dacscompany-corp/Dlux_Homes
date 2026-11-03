@@ -84,7 +84,7 @@ const navItems: Array<
 // a raw DB cleaning_status.
 const statusConfig: Record<string, { label: string; color: string; bg: string; dot: string }> = {
   ready:                { label: "Done",                color: "#065f46", bg: "#d1fae5", dot: "#10b981" },
-  "awaiting-inspection": { label: "Completed",           color: "#5b21b6", bg: "#ede9fe", dot: "#8b5cf6" },
+  "awaiting-inspection": { label: "Waiting for confirmation", color: "#5b21b6", bg: "#ede9fe", dot: "#8b5cf6" },
   "in-progress":        { label: "In Progress",         color: "#8a6a2f", bg: "#F7F0E3", dot: "#B07848" },
   pending:              { label: "Assigned",            color: "#92400e", bg: "#fef3c7", dot: "#f59e0b" },
 };
@@ -136,11 +136,11 @@ const guideTopics: { title: string; desc: string; icon: React.ElementType; goTo:
       "Took a bad one? Press Replace photo and take it again.",
       "If an upload fails, the area shows a warning — press the button again to retry.",
     ] },
-  { title: "What the statuses mean", desc: "Assigned, In Progress, Completed, Done — the same names the office uses.", icon: CheckSquare, goTo: "Assignments", goLabel: "Go to Assignments",
+  { title: "What the statuses mean", desc: "Assigned, In Progress, Waiting for confirmation, Done.", icon: CheckSquare, goTo: "Assignments", goLabel: "Go to Assignments",
     steps: [
       "Assigned — the room is yours but not started yet.",
       "In Progress — you pressed Start cleaning and are working on it.",
-      "Completed — you finished; the office is checking your photos.",
+      "Waiting for confirmation — you finished; the office is checking your photos.",
       "Done — the office approved it. Nothing more to do.",
       "If the office sends a room back, it returns to In Progress with a purple note saying what to fix.",
     ] },
@@ -563,7 +563,7 @@ export default function CleanerDesktopPortal() {
       );
     }
     if (cs === "awaiting-inspection") {
-      return <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border" style={{ backgroundColor: "#ede9fe", color: "#5b21b6", borderColor: "#c4b5fd" }}><CheckCircle2 className="w-3.5 h-3.5" />Completed</span>;
+      return <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border" style={{ backgroundColor: "#ede9fe", color: "#5b21b6", borderColor: "#c4b5fd" }}><Clock className="w-3.5 h-3.5" />Waiting for confirmation</span>;
     }
     return <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border" style={{ backgroundColor: "#d1fae5", color: "#065f46", borderColor: "#6ee7b7" }}><CheckCircle2 className="w-3.5 h-3.5" />Done</span>;
   };
@@ -942,26 +942,37 @@ export default function CleanerDesktopPortal() {
                 </p>
               ) : null}
               {assignments.length > 0 && (
-                <div role="tablist" aria-label="Filter by status" className="flex flex-wrap gap-2">
-                  {(["all", ...ASSIGNMENT_GROUPS] as const).map((key) => {
-                    const active = assignmentFilter === key;
-                    const cfg = key === "all" ? null : statusConfig[key];
-                    const count = key === "all" ? assignments.length : groupCounts[key];
-                    return (
-                      <button key={key} type="button" role="tab" aria-selected={active}
-                        onClick={() => setAssignmentFilter(key)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full border cursor-pointer"
-                        style={{
-                          backgroundColor: active ? (cfg ? cfg.bg : "#1f1b16") : "#ffffff",
-                          color: active ? (cfg ? cfg.color : "#ffffff") : "#5a4a3a",
-                          borderColor: active ? (cfg ? cfg.dot : "#1f1b16") : "#E0CEB8",
-                        }}>
-                        {cfg && <span className="w-2 h-2 rounded-full" style={{ backgroundColor: cfg.dot }} />}
-                        {cfg ? cfg.label : "All"}
-                        <span style={{ opacity: 0.75 }}>{count}</span>
-                      </button>
-                    );
-                  })}
+                <div>
+                  {/* Every status as a tile with its count, all in view. Click a
+                      tile to show only that status; click again for everything. */}
+                  <div role="tablist" aria-label="Filter by status" className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                    {ASSIGNMENT_GROUPS.map((key) => {
+                      const active = assignmentFilter === key;
+                      const cfg = statusConfig[key];
+                      const count = groupCounts[key];
+                      return (
+                        <button key={key} type="button" role="tab" aria-selected={active}
+                          onClick={() => setAssignmentFilter(active ? "all" : key)}
+                          className="flex items-center gap-3 px-4 py-3 text-left border rounded-xl cursor-pointer transition-colors"
+                          style={{
+                            backgroundColor: active ? cfg.bg : "#ffffff",
+                            borderColor: active ? cfg.dot : "#E0CEB8",
+                            borderWidth: active ? 2 : 1,
+                            opacity: count === 0 && !active ? 0.6 : 1,
+                          }}>
+                          <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: cfg.dot }} />
+                          <span className="flex-1 min-w-0 text-sm font-semibold leading-tight" style={{ color: active ? cfg.color : "#1f1b16" }}>{cfg.label}</span>
+                          <span className="text-2xl font-semibold leading-none flex-shrink-0" style={{ color: cfg.color }}>{count}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {assignmentFilter !== "all" && (
+                    <button type="button" onClick={() => setAssignmentFilter("all")}
+                      className="mt-2 text-sm font-semibold underline underline-offset-2 cursor-pointer" style={{ color: "#8a6a2f" }}>
+                      Show all rooms ({assignments.length})
+                    </button>
+                  )}
                 </div>
               )}
               {assignments.length > 0 && shownAssignments.length === 0 && (

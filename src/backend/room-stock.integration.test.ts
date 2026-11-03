@@ -160,11 +160,34 @@ describe("Room Stock", () => {
     const list = (await (await getStock(req("/x"))).json()).data.supplies as { id: string; item_name: string }[];
     const soap = list.find((s) => s.item_name === "Hand soap")!;
     expect((await putSupply(req("/x", { method: "PUT", body: { par_quantity: 3 } }), ctx(soap.id))).status).toBe(200);
+    // Only the office changes an item's settings.
     as(C1, "Cleaner");
-    expect((await deleteSupply(req("/x", { method: "DELETE" }), ctx(soap.id))).status).toBe(403);
+    expect((await putSupply(req("/x", { method: "PUT", body: { par_quantity: 9 } }), ctx(soap.id))).status).toBe(403);
     as(OWNER, "Owner");
+    h.notifications = [];
     expect((await deleteSupply(req("/x", { method: "DELETE" }), ctx(soap.id))).status).toBe(200);
     const after = (await (await getStock(req("/x"))).json()).data.supplies as { item_name: string }[];
     expect(after.some((s) => s.item_name === "Hand soap")).toBe(false);
+    // The office's own changes don't notify the office.
+    expect(h.notifications).toHaveLength(0);
+  }, 60_000);
+
+  it("lets cleaners add and remove items, telling the office each time", async () => {
+    as(C1, "Cleaner", "Cora Test");
+    h.notifications = [];
+    const made = await postStock(req("/x", { method: "POST", body: { item_name: "Slippers", unit_type: "pairs", par_quantity: 2 } }));
+    expect(made.status).toBe(200);
+    expect(h.notifications[0]).toMatchObject({ roles: ["Owner", "CSR"], title: "Room supply added" });
+    expect(String(h.notifications[0].message)).toContain("Cora Test added Slippers");
+
+    const list = (await (await getStock(req("/x"))).json()).data.supplies as { id: string; item_name: string; current_quantity: number }[];
+    const slippers = list.find((s) => s.item_name === "Slippers")!;
+    expect(slippers.current_quantity).toBe(2);
+
+    h.notifications = [];
+    expect((await deleteSupply(req("/x", { method: "DELETE" }), ctx(slippers.id))).status).toBe(200);
+    expect(h.notifications[0]).toMatchObject({ roles: ["Owner", "CSR"], title: "Room supply removed" });
+    const after = (await (await getStock(req("/x"))).json()).data.supplies as { item_name: string }[];
+    expect(after.some((s) => s.item_name === "Slippers")).toBe(false);
   }, 60_000);
 });
