@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pool from '../config/db';
+import { amenityCollectedSql, collectedRevenueSql, grossRevenueSql } from '@/lib/amenityRevenue';
 
 const BOOKING_TABLE = (() => {
   const raw = (process.env.BOOKING_TABLE_NAME || "booking").trim();
@@ -31,11 +32,9 @@ function safeIntStr(value: unknown, fallback: number, max = 3650): string {
 // subquery instead, which cannot multiply rows.
 const summaryStatsQuery = (where: string) => `
   SELECT
-    COALESCE(SUM(CASE
-      WHEN bp.payment_status = 'approved_down_payment' THEN bp.down_payment
-      WHEN bp.payment_status = 'approved_full_payment' THEN bp.total_amount
-      ELSE 0
-    END), 0) as total_revenue,
+    -- Amenity fees (Swimming Pool, Basketball Court) are not business revenue
+    -- — see src/lib/amenityRevenue.ts. They're reported on their own below.
+    COALESCE(SUM(${collectedRevenueSql()}), 0) as total_revenue,
     -- Gross revenue: the full booked value of every booking in this window,
     -- regardless of whether any payment has actually been collected yet -
     -- a pending-payment booking counts here even at zero received.
@@ -45,7 +44,8 @@ const summaryStatsQuery = (where: string) => `
     -- total_amount lives on booking_payments (one row per booking), not on
     -- the booking row itself. Add-on charges (add_ons_total, already folded
     -- into total_amount) are excluded so gross reflects accommodation only.
-    COALESCE(SUM(GREATEST(0, bp.total_amount - COALESCE(bp.add_ons_total, 0))), 0) as total_gross_revenue,
+    COALESCE(SUM(${grossRevenueSql()}), 0) as total_gross_revenue,
+    COALESCE(SUM(${amenityCollectedSql()}), 0) as amenity_fees_total,
     COUNT(DISTINCT b.id) as total_bookings,
     COUNT(DISTINCT COALESCE(
       b.user_id::text,
@@ -156,6 +156,8 @@ const ROOM_COUNT_QUERY = `SELECT COUNT(*)::int AS total_rooms FROM havens`;
 export interface AnalyticsSummary {
   total_revenue: number;
   total_gross_revenue: number;
+  /** Amenity fees (pool, court) collected in the window — tracked, not revenue. */
+  amenity_fees_total: number;
   total_bookings: number;
   occupancy_rate: number;
   new_guests: number;
@@ -187,12 +189,8 @@ export async function fetchMonthlyRevenue(months: string = '6'): Promise<Monthly
   const query = `
     SELECT
       TO_CHAR(DATE_TRUNC('month', b.check_in_date::date), 'YYYY-MM') as month,
-      COALESCE(SUM(CASE
-        WHEN bp.payment_status = 'approved_down_payment' THEN bp.down_payment
-        WHEN bp.payment_status = 'approved_full_payment' THEN bp.total_amount
-        ELSE 0
-      END), 0) as revenue,
-      COALESCE(SUM(GREATEST(0, bp.total_amount - COALESCE(bp.add_ons_total, 0))), 0) as gross_revenue
+      COALESCE(SUM(${collectedRevenueSql()}), 0) as revenue,
+      COALESCE(SUM(${grossRevenueSql()}), 0) as gross_revenue
     FROM ${BOOKING_TABLE} b
     LEFT JOIN booking_payments bp ON b.id = bp.booking_id
     WHERE b.check_in_date >= NOW() - INTERVAL '${months} months'
@@ -279,6 +277,7 @@ export const getAnalyticsSummary = async (req: NextRequest): Promise<NextRespons
     const summary: AnalyticsSummary = {
       total_revenue: parseFloat(current.total_revenue),
       total_gross_revenue: parseFloat(current.total_gross_revenue),
+      amenity_fees_total: parseFloat(current.amenity_fees_total ?? 0),
       total_bookings: parseInt(current.total_bookings),
       occupancy_rate: parseFloat(occupancy_rate.toFixed(1)),
       new_guests: parseInt(current.new_guests),
@@ -320,11 +319,7 @@ export const getRevenueByRoom = async (req: NextRequest): Promise<NextResponse> 
     const query = `
       SELECT
         b.room_name,
-        COALESCE(SUM(CASE
-          WHEN bp.payment_status = 'approved_down_payment' THEN bp.down_payment
-          WHEN bp.payment_status = 'approved_full_payment' THEN bp.total_amount
-          ELSE 0
-        END), 0) as revenue,
+        COALESCE(SUM(${collectedRevenueSql()}), 0) as revenue,
         COUNT(DISTINCT b.id) as bookings
       FROM ${BOOKING_TABLE} b
       LEFT JOIN booking_payments bp ON b.id = bp.booking_id
@@ -367,12 +362,8 @@ export const getMonthlyRevenue = async (req: NextRequest): Promise<NextResponse>
     const query = `
       SELECT
         TO_CHAR(DATE_TRUNC('month', b.check_in_date::date), 'YYYY-MM') as month,
-        COALESCE(SUM(CASE
-          WHEN bp.payment_status = 'approved_down_payment' THEN bp.down_payment
-          WHEN bp.payment_status = 'approved_full_payment' THEN bp.total_amount
-          ELSE 0
-        END), 0) as revenue,
-        COALESCE(SUM(GREATEST(0, bp.total_amount - COALESCE(bp.add_ons_total, 0))), 0) as gross_revenue
+        COALESCE(SUM(${collectedRevenueSql()}), 0) as revenue,
+        COALESCE(SUM(${grossRevenueSql()}), 0) as gross_revenue
       FROM ${BOOKING_TABLE} b
       LEFT JOIN booking_payments bp ON b.id = bp.booking_id
       WHERE b.check_in_date >= NOW() - INTERVAL '${months} months'
