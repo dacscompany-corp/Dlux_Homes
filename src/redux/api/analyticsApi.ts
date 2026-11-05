@@ -3,8 +3,8 @@ import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 export interface AnalyticsSummary {
   total_revenue: number;
   total_gross_revenue: number;
-  /** Pool Pass fees collected — tracked separately, NOT part of revenue. */
-  pool_pass_total?: number;
+  /** Amenity fees (Swimming Pool, Basketball Court) collected — tracked separately, NOT part of revenue or profit. */
+  amenity_fees_total?: number;
   total_bookings: number;
   occupancy_rate: number;
   new_guests: number;

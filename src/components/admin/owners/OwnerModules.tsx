@@ -198,8 +198,8 @@ export function AnalyticsSection() {
       { label: `Profit (${span})`, value: overheadReady ? signedPeso(profit) : "—" },
     ] : []),
     { label: `Occupancy (${span})`, value: `${Math.round(Number(s.occupancy_rate ?? 0))}%` },
-    // Tracked on its own — Pool Pass fees are not counted in revenue above.
-    { label: `Pool Pass collected (${span}) · not revenue`, value: peso(Number(s.pool_pass_total ?? 0)) },
+    // Tracked on its own — amenity fees (pool, court) aren't in revenue or profit.
+    { label: `Amenities collected (${span}) · not revenue`, value: peso(Number(s.amenity_fees_total ?? 0)) },
     { label: `Bookings (${span})`, value: String(s.total_bookings ?? 0) },
     { label: `New Guests (${span})`, value: String(s.new_guests ?? 0) },
   ];

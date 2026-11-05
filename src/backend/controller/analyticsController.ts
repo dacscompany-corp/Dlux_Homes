@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pool from '../config/db';
-import { collectedRevenueSql, grossRevenueSql, poolPassCollectedSql } from '@/lib/poolPassRevenue';
+import { amenityCollectedSql, collectedRevenueSql, grossRevenueSql } from '@/lib/amenityRevenue';
 
 const BOOKING_TABLE = (() => {
   const raw = (process.env.BOOKING_TABLE_NAME || "booking").trim();
@@ -32,8 +32,8 @@ function safeIntStr(value: unknown, fallback: number, max = 3650): string {
 // subquery instead, which cannot multiply rows.
 const summaryStatsQuery = (where: string) => `
   SELECT
-    -- Pool Pass fees are not business revenue (owner, 2026-11-03) — see
-    -- src/lib/poolPassRevenue.ts. They're reported on their own below.
+    -- Amenity fees (Swimming Pool, Basketball Court) are not business revenue
+    -- — see src/lib/amenityRevenue.ts. They're reported on their own below.
     COALESCE(SUM(${collectedRevenueSql()}), 0) as total_revenue,
     -- Gross revenue: the full booked value of every booking in this window,
     -- regardless of whether any payment has actually been collected yet -
@@ -45,7 +45,7 @@ const summaryStatsQuery = (where: string) => `
     -- the booking row itself. Add-on charges (add_ons_total, already folded
     -- into total_amount) are excluded so gross reflects accommodation only.
     COALESCE(SUM(${grossRevenueSql()}), 0) as total_gross_revenue,
-    COALESCE(SUM(${poolPassCollectedSql()}), 0) as pool_pass_total,
+    COALESCE(SUM(${amenityCollectedSql()}), 0) as amenity_fees_total,
     COUNT(DISTINCT b.id) as total_bookings,
     COUNT(DISTINCT COALESCE(
       b.user_id::text,
@@ -156,8 +156,8 @@ const ROOM_COUNT_QUERY = `SELECT COUNT(*)::int AS total_rooms FROM havens`;
 export interface AnalyticsSummary {
   total_revenue: number;
   total_gross_revenue: number;
-  /** Pool Pass fees collected in the window — tracked, not counted as revenue. */
-  pool_pass_total: number;
+  /** Amenity fees (pool, court) collected in the window — tracked, not revenue. */
+  amenity_fees_total: number;
   total_bookings: number;
   occupancy_rate: number;
   new_guests: number;
@@ -277,7 +277,7 @@ export const getAnalyticsSummary = async (req: NextRequest): Promise<NextRespons
     const summary: AnalyticsSummary = {
       total_revenue: parseFloat(current.total_revenue),
       total_gross_revenue: parseFloat(current.total_gross_revenue),
-      pool_pass_total: parseFloat(current.pool_pass_total ?? 0),
+      amenity_fees_total: parseFloat(current.amenity_fees_total ?? 0),
       total_bookings: parseInt(current.total_bookings),
       occupancy_rate: parseFloat(occupancy_rate.toFixed(1)),
       new_guests: parseInt(current.new_guests),

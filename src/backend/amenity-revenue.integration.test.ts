@@ -6,10 +6,11 @@ import { uuid_ossp } from "@electric-sql/pglite/contrib/uuid_ossp";
 import { btree_gist } from "@electric-sql/pglite/contrib/btree_gist";
 import { NextRequest } from "next/server";
 
-// Pool Pass fees are not business revenue (owner, 2026-11-03): every revenue
+// Amenity fees (Swimming Pool, Basketball Court) are not business revenue
+// (owner, 2026-11-03 / 2026-11-05): every revenue
 // figure — the dashboard summary, revenue by room, the monthly trend and the
 // all-time profitability total — leaves them out, and reports them on their
-// own as pool_pass_total. Real schema, in-memory Postgres.
+// own as amenity_fees_total. Real schema, in-memory Postgres.
 
 const h = vi.hoisted(() => ({ db: null as unknown as import("@electric-sql/pglite").PGlite }));
 
@@ -92,23 +93,25 @@ beforeAll(async () => {
   await booking({ total: 1999, down: 1000, addOnsTotal: 0, payStatus: "approved_full_payment", addOns: [["poolPass", 100, 1]] });
   // A cancelled pool add-on isn't taken off anything.
   await booking({ total: 1899, down: 950, addOnsTotal: 0, payStatus: "approved_full_payment", addOns: [["Pool Pass", 150, 1, "cancelled"]] });
+  // Basketball Court counts as an amenity too (and a booking can have both).
+  await booking({ total: 2349, down: 1400, addOnsTotal: 450, payStatus: "approved_full_payment", addOns: [["Basketball Court", 150, 1], ["Swimming Pool", 150, 2]] });
   // Not paid yet — no collected revenue, no pool collected.
   await booking({ total: 2199, down: 1250, addOnsTotal: 300, payStatus: "pending_down_payment", addOns: [["Swimming Pool", 150, 2]] });
 }, 90_000);
 
-describe("Pool Pass is excluded from revenue", () => {
-  // Collected: 1,899 + 950 + 1,899 + 1,899 + 1,899 + 0
-  const COLLECTED = 1899 + 950 + 1899 + 1899 + 1899;
-  // Pool collected: 300 + 300 + 0 + 100 + 0 + 0
-  const POOL = 700;
+describe("Amenity fees (pool, court) are excluded from revenue", () => {
+  // Collected: 1,899 + 950 + 1,899 + 1,899 + 1,899 + 1,899 (court + pool booking) + 0
+  const COLLECTED = 1899 + 950 + 1899 + 1899 + 1899 + 1899;
+  // Amenities collected: 300 + 300 + 0 + 100 + 0 + 450 (court + pool) + 0
+  const POOL = 1150;
 
   it("dashboard summary: revenue without pool fees, pool reported separately", async () => {
     const s = await get(getAnalyticsSummary, `month=${MONTH}`);
     expect(s.total_revenue).toBe(COLLECTED);
-    expect(s.pool_pass_total).toBe(POOL);
+    expect(s.amenity_fees_total).toBe(POOL);
     // Gross: booked value less add-ons (pool included) — the legacy row too.
-    expect(s.total_gross_revenue).toBe(1899 * 6);
-    expect(s.total_bookings).toBe(6);
+    expect(s.total_gross_revenue).toBe(1899 * 7);
+    expect(s.total_bookings).toBe(7);
   });
 
   it("revenue by room and the monthly trend agree with the summary", async () => {
@@ -123,6 +126,6 @@ describe("Pool Pass is excluded from revenue", () => {
     const res = await getAllTimeTotals();
     const d = (await res.json()).data;
     expect(d.revenue).toBe(COLLECTED);
-    expect(d.pool_pass_total).toBe(POOL);
+    expect(d.amenity_fees_total).toBe(POOL);
   });
 });
