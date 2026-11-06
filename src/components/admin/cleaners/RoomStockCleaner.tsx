@@ -10,11 +10,16 @@
 //     (or "Save count" when nothing is needed).
 //   - Cleaners can add an item to the room's list or remove one (owner,
 //     2026-10-29); the office is notified of every change.
+//   - Quick picks (2026-11-06): one tap adds an item they often ask for that
+//     isn't on the list (bed sheets, pillowcases…).
+//   - Take something out (2026-11-06): report an item that has to leave the
+//     room — damaged, stained, too many, expired — optionally asking for a
+//     replacement in the same tap.
 // Inline styles so it reads the same in both portals.
 
 import { useMemo, useState } from "react";
 import toast from "react-hot-toast";
-import { Minus, Plus, Package, Send, Check, Clock, Truck, X, ChevronDown, ChevronUp, Trash2 } from "lucide-react";
+import { Minus, Plus, Package, PackageMinus, Send, Check, Clock, Truck, X, ChevronDown, ChevronUp, Trash2 } from "lucide-react";
 import {
   supplyLevel,
   useAddRoomSupplyMutation,
@@ -75,6 +80,24 @@ const COPY = {
     loadFailed: "Couldn't load room supplies. Check your connection and try again.",
     retry: "Try again",
     status: { pending: "Waiting for office", processing: "On the way", completed: "Delivered" } as Record<RestockStatus, string>,
+    statusOut: { pending: "Waiting for office", processing: "Office is on it", completed: "Taken out" } as Record<RestockStatus, string>,
+    quick: "Quick add:",
+    pullTitle: "Take something out?",
+    pullHint: "Tell the office what has to leave the room — broken, stained, too many or expired.",
+    pullPick: "Which item?",
+    pullOther: "Other item",
+    pullQty: "How many",
+    pullWhy: "Why?",
+    reasons: ["Damaged", "Stained / dirty", "Too many", "Expired"],
+    reasonOther: "Other reason",
+    replaceToo: "Also ask for a replacement",
+    pullSend: (n: number, name: string) => `Send · take out ${n} × ${name}`,
+    pullSent: "Sent — the office will take it out",
+    pullNeedItem: "Pick the item to take out",
+    pullNeedWhy: "Pick why it has to go",
+    pullOff: "Taking items out isn't switched on yet — ask the office.",
+    takingOut: (n: number) => `Taking out ${n}`,
+    takeOut: "Take out",
   },
   tl: {
     title: "Mga supply sa kwarto",
@@ -120,6 +143,24 @@ const COPY = {
     loadFailed: "Hindi makuha ang supply sa kwarto. Tingnan ang koneksyon at subukan ulit.",
     retry: "Subukan ulit",
     status: { pending: "Hinihintay ang opisina", processing: "Parating na", completed: "Naihatid na" } as Record<RestockStatus, string>,
+    statusOut: { pending: "Hinihintay ang opisina", processing: "Inaasikaso na", completed: "Nailabas na" } as Record<RestockStatus, string>,
+    quick: "Mabilis na idagdag:",
+    pullTitle: "May ilalabas sa kwarto?",
+    pullHint: "Sabihin sa opisina ang kailangang ilabas — sira, may mantsa, sobra o expired.",
+    pullPick: "Aling item?",
+    pullOther: "Ibang item",
+    pullQty: "Ilan",
+    pullWhy: "Bakit?",
+    reasons: ["Sira", "May mantsa / marumi", "Sobra", "Expired"],
+    reasonOther: "Ibang dahilan",
+    replaceToo: "Humingi rin ng kapalit",
+    pullSend: (n: number, name: string) => `Ipadala · ilabas ${n} × ${name}`,
+    pullSent: "Naipadala — ilalabas ito ng opisina",
+    pullNeedItem: "Piliin ang ilalabas",
+    pullNeedWhy: "Piliin kung bakit",
+    pullOff: "Hindi pa bukas ang paglabas ng item — sabihan ang opisina.",
+    takingOut: (n: number) => `Ilalabas: ${n}`,
+    takeOut: "Ilabas",
   },
 };
 
@@ -149,6 +190,9 @@ function groupRequests(requests: RestockRequest[]) {
   for (const g of groups) g.status = g.items.reduce<RestockStatus>((s, r) => (rank[r.status] < rank[s] ? r.status : s), "completed");
   return groups;
 }
+
+/** Offered as one-tap quick picks (with whatever they've typed before). */
+const COMMON_EXTRAS = ["Bed sheets", "Pillowcases", "Floor mat", "Hand towels", "Slippers"];
 
 const when = (iso: string) =>
   new Date(iso).toLocaleString("en-US", { timeZone: "Asia/Manila", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -207,6 +251,52 @@ export default function RoomStockCleaner({ lang = "en", big = false }: { lang?: 
   const [showNote, setShowNote] = useState(false);
   const [note, setNote] = useState("");
   const [showPast, setShowPast] = useState(false);
+
+  // Quick picks: items typed before (not on the list) + common linens.
+  const quickPicks = useMemo(() => {
+    const onList = new Set(supplies.map((x) => x.item_name.trim().toLowerCase()));
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const name of [...requests.filter((r) => !r.room_supply_id && (r.kind ?? "restock") === "restock").map((r) => r.item_name), ...COMMON_EXTRAS]) {
+      const key = name.trim().toLowerCase();
+      if (!key || onList.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      out.push(name.trim().replace(/^./, (c) => c.toUpperCase()));
+    }
+    return out.slice(0, 8);
+  }, [requests, supplies]);
+  const addQuick = (name: string) => setExtras((xs) => {
+    const i = xs.findIndex((x) => x.name.trim().toLowerCase() === name.toLowerCase());
+    if (i >= 0) return xs.map((x, j) => (j === i ? { ...x, qty: x.qty + 1 } : x));
+    const blank = xs.findIndex((x) => !x.name.trim());
+    if (blank >= 0) return xs.map((x, j) => (j === blank ? { name, qty: 1 } : x));
+    return [...xs, { name, qty: 1 }];
+  });
+
+  // Take something out — one item per send.
+  const pulloutsEnabled = data?.pulloutsEnabled !== false;
+  const [showPull, setShowPull] = useState(false);
+  const EMPTY_PULL = { supplyId: null as string | null, other: false, name: "", qty: 1, reason: "", otherReason: "", replace: true };
+  const [pull, setPull] = useState(EMPTY_PULL);
+  const resetPull = () => setPull(EMPTY_PULL);
+  const pullReason = pull.reason === "__other" ? pull.otherReason.trim() : pull.reason;
+  const onSendPull = async () => {
+    if (!pull.name.trim()) { toast.error(t.pullNeedItem); return; }
+    if (!pullReason) { toast.error(t.pullNeedWhy); return; }
+    try {
+      await createRequest({
+        havenId: data?.haven?.id,
+        kind: "pullout",
+        replace: pull.replace,
+        items: [{ ...(pull.supplyId ? { room_supply_id: pull.supplyId } : { item_name: pull.name.trim() }), quantity: pull.qty, reason: pullReason }],
+      }).unwrap();
+      toast.success(t.pullSent);
+      resetPull();
+      setShowPull(false);
+    } catch (err) {
+      toast.error((err as { data?: { error?: string } })?.data?.error || "Could not send");
+    }
+  };
 
   const fs = big ? 17 : 14;
   const btnH = big ? 48 : 38;
@@ -273,22 +363,24 @@ export default function RoomStockCleaner({ lang = "en", big = false }: { lang?: 
       {roundBtn(`${label} +`, () => onChange(value + 1), Plus)}
     </div>
   );
-  const statusPill = (status: RestockStatus) => {
+  const statusPill = (status: RestockStatus, pullout = false) => {
     const st = STATUS_STYLE[status];
     return (
       <span style={{ flex: "none", display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: 999, fontSize: fs - 4, fontWeight: 700, background: st.bg, color: st.fg }}>
-        <st.Icon style={{ width: 14, height: 14 }} />{t.status[status]}
+        <st.Icon style={{ width: 14, height: 14 }} />{(pullout ? t.statusOut : t.status)[status]}
       </span>
     );
   };
+  const itemLabel = (r: RestockRequest) =>
+    r.kind === "pullout" ? `${t.takeOut}: ${r.quantity} × ${r.item_name}${r.reason ? ` (${r.reason})` : ""}` : `${r.quantity} × ${r.item_name}`;
   const groupRow = (g: (typeof groups)[number], i: number) => (
     <div key={g.key} style={{ padding: "12px 16px", borderTop: i ? `1px solid #F3EEE2` : 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <span style={{ flex: 1, fontSize: fs - 3, color: C.muted }}>{when(g.at)}</span>
-        {statusPill(g.status)}
+        {statusPill(g.status, g.items.every((r) => r.kind === "pullout"))}
       </div>
       <div style={{ fontSize: fs, fontWeight: 600, color: C.ink, marginTop: 4, lineHeight: 1.4 }}>
-        {g.items.map((r) => `${r.quantity} × ${r.item_name}`).join(", ")}
+        {g.items.map(itemLabel).join(", ")}
       </div>
       {g.items.some((r) => r.admin_note) && (
         <div style={{ fontSize: fs - 3, color: C.muted, marginTop: 2 }}>“{g.items.find((r) => r.admin_note)?.admin_note}”</div>
@@ -384,7 +476,8 @@ export default function RoomStockCleaner({ lang = "en", big = false }: { lang?: 
           const need = Math.max(0, s.par_quantity - value - s.open_request_qty);
           const rs = requestStatusOf(s);
           // The one thing worth knowing about this item right now.
-          const status = rs === "processing" ? { label: t.status.processing, fg: C.blue, bg: C.blueBg }
+          const status = (s.open_pullout_qty ?? 0) > 0 && !rs ? { label: t.takingOut(s.open_pullout_qty ?? 0), fg: "#5b21b6", bg: "#ede9fe" }
+            : rs === "processing" ? { label: t.status.processing, fg: C.blue, bg: C.blueBg }
             : rs === "pending" ? { label: t.asked, fg: C.amber, bg: C.amberBg }
             : need > 0 && !skipped[s.id] ? { label: t.willAsk(need), fg: "#fff", bg: C.ink }
             : level === "out" ? { label: t.out, fg: C.red, bg: C.redBg }
@@ -441,6 +534,17 @@ export default function RoomStockCleaner({ lang = "en", big = false }: { lang?: 
         {(showOther || supplies.length === 0) && (
           <div style={{ padding: big ? 16 : 14, display: "flex", flexDirection: "column", gap: 10, borderTop: `1px solid ${C.line}` }}>
             <div style={{ fontSize: fs - 2, color: C.muted }}>{t.otherHint}</div>
+            {quickPicks.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: fs - 3, fontWeight: 700, color: C.muted }}>{t.quick}</span>
+                {quickPicks.map((name) => (
+                  <button key={name} type="button" onClick={() => addQuick(name)}
+                    style={{ height: btnH - 8, padding: "0 12px", borderRadius: 999, border: `1px solid ${C.line}`, background: C.cream, color: C.ink, fontWeight: 600, fontSize: fs - 2, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    <Plus style={{ width: 14, height: 14, color: C.gold }} />{name}
+                  </button>
+                ))}
+              </div>
+            )}
             {extras.map((e, i) => (
               <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <input value={e.name} placeholder={t.otherPh}
@@ -459,6 +563,83 @@ export default function RoomStockCleaner({ lang = "en", big = false }: { lang?: 
               style={{ alignSelf: "flex-start", height: btnH - 4, padding: "0 12px", borderRadius: 10, border: `1px dashed ${C.gold}`, background: "#fff", color: C.gold, fontWeight: 600, fontSize: fs - 1, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
               <Plus style={{ width: 16, height: 16 }} />{t.addAnother}
             </button>
+          </div>
+        )}
+      </div>
+
+      {/* Take something out — its own small form and send button. */}
+      <div style={card}>
+        <button type="button" onClick={() => setShowPull((v) => !v)} aria-expanded={showPull}
+          style={{ width: "100%", padding: big ? "14px 16px" : "12px 16px", border: 0, background: C.cream, display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+          <PackageMinus style={{ width: 18, height: 18, color: "#5b21b6" }} />
+          <span style={{ flex: 1, fontWeight: 700, fontSize: fs, color: C.ink }}>{t.pullTitle}</span>
+          {showPull ? <ChevronUp style={{ width: 18, height: 18, color: C.muted }} /> : <ChevronDown style={{ width: 18, height: 18, color: C.muted }} />}
+        </button>
+        {showPull && (
+          <div style={{ padding: big ? 16 : 14, display: "flex", flexDirection: "column", gap: 12, borderTop: `1px solid ${C.line}` }}>
+            <div style={{ fontSize: fs - 2, color: C.muted, lineHeight: 1.4 }}>{t.pullHint}</div>
+            {!pulloutsEnabled ? (
+              <div style={{ fontSize: fs - 2, color: C.amber, background: C.amberBg, borderRadius: 10, padding: "10px 12px" }}>{t.pullOff}</div>
+            ) : (<>
+              <div>
+                <div style={{ fontSize: fs - 3, fontWeight: 700, color: C.muted, marginBottom: 6 }}>{t.pullPick}</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {[...supplies.map((x) => ({ id: x.id as string | null, name: x.item_name })), { id: null, name: "" }].map((o) => {
+                    const on = o.id ? pull.supplyId === o.id : pull.other;
+                    return (
+                      <button key={o.id ?? "__other"} type="button"
+                        onClick={() => setPull((p) => (o.id ? { ...p, supplyId: o.id, other: false, name: o.name } : { ...p, supplyId: null, other: true, name: "" }))}
+                        aria-pressed={on}
+                        style={{ height: btnH - 8, padding: "0 12px", borderRadius: 999, cursor: "pointer", fontWeight: 600, fontSize: fs - 2,
+                          border: `1.5px solid ${on ? "#5b21b6" : C.line}`, background: on ? "#ede9fe" : "#fff", color: on ? "#5b21b6" : C.ink }}>
+                        {o.id ? o.name : `+ ${t.pullOther}`}
+                      </button>
+                    );
+                  })}
+                </div>
+                {pull.other && (
+                  <input autoFocus value={pull.name} placeholder={t.otherPh} maxLength={100}
+                    onChange={(e) => setPull((p) => ({ ...p, name: e.target.value }))}
+                    style={{ marginTop: 8, width: "100%", boxSizing: "border-box", height: btnH, border: `1px solid ${C.line}`, borderRadius: 10, padding: "0 12px", fontSize: fs }} />
+                )}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ fontSize: fs - 3, fontWeight: 700, color: C.muted }}>{t.pullQty}</span>
+                {stepper(pull.qty, (v) => setPull((p) => ({ ...p, qty: v })), t.pullQty, 1)}
+              </div>
+              <div>
+                <div style={{ fontSize: fs - 3, fontWeight: 700, color: C.muted, marginBottom: 6 }}>{t.pullWhy}</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {[...t.reasons, "__other"].map((r) => {
+                    const on = pull.reason === r;
+                    return (
+                      <button key={r} type="button" aria-pressed={on}
+                        // "Too many" means nothing to replace; the others usually do.
+                        onClick={() => setPull((p) => ({ ...p, reason: r, replace: r === t.reasons[2] ? false : p.reason === t.reasons[2] ? true : p.replace }))}
+                        style={{ height: btnH - 8, padding: "0 12px", borderRadius: 999, cursor: "pointer", fontWeight: 600, fontSize: fs - 2,
+                          border: `1.5px solid ${on ? C.ink : C.line}`, background: on ? C.ink : "#fff", color: on ? "#fff" : C.ink }}>
+                        {r === "__other" ? t.reasonOther : r}
+                      </button>
+                    );
+                  })}
+                </div>
+                {pull.reason === "__other" && (
+                  <input value={pull.otherReason} placeholder={t.reasonOther} maxLength={200}
+                    onChange={(e) => setPull((p) => ({ ...p, otherReason: e.target.value }))}
+                    style={{ marginTop: 8, width: "100%", boxSizing: "border-box", height: btnH, border: `1px solid ${C.line}`, borderRadius: 10, padding: "0 12px", fontSize: fs }} />
+                )}
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: fs - 1, color: C.ink, cursor: "pointer" }}>
+                <input type="checkbox" checked={pull.replace} onChange={(e) => setPull((p) => ({ ...p, replace: e.target.checked }))}
+                  style={{ width: 20, height: 20, accentColor: C.ink }} />
+                {t.replaceToo}
+              </label>
+              <button type="button" onClick={onSendPull} disabled={sending}
+                style={{ minHeight: btnH + 6, padding: "8px 14px", borderRadius: 12, border: 0, background: "#5b21b6", color: "#fff", fontWeight: 700, fontSize: fs, cursor: "pointer", opacity: sending ? 0.7 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, lineHeight: 1.3 }}>
+                <PackageMinus style={{ width: 18, height: 18 }} />
+                {sending ? t.sending : t.pullSend(pull.qty, pull.name.trim() || "…")}
+              </button>
+            </>)}
           </div>
         )}
       </div>

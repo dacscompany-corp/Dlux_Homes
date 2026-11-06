@@ -83,6 +83,7 @@ beforeAll(async () => {
     await h.db.query(`INSERT INTO employees (id, first_name, last_name, role) VALUES ($1, $2, 'Test', $3)`, [id, fn, role]);
   }
   await h.db.exec(fs.readFileSync(path.join(process.cwd(), "src/backend/migrations/2026-10-22-room-stock.sql"), "utf8"));
+  await h.db.exec(fs.readFileSync(path.join(process.cwd(), "src/backend/migrations/2026-11-06-room-stock-pullout.sql"), "utf8"));
 }, 60_000);
 
 describe("Room Stock", () => {
@@ -189,5 +190,49 @@ describe("Room Stock", () => {
     expect(h.notifications[0]).toMatchObject({ roles: ["Owner", "CSR"], title: "Room supply removed" });
     const after = (await (await getStock(req("/x"))).json()).data.supplies as { item_name: string }[];
     expect(after.some((s) => s.item_name === "Slippers")).toBe(false);
+  }, 60_000);
+
+  it("takes damaged items out of the room, with a replacement in the same request", async () => {
+    as(C1, "Cleaner", "Cora Test");
+    const stock = await (await getStock(req("/x"))).json();
+    expect(stock.data.pulloutsEnabled).toBe(true);
+    const tp = stock.data.supplies.find((s: { item_name: string }) => s.item_name === "Toilet paper");
+    const before = tp.current_quantity;
+
+    h.notifications = [];
+    const sent = await postRequest(req("/x", { method: "POST", body: {
+      kind: "pullout", replace: true, items: [{ room_supply_id: tp.id, quantity: 1, reason: "Damaged" }],
+    } }));
+    expect(sent.status).toBe(201);
+    expect(h.notifications[0]).toMatchObject({ roles: ["Owner", "CSR"], title: "Pull-out request" });
+    expect(String(h.notifications[0].message)).toContain("1 × Toilet paper (Damaged) taken out");
+    expect(String(h.notifications[0].message)).toContain("Replacement 1 × Toilet paper");
+
+    // One pull-out and one replacement restock, both open.
+    const mine = (await (await getRequests(req("/x"))).json()).data as { id: string; kind: string; reason: string | null; status: string; item_name: string }[];
+    const out = mine.find((r) => r.kind === "pullout" && r.status === "pending")!;
+    const repl = mine.find((r) => r.kind === "restock" && r.status === "pending" && r.item_name === "Toilet paper")!;
+    expect(out.reason).toBe("Damaged");
+    expect(repl).toBeTruthy();
+    const listed = (await (await getStock(req("/x"))).json()).data.supplies.find((s: { id: string }) => s.id === tp.id);
+    expect(listed.open_pullout_qty).toBe(1);
+    expect(listed.open_request_qty).toBeGreaterThanOrEqual(1);
+
+    // Office: taking it out lowers the count, the replacement raises it again.
+    as(OWNER, "Owner");
+    h.notifications = [];
+    expect((await patchRequest(req("/x", { method: "PATCH", body: { status: "completed" } }), ctx(out.id))).status).toBe(200);
+    expect(h.notifications[0]).toMatchObject({ userId: C1, title: "Items taken out" });
+    let now = (await (await getStock(req("/x"))).json()).data.supplies.find((s: { id: string }) => s.id === tp.id);
+    expect(now.current_quantity).toBe(Math.max(0, before - 1));
+    expect(now.open_pullout_qty).toBe(0);
+    expect((await patchRequest(req("/x", { method: "PATCH", body: { status: "completed" } }), ctx(repl.id))).status).toBe(200);
+    now = (await (await getStock(req("/x"))).json()).data.supplies.find((s: { id: string }) => s.id === tp.id);
+    expect(now.current_quantity).toBe(Math.max(0, before - 1) + 1);
+
+    // A pull-out needs an item; one not on the list is fine.
+    as(C1, "Cleaner", "Cora Test");
+    expect((await postRequest(req("/x", { method: "POST", body: { kind: "pullout", items: [] } }))).status).toBe(400);
+    expect((await postRequest(req("/x", { method: "POST", body: { kind: "pullout", items: [{ item_name: "Broken lamp", quantity: 1, reason: "Damaged" }] } }))).status).toBe(201);
   }, 60_000);
 });
