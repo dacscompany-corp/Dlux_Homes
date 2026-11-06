@@ -116,12 +116,16 @@ export interface RoomSupply {
   last_counted_by_name: string | null;
   /** Total already asked for in requests that aren't completed yet. */
   open_request_qty: number;
+  /** Already reported to be taken out of the room (pull-outs not done yet). */
+  open_pullout_qty?: number;
 }
 
 export interface RoomStock {
   haven: { id: string; name: string } | null;
   havens: { id: string; name: string }[];
   supplies: RoomSupply[];
+  /** False until the 2026-11-06 migration is applied. */
+  pulloutsEnabled?: boolean;
 }
 
 export type RestockStatus = "pending" | "processing" | "completed";
@@ -142,6 +146,10 @@ export interface RestockRequest {
   admin_note: string | null;
   requested_by_name: string | null;
   handled_by_name: string | null;
+  /** restock = bring items in; pullout = take them out of the room. */
+  kind?: "restock" | "pullout";
+  /** Why a pull-out is needed (damaged, stained…). */
+  reason?: string | null;
 }
 
 /** "out" at 0, "low" below the full-stock amount, otherwise "ok". */
@@ -478,8 +486,11 @@ export const cleanersApi = createApi({
       transformResponse: (r: { success: boolean; data: RestockRequest[] }) => r.data ?? [],
       providesTags: ["RestockRequest"],
     }),
-    createRestockRequest: builder.mutation<unknown, { havenId?: string; note?: string; items: { room_supply_id?: string; item_name?: string; quantity: number }[] }>({
-      query: (a) => ({ url: "/restock-requests", method: "POST", body: { haven_id: a.havenId, note: a.note, items: a.items } }),
+    createRestockRequest: builder.mutation<unknown, {
+      havenId?: string; note?: string; kind?: "restock" | "pullout"; replace?: boolean;
+      items: { room_supply_id?: string; item_name?: string; quantity: number; reason?: string }[];
+    }>({
+      query: (a) => ({ url: "/restock-requests", method: "POST", body: { haven_id: a.havenId, note: a.note, kind: a.kind, replace: a.replace, items: a.items } }),
       invalidatesTags: ["RestockRequest", "RoomStock"],
     }),
     updateRestockRequest: builder.mutation<unknown, { id: string; status?: RestockStatus; adminNote?: string }>({

@@ -6,6 +6,10 @@
 //     its items, moved along with one tap — Getting it → Delivered. Delivering
 //     adds the quantities back to the room's count (server side).
 //   - Shopping list: everything still to get, added up per item.
+//   - Pull-outs (2026-11-06): a cleaner can ask for items to be taken OUT of
+//     the room (damaged, stained…). They show in the same order card marked
+//     "Take out"; finishing one lowers the room's count. Not on the shopping list.
+//   - Old requests show how long they've been waiting.
 //   - The room's supply list: what should be in the unit, how many are there
 //     (last count by a cleaner), and which are low or out.
 
@@ -88,7 +92,7 @@ export function RoomStockAdmin() {
   const shopping = useMemo(() => {
     const m = new Map<string, { name: string; unit: string | null; qty: number }>();
     for (const r of requests) {
-      if (r.status === "completed") continue;
+      if (r.status === "completed" || r.kind === "pullout") continue;
       const k = `${r.item_name.toLowerCase()}|${r.unit_type ?? ""}`;
       const cur = m.get(k);
       if (cur) cur.qty += r.quantity;
@@ -107,7 +111,9 @@ export function RoomStockAdmin() {
     setBusyKey(key);
     try {
       for (const r of todo) await updateRequest({ id: r.id, status }).unwrap();
-      toast.success(status === "completed" ? "Delivered — room count updated" : "Marked as on the way");
+      toast.success(status === "completed"
+        ? (todo.every(isOut) ? "Taken out — room count updated" : "Done — room count updated")
+        : "Marked as on the way");
     } catch (err) {
       toast.error(apiErr(err, "Could not update the request"));
     } finally {
@@ -115,6 +121,13 @@ export function RoomStockAdmin() {
       setConfirmKey(null);
     }
   };
+  const isOut = (r: RestockRequest) => r.kind === "pullout";
+  const doneLabel = (items: RestockRequest[]) =>
+    items.every(isOut) ? (items.length > 1 ? "All taken out" : "Taken out")
+      : items.some(isOut) ? "All done"
+      : items.length > 1 ? "All delivered" : "Delivered";
+  // Days an open order has been waiting (Manila calendar days).
+  const waitingDays = (iso: string) => Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
   const deliver = (key: string, items: RestockRequest[]) => {
     if (confirmKey !== key) {
       setConfirmKey(key);
@@ -196,7 +209,7 @@ export function RoomStockAdmin() {
               <ClipboardList className="w-4 h-4" style={{ color: "#B07848" }} />Requests from cleaners
             </h3>
             <div className="flex rounded-lg border overflow-hidden" style={{ borderColor: "#ece5d4" }}>
-              {([["open", `To do (${openOrders.length})`], ["delivered", "Delivered"]] as const).map(([id, label]) => (
+              {([["open", `To do (${openOrders.length})`], ["delivered", "Done"]] as const).map(([id, label]) => (
                 <button key={id} type="button" onClick={() => setView(id)}
                   className="px-3 py-1.5 text-xs font-semibold cursor-pointer"
                   style={{ backgroundColor: view === id ? "#1f1b16" : "#fff", color: view === id ? "#fff" : "#6b6358" }}>
@@ -211,7 +224,7 @@ export function RoomStockAdmin() {
             <div className="px-4 py-8 text-center">
               <Check className="w-7 h-7 mx-auto mb-2" style={{ color: "#059669" }} />
               <p className="text-sm font-semibold" style={{ color: "#1f1b16" }}>{view === "open" ? "Nothing to do" : "No deliveries yet"}</p>
-              <p className="text-xs mt-1" style={{ color: "#8B6344" }}>{view === "open" ? "When a cleaner asks for supplies, it shows up here." : "Delivered requests are listed here."}</p>
+              <p className="text-xs mt-1" style={{ color: "#8B6344" }}>{view === "open" ? "When a cleaner asks for supplies or for something to be taken out, it shows up here." : "Finished requests are listed here."}</p>
             </div>
           ) : shownOrders.map((o, i) => {
             const st = STATUS[o.status];
@@ -225,6 +238,12 @@ export function RoomStockAdmin() {
                   </span>
                   <span className="text-sm font-semibold" style={{ color: "#1f1b16" }}>{o.by}</span>
                   <span className="text-xs" style={{ color: "#8B6344" }}>· {o.room} · {when(o.at)}</span>
+                  {o.status !== "completed" && waitingDays(o.at) >= 1 && (
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                      style={waitingDays(o.at) >= 3 ? { backgroundColor: "#fee2e2", color: "#b91c1c" } : { backgroundColor: "#fef3c7", color: "#92400e" }}>
+                      Waiting {waitingDays(o.at)} {waitingDays(o.at) === 1 ? "day" : "days"}
+                    </span>
+                  )}
                 </div>
 
                 <ul className="mt-2.5 space-y-1.5">
@@ -233,13 +252,17 @@ export function RoomStockAdmin() {
                       <span className="w-6 text-right font-semibold" style={{ color: "#1f1b16" }}>{r.quantity}</span>
                       <span style={{ color: "#8B6344" }}>×</span>
                       <span className="flex-1 min-w-0" style={{ color: r.status === "completed" ? "#A89080" : "#1a1a1a", textDecoration: r.status === "completed" && o.status !== "completed" ? "line-through" : "none" }}>
+                        {isOut(r) && (
+                          <span className="inline-block text-[11px] font-semibold px-1.5 py-0.5 rounded mr-1.5 align-middle" style={{ backgroundColor: "#ede9fe", color: "#5b21b6" }}>Take out</span>
+                        )}
                         {r.item_name}{r.unit_type ? <span style={{ color: "#8B6344" }}> ({r.unit_type})</span> : null}
+                        {isOut(r) && r.reason ? <span style={{ color: "#5b21b6" }}> — {r.reason}</span> : null}
                       </span>
                       {/* Part of an order can be delivered on its own. */}
                       {open.length > 1 && r.status !== "completed" && (
-                        <button type="button" disabled={busy} onClick={() => moveItems(o.key, [r], "completed")} title="Delivered just this item"
+                        <button type="button" disabled={busy} onClick={() => moveItems(o.key, [r], "completed")} title={isOut(r) ? "Taken out — just this item" : "Delivered just this item"}
                           className="text-xs font-semibold px-2 py-0.5 rounded border cursor-pointer disabled:opacity-50" style={{ color: "#065f46", borderColor: "#a7f3d0", backgroundColor: "#ecfdf5" }}>
-                          ✓ Delivered
+                          ✓ {isOut(r) ? "Taken out" : "Delivered"}
                         </button>
                       )}
                     </li>
@@ -248,7 +271,7 @@ export function RoomStockAdmin() {
                 {o.note && <p className="text-xs mt-2 px-3 py-2 rounded-lg" style={{ color: "#5b21b6", backgroundColor: "#f5f3ff" }}>“{o.note}”</p>}
                 {o.status === "completed" && (
                   <p className="text-xs mt-2" style={{ color: "#8B6344" }}>
-                    Delivered {when(o.items[0].completed_at)}{o.items[0].handled_by_name ? ` by ${o.items[0].handled_by_name}` : ""}
+                    {o.items.every(isOut) ? "Taken out" : "Done"} {when(o.items[0].completed_at)}{o.items[0].handled_by_name ? ` by ${o.items[0].handled_by_name}` : ""}
                   </p>
                 )}
 
@@ -258,18 +281,23 @@ export function RoomStockAdmin() {
                       <button type="button" disabled={busy} onClick={() => moveItems(o.key, o.items, "processing")}
                         className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold border rounded-lg cursor-pointer disabled:opacity-50"
                         style={{ color: "#1e40af", borderColor: "#bfdbfe", backgroundColor: "#eff6ff" }}>
-                        <Truck className="w-4 h-4" />I&apos;m getting it
+                        <Truck className="w-4 h-4" />I&apos;m on it
                       </button>
                     )}
                     <button type="button" disabled={busy} onClick={() => deliver(o.key, open)}
                       className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white rounded-lg cursor-pointer disabled:opacity-50"
                       style={{ backgroundColor: confirmKey === o.key ? "#065f46" : "#059669" }}>
                       <Check className="w-4 h-4" />
-                      {busy ? "Saving…" : confirmKey === o.key ? "Tap again to confirm" : open.length > 1 ? "All delivered" : "Delivered"}
+                      {busy ? "Saving…" : confirmKey === o.key ? "Tap again to confirm" : doneLabel(open)}
                     </button>
                     {confirmKey === o.key && !busy && (
                       <>
-                        <span className="text-xs" style={{ color: "#5a4a3a" }}>Adds {open.map((r) => `${r.quantity} ${r.item_name}`).join(", ")} to the room&apos;s count.</span>
+                        <span className="text-xs" style={{ color: "#5a4a3a" }}>
+                          {[
+                            open.filter((r) => !isOut(r)).length ? `Adds ${open.filter((r) => !isOut(r)).map((r) => `${r.quantity} ${r.item_name}`).join(", ")} to the room's count.` : "",
+                            open.filter(isOut).length ? `Takes ${open.filter(isOut).map((r) => `${r.quantity} ${r.item_name}`).join(", ")} off the room's count.` : "",
+                          ].filter(Boolean).join(" ")}
+                        </span>
                         <button type="button" onClick={() => setConfirmKey(null)} className="text-xs underline cursor-pointer" style={{ color: "#8B6344" }}>Cancel</button>
                       </>
                     )}

@@ -10,6 +10,10 @@ import { createNotificationForUser, createNotificationsForRoles } from "@/backen
 // Tables: room_supplies (what's in the room) and restock_requests — see
 // migrations/2026-10-22-room-stock.sql. Route files do the auth; these
 // functions take already-validated input plus the acting employee.
+//
+// A request is a RESTOCK (bring items in) or a PULL-OUT (take items out of the
+// room — damaged, stained, extra; owner, 2026-11-06). Both use the same three
+// steps; completing a restock raises the room's count, a pull-out lowers it.
 
 export type RequestStatus = "pending" | "processing" | "completed";
 export const REQUEST_STATUSES: RequestStatus[] = ["pending", "processing", "completed"];
@@ -31,6 +35,25 @@ export const STARTER_SUPPLIES: { item_name: string; unit_type: string; par_quant
   { item_name: "Tissue", unit_type: "boxes", par_quantity: 1 },
 ];
 
+export type RequestKind = "restock" | "pullout";
+
+// Pull-outs need the 2026-11-06 columns (kind, reason). Until that migration is
+// applied everything keeps working as before — every request is a restock —
+// and only sending a pull-out is refused, so a missing column can't take the
+// whole Room Stock page down. Once seen, the column is remembered.
+let kindColumn: { at: number; has: boolean } | null = null;
+async function hasKindColumn(): Promise<boolean> {
+  if (kindColumn && (kindColumn.has || Date.now() - kindColumn.at < 60_000)) return kindColumn.has;
+  try {
+    const r = await pool.query(
+      `SELECT 1 FROM information_schema.columns WHERE table_name = 'restock_requests' AND column_name = 'kind' LIMIT 1`);
+    kindColumn = { at: Date.now(), has: r.rows.length > 0 };
+  } catch {
+    kindColumn = { at: Date.now(), has: false };
+  }
+  return kindColumn.has;
+}
+
 const ok = (data: unknown, status = 200) => NextResponse.json({ success: true, data }, { status });
 const fail = (error: string, status = 400) => NextResponse.json({ success: false, error }, { status });
 
@@ -51,13 +74,19 @@ async function resolveHaven(havenId: string | null): Promise<{ id: string; name:
   return res.rows[0] ?? null;
 }
 
-const SUPPLY_SELECT = `
+// open_request_qty: supplies already asked for and on their way in;
+// open_pullout_qty: items already reported to be taken out.
+const supplySelect = (hasKind: boolean) => `
   SELECT s.id::text AS id, s.haven_id::text AS haven_id, s.item_name, s.unit_type,
          s.par_quantity, s.current_quantity, s.display_order,
          s.last_counted_at, s.updated_at,
          NULLIF(TRIM(COALESCE(e.first_name, '') || ' ' || COALESCE(e.last_name, '')), '') AS last_counted_by_name,
          (SELECT COALESCE(SUM(r.quantity), 0)::int FROM restock_requests r
-           WHERE r.room_supply_id = s.id AND r.status <> 'completed') AS open_request_qty
+           WHERE r.room_supply_id = s.id AND r.status <> 'completed'${hasKind ? ` AND r.kind = 'restock'` : ""}) AS open_request_qty,
+         ${hasKind
+           ? `(SELECT COALESCE(SUM(r.quantity), 0)::int FROM restock_requests r
+               WHERE r.room_supply_id = s.id AND r.status <> 'completed' AND r.kind = 'pullout')`
+           : "0"} AS open_pullout_qty
     FROM room_supplies s
     LEFT JOIN employees e ON e.id = s.last_counted_by
 `;
@@ -67,11 +96,12 @@ export async function listRoomSupplies(havenId: string | null): Promise<NextResp
   try {
     const haven = await resolveHaven(havenId);
     if (!haven) return ok({ haven: null, havens: [], supplies: [] });
+    const hasKind = await hasKindColumn();
     const [havens, supplies] = await Promise.all([
       pool.query<{ id: string; name: string }>(`SELECT uuid_id::text AS id, haven_name AS name FROM havens ORDER BY haven_name`),
-      pool.query(`${SUPPLY_SELECT} WHERE s.haven_id = $1::uuid ORDER BY s.display_order, s.item_name`, [haven.id]),
+      pool.query(`${supplySelect(hasKind)} WHERE s.haven_id = $1::uuid ORDER BY s.display_order, s.item_name`, [haven.id]),
     ]);
-    return ok({ haven, havens: havens.rows, supplies: supplies.rows });
+    return ok({ haven, havens: havens.rows, supplies: supplies.rows, pulloutsEnabled: hasKind });
   } catch (err) {
     console.error("listRoomSupplies failed:", err);
     return fail("Could not load room supplies", 500);
@@ -213,9 +243,10 @@ export async function saveSupplyCounts(counts: unknown, actorId: string | null):
   }
 }
 
-const REQUEST_SELECT = `
+const requestSelect = (hasKind: boolean) => `
   SELECT r.id::text AS id, r.haven_id::text AS haven_id, h.haven_name AS room_name,
          r.room_supply_id::text AS room_supply_id, r.item_name, r.quantity, r.note, r.status,
+         ${hasKind ? "r.kind, r.reason" : "'restock'::text AS kind, NULL::text AS reason"},
          r.requested_at, r.processing_at, r.completed_at, r.admin_note,
          r.requested_by::text AS requested_by,
          NULLIF(TRIM(COALESCE(rq.first_name, '') || ' ' || COALESCE(rq.last_name, '')), '') AS requested_by_name,
@@ -241,8 +272,9 @@ export async function listRestockRequests(opts: { status: string | null; onlyReq
       params.push(opts.onlyRequester);
       where.push(`r.requested_by = $${params.length}::uuid`);
     }
+    const hasKind = await hasKindColumn();
     const res = await pool.query(
-      `${REQUEST_SELECT} ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      `${requestSelect(hasKind)} ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
        ORDER BY CASE r.status WHEN 'pending' THEN 0 WHEN 'processing' THEN 1 ELSE 2 END, r.requested_at DESC
        LIMIT 200`,
       params,
@@ -254,14 +286,29 @@ export async function listRestockRequests(opts: { status: string | null; onlyReq
   }
 }
 
-/** POST — one request per item (any staff). Owner/CSR are notified. */
+/**
+ * POST — one request per item (any staff). Owner/CSR are notified.
+ * kind "pullout": the items are to be taken out of the room; each can carry a
+ * reason, and replace: true asks for the same amount to be brought in too.
+ */
 export async function createRestockRequests(
-  body: { haven_id?: string; note?: string; items?: { room_supply_id?: string; item_name?: string; quantity?: unknown }[] },
+  body: {
+    haven_id?: string; note?: string; kind?: string; reason?: string; replace?: boolean;
+    items?: { room_supply_id?: string; item_name?: string; quantity?: unknown; reason?: string }[];
+  },
   actor: { id: string | null; name: string },
 ): Promise<NextResponse> {
   const items = Array.isArray(body.items) ? body.items : [];
-  if (items.length === 0) return fail("Pick at least one item to request.");
+  const kind: RequestKind = body.kind === "pullout" ? "pullout" : "restock";
+  if (items.length === 0) return fail(kind === "pullout" ? "Pick at least one item to take out." : "Pick at least one item to request.");
   const note = body.note ? String(body.note).trim().slice(0, 500) : null;
+  const hasKind = await hasKindColumn();
+  if (kind === "pullout" && !hasKind) {
+    return fail("Pull-out requests need a quick database update first. Ask the office to run the 2026-11-06 Room Stock migration.", 503);
+  }
+  const replace = kind === "pullout" && body.replace === true;
+  const reasonFor = (it: { reason?: string }) =>
+    kind === "pullout" ? (String(it.reason ?? body.reason ?? "").trim().slice(0, 200) || null) : null;
 
   // Look the room up before taking a connection for the transaction.
   const haven = await resolveHaven(isUuid(body.haven_id) ? body.haven_id : null).catch(() => null);
@@ -270,7 +317,19 @@ export async function createRestockRequests(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const created: { item_name: string; quantity: number }[] = [];
+    const created: { item_name: string; quantity: number; kind: RequestKind; reason: string | null }[] = [];
+    const insert = (supplyId: string | null, name: string, qty: number, k: RequestKind, reason: string | null) =>
+      hasKind
+        ? client.query(
+            `INSERT INTO restock_requests (haven_id, room_supply_id, item_name, quantity, note, requested_by, kind, reason)
+             VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::uuid, $7, $8)`,
+            [haven.id, supplyId, name.slice(0, 100), qty, note, isUuid(actor.id) ? actor.id : null, k, reason],
+          )
+        : client.query(
+            `INSERT INTO restock_requests (haven_id, room_supply_id, item_name, quantity, note, requested_by)
+             VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::uuid)`,
+            [haven.id, supplyId, name.slice(0, 100), qty, note, isUuid(actor.id) ? actor.id : null],
+          );
     for (const it of items) {
       const qty = wholeNumber(it.quantity);
       if (!qty) { await client.query("ROLLBACK"); return fail("Each item needs a quantity of 1 or more."); }
@@ -284,19 +343,29 @@ export async function createRestockRequests(
         name = s.rows[0].item_name;
       }
       if (!name) { await client.query("ROLLBACK"); return fail("Each item needs a name."); }
-      await client.query(
-        `INSERT INTO restock_requests (haven_id, room_supply_id, item_name, quantity, note, requested_by)
-         VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::uuid)`,
-        [haven.id, supplyId, name.slice(0, 100), qty, note, isUuid(actor.id) ? actor.id : null],
-      );
-      created.push({ item_name: name, quantity: qty });
+      const reason = reasonFor(it);
+      await insert(supplyId, name, qty, kind, reason);
+      created.push({ item_name: name, quantity: qty, kind, reason });
+      // Pull out + replace: the same amount is asked for, as its own restock.
+      if (replace) {
+        await insert(supplyId, name, qty, "restock", null);
+        created.push({ item_name: name, quantity: qty, kind: "restock", reason: null });
+      }
     }
     await client.query("COMMIT");
 
-    const list = created.map((c) => `${c.quantity} × ${c.item_name}`).join(", ");
+    const out = created.filter((c) => c.kind === "pullout");
+    const inn = created.filter((c) => c.kind === "restock");
+    const say = (list: typeof created, withReason: boolean) =>
+      list.map((c) => `${c.quantity} × ${c.item_name}${withReason && c.reason ? ` (${c.reason})` : ""}`).join(", ");
+    const message = [
+      out.length ? `${actor.name} needs ${say(out, true)} taken out of ${haven.name}.` : "",
+      inn.length ? `${out.length ? "Replacement" : `${actor.name} asked for`} ${say(inn, false)}${out.length ? " asked for too." : ` for ${haven.name}.`}` : "",
+      note ? `Note: ${note}` : "",
+    ].filter(Boolean).join(" ");
     await createNotificationsForRoles(["Owner", "CSR"], {
-      title: "Restock request",
-      message: `${actor.name} asked for ${list} for ${haven.name}.${note ? ` Note: ${note}` : ""}`,
+      title: out.length ? "Pull-out request" : "Restock request",
+      message,
       notificationType: "restock_request",
     }).catch((e) => console.error("restock notify failed:", e));
 
@@ -323,12 +392,14 @@ export async function updateRestockRequest(
   if (!isUuid(id)) return fail("Unknown request", 404);
   const status = body.status as RequestStatus | undefined;
   if (status && !REQUEST_STATUSES.includes(status)) return fail("Status must be pending, processing or completed.");
+  const hasKind = await hasKindColumn();
 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const cur = await client.query<{ status: RequestStatus; room_supply_id: string | null; quantity: number; item_name: string; requested_by: string | null }>(
-      `SELECT status, room_supply_id::text AS room_supply_id, quantity, item_name, requested_by::text AS requested_by
+    const cur = await client.query<{ status: RequestStatus; room_supply_id: string | null; quantity: number; item_name: string; requested_by: string | null; kind: RequestKind }>(
+      `SELECT status, room_supply_id::text AS room_supply_id, quantity, item_name, requested_by::text AS requested_by,
+              ${hasKind ? "kind" : "'restock'::text AS kind"}
          FROM restock_requests WHERE id = $1::uuid FOR UPDATE`, [id]);
     const req = cur.rows[0];
     if (!req) { await client.query("ROLLBACK"); return fail("Unknown request", 404); }
@@ -350,8 +421,11 @@ export async function updateRestockRequest(
 
     const nowCompleted = status === "completed" && req.status !== "completed";
     if (nowCompleted && req.room_supply_id) {
+      // Delivered → the room has more; taken out → it has fewer (never below 0).
       await client.query(
-        `UPDATE room_supplies SET current_quantity = current_quantity + $2, updated_at = NOW() WHERE id = $1::uuid`,
+        req.kind === "pullout"
+          ? `UPDATE room_supplies SET current_quantity = GREATEST(0, current_quantity - $2), updated_at = NOW() WHERE id = $1::uuid`
+          : `UPDATE room_supplies SET current_quantity = current_quantity + $2, updated_at = NOW() WHERE id = $1::uuid`,
         [req.room_supply_id, req.quantity],
       );
     }
@@ -359,8 +433,10 @@ export async function updateRestockRequest(
 
     if (nowCompleted && req.requested_by) {
       await createNotificationForUser(req.requested_by, {
-        title: "Supplies delivered",
-        message: `Your request for ${req.quantity} × ${req.item_name} is completed.`,
+        title: req.kind === "pullout" ? "Items taken out" : "Supplies delivered",
+        message: req.kind === "pullout"
+          ? `${req.quantity} × ${req.item_name} has been taken out of the room.`
+          : `Your request for ${req.quantity} × ${req.item_name} is completed.`,
         notificationType: "restock_completed",
       }).catch((e) => console.error("restock notify failed:", e));
     }

@@ -167,6 +167,7 @@ const en = {
       "Count what's left with − and +. Anything missing is added by itself.",
       "Need something not on the list? Tap Something else? and type it.",
       "Tap Send to office. Each item shows its status: Waiting for office → On the way → Delivered.",
+      "Something broken, stained or extra? Open Take something out?, pick the item and why, then send — tick Also ask for a replacement to get a new one.",
     ] },
     { title: "Report something broken or missing", go: "problem", steps: [
       "Open Menu → Report a problem (or tap Problem? in a room).",
@@ -406,6 +407,7 @@ const tl: CleanerStrings = {
       "Bilangin ang natira gamit ang − at +. Kusang idadagdag ang kulang.",
       "May kailangang wala sa listahan? Pindutin ang Iba pa? at isulat ito.",
       "Pindutin ang Ipadala sa opisina. May status ang bawat item: Hinihintay ang opisina → Parating na → Naihatid na.",
+      "May sira, may mantsa o sobra? Buksan ang May ilalabas sa kwarto?, piliin ang item at kung bakit, tapos ipadala — i-tsek ang Humingi rin ng kapalit para may bago.",
     ] },
     { title: "Mag-report ng sira o nawawala", go: "problem", steps: [
       "Buksan ang Menu → Mag-report ng problema (o pindutin ang May problema? sa kwarto).",
