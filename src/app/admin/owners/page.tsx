@@ -62,7 +62,6 @@ import {
   LogOut,
   Wallet,
   BarChart3,
-  ArrowUpRight,
   Eye,
   Check,
   XCircle,
@@ -71,7 +70,6 @@ import {
   Shield,
   Mail,
   Plus,
-  AlertCircle,
   FileText,
   MapPin,
   Phone,
@@ -807,10 +805,9 @@ export default function OwnerDashboard() {
     };
   });
   const overviewRevenueTotal = overviewRevenueData.reduce((t, m) => t + m.amount, 0);
-  // Revenue by haven (Finance) + y-axis ticks for the bar chart
+  // Revenue by haven (Finance)
   const roomRev = ((roomRevRes as unknown as { data?: { room_name: string; revenue: number; bookings: number }[] })?.data) || [];
   const totalRoomRev = Math.max(1, roomRev.reduce((t, r) => t + (Number(r.revenue) || 0), 0));
-  const revYticks = [1, 0.75, 0.5, 0.25, 0].map((f) => `₱${Math.round((maxRev * f) / 1000)}k`);
 
   // Backend statuses → UI statuses the design's statusConfig expects.
   // "on-going" = down payment approved, awaiting final approval — NOT checked in.
