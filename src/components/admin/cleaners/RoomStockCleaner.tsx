@@ -492,7 +492,7 @@ export default function RoomStockCleaner({ lang = "en", big = false }: { lang?: 
                 </span>
                 <button type="button" aria-label={t.removeItem(s.item_name)} title={t.removeItem(s.item_name)}
                   onClick={() => setConfirmRemove(confirmRemove === s.id ? null : s.id)}
-                  style={{ flex: "none", width: 36, height: 36, borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.red, display: "grid", placeItems: "center", cursor: "pointer" }}>
+                  style={{ flex: "none", width: 44, height: 44, borderRadius: 12, border: `1px solid ${C.line}`, background: "#fff", color: C.red, display: "grid", placeItems: "center", cursor: "pointer" }}>
                   <Trash2 style={{ width: 16, height: 16 }} />
                 </button>
               </div>
@@ -654,7 +654,7 @@ export default function RoomStockCleaner({ lang = "en", big = false }: { lang?: 
                 <span key={s.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 6px 5px 10px", borderRadius: 999, background: C.cream, border: `1px solid ${C.line}`, fontSize: fs - 3, fontWeight: 600, color: C.ink }}>
                   {need} × {s.item_name}
                   <button type="button" aria-label={`${t.skip}: ${s.item_name}`} onClick={() => setSkipped((k) => ({ ...k, [s.id]: true }))}
-                    style={{ width: 22, height: 22, borderRadius: 999, border: 0, background: "#fff", color: C.muted, display: "grid", placeItems: "center", cursor: "pointer" }}>
+                    style={{ width: 32, height: 32, borderRadius: 999, border: 0, background: "#fff", color: C.muted, display: "grid", placeItems: "center", cursor: "pointer" }}>
                     <X style={{ width: 13, height: 13 }} />
                   </button>
                 </span>

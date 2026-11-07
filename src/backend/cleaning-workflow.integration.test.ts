@@ -114,6 +114,7 @@ import { GET as listTasks } from "@/app/api/admin/cleaners/tasks/route";
 import { PUT as startTask } from "@/app/api/admin/cleaners/tasks/[id]/start/route";
 import { PUT as acceptRoute } from "@/app/api/admin/cleaners/tasks/[id]/accept/route";
 import { POST as syncRoute } from "@/app/api/admin/cleaners/tasks/sync/route";
+import { GET as listReports } from "@/app/api/report/route";
 import { PATCH as staffStatusRoute } from "@/app/api/admin/employees/[id]/status/route";
 import { PUT as declineRoute } from "@/app/api/admin/cleaners/tasks/[id]/decline/route";
 import { PUT as completeTask } from "@/app/api/admin/cleaners/tasks/[id]/complete/route";
@@ -1384,5 +1385,34 @@ describe("booking → cleaning task transmission", () => {
     const row = all.data.find((x: { cleaning_id: string }) => x.cleaning_id === t.id);
     expect(row).toBeTruthy();
     expect(row.assigned_cleaner_id).toBeNull();
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Issue reports list filters (2026-11-07: "cannot cast type integer to uuid")
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("issue reports list", () => {
+  it("a cleaner sees only their own reports, and a task's reports can be listed", async () => {
+    const b = await addBooking();
+    await confirm(b.id);
+    const [t] = await taskFor(b.id);
+    await h.db.query(
+      `INSERT INTO report_issue (haven_id, issue_type, specific_location, issue_description, user_id, booking_cleaning_id)
+       VALUES ($1::uuid, 'Broken', 'Bathroom', 'Leaking tap', $2::uuid, $3::uuid)`,
+      [havenId, C1, t.id],
+    );
+    as({ id: C1, role: "Cleaner" });
+    let res = await listReports(req("/api/report"));
+    expect(res.status).toBe(200);
+    expect((await res.json()).data).toHaveLength(1);
+
+    as({ id: C2, role: "Cleaner" });
+    expect((await (await listReports(req("/api/report"))).json()).data).toHaveLength(0);
+
+    as({ id: OWNER, role: "Owner" });
+    res = await listReports(req(`/api/report?booking_cleaning_id=${t.id}`));
+    expect(res.status).toBe(200);
+    expect((await res.json()).data).toHaveLength(1);
   });
 });

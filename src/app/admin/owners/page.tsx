@@ -31,7 +31,7 @@ import { checkInOpensLabel, isCheckInOpen } from "@/lib/checkin-window";
 import {
   AnalyticsSection, BookingCalendarSection, BlockedDatesSection,
   PaymentMethodsSection, GuestAssistanceSection, UserManagementSection, PartnerManagementSection,
-  PricingCalendarSection, Empty,
+  PricingCalendarSection, Empty, TeamSearch, matchesTeamSearch,
 } from "@/components/admin/owners/OwnerModules";
 import { CleaningOperationsSection } from "@/components/admin/owners/CleaningOperationsSection";
 import { ExtendBookingModal, ExtensionHistory, useBookingExtensions, EXTENDABLE_UI_STATUSES } from "@/components/admin/owners/ExtendBooking";
@@ -176,6 +176,7 @@ export default function OwnerDashboard() {
   const [guideOpen, setGuideOpen] = useState(false);
   const [financeTab, setFinanceTab]   = useState<"revenue"|"methods"|"promotions"|"seasonal"|"overhead"|"profitability">("revenue");
   const [teamTab, setTeamTab]         = useState<"staff"|"users"|"partners">("staff");
+  const [staffQuery, setStaffQuery]   = useState("");
 
   // ── Live data from the Supabase-backed API (RTK Query) ──
   const REVENUE_RANGES: Record<string, { name: string; label: string; months: string; days: string }> = {
@@ -2546,6 +2547,10 @@ export default function OwnerDashboard() {
                 <Plus className="w-4 h-4" /> Add Staff
               </button>
             </div>
+            {(() => {
+              const shownStaff = staffMembers.filter((m) => matchesTeamSearch(staffQuery, [m.name, m.id, m.role, m.email, m.phone, m.status]));
+              return (<>
+            <TeamSearch value={staffQuery} onChange={setStaffQuery} placeholder="Search name, ID, role, email or phone…" shown={shownStaff.length} total={staffMembers.length} />
             <div className="border overflow-hidden" style={{ borderColor: "#ece5d4" }}>
               <div className="overflow-x-auto">
                 <table className="w-full">
@@ -2555,7 +2560,12 @@ export default function OwnerDashboard() {
                     ))}
                   </tr></thead>
                   <tbody>
-                    {staffMembers.map((staff, idx) => (
+                    {shownStaff.length === 0 && (
+                      <tr><td colSpan={6} className="px-4 py-10 text-center text-sm" style={{ color: "#8B6344" }}>
+                        {staffQuery.trim() ? `No staff match “${staffQuery.trim()}”.` : "No staff yet."}
+                      </td></tr>
+                    )}
+                    {shownStaff.map((staff, idx) => (
                       <tr key={staff.id} className="transition-colors" style={{ borderTop: idx > 0 ? "1px solid #F7F0E3" : "none" }}
                         onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "#F7F0E3"}
                         onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"}>
@@ -2648,6 +2658,8 @@ export default function OwnerDashboard() {
                 </table>
               </div>
             </div>
+              </>);
+            })()}
           </>)}
           </>)}
 
