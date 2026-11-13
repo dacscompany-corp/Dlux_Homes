@@ -7,7 +7,7 @@ import ImageThumb from "@/components/ImageThumb";
 import { MonthNavigator, currentMonthKey } from "@/components/admin/owners/MonthNavigator";
 import { useGetOverheadDashboardQuery, useGetOverheadAllTimeQuery } from "@/redux/api/overheadApi";
 import { useSession } from "next-auth/react";
-import { BarChart3, Calendar, CalendarOff, CreditCard, Headphones, UsersRound, Handshake, Plus, Trash2, Power, Pencil, X, Moon, Sun } from "lucide-react";
+import { BarChart3, Calendar, CalendarOff, CreditCard, Headphones, UsersRound, Handshake, Plus, Trash2, Power, Pencil, X, Moon, Sun, Search } from "lucide-react";
 import { useGetAnalyticsSummaryQuery, useGetMonthlyRevenueQuery, useGetRevenueByRoomQuery } from "@/redux/api/analyticsApi";
 import { useGetBookingsQuery } from "@/redux/api/bookingsApi";
 import { useGetBlockedDatesQuery, useCreateBlockedDateMutation, useDeleteBlockedDateMutation } from "@/redux/api/blockedDatesApi";
@@ -1469,15 +1469,50 @@ export function GuestAssistanceSection() {
 }
 
 // ── 7. User Management ────────────────────────────────────────────────────
+/** True when every word of `query` appears somewhere in `fields` (case-insensitive). */
+export function matchesTeamSearch(query: string, fields: unknown[]): boolean {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const hay = fields.map((f) => String(f ?? "")).join(" ").toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+
+/** The Team tabs' search box: type to filter, × to clear, with a match count. */
+export function TeamSearch({ value, onChange, placeholder, shown, total }: {
+  value: string; onChange: (v: string) => void; placeholder: string; shown: number; total: number;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-3 mb-4">
+      <label className="flex items-center gap-2 flex-1 min-w-[220px] max-w-md px-3 py-2 border bg-white rounded-lg" style={{ borderColor: "#D4BFA0" }}>
+        <Search className="w-4 h-4 flex-shrink-0" style={{ color: "#8B6344" }} />
+        <input type="search" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+          aria-label={placeholder}
+          onKeyDown={(e) => { if (e.key === "Escape") onChange(""); }}
+          className="flex-1 min-w-0 text-sm outline-none bg-transparent" style={{ color: "#1a1a1a" }} />
+        {value && (
+          <button type="button" onClick={() => onChange("")} title="Clear search" aria-label="Clear search"
+            className="w-5 h-5 grid place-items-center rounded-full cursor-pointer" style={{ backgroundColor: "#F7F0E3", color: "#8B6344" }}>
+            <X className="w-3 h-3" />
+          </button>
+        )}
+      </label>
+      {value.trim() && <span className="text-xs" style={{ color: "#8B6344" }}>{shown} of {total} found</span>}
+    </div>
+  );
+}
+
 export function UserManagementSection() {
   const { data: usersRes } = useGetAdminUsersQuery({});
   const rows = dataOf(usersRes);
+  const [q, setQ] = useState("");
+  const shown = rows.filter((u) => matchesTeamSearch(q, [u.name, u.email, u.user_role, u.register_as]));
   return (
     <div>
       <SectionHead title="User Management" icon={UsersRound} sub="Registered guest accounts" />
-      {rows.length === 0 ? <Empty label="No registered users yet." /> : (
+      {rows.length > 0 && <TeamSearch value={q} onChange={setQ} placeholder="Search name, email or role…" shown={shown.length} total={rows.length} />}
+      {rows.length === 0 ? <Empty label="No registered users yet." /> : shown.length === 0 ? <Empty label={`No users match “${q.trim()}”.`} /> : (
         <Table headers={["Name", "Email", "Role", "Signed up via", "Joined", "Last login"]}>
-          {rows.map((u, i) => (
+          {shown.map((u, i) => (
             <tr key={String(u.user_id ?? i)} style={{ borderTop: i > 0 ? "1px solid #F7F0E3" : "none" }}>
               <td className="px-4 py-3.5 text-sm font-medium" style={{ color: "#1a1a1a" }}>{String(u.name ?? "—")}</td>
               <td className="px-4 py-3.5 text-sm" style={{ color: "#5a4a3a" }}>{String(u.email ?? "—")}</td>
@@ -1498,12 +1533,15 @@ export function PartnerManagementSection() {
   const { data: partnersRes } = useGetPartnersQuery({});
   const rows = dataOf(partnersRes);
   const tone = (s: string) => (s === "active" ? "good" : s === "pending" ? "warn" : "bad");
+  const [q, setQ] = useState("");
+  const shown = rows.filter((p) => matchesTeamSearch(q, [p.fullname, p.email, p.phone, p.type, p.status]));
   return (
     <div>
       <SectionHead title="Partner Management" icon={Handshake} sub="Business partners and affiliates" />
-      {rows.length === 0 ? <Empty label="No partners yet." /> : (
+      {rows.length > 0 && <TeamSearch value={q} onChange={setQ} placeholder="Search name, email, phone or status…" shown={shown.length} total={rows.length} />}
+      {rows.length === 0 ? <Empty label="No partners yet." /> : shown.length === 0 ? <Empty label={`No partners match “${q.trim()}”.`} /> : (
         <Table headers={["Partner", "Email", "Phone", "Type", "Commission", "Status"]}>
-          {rows.map((p, i) => (
+          {shown.map((p, i) => (
             <tr key={String(p.id ?? i)} style={{ borderTop: i > 0 ? "1px solid #F7F0E3" : "none" }}>
               <td className="px-4 py-3.5 text-sm font-medium" style={{ color: "#1a1a1a" }}>{String(p.fullname ?? "—")}</td>
               <td className="px-4 py-3.5 text-sm" style={{ color: "#5a4a3a" }}>{String(p.email ?? "—")}</td>

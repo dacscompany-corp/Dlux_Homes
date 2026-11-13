@@ -983,10 +983,10 @@ function AssignCleanerControl({ task, cleaners, loadFailed }: { task: CleaningTa
   );
 }
 
-// Dedicated "Cleaning Checklist" tab — pick a task from a compact list, see
-// and edit its checklist directly (same ChecklistSection the task drawer
-// uses), without opening the drawer. Tasks that are Ready have nothing left
-// to check off, so they're left out of the picker.
+// Dedicated "Cleaning Checklist" tab — pick a room from the list on the left,
+// see and edit its checklist on the right (same ChecklistSection the task
+// drawer uses), without opening the drawer. Tasks that are Ready have nothing
+// left to check off, so they're left out of the picker.
 function ChecklistTab({ tasks, isFetching }: { tasks: CleaningTask[]; isFetching: boolean }) {
   const relevant = tasks.filter((t) => t.cleaning_status !== "ready").sort(byNearestCleaning);
   const [query, setQuery] = useState("");
@@ -996,103 +996,134 @@ function ChecklistTab({ tasks, isFetching }: { tasks: CleaningTask[]; isFetching
   );
   const [pickedId, setPickedId] = useState<string | null>(relevant[0]?.cleaning_id ?? null);
   const picked = filtered.find((t) => t.cleaning_id === pickedId) ?? filtered[0] ?? null;
+  const cleanerOf = (t: CleaningTask) =>
+    t.cleaner_first_name ? `${t.cleaner_first_name} ${t.cleaner_last_name ?? ""}`.trim() : "No cleaner yet";
+  const guestOf = (t: CleaningTask) => `${t.guest_first_name ?? ""} ${t.guest_last_name ?? ""}`.trim() || "—";
 
   if (!isFetching && relevant.length === 0) {
-    return <p className="text-sm" style={{ color: "#8B6344" }}>No active cleaning tasks to check.</p>;
+    return (
+      <div className="border rounded-xl px-6 py-10 text-center" style={{ borderColor: "#ece5d4" }}>
+        <CheckCircle2 className="w-8 h-8 mx-auto mb-2" style={{ color: "#059669" }} />
+        <p className="text-sm font-semibold" style={{ color: "#1f1b16" }}>Nothing to check right now</p>
+        <p className="text-xs mt-1" style={{ color: "#8B6344" }}>Rooms waiting to be cleaned show up here with their checklist.</p>
+      </div>
+    );
   }
 
   return (
     <div>
       <SearchBox value={query} onChange={setQuery} placeholder="Search room, booking, guest, or cleaner…" />
-      <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
-      {/* Task picker */}
-      <div className="border overflow-hidden self-start" style={{ borderColor: "#ece5d4" }}>
-        {filtered.length === 0 && (
-          <p className="px-3 py-4 text-xs" style={{ color: "#8B6344" }}>No tasks match your search.</p>
-        )}
-        {filtered.map((t, i) => {
-          const st = STATUS_LABELS[t.cleaning_status] || STATUS_LABELS.pending;
-          const isActive = picked?.cleaning_id === t.cleaning_id;
-          return (
-            <button key={t.cleaning_id} onClick={() => setPickedId(t.cleaning_id)}
-              className="w-full text-left px-3 py-2.5 cursor-pointer transition-colors"
-              style={{
-                borderTop: i > 0 ? "1px solid #F7F0E3" : "none",
-                backgroundColor: isActive ? "#FAF7F1" : "transparent",
-              }}>
-              <div className="flex items-center gap-1.5 text-sm font-medium" style={{ color: "#1a1a1a" }}>
-                <Building2 className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#8a6a2f" }} />
-                <span className="truncate">{t.haven}</span>
-              </div>
-              <div className="flex items-center gap-1.5 mt-1">
-                <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: st.dot }} />
-                <span className="text-xs" style={{ color: "#8B6344" }}>{st.label}</span>
-              </div>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Selected task's checklist */}
-      <div>
-        {picked ? (
-          <>
-            <div className="mb-3">
-              <p className="text-sm font-semibold" style={{ color: "#1f1b16" }}>{picked.haven}</p>
-              <p className="text-xs" style={{ color: "#8B6344" }}>{picked.booking_id}</p>
-            </div>
-            {picked.haven_id && picked.booking_uuid ? (
-              <ChecklistSection havenId={picked.haven_id} bookingUuid={picked.booking_uuid} />
-            ) : (
-              <p className="text-xs" style={{ color: "#8B6344" }}>This task is missing haven/booking data needed to load its checklist.</p>
+      <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-5">
+        {/* Room picker */}
+        <div className="self-start">
+          <p className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: "#8a6a2f" }}>
+            Pick a room · {filtered.length}
+          </p>
+          <div className="space-y-2">
+            {filtered.length === 0 && (
+              <p className="border rounded-xl px-3 py-4 text-xs" style={{ color: "#8B6344", borderColor: "#ece5d4" }}>No rooms match your search.</p>
             )}
-          </>
-        ) : (
-          <p className="text-sm" style={{ color: "#8B6344" }}>Select a task to view its checklist.</p>
-        )}
-      </div>
+            {filtered.map((t) => {
+              const st = STATUS_LABELS[t.cleaning_status] || STATUS_LABELS.pending;
+              const isActive = picked?.cleaning_id === t.cleaning_id;
+              return (
+                <button key={t.cleaning_id} type="button" onClick={() => setPickedId(t.cleaning_id)} aria-pressed={isActive}
+                  className="w-full text-left rounded-xl border px-3.5 py-3 cursor-pointer transition-colors"
+                  style={{
+                    borderColor: isActive ? "#B07848" : "#ece5d4",
+                    borderWidth: isActive ? 2 : 1,
+                    backgroundColor: isActive ? "#FAF7F1" : "#ffffff",
+                  }}>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: st.bg, color: st.color }}>
+                      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: st.dot }} />{st.label}
+                    </span>
+                    <span className="ml-auto text-[11px] font-mono" style={{ color: "#8B6344" }}>{t.booking_id}</span>
+                  </div>
+                  <p className="text-sm font-semibold mt-1.5 truncate" style={{ color: "#1a1a1a" }}>{t.haven}</p>
+                  <div className="mt-1 space-y-0.5 text-xs" style={{ color: "#6b5040" }}>
+                    <p className="flex items-center gap-1.5"><Clock className="w-3 h-3 flex-shrink-0" style={{ color: "#B07848" }} />{fmtDateTime(checkoutMoment(t)?.toISOString() ?? null)}</p>
+                    <p className="flex items-center gap-1.5"><User className="w-3 h-3 flex-shrink-0" style={{ color: "#B07848" }} />{cleanerOf(t)}</p>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Selected room's checklist */}
+        <div className="min-w-0">
+          {picked ? (
+            <>
+              <div className="border rounded-xl px-4 py-3.5 mb-4 flex flex-wrap items-center gap-x-6 gap-y-2" style={{ borderColor: "#ece5d4", backgroundColor: "#FDFBF7" }}>
+                <div className="min-w-0">
+                  <p className="text-base font-semibold" style={{ color: "#1f1b16" }}>{picked.haven}</p>
+                  <p className="text-xs font-mono mt-0.5" style={{ color: "#8B6344" }}>{picked.booking_id}</p>
+                </div>
+                {[
+                  { k: "Cleaning due", v: fmtDateTime(checkoutMoment(picked)?.toISOString() ?? null) },
+                  { k: "Cleaner", v: cleanerOf(picked) },
+                  { k: "Guest", v: guestOf(picked) },
+                ].map((x) => (
+                  <div key={x.k}>
+                    <p className="text-[11px] uppercase tracking-wider" style={{ color: "#a08a6c" }}>{x.k}</p>
+                    <p className="text-sm font-medium" style={{ color: "#1f1b16" }}>{x.v}</p>
+                  </div>
+                ))}
+              </div>
+              {picked.haven_id && picked.booking_uuid ? (
+                <ChecklistSection havenId={picked.haven_id} bookingUuid={picked.booking_uuid} wide />
+              ) : (
+                <p className="text-xs" style={{ color: "#8B6344" }}>This task is missing haven/booking data needed to load its checklist.</p>
+              )}
+            </>
+          ) : (
+            <p className="text-sm" style={{ color: "#8B6344" }}>Pick a room on the left to see its checklist.</p>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
 // Checklist for this specific assignment — what the cleaner sees and works
-// through in My Assignments, plus the proof photos they attach per category.
+// through in My Assignments, plus the one proof photo per area they attach.
 // Admin can add/edit/remove individual tasks here (per-assignment
 // customization, e.g. "deep clean the oven" for just this booking) without
 // touching the template every other room's checklist is built from.
-// Sentinel value for the "Add Category" dropdown's custom-name option — kept
+// Sentinel value for the "Add an area" picker's custom-name option — kept
 // out of band from any real category name (which are free text and could in
 // principle collide with a short string like "other").
 const CUSTOM_CATEGORY = "__custom__";
 
-function ChecklistSection({ havenId, bookingUuid }: { havenId: string; bookingUuid: string }) {
+function ChecklistSection({ havenId, bookingUuid, wide = false }: { havenId: string; bookingUuid: string; /** Two area cards per row (the tab); the drawer is too narrow. */ wide?: boolean }) {
   const { data: checklist, isFetching } = useGetChecklistQuery({ havenId, bookingId: bookingUuid });
   const { data: photos } = useGetChecklistPhotosQuery(checklist?.id ?? "", { skip: !checklist?.id });
   const [addTask, { isLoading: adding }] = useAddChecklistTaskMutation();
   const [editTask] = useEditChecklistTaskMutation();
   const [removeTask] = useRemoveChecklistTaskMutation();
   // Every category name already in use anywhere (the 5 template ones plus
-  // any custom category some other checklist already created) — the "Add
-  // Category" picker below offers these instead of a blank text box, so
-  // admin doesn't fragment "Bedroom" vs "bedroom" across rooms.
+  // any custom category some other checklist already created) — the "Add an
+  // area" picker offers these instead of a blank text box, so admin doesn't
+  // fragment "Bedroom" vs "bedroom" across rooms.
   const { data: knownCategories } = useGetKnownCategoriesQuery();
 
   const [addingFor, setAddingFor] = useState<string | null>(null);
   const [newTaskText, setNewTaskText] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
-  // Creating a brand-new category (title), e.g. "Bedroom", "Bathroom" — not
-  // adding a task under one that already exists. A category only exists at
-  // all because a task carries it, so "add a category" is really "add its
-  // first task under a category name that doesn't exist yet."
+  // Removing asks once more (tap the bin again) — a stray click used to delete instantly.
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+  // Creating a brand-new category (area), e.g. "Balcony" — not adding a task
+  // under one that already exists. A category only exists at all because a
+  // task carries it, so "add an area" is really "add its first task under a
+  // category name that doesn't exist yet."
   const [addingCategory, setAddingCategory] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string>(CUSTOM_CATEGORY);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryTask, setNewCategoryTask] = useState("");
   const usedCategoryNames = new Set((checklist?.categories ?? []).map((c) => c.category));
-  // Only offer categories this checklist doesn't already have — no point
-  // suggesting "Bedroom" if it's already one of the sections above.
+  // Only offer categories this checklist doesn't already have.
   const availableCategories = (knownCategories ?? []).filter((c) => !usedCategoryNames.has(c));
 
   const submitAdd = async (category: string) => {
@@ -1109,16 +1140,19 @@ function ChecklistSection({ havenId, bookingUuid }: { havenId: string; bookingUu
 
   const submitNewCategory = async () => {
     const category = selectedCategory === CUSTOM_CATEGORY ? newCategoryName.trim() : selectedCategory;
-    if (!checklist?.id || !category || !newCategoryTask.trim()) return;
+    if (!checklist?.id || !category || !newCategoryTask.trim()) {
+      toast.error(!category ? "Name the area first" : "Add the area's first task");
+      return;
+    }
     try {
       await addTask({ checklistId: checklist.id, category, taskDescription: newCategoryTask.trim() }).unwrap();
       setNewCategoryName("");
       setNewCategoryTask("");
       setSelectedCategory(CUSTOM_CATEGORY);
       setAddingCategory(false);
-      toast.success("Category added");
+      toast.success(`${category} added`);
     } catch (err) {
-      toast.error((err as { data?: { error?: string } })?.data?.error || "Could not add category");
+      toast.error((err as { data?: { error?: string } })?.data?.error || "Could not add the area");
     }
   };
 
@@ -1134,16 +1168,18 @@ function ChecklistSection({ havenId, bookingUuid }: { havenId: string; bookingUu
   };
 
   const handleRemove = async (taskId: string) => {
+    if (confirmRemoveId !== taskId) { setConfirmRemoveId(taskId); return; }
     try {
       await removeTask({ taskId }).unwrap();
+      setConfirmRemoveId(null);
       toast.success("Task removed");
     } catch (err) {
       toast.error((err as { data?: { error?: string } })?.data?.error || "Could not remove task");
     }
   };
 
-  if (isFetching) {
-    return <p className="text-xs mb-4" style={{ color: "#8B6344" }}>Loading checklist…</p>;
+  if (isFetching && !checklist) {
+    return <p className="text-sm mb-4" style={{ color: "#8B6344" }}>Loading checklist…</p>;
   }
   if (!checklist) {
     return null;
@@ -1151,118 +1187,187 @@ function ChecklistSection({ havenId, bookingUuid }: { havenId: string; bookingUu
 
   const total = checklist.categories.reduce((n, c) => n + c.tasks.length, 0);
   const done = checklist.categories.reduce((n, c) => n + c.tasks.filter((t) => t.completed).length, 0);
+  const photoOf = (c: (typeof checklist.categories)[number]) => c.photo_url || photos?.[c.category]?.url || null;
+  const photographed = checklist.categories.filter((c) => !!photoOf(c)).length;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  const allDone = total > 0 && done === total && photographed === checklist.categories.length;
 
   return (
-    <div className="mb-6">
-      <div className="flex items-center justify-between mb-2 gap-3">
-        <p className="text-sm font-semibold" style={{ color: "#1f1b16" }}>Cleaning Checklist</p>
-        <div className="flex items-center gap-3">
-          <span className="text-xs" style={{ color: "#8B6344" }}>{done} / {total} done</span>
-          <button onClick={() => {
-            setAddingCategory((v) => !v);
-            setSelectedCategory(availableCategories[0] ?? CUSTOM_CATEGORY);
-            setNewCategoryName("");
-            setNewCategoryTask("");
-          }}
-            className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full cursor-pointer"
-            style={{ color: "#8a6a2f", backgroundColor: "#FAF7F1" }}>
-            <Plus className="w-3.5 h-3.5" />Add Category
-          </button>
+    <div className="mb-6 space-y-4">
+      {/* Progress at a glance */}
+      <div className="border rounded-xl px-4 py-3.5" style={{ borderColor: "#ece5d4" }}>
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="text-sm font-semibold flex-1 min-w-0" style={{ color: "#1f1b16" }}>
+            {allDone ? "All done — every task ticked and every area photographed" : "Cleaning checklist"}
+          </p>
+          <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={{ backgroundColor: "#F7F0E3", color: "#5a4a3a" }}>
+            ✓ {done} of {total} tasks
+          </span>
+          <span className="text-xs font-semibold px-2.5 py-1 rounded-full inline-flex items-center gap-1"
+            style={photographed === checklist.categories.length && checklist.categories.length > 0
+              ? { backgroundColor: "#d1fae5", color: "#065f46" }
+              : { backgroundColor: "#fef3c7", color: "#92400e" }}>
+            <Camera className="w-3 h-3" />{photographed} of {checklist.categories.length} photos
+          </span>
         </div>
+        <div className="h-2 rounded-full overflow-hidden mt-3" style={{ backgroundColor: "#EFE4CE" }}>
+          <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: allDone ? "#059669" : "#B07848" }} />
+        </div>
+        <p className="text-xs mt-2" style={{ color: "#8B6344" }}>
+          Changes here only affect this booking&apos;s checklist — other rooms keep the usual list.
+        </p>
       </div>
 
-      {addingCategory && (
-        <div className="border p-3 space-y-2 mb-3" style={{ borderColor: "#D4BFA0", backgroundColor: "#FAF7F1" }}>
-          <select
-            aria-label="Category"
-            value={selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value)}
-            className="w-full text-sm outline-none border-b py-1 cursor-pointer"
-            style={{ borderColor: "#D4BFA0", color: "#1a1a1a", backgroundColor: "transparent" }}
-          >
-            {availableCategories.map((c) => <option key={c} value={c}>{c}</option>)}
-            <option value={CUSTOM_CATEGORY}>+ New category…</option>
-          </select>
-          {selectedCategory === CUSTOM_CATEGORY && (
-            <input autoFocus placeholder="Category name (e.g. Rooftop, Garage)…" value={newCategoryName}
-              onChange={(e) => setNewCategoryName(e.target.value)}
-              className="w-full text-sm outline-none border-b py-1" style={{ borderColor: "#D4BFA0", color: "#1a1a1a", backgroundColor: "transparent" }} />
-          )}
-          <input placeholder="First task in this category…" value={newCategoryTask}
-            onChange={(e) => setNewCategoryTask(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") submitNewCategory(); if (e.key === "Escape") setAddingCategory(false); }}
-            className="w-full text-sm outline-none border-b py-1" style={{ borderColor: "#D4BFA0", color: "#1a1a1a", backgroundColor: "transparent" }} />
-          <div className="flex items-center gap-3">
-            <button onClick={submitNewCategory} disabled={adding} className="text-xs font-medium cursor-pointer disabled:opacity-50" style={{ color: "#059669" }}>Add Category</button>
-            <button onClick={() => setAddingCategory(false)} className="text-xs cursor-pointer" style={{ color: "#8B6344" }}>Cancel</button>
-          </div>
-        </div>
+      {checklist.categories.length === 0 && (
+        <p className="border rounded-xl px-4 py-5 text-sm" style={{ color: "#8B6344", borderColor: "#ece5d4" }}>
+          No areas yet — add one below (e.g. Bedroom, Bathroom, Kitchen).
+        </p>
       )}
 
-      <div className="border" style={{ borderColor: "#ece5d4" }}>
-        {checklist.categories.length === 0 && (
-          <p className="px-3 py-4 text-xs" style={{ color: "#8B6344" }}>No categories yet — add one above (e.g. Bedroom, Bathroom, Kitchen).</p>
-        )}
-        {checklist.categories.map((cat, ci) => {
-          // One photo per category — the finished area — from the checklist
-          // itself, falling back to the photos endpoint (keyed by category).
-          const photo = cat.photo_url || photos?.[cat.category]?.url || null;
+      {/* One card per area */}
+      <div className={`grid grid-cols-1 ${wide ? "xl:grid-cols-2" : ""} gap-4`}>
+        {checklist.categories.map((cat) => {
+          const photo = photoOf(cat);
+          const catDone = cat.tasks.filter((t) => t.completed).length;
+          const catPct = cat.tasks.length ? Math.round((catDone / cat.tasks.length) * 100) : 0;
           return (
-          <div key={cat.category} style={{ borderTop: ci > 0 ? "1px solid #ece5d4" : "none" }}>
-            <div className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider" style={{ backgroundColor: "#FAF7F1", color: "#8a6a2f" }}>
-              <span className="flex-1 min-w-0">{cat.category}</span>
-              {photo
-                ? <ImageThumb src={photo} alt={cat.category} size={28} />
-                : <span className="text-[10px] font-semibold normal-case tracking-normal px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ backgroundColor: "#fef3c7", color: "#92400e" }}>No photo</span>}
-            </div>
-            {cat.tasks.map((item) => (
-                <div key={item.id} className="flex items-center gap-2 px-3 py-2 text-sm" style={{ borderTop: "1px solid #F7F0E3" }}>
-                  {item.completed
-                    ? <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#059669" }} />
-                    : <span className="w-3.5 h-3.5 flex-shrink-0 rounded-full border" style={{ borderColor: "#D4BFA0" }} />}
-                  {editingId === item.id ? (
-                    <input autoFocus value={editText} onChange={(e) => setEditText(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") submitEdit(item.id); if (e.key === "Escape") setEditingId(null); }}
-                      className="flex-1 min-w-0 text-sm outline-none border-b" style={{ borderColor: "#D4BFA0", color: "#1a1a1a" }} />
-                  ) : (
-                    <span className="flex-1 min-w-0" style={{ color: item.completed ? "#A89080" : "#5a4a3a", textDecoration: item.completed ? "line-through" : "none" }}>
-                      {item.task}
-                    </span>
-                  )}
-                  {editingId === item.id ? (
-                    <button onClick={() => submitEdit(item.id)} className="text-xs font-medium cursor-pointer flex-shrink-0" style={{ color: "#059669" }}>Save</button>
-                  ) : (
-                    <>
-                      <button title="Edit task" onClick={() => { setEditingId(item.id); setEditText(item.task); }}
-                        className="flex-shrink-0 cursor-pointer" style={{ color: "#8B6344" }}>
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <button title="Remove task" onClick={() => handleRemove(item.id)}
-                        className="flex-shrink-0 cursor-pointer" style={{ color: "#dc2626" }}>
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </>
-                  )}
+            <div key={cat.category} className="border rounded-xl overflow-hidden self-start" style={{ borderColor: "#ece5d4" }}>
+              <div className="flex items-center gap-3 px-4 py-3" style={{ backgroundColor: "#FAF7F1", borderBottom: "1px solid #ece5d4" }}>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold truncate" style={{ color: "#1f1b16" }}>{cat.category}</p>
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <div className="h-1.5 flex-1 rounded-full overflow-hidden" style={{ backgroundColor: "#EFE4CE" }}>
+                      <div className="h-full rounded-full" style={{ width: `${catPct}%`, backgroundColor: catPct === 100 ? "#059669" : "#B07848" }} />
+                    </div>
+                    <span className="text-[11px] font-semibold" style={{ color: "#8B6344" }}>{catDone}/{cat.tasks.length}</span>
+                  </div>
                 </div>
-            ))}
-            {addingFor === cat.category ? (
-              <div className="flex items-center gap-2 px-3 py-2" style={{ borderTop: "1px solid #F7F0E3" }}>
-                <input autoFocus placeholder="New task…" value={newTaskText} onChange={(e) => setNewTaskText(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") submitAdd(cat.category); if (e.key === "Escape") setAddingFor(null); }}
-                  className="flex-1 min-w-0 text-sm outline-none border-b" style={{ borderColor: "#D4BFA0", color: "#1a1a1a" }} />
-                <button onClick={() => submitAdd(cat.category)} disabled={adding} className="text-xs font-medium cursor-pointer disabled:opacity-50" style={{ color: "#059669" }}>Add</button>
-                <button onClick={() => setAddingFor(null)} className="text-xs cursor-pointer" style={{ color: "#8B6344" }}>Cancel</button>
+                {photo ? (
+                  <div className="text-center flex-shrink-0">
+                    <ImageThumb src={photo} alt={`${cat.category} — finished`} size={52} rounded={10} />
+                    <p className="text-[10px] mt-0.5" style={{ color: "#065f46" }}>Photo ✓</p>
+                  </div>
+                ) : (
+                  <div className="flex-shrink-0 w-[52px] h-[52px] rounded-[10px] border border-dashed grid place-items-center text-center" style={{ borderColor: "#e8c98a", backgroundColor: "#fffbeb" }}
+                    title="The cleaner hasn't taken this area's photo yet">
+                    <Camera className="w-4 h-4" style={{ color: "#b45309" }} />
+                  </div>
+                )}
               </div>
-            ) : (
-              <button onClick={() => { setAddingFor(cat.category); setNewTaskText(""); }}
-                className="w-full flex items-center gap-1.5 px-3 py-2 text-xs font-medium cursor-pointer" style={{ borderTop: "1px solid #F7F0E3", color: "#8a6a2f" }}>
-                <Plus className="w-3.5 h-3.5" />Add task to {cat.category}
-              </button>
-            )}
-          </div>
+
+              <ul>
+                {cat.tasks.map((item) => (
+                  <li key={item.id} className="group flex items-center gap-2.5 px-4 py-2.5 text-sm" style={{ borderTop: "1px solid #F7F0E3" }}>
+                    {item.completed
+                      ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" style={{ color: "#059669" }} aria-label="Done" />
+                      : <span className="w-4 h-4 flex-shrink-0 rounded-full border-2" style={{ borderColor: "#D4BFA0" }} aria-label="Not done yet" />}
+                    {editingId === item.id ? (
+                      <>
+                        <input autoFocus value={editText} onChange={(e) => setEditText(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") submitEdit(item.id); if (e.key === "Escape") setEditingId(null); }}
+                          className="flex-1 min-w-0 text-sm outline-none border rounded-lg px-2.5 py-1.5" style={{ borderColor: "#D4BFA0", color: "#1a1a1a" }} />
+                        <button type="button" onClick={() => submitEdit(item.id)} className="text-xs font-semibold px-3 py-1.5 rounded-lg text-white cursor-pointer flex-shrink-0" style={{ backgroundColor: "#059669" }}>Save</button>
+                        <button type="button" onClick={() => setEditingId(null)} className="text-xs cursor-pointer flex-shrink-0" style={{ color: "#8B6344" }}>Cancel</button>
+                      </>
+                    ) : (
+                      <>
+                        <span className="flex-1 min-w-0" style={{ color: item.completed ? "#A89080" : "#3f342a", textDecoration: item.completed ? "line-through" : "none" }}>
+                          {item.task}
+                        </span>
+                        {confirmRemoveId === item.id ? (
+                          <>
+                            <button type="button" onClick={() => handleRemove(item.id)} className="text-xs font-semibold px-2.5 py-1 rounded-lg text-white cursor-pointer flex-shrink-0" style={{ backgroundColor: "#dc2626" }}>Remove</button>
+                            <button type="button" onClick={() => setConfirmRemoveId(null)} className="text-xs cursor-pointer flex-shrink-0" style={{ color: "#8B6344" }}>Keep</button>
+                          </>
+                        ) : (
+                          <span className="flex items-center gap-1 flex-shrink-0 opacity-60 group-hover:opacity-100 transition-opacity">
+                            <button type="button" title="Edit task" aria-label={`Edit: ${item.task}`} onClick={() => { setEditingId(item.id); setEditText(item.task); setConfirmRemoveId(null); }}
+                              className="w-7 h-7 grid place-items-center rounded-lg cursor-pointer hover:bg-[#F7F0E3]" style={{ color: "#8B6344" }}>
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button type="button" title="Remove task" aria-label={`Remove: ${item.task}`} onClick={() => handleRemove(item.id)}
+                              className="w-7 h-7 grid place-items-center rounded-lg cursor-pointer hover:bg-[#fef2f2]" style={{ color: "#dc2626" }}>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+
+              {addingFor === cat.category ? (
+                <div className="flex items-center gap-2 px-4 py-2.5" style={{ borderTop: "1px solid #F7F0E3", backgroundColor: "#FDFBF7" }}>
+                  <input autoFocus placeholder={`New task for ${cat.category}…`} value={newTaskText} onChange={(e) => setNewTaskText(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") submitAdd(cat.category); if (e.key === "Escape") setAddingFor(null); }}
+                    className="flex-1 min-w-0 text-sm outline-none border rounded-lg px-2.5 py-1.5" style={{ borderColor: "#D4BFA0", color: "#1a1a1a", backgroundColor: "#fff" }} />
+                  <button type="button" onClick={() => submitAdd(cat.category)} disabled={adding || !newTaskText.trim()}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-lg text-white cursor-pointer disabled:opacity-50 flex-shrink-0" style={{ backgroundColor: "#1f1b16" }}>Add</button>
+                  <button type="button" onClick={() => setAddingFor(null)} className="text-xs cursor-pointer flex-shrink-0" style={{ color: "#8B6344" }}>Cancel</button>
+                </div>
+              ) : (
+                <button type="button" onClick={() => { setAddingFor(cat.category); setNewTaskText(""); setConfirmRemoveId(null); }}
+                  className="w-full flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold cursor-pointer hover:bg-[#FDFBF7]" style={{ borderTop: "1px solid #F7F0E3", color: "#8a6a2f" }}>
+                  <Plus className="w-3.5 h-3.5" />Add a task
+                </button>
+              )}
+            </div>
           );
         })}
       </div>
+
+      {/* Add a whole new area */}
+      {addingCategory ? (
+        <div className="border rounded-xl p-4 space-y-3" style={{ borderColor: "#D4BFA0", backgroundColor: "#FAF7F1" }}>
+          <p className="text-sm font-semibold" style={{ color: "#1f1b16" }}>Add an area to this checklist</p>
+          <div className="flex flex-wrap gap-1.5">
+            {availableCategories.map((c) => (
+              <button key={c} type="button" onClick={() => setSelectedCategory(c)} aria-pressed={selectedCategory === c}
+                className="text-xs font-semibold px-3 py-1.5 rounded-full border cursor-pointer"
+                style={selectedCategory === c
+                  ? { backgroundColor: "#1f1b16", borderColor: "#1f1b16", color: "#fff" }
+                  : { backgroundColor: "#fff", borderColor: "#e0cfb2", color: "#5a4a3a" }}>
+                {c}
+              </button>
+            ))}
+            <button type="button" onClick={() => setSelectedCategory(CUSTOM_CATEGORY)} aria-pressed={selectedCategory === CUSTOM_CATEGORY}
+              className="text-xs font-semibold px-3 py-1.5 rounded-full border border-dashed cursor-pointer"
+              style={selectedCategory === CUSTOM_CATEGORY
+                ? { backgroundColor: "#1f1b16", borderColor: "#1f1b16", color: "#fff" }
+                : { backgroundColor: "#fff", borderColor: "#B07848", color: "#8a6a2f" }}>
+              + New area
+            </button>
+          </div>
+          {selectedCategory === CUSTOM_CATEGORY && (
+            <input autoFocus placeholder="Area name (e.g. Balcony, Laundry)" value={newCategoryName}
+              onChange={(e) => setNewCategoryName(e.target.value)}
+              className="w-full text-sm outline-none border rounded-lg px-3 py-2" style={{ borderColor: "#D4BFA0", color: "#1a1a1a", backgroundColor: "#fff" }} />
+          )}
+          <input placeholder="Its first task (e.g. Sweep and mop the floor)" value={newCategoryTask}
+            onChange={(e) => setNewCategoryTask(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") submitNewCategory(); if (e.key === "Escape") setAddingCategory(false); }}
+            className="w-full text-sm outline-none border rounded-lg px-3 py-2" style={{ borderColor: "#D4BFA0", color: "#1a1a1a", backgroundColor: "#fff" }} />
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={submitNewCategory} disabled={adding}
+              className="text-sm font-semibold px-4 py-2 rounded-lg text-white cursor-pointer disabled:opacity-50" style={{ backgroundColor: "#1f1b16" }}>
+              Add area
+            </button>
+            <button type="button" onClick={() => setAddingCategory(false)} className="text-sm cursor-pointer px-3 py-2" style={{ color: "#8B6344" }}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <button type="button" onClick={() => {
+          setAddingCategory(true);
+          setSelectedCategory(availableCategories[0] ?? CUSTOM_CATEGORY);
+          setNewCategoryName("");
+          setNewCategoryTask("");
+        }}
+          className="w-full flex items-center justify-center gap-1.5 rounded-xl border border-dashed px-4 py-3 text-sm font-semibold cursor-pointer hover:bg-[#FDFBF7]"
+          style={{ borderColor: "#B07848", color: "#8a6a2f" }}>
+          <Plus className="w-4 h-4" />Add an area (e.g. Balcony)
+        </button>
+      )}
     </div>
   );
 }

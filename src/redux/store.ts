@@ -48,6 +48,20 @@ const persistConfig = {
 
 const persistedBookingReducer = persistReducer(persistConfig, bookingReducer);
 
+// Every RTK Query cache slice. Their data comes straight from the server and is
+// never edited in place, so the dev-only immutability/serializability checks
+// gain nothing there — but walking those large caches (all bookings, tasks,
+// reports…) on every action took up to 2.3s in development, freezing the admin
+// pages on refresh. The checks still cover the app's own state (booking).
+// Production builds don't run these checks at all.
+const API_CACHE_PATHS = [
+  employeeApi, roomApi, bookingsApi, bookingPaymentsApi, wishlistApi, messagesApi, usersApi,
+  activityLogApi, analyticsApi, reportApi, notificationsApi, reviewsApi, blockedDatesApi,
+  adminUsersApi, cleanersApi, partnersApi, partnerSelfApi, partnerHavensReviewApi, partnersAdminApi,
+  amenityVerificationApi, partnerCalendarApi, adminPayoutsApi, partnerRegistrationApi,
+  systemAuditLogsApi, havenListingStatusApi, promotionsApi, seasonalRatesApi, overheadApi,
+].map((api) => api.reducerPath);
+
 export const store = configureStore({
   reducer: {
     booking: persistedBookingReducer,
@@ -90,10 +104,12 @@ export const store = configureStore({
         ],
         ignoredPaths: [
           "booking._persist",
+          ...API_CACHE_PATHS,
         ],
       },
       immutableCheck: {
         warnAfter: 128,
+        ignoredPaths: API_CACHE_PATHS,
       },
     })
       .concat(employeeApi.middleware)

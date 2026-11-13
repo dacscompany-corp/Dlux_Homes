@@ -66,12 +66,12 @@ export async function GET(request: NextRequest) {
       }
       if (booking_cleaning_id) {
         params.push(booking_cleaning_id);
-        where.push(`ri.booking_cleaning_id = ${params.length}::uuid`);
+        where.push(`ri.booking_cleaning_id = $${params.length}::uuid`);
       }
       if (!isAdmin) {
         // Cleaners: only the reports they filed ("My reports").
         params.push(actorId ?? '00000000-0000-0000-0000-000000000000');
-        where.push(`ri.user_id = ${params.length}::uuid`);
+        where.push(`ri.user_id = $${params.length}::uuid`);
       }
       if (where.length) {
         query += ' WHERE ' + where.join(' AND ');

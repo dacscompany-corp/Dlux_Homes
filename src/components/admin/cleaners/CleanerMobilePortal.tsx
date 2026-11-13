@@ -726,7 +726,7 @@ export default function CleanerMobilePortal() {
             <div style={{ display: "flex", background: C.bg, border: `1px solid ${C.line}`, borderRadius: 999, padding: 3, flexShrink: 0 }}>
               {(["en", "tl"] as CleanerLanguage[]).map((code) => (
                 <button key={code} type="button" onClick={() => pickLang(code)} aria-pressed={lang === code} style={{
-                  height: 38, minWidth: 44, padding: "0 10px", border: 0, borderRadius: 999,
+                  height: 44, minWidth: 48, padding: "0 12px", border: 0, borderRadius: 999,
                   font: `600 14px ${SANS}`, cursor: "pointer",
                   background: lang === code ? C.ink : "transparent",
                   color: lang === code ? C.onDark : C.muted,
@@ -1525,7 +1525,7 @@ export default function CleanerMobilePortal() {
                       <div key={m.id}>
                         {newDay && (
                           <div style={{ display: "flex", justifyContent: "center", margin: "14px 0 10px" }}>
-                            <span style={{ fontSize: 12, fontWeight: 600, color: C.muted, background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "4px 12px" }}>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: C.muted, background: C.card, border: `1px solid ${C.line}`, borderRadius: 999, padding: "4px 12px" }}>
                               {formatDateLine(at, lang)}
                             </span>
                           </div>
@@ -1549,7 +1549,7 @@ export default function CleanerMobilePortal() {
                           }}>
                             {m.message_text}
                             <span style={{
-                              display: "block", textAlign: "right", fontSize: 12, marginTop: 4,
+                              display: "block", textAlign: "right", fontSize: 13, marginTop: 4,
                               color: mine ? C.onDarkFaint : C.faint,
                             }}>
                               {at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
@@ -1576,7 +1576,7 @@ export default function CleanerMobilePortal() {
                 <div style={{ display: "flex", gap: 8, overflowX: "auto", padding: "0 12px 8px", scrollbarWidth: "none" }}>
                   {t.quick.map((q) => (
                     <button key={q} type="button" onClick={() => sendQuick(q)} disabled={sendingMsg} style={{
-                      flexShrink: 0, height: 38, padding: "0 14px", border: `1px solid ${C.creamLine}`, background: C.cream,
+                      flexShrink: 0, height: 44, padding: "0 16px", border: `1px solid ${C.creamLine}`, background: C.cream,
                       color: C.ink, borderRadius: 999, font: `500 15px ${SANS}`, cursor: "pointer", whiteSpace: "nowrap",
                     }}>{q}</button>
                   ))}
@@ -1663,7 +1663,7 @@ export default function CleanerMobilePortal() {
                         <span style={{ flex: 1, minWidth: 0 }}>
                           <span style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
                             <span style={{ fontSize: 16, fontWeight: n.read ? 500 : 700 }}>{n.title}</span>
-                            <span style={{ fontSize: 12, color: C.faint, flexShrink: 0 }}>{n.timestamp}</span>
+                            <span style={{ fontSize: 13, color: C.muted, flexShrink: 0 }}>{n.timestamp}</span>
                           </span>
                           <span style={{ display: "block", fontSize: 15, color: C.muted, marginTop: 3, lineHeight: 1.4 }}>{n.description}</span>
                         </span>

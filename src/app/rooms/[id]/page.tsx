@@ -1283,7 +1283,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
               document.getElementById("mbook")?.scrollIntoView({ behavior: "smooth", block: "start" });
             }}
             style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, background: "#B8754A", color: "#FAF7F1", border: 0, padding: 16, borderRadius: 14, font: "inherit", fontSize: 15.5, fontWeight: 600, cursor: "pointer" }}>
-            {canProceed ? "Reserve" : !date ? "Pick a date" : "Choose your rate"}
+            {canProceed ? "Reserve" : !date ? "Pick a date" : "Choose how to stay"}
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
           </button>
         </div>
@@ -1374,7 +1374,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
               </CardStep>
 
               {/* 2. RATE — only what is bookable on that date. */}
-              <CardStep n={2} title="Choose your rate" active={cardStep === 2} done={stayChosen && cardStep > 2} summary={stayChosen ? `${selectedWindow.label} · ${peso(windowRate(selectedWindow))}` : undefined} onOpen={() => { setCardStep(2); setDateOpen(false); setGuestOpen(false); }}>
+              <CardStep n={2} title="How would you like to stay?" active={cardStep === 2} done={stayChosen && cardStep > 2} summary={stayChosen ? `${selectedWindow.label} · ${peso(windowRate(selectedWindow))}` : undefined} onOpen={() => { setCardStep(2); setDateOpen(false); setGuestOpen(false); }}>
                 {!date ? (
                   <div style={{ fontSize: 13, color: "#8B7458", padding: "10px 2px" }}>
                     Pick a date first — the rates open on that day will appear here.
@@ -1438,9 +1438,9 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                       <div style={{ fontSize: 11.5, color: "#1F160E", fontWeight: 600, marginTop: 3 }}>Check-out {formatDateMedium(checkOutDate)}</div>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                      <button aria-label="Fewer nights" onClick={() => setNights(Math.max(1, stayNights - 1))} style={{ width: 34, height: 34, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: stayNights > 1 ? "pointer" : "not-allowed", opacity: stayNights > 1 ? 1 : 0.4 }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
+                      <button aria-label="Fewer nights" onClick={() => setNights(Math.max(1, stayNights - 1))} style={{ width: 40, height: 40, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: stayNights > 1 ? "pointer" : "not-allowed", opacity: stayNights > 1 ? 1 : 0.4 }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
                       <span style={{ minWidth: 16, textAlign: "center", fontWeight: 700, fontSize: 15 }}>{stayNights}</span>
-                      <button aria-label="More nights" disabled={stayNights >= maxNights} onClick={() => setNights(Math.min(maxNights, stayNights + 1))} style={{ width: 34, height: 34, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: stayNights < maxNights ? "pointer" : "not-allowed", opacity: stayNights < maxNights ? 1 : 0.4 }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
+                      <button aria-label="More nights" disabled={stayNights >= maxNights} onClick={() => setNights(Math.min(maxNights, stayNights + 1))} style={{ width: 40, height: 40, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: stayNights < maxNights ? "pointer" : "not-allowed", opacity: stayNights < maxNights ? 1 : 0.4 }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
                     </div>
                   </div>
                   {/* Say WHY the + stopped, rather than letting it just not respond. */}
@@ -1458,7 +1458,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
               </CardStep>
 
               {/* 3. GUESTS */}
-              <CardStep n={3} title="Who’s coming?" active={cardStep === 3} done={false} summary={`${guests.adults + guests.children + guests.infants} guest${guests.adults + guests.children + guests.infants > 1 ? "s" : ""}`} onOpen={() => { setCardStep(3); setGuestOpen(true); setDateOpen(false); }}>
+              <CardStep n={3} title="Who’s coming?" active={cardStep === 3} done={!!date && stayChosen} summary={`${guests.adults + guests.children + guests.infants} guest${guests.adults + guests.children + guests.infants > 1 ? "s" : ""}`} onOpen={() => { setCardStep(3); setGuestOpen(true); setDateOpen(false); }}>
                 <button onClick={() => { setGuestOpen(!guestOpen); setDateOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 15px", borderRadius: 14, background: "#FFFCF4", border: guestOpen ? "1.5px solid #B07848" : "1.5px solid #E0CEB2", cursor: "pointer", fontFamily: "inherit" }}>
                   <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8C5A2E" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>
@@ -1469,7 +1469,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                 {guestOpen && (() => {
                   const counted = guests.adults + guests.children;
                   const maxed = counted >= 4;
-                  const stepStyle = (enabled: boolean): CSSProperties => ({ width: 32, height: 32, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: enabled ? "pointer" : "not-allowed", opacity: enabled ? 1 : 0.4 });
+                  const stepStyle = (enabled: boolean): CSSProperties => ({ width: 40, height: 40, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: enabled ? "pointer" : "not-allowed", opacity: enabled ? 1 : 0.4 });
                   const minus = <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12" /></svg>;
                   const plus = <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>;
                   return (
@@ -1477,25 +1477,25 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderBottom: "1px solid #EFE4CE" }}>
                         <div><div style={{ fontWeight: 600, fontSize: 14 }}>Adults</div><div style={{ fontSize: 11.5, color: "#8B7458" }}>Age 18+</div></div>
                         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                          <button onClick={() => setGuests({ ...guests, adults: Math.max(1, guests.adults - 1) })} style={stepStyle(guests.adults > 1)}>{minus}</button>
+                          <button aria-label="Fewer adults" onClick={() => setGuests({ ...guests, adults: Math.max(1, guests.adults - 1) })} style={stepStyle(guests.adults > 1)}>{minus}</button>
                           <span style={{ minWidth: 16, textAlign: "center", fontWeight: 700 }}>{guests.adults}</span>
-                          <button onClick={() => { if (!maxed) setGuests({ ...guests, adults: guests.adults + 1 }); }} style={stepStyle(!maxed)}>{plus}</button>
+                          <button aria-label="More adults" onClick={() => { if (!maxed) setGuests({ ...guests, adults: guests.adults + 1 }); }} style={stepStyle(!maxed)}>{plus}</button>
                         </div>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderBottom: "1px solid #EFE4CE" }}>
                         <div><div style={{ fontWeight: 600, fontSize: 14 }}>Teens</div><div style={{ fontSize: 11.5, color: "#8B7458" }}>Age 7&ndash;17</div></div>
                         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                          <button onClick={() => setGuests({ ...guests, children: Math.max(0, guests.children - 1) })} style={stepStyle(guests.children > 0)}>{minus}</button>
+                          <button aria-label="Fewer teens" onClick={() => setGuests({ ...guests, children: Math.max(0, guests.children - 1) })} style={stepStyle(guests.children > 0)}>{minus}</button>
                           <span style={{ minWidth: 16, textAlign: "center", fontWeight: 700 }}>{guests.children}</span>
-                          <button onClick={() => { if (!maxed) setGuests({ ...guests, children: guests.children + 1 }); }} style={stepStyle(!maxed)}>{plus}</button>
+                          <button aria-label="More teens" onClick={() => { if (!maxed) setGuests({ ...guests, children: guests.children + 1 }); }} style={stepStyle(!maxed)}>{plus}</button>
                         </div>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0" }}>
                         <div><div style={{ fontWeight: 600, fontSize: 14 }}>Little ones</div><div style={{ fontSize: 11.5, color: "#8B7458" }}>7 &amp; under · free</div></div>
                         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                          <button onClick={() => setGuests({ ...guests, infants: Math.max(0, guests.infants - 1) })} style={stepStyle(guests.infants > 0)}>{minus}</button>
+                          <button aria-label="Fewer little ones" onClick={() => setGuests({ ...guests, infants: Math.max(0, guests.infants - 1) })} style={stepStyle(guests.infants > 0)}>{minus}</button>
                           <span style={{ minWidth: 16, textAlign: "center", fontWeight: 700 }}>{guests.infants}</span>
-                          <button onClick={() => { if (guests.infants < 4) setGuests({ ...guests, infants: guests.infants + 1 }); }} style={stepStyle(guests.infants < 4)}>{plus}</button>
+                          <button aria-label="More little ones" onClick={() => { if (guests.infants < 4) setGuests({ ...guests, infants: guests.infants + 1 }); }} style={stepStyle(guests.infants < 4)}>{plus}</button>
                         </div>
                       </div>
                       <div style={{ fontSize: 11, color: "#9B8B73", padding: "0 0 12px", lineHeight: 1.5 }}>Rate covers 2 guests. Each extra adult or teen is {peso(room.additionalPaxFee)} per night (up to 4). Little ones stay free, up to 4. For 5+, message us on <a href="https://www.facebook.com/messages/t/270893736109969" target="_blank" rel="noopener" style={{ color: "#B07848", fontWeight: 600 }}>Facebook</a>.</div>
@@ -1527,6 +1527,12 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                     </button>
                   )}
                   <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16, paddingTop: 9, borderTop: "1px solid #EFE4CE" }}><span>Total</span><span>{peso(payableTotal)}</span></div>
+                  {/* Same split checkout asks for: half to reserve, the rest at check-in. */}
+                  <div style={{ background: "#F6EFE2", borderRadius: 12, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 5, fontSize: 13 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#1F160E", fontWeight: 600 }}><span>To reserve (50%, at checkout)</span><span>{peso(Math.round(payableTotal * 0.5))}</span></div>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#6B5A45" }}><span>Balance on arrival</span><span>{peso(payableTotal - Math.round(payableTotal * 0.5))}</span></div>
+                    <div style={{ fontSize: 11.5, color: "#8B7458" }}>Plus a refundable security deposit on arrival.</div>
+                  </div>
                   {/* PROMO CODE — mirrors the desktop panel; checkout re-validates. */}
                   {enteredPromo ? (
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, background: "#EAF7EF", border: "1px solid #BCE7CC", borderRadius: 12, padding: "10px 14px", marginTop: 4 }}>
@@ -1899,7 +1905,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                   </CardStep>
 
                   {/* 2. RATE — only what is bookable on that date. */}
-                  <CardStep n={2} title="Choose your rate" active={cardStep === 2} done={stayChosen && cardStep > 2} summary={stayChosen ? `${selectedWindow.label} · ${peso(windowRate(selectedWindow))}` : undefined} onOpen={() => { setCardStep(2); setDateOpen(false); setGuestOpen(false); }}>
+                  <CardStep n={2} title="How would you like to stay?" active={cardStep === 2} done={stayChosen && cardStep > 2} summary={stayChosen ? `${selectedWindow.label} · ${peso(windowRate(selectedWindow))}` : undefined} onOpen={() => { setCardStep(2); setDateOpen(false); setGuestOpen(false); }}>
                     {!date ? (
                       <div style={{ fontSize: 13.5, color: "#8B7458", padding: "10px 2px" }}>
                         Pick a date first — the rates open on that day will appear here.
@@ -1957,9 +1963,9 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                           <div style={{ fontSize: 12, color: "#1F160E", fontWeight: 600, marginTop: 3 }}>Check-out {formatDateMedium(checkOutDate)}</div>
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
-                          <button aria-label="Fewer nights" onClick={() => setNights(Math.max(1, stayNights - 1))} style={{ width: 32, height: 32, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: stayNights > 1 ? "pointer" : "not-allowed", opacity: stayNights > 1 ? 1 : 0.4 }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
+                          <button aria-label="Fewer nights" onClick={() => setNights(Math.max(1, stayNights - 1))} style={{ width: 38, height: 38, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: stayNights > 1 ? "pointer" : "not-allowed", opacity: stayNights > 1 ? 1 : 0.4 }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
                           <span style={{ minWidth: 16, textAlign: "center", fontWeight: 700, fontSize: 15 }}>{stayNights}</span>
-                          <button aria-label="More nights" disabled={stayNights >= maxNights} onClick={() => setNights(Math.min(maxNights, stayNights + 1))} style={{ width: 32, height: 32, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: stayNights < maxNights ? "pointer" : "not-allowed", opacity: stayNights < maxNights ? 1 : 0.4 }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
+                          <button aria-label="More nights" disabled={stayNights >= maxNights} onClick={() => setNights(Math.min(maxNights, stayNights + 1))} style={{ width: 38, height: 38, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: stayNights < maxNights ? "pointer" : "not-allowed", opacity: stayNights < maxNights ? 1 : 0.4 }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
                         </div>
                       </div>
                       {stayNights >= maxNights && (
@@ -1976,7 +1982,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                   </CardStep>
 
                   {/* 3. GUESTS */}
-                  <CardStep n={3} title="Who’s coming?" active={cardStep === 3} done={false} summary={`${guests.adults + guests.children + guests.infants} guest${guests.adults + guests.children + guests.infants > 1 ? "s" : ""}`} onOpen={() => { setCardStep(3); setGuestOpen(true); setDateOpen(false); }}>
+                  <CardStep n={3} title="Who’s coming?" active={cardStep === 3} done={!!date && stayChosen} summary={`${guests.adults + guests.children + guests.infants} guest${guests.adults + guests.children + guests.infants > 1 ? "s" : ""}`} onOpen={() => { setCardStep(3); setGuestOpen(true); setDateOpen(false); }}>
                     <button onClick={() => { setGuestOpen(!guestOpen); setDateOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 15px", borderRadius: 14, background: "#FFFCF4", border: guestOpen ? "1.5px solid #B07848" : "1.5px solid #E0CEB2", cursor: "pointer", fontFamily: "inherit" }}>
                       <span style={{ display: "flex", alignItems: "center", gap: 11 }}>
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8C5A2E" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>
@@ -1987,7 +1993,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                     {guestOpen && (() => {
                       const counted = guests.adults + guests.children;
                       const maxed = counted >= 4;
-                      const stepStyle = (enabled: boolean): CSSProperties => ({ width: 30, height: 30, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: enabled ? "pointer" : "not-allowed", opacity: enabled ? 1 : 0.4 });
+                      const stepStyle = (enabled: boolean): CSSProperties => ({ width: 38, height: 38, borderRadius: "50%", border: "1px solid #D4BE9A", background: "#fff", color: "#1F160E", display: "grid", placeItems: "center", cursor: enabled ? "pointer" : "not-allowed", opacity: enabled ? 1 : 0.4 });
                       const minus = <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12" /></svg>;
                       const plus = <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>;
                       return (
@@ -1995,25 +2001,25 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderBottom: "1px solid #EFE4CE" }}>
                             <div><div style={{ fontWeight: 600, fontSize: 14 }}>Adults</div><div style={{ fontSize: 12, color: "#8B7458" }}>Age 18+</div></div>
                             <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
-                              <button onClick={() => setGuests({ ...guests, adults: Math.max(1, guests.adults - 1) })} style={stepStyle(guests.adults > 1)}>{minus}</button>
+                              <button aria-label="Fewer adults" onClick={() => setGuests({ ...guests, adults: Math.max(1, guests.adults - 1) })} style={stepStyle(guests.adults > 1)}>{minus}</button>
                               <span style={{ minWidth: 16, textAlign: "center", fontWeight: 700 }}>{guests.adults}</span>
-                              <button onClick={() => { if (!maxed) setGuests({ ...guests, adults: guests.adults + 1 }); }} style={stepStyle(!maxed)}>{plus}</button>
+                              <button aria-label="More adults" onClick={() => { if (!maxed) setGuests({ ...guests, adults: guests.adults + 1 }); }} style={stepStyle(!maxed)}>{plus}</button>
                             </div>
                           </div>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderBottom: "1px solid #EFE4CE" }}>
                             <div><div style={{ fontWeight: 600, fontSize: 14 }}>Teens</div><div style={{ fontSize: 12, color: "#8B7458" }}>Age 7&ndash;17</div></div>
                             <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
-                              <button onClick={() => setGuests({ ...guests, children: Math.max(0, guests.children - 1) })} style={stepStyle(guests.children > 0)}>{minus}</button>
+                              <button aria-label="Fewer teens" onClick={() => setGuests({ ...guests, children: Math.max(0, guests.children - 1) })} style={stepStyle(guests.children > 0)}>{minus}</button>
                               <span style={{ minWidth: 16, textAlign: "center", fontWeight: 700 }}>{guests.children}</span>
-                              <button onClick={() => { if (!maxed) setGuests({ ...guests, children: guests.children + 1 }); }} style={stepStyle(!maxed)}>{plus}</button>
+                              <button aria-label="More teens" onClick={() => { if (!maxed) setGuests({ ...guests, children: guests.children + 1 }); }} style={stepStyle(!maxed)}>{plus}</button>
                             </div>
                           </div>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0" }}>
                             <div><div style={{ fontWeight: 600, fontSize: 14 }}>Little ones</div><div style={{ fontSize: 12, color: "#8B7458" }}>7 &amp; under · free</div></div>
                             <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
-                              <button onClick={() => setGuests({ ...guests, infants: Math.max(0, guests.infants - 1) })} style={stepStyle(guests.infants > 0)}>{minus}</button>
+                              <button aria-label="Fewer little ones" onClick={() => setGuests({ ...guests, infants: Math.max(0, guests.infants - 1) })} style={stepStyle(guests.infants > 0)}>{minus}</button>
                               <span style={{ minWidth: 16, textAlign: "center", fontWeight: 700 }}>{guests.infants}</span>
-                              <button onClick={() => { if (guests.infants < 4) setGuests({ ...guests, infants: guests.infants + 1 }); }} style={stepStyle(guests.infants < 4)}>{plus}</button>
+                              <button aria-label="More little ones" onClick={() => { if (guests.infants < 4) setGuests({ ...guests, infants: guests.infants + 1 }); }} style={stepStyle(guests.infants < 4)}>{plus}</button>
                             </div>
                           </div>
                           <div style={{ fontSize: 11.5, color: "#9B8B73", padding: "0 0 12px", lineHeight: 1.5 }}>The rate covers 2 guests. Each extra adult or teen is {peso(room.additionalPaxFee)} per night (up to 4). Little ones stay free, up to 4. For 5+ adults/teens, message us on <a href="https://www.facebook.com/messages/t/270893736109969" target="_blank" rel="noopener" style={{ color: "#B07848", fontWeight: 600 }}>Facebook</a>.</div>
@@ -2044,6 +2050,12 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                     </button>
                   )}
                   <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16, paddingTop: 9, borderTop: "1px solid #EFE4CE" }}><span>Total</span><span>{peso(payableTotal)}</span></div>
+                  {/* Same split checkout asks for: half to reserve, the rest at check-in. */}
+                  <div style={{ background: "#F6EFE2", borderRadius: 12, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 5, fontSize: 13 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#1F160E", fontWeight: 600 }}><span>To reserve (50%, at checkout)</span><span>{peso(Math.round(payableTotal * 0.5))}</span></div>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#6B5A45" }}><span>Balance on arrival</span><span>{peso(payableTotal - Math.round(payableTotal * 0.5))}</span></div>
+                    <div style={{ fontSize: 11.5, color: "#8B7458" }}>Plus a refundable security deposit on arrival.</div>
+                  </div>
                     </div>
                   )}
 
@@ -2105,7 +2117,7 @@ function RoomDetailInner({ params }: { params: Promise<{ id: string }> }) {
                   {/* reserve */}
                   <div>
                     <button onClick={handleReserve} disabled={!canProceed} style={{ display: "flex", width: "100%", alignItems: "center", justifyContent: "center", gap: 8, padding: "15px 24px", borderRadius: 999, fontSize: 15, fontWeight: 600, fontFamily: "inherit", border: "none", cursor: canProceed ? "pointer" : "not-allowed", background: canProceed ? "#B07848" : "#E4D7BE", color: canProceed ? "#fff" : "#9B8B73", boxShadow: canProceed ? "0 4px 14px rgba(176,120,72,.28)" : "none" }}>
-                      {canProceed ? "Reserve your stay" : !date ? "Pick a date to continue" : "Choose your rate to continue"}
+                      {canProceed ? "Reserve your stay" : !date ? "Pick a date to continue" : "Choose how you'd like to stay"}
                       {canProceed && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>}
                     </button>
                     <div style={{ textAlign: "center", fontSize: 12, color: "#8B7458", marginTop: 11, lineHeight: 1.5 }}>You won&rsquo;t be charged now. Pay the 50% deposit only when you confirm at checkout.</div>
